@@ -113,6 +113,170 @@ fn emit_date_token(output: &mut String, date: NaiveDate, token: char, run: usize
     output.push_str(&expansion);
 }
 
+/// Parses `text` against a `format_date` format string, returning the date
+/// that formats to exactly `text` — the inverse of `format_date`, used to
+/// recognize daily notes by filename. Weekday / week-number tokens are
+/// consumed but carry no year/month/day information; a format must contain
+/// year, month, and day tokens for parsing to succeed. Every candidate is
+/// verified by formatting it back, so a `Some` result always roundtrips.
+pub fn parse_date(text: &str, format: &str) -> Option<NaiveDate> {
+    let tokens = format_tokens(format);
+    try_match(&tokens, text, DateFields::default(), format, text)
+}
+
+enum FormatToken {
+    Literal(char),
+    Run(char, usize),
+}
+
+/// Tokenizes a format string exactly the way `format_date` walks it: bracket
+/// literals, runs of the date token characters, and passthrough characters.
+fn format_tokens(format: &str) -> Vec<FormatToken> {
+    let characters: Vec<char> = format.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        match character {
+            '[' => {
+                index += 1;
+                while index < characters.len() && characters[index] != ']' {
+                    tokens.push(FormatToken::Literal(characters[index]));
+                    index += 1;
+                }
+                if index < characters.len() {
+                    index += 1;
+                }
+            }
+            'Y' | 'M' | 'D' | 'd' | 'W' | 'G' => {
+                let mut run = 1;
+                while index + run < characters.len() && characters[index + run] == character {
+                    run += 1;
+                }
+                tokens.push(FormatToken::Run(character, run));
+                index += run;
+            }
+            _ => {
+                tokens.push(FormatToken::Literal(character));
+                index += 1;
+            }
+        }
+    }
+    tokens
+}
+
+#[derive(Clone, Copy, Default)]
+struct DateFields {
+    year: Option<i32>,
+    month: Option<u32>,
+    day: Option<u32>,
+}
+
+const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+const WEEKDAY_NAMES: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+
+/// Backtracking matcher over the token list. Variable-width numeric tokens
+/// (`M`, `D`, `W`) try the longer width first; the final roundtrip check
+/// rejects any loose match that doesn't reproduce the input.
+fn try_match(
+    tokens: &[FormatToken],
+    input: &str,
+    fields: DateFields,
+    format: &str,
+    full_input: &str,
+) -> Option<NaiveDate> {
+    let Some((token, rest_tokens)) = tokens.split_first() else {
+        if !input.is_empty() {
+            return None;
+        }
+        let date = NaiveDate::from_ymd_opt(fields.year?, fields.month?, fields.day?)?;
+        return (format_date(date, format) == full_input).then_some(date);
+    };
+    let recurse = |input: &str, fields: DateFields| {
+        try_match(rest_tokens, input, fields, format, full_input)
+    };
+    match token {
+        FormatToken::Literal(literal) => {
+            recurse(input.strip_prefix(*literal)?, fields)
+        }
+        FormatToken::Run('Y', 2) => {
+            let (value, rest) = take_digits(input, 2)?;
+            recurse(rest, DateFields { year: Some(2000 + value as i32), ..fields })
+        }
+        FormatToken::Run('Y', _) => {
+            let (value, rest) = take_digits(input, 4)?;
+            recurse(rest, DateFields { year: Some(value as i32), ..fields })
+        }
+        FormatToken::Run('M', 1) => [2, 1].iter().find_map(|&width| {
+            let (value, rest) = take_digits(input, width)?;
+            recurse(rest, DateFields { month: Some(value), ..fields })
+        }),
+        FormatToken::Run('M', 2) => {
+            let (value, rest) = take_digits(input, 2)?;
+            recurse(rest, DateFields { month: Some(value), ..fields })
+        }
+        FormatToken::Run('M', run) => MONTH_NAMES.iter().enumerate().find_map(|(index, name)| {
+            let name = if *run == 3 { &name[..3] } else { name };
+            let rest = input.strip_prefix(name)?;
+            recurse(rest, DateFields { month: Some(index as u32 + 1), ..fields })
+        }),
+        FormatToken::Run('D', 1) => [2, 1].iter().find_map(|&width| {
+            let (value, rest) = take_digits(input, width)?;
+            recurse(rest, DateFields { day: Some(value), ..fields })
+        }),
+        FormatToken::Run('D', _) => {
+            let (value, rest) = take_digits(input, 2)?;
+            recurse(rest, DateFields { day: Some(value), ..fields })
+        }
+        FormatToken::Run('d', 1) => recurse(take_digits(input, 1)?.1, fields),
+        FormatToken::Run('d', 2) => WEEKDAY_NAMES
+            .iter()
+            .find_map(|name| recurse(input.strip_prefix(&name[..2])?, fields)),
+        FormatToken::Run('d', run) => WEEKDAY_NAMES.iter().find_map(|name| {
+            let name = if *run == 3 { &name[..3] } else { name };
+            recurse(input.strip_prefix(name)?, fields)
+        }),
+        FormatToken::Run('W', 1) => [2, 1]
+            .iter()
+            .find_map(|&width| recurse(take_digits(input, width)?.1, fields)),
+        FormatToken::Run('W', _) => recurse(take_digits(input, 2)?.1, fields),
+        FormatToken::Run('G', 2) => recurse(take_digits(input, 2)?.1, fields),
+        FormatToken::Run('G', _) => recurse(take_digits(input, 4)?.1, fields),
+        FormatToken::Run(..) => None,
+    }
+}
+
+/// Takes exactly `width` ASCII digits from the start of `input`.
+fn take_digits(input: &str, width: usize) -> Option<(u32, &str)> {
+    let digits = input.get(..width)?;
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, input.get(width..)?))
+}
+
 /// Expands Obsidian-style template tokens: `{{date}}`, `{{date:FORMAT}}`,
 /// `{{time}}`, and `{{title}}`. Unrecognized tokens are left as-is.
 pub fn expand_template(
@@ -296,6 +460,41 @@ mod tests {
             TimelineEntry::ThisWeek.resolve(date(2026, 7, 26)),
             Some((NoteKind::Weekly, date(2026, 7, 20)))
         );
+    }
+
+    #[test]
+    fn parse_date_inverts_format_date() {
+        for format in [
+            "YYYY-MM-DD",
+            "DD-MM-YYYY",
+            "YYYY/M/D",
+            "[day-]YYYY-MM-DD",
+            "D MMM YYYY",
+            "MMMM D, YYYY",
+            "dddd YYYY-MM-DD",
+            "ddd DD MM YY",
+        ] {
+            for d in [date(2026, 7, 20), date(2026, 1, 5), date(2027, 12, 31)] {
+                let formatted = format_date(d, format);
+                assert_eq!(
+                    parse_date(&formatted, format),
+                    Some(d),
+                    "for {format:?} / {formatted:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parse_date_rejects_non_matches() {
+        assert_eq!(parse_date("not-a-date", "YYYY-MM-DD"), None);
+        assert_eq!(parse_date("2026-13-40", "YYYY-MM-DD"), None);
+        assert_eq!(parse_date("2026-07-20-extra", "YYYY-MM-DD"), None);
+        assert_eq!(parse_date("2026-07", "YYYY-MM-DD"), None);
+        // A wrong weekday name fails the roundtrip check.
+        assert_eq!(parse_date("Tuesday 2026-07-20", "dddd YYYY-MM-DD"), None);
+        // Week-only formats carry no year/month/day.
+        assert_eq!(parse_date("2026-W30", "GGGG-[W]WW"), None);
     }
 
     #[test]

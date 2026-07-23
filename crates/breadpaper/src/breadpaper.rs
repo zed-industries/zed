@@ -1,4 +1,6 @@
 pub mod areas;
+pub mod day_plan;
+pub mod day_planner_panel;
 pub mod history;
 pub mod notes;
 pub mod timeline_panel;
@@ -12,8 +14,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use workspace::{AppState, OpenOptions, OpenVisible, Workspace};
 
-pub use timeline_panel::{TimelinePanel, init, show_panel_if_vault};
+pub use day_planner_panel::DayPlannerPanel;
+pub use timeline_panel::{TimelinePanel, show_panel_if_vault};
 pub use vault::{Vault, VaultStatus, default_vault_path, scaffold_vault};
+
+pub fn init(cx: &mut App) {
+    timeline_panel::init(cx);
+    day_planner_panel::init(cx);
+}
 
 /// Opens `path` and lands the user on a rendered markdown preview of it
 /// ("viewing mode") instead of the raw buffer. There is no one-shot

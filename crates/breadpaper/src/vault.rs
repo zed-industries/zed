@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::day_plan::DayPlannerConfig;
 use crate::notes::NoteKind;
 
 pub const VAULT_MARKER_DIR: &str = ".breadpaper";
@@ -92,6 +93,78 @@ struct VaultConfigContent {
     history: HistoryConfigContent,
     #[serde(skip_serializing_if = "AreasConfigContent::is_unset")]
     areas: AreasConfigContent,
+    #[serde(skip_serializing_if = "DayPlannerConfigContent::is_unset")]
+    day_planner: DayPlannerConfigContent,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct DayPlannerConfigContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    heading: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    day_start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    day_end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_duration_minutes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    show_now_indicator: Option<bool>,
+}
+
+impl DayPlannerConfigContent {
+    fn resolve(self) -> DayPlannerConfig {
+        let defaults = DayPlannerConfig::default();
+        let parse_bound = |raw: Option<String>, name: &str, default: u32| match raw {
+            None => default,
+            Some(raw) => match crate::day_plan::parse_grid_bound(&raw) {
+                Some(minutes) => minutes,
+                None => {
+                    log::warn!(
+                        "BreadPaper: invalid [day_planner].{name} {raw:?} in config.toml; \
+                         using the default"
+                    );
+                    default
+                }
+            },
+        };
+        let mut day_start = parse_bound(self.day_start, "day_start", defaults.day_start);
+        let mut day_end = parse_bound(self.day_end, "day_end", defaults.day_end);
+        if day_end <= day_start {
+            log::warn!(
+                "BreadPaper: [day_planner] day_end must be after day_start; using the defaults"
+            );
+            day_start = defaults.day_start;
+            day_end = defaults.day_end;
+        }
+        DayPlannerConfig {
+            heading: self.heading.unwrap_or(defaults.heading),
+            day_start,
+            day_end,
+            default_duration: match self.default_duration_minutes {
+                Some(0) => {
+                    log::warn!(
+                        "BreadPaper: [day_planner].default_duration_minutes must be at \
+                         least 1; using the default"
+                    );
+                    defaults.default_duration
+                }
+                Some(minutes) => minutes,
+                None => defaults.default_duration,
+            },
+            show_now_indicator: self
+                .show_now_indicator
+                .unwrap_or(defaults.show_now_indicator),
+        }
+    }
+
+    fn is_unset(&self) -> bool {
+        self.heading.is_none()
+            && self.day_start.is_none()
+            && self.day_end.is_none()
+            && self.default_duration_minutes.is_none()
+            && self.show_now_indicator.is_none()
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -240,6 +313,7 @@ pub struct VaultConfig {
     pub weekly: NotesConfig,
     pub history: HistoryConfig,
     pub areas: AreasConfig,
+    pub day_planner: DayPlannerConfig,
 }
 
 impl Default for VaultConfig {
@@ -256,6 +330,7 @@ impl VaultConfigContent {
             weekly: self.weekly.resolve(NotesConfig::weekly_default()),
             history: self.history.resolve(),
             areas: self.areas.resolve(),
+            day_planner: self.day_planner.resolve(),
         }
     }
 }
@@ -338,6 +413,18 @@ impl Vault {
 
     pub fn template_path(&self, kind: NoteKind) -> PathBuf {
         self.root.join(&self.notes_config(kind).template)
+    }
+
+    /// The date of the daily note at `path`, or `None` when `path` isn't a
+    /// daily note of this vault. The inverse of `note_path(NoteKind::Daily, _)`:
+    /// the whole path below the daily directory is matched against the
+    /// filename format, so formats containing `/` (nested folders per year or
+    /// month) are recognized too.
+    pub fn daily_note_date(&self, path: &Path) -> Option<chrono::NaiveDate> {
+        let daily_dir = self.root.join(&self.config.daily.dir);
+        let relative = path.strip_prefix(&daily_dir).ok()?.to_str()?;
+        let stem = relative.strip_suffix(".md")?;
+        crate::notes::parse_date(stem, &self.config.daily.filename)
     }
 }
 
@@ -557,6 +644,103 @@ mod tests {
         }
         let raw = fs::read_to_string(marker.join(VAULT_CONFIG_FILE)).unwrap();
         assert!(!raw.contains("[weekly]"), "unset section reappeared: {raw}");
+    }
+
+    #[test]
+    fn day_planner_config_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(VAULT_MARKER_DIR);
+        fs::create_dir_all(&marker).unwrap();
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n[day_planner]\nheading = \"Plan\"\nday_start = \"08:00\"\ndefault_duration_minutes = 45\n",
+        )
+        .unwrap();
+        match Vault::detect(dir.path()) {
+            VaultStatus::Valid(vault) => {
+                let config = &vault.config.day_planner;
+                assert_eq!(config.heading, "Plan");
+                assert_eq!(config.day_start, 480);
+                // Unspecified keys keep their defaults.
+                assert_eq!(config.day_end, 1440);
+                assert_eq!(config.default_duration, 45);
+                assert!(config.show_now_indicator);
+            }
+            other => panic!("expected valid vault, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn day_planner_config_invalid_values_fall_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(VAULT_MARKER_DIR);
+        fs::create_dir_all(&marker).unwrap();
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n[day_planner]\nday_start = \"25:00\"\nday_end = \"05:00\"\n",
+        )
+        .unwrap();
+        match Vault::detect(dir.path()) {
+            VaultStatus::Valid(vault) => {
+                // 25:00 is invalid, and the surviving day_end (05:00) is
+                // before the default day_start, so both fall back.
+                assert_eq!(vault.config.day_planner.day_start, 360);
+                assert_eq!(vault.config.day_planner.day_end, 1440);
+            }
+            other => panic!("expected valid vault, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn daily_note_date_inverts_note_path() {
+        let dir = tempfile::tempdir().unwrap();
+        scaffold_vault(dir.path()).unwrap();
+        let VaultStatus::Valid(vault) = Vault::detect(dir.path()) else {
+            panic!("expected valid vault");
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
+        let path = vault.note_path(NoteKind::Daily, date);
+        assert_eq!(vault.daily_note_date(&path), Some(date));
+
+        assert_eq!(
+            vault.daily_note_date(&vault.note_path(NoteKind::Weekly, date)),
+            None
+        );
+        assert_eq!(
+            vault.daily_note_date(&dir.path().join("2026-07-20.md")),
+            None
+        );
+        assert_eq!(
+            vault.daily_note_date(&dir.path().join("daily/notes.md")),
+            None
+        );
+        assert_eq!(
+            vault.daily_note_date(&dir.path().join("daily/2026-07-20.txt")),
+            None
+        );
+        assert_eq!(
+            vault.daily_note_date(&dir.path().join("daily/sub/2026-07-20.md")),
+            None
+        );
+    }
+
+    #[test]
+    fn daily_note_date_supports_nested_filename_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(VAULT_MARKER_DIR);
+        fs::create_dir_all(&marker).unwrap();
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n[daily]\nfilename = \"YYYY/MM/DD\"\n",
+        )
+        .unwrap();
+        let VaultStatus::Valid(vault) = Vault::detect(dir.path()) else {
+            panic!("expected valid vault");
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
+        let path = vault.note_path(NoteKind::Daily, date);
+        assert_eq!(path, dir.path().join("daily/2026/07/20.md"));
+        assert_eq!(vault.daily_note_date(&path), Some(date));
     }
 
     #[test]

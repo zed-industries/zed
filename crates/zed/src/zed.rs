@@ -774,6 +774,8 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
     cx.spawn_in(window, async move |workspace_handle, cx| {
         let breadpaper_timeline_panel =
             breadpaper::TimelinePanel::load(workspace_handle.clone(), cx.clone());
+        let breadpaper_day_planner_panel =
+            breadpaper::DayPlannerPanel::load(workspace_handle.clone(), cx.clone());
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -799,6 +801,11 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
 
         futures::join!(
             add_panel_when_ready(breadpaper_timeline_panel, workspace_handle.clone(), cx.clone()),
+            add_panel_when_ready(
+                breadpaper_day_planner_panel,
+                workspace_handle.clone(),
+                cx.clone()
+            ),
             add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
