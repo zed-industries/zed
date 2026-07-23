@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
@@ -17,10 +16,8 @@ use gpui::{
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm};
-use project::{git_store::Repository, project_settings::ProjectSettings};
+use project::git_store::Repository;
 use project_diff::ProjectDiff;
-use settings::{Settings as _, SettingsStore};
-use std::any::TypeId;
 use time::OffsetDateTime;
 use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
 use workspace::{
@@ -83,27 +80,7 @@ pub fn get_provider_icon(name: &str) -> IconName {
     }
 }
 
-fn update_no_verify_command_palette_filter(cx: &mut App) {
-    let toggle_no_verify_action = [TypeId::of::<git::NoVerify>()];
-    let allow_no_verify_commit = ProjectSettings::get_global(cx).git.allow_no_verify_commit;
-
-    CommandPaletteFilter::update_global(cx, |filter, _| {
-        if allow_no_verify_commit {
-            filter.show_action_types(&toggle_no_verify_action);
-        } else {
-            filter.hide_action_types(&toggle_no_verify_action);
-        }
-    });
-}
-
-fn init_no_verify_command_palette_filter(cx: &mut App) {
-    update_no_verify_command_palette_filter(cx);
-    cx.observe_global::<SettingsStore>(update_no_verify_command_palette_filter)
-        .detach();
-}
-
 pub fn init(cx: &mut App) {
-    init_no_verify_command_palette_filter(cx);
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
     git_graph::init(cx);
@@ -1341,43 +1318,6 @@ impl EventEmitter<DismissEvent> for GitCloneModal {}
 impl ModalView for GitCloneModal {}
 
 #[cfg(test)]
-mod command_palette_filter_tests {
-    use super::*;
-    use gpui::TestAppContext;
-
-    #[gpui::test]
-    async fn test_toggle_no_verify_visibility_follows_allow_setting(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            command_palette_hooks::init(cx);
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            init_no_verify_command_palette_filter(cx);
-
-            assert!(
-                CommandPaletteFilter::try_global(cx)
-                    .is_some_and(|filter| filter.is_hidden(&git::NoVerify))
-            );
-        });
-
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.git.get_or_insert_default().allow_no_verify_commit = Some(true);
-                });
-            });
-        });
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            assert!(
-                CommandPaletteFilter::try_global(cx)
-                    .is_some_and(|filter| !filter.is_hidden(&git::NoVerify))
-            );
-        });
-    }
-}
-
-#[cfg(test)]
 mod view_commit_tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
@@ -1385,7 +1325,7 @@ mod view_commit_tests {
     use project::project_settings::ProjectSettings;
     use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{Settings as _, SettingsStore};
     use std::path::Path;
     use std::sync::Arc;
     use theme::LoadThemes;

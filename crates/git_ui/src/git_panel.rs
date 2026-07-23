@@ -37,7 +37,7 @@ use git::repository::{
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
 use git::{
-    Amend, Commit, NoVerify, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus,
+    Amend, Commit, Signoff, SkipHooks, ToggleStaged, repository::RepoPath, status::FileStatus,
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
@@ -86,9 +86,10 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Divider, ElevationIndex,
-    IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
-    Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Divider, DocumentationSide,
+    ElevationIndex, IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ProjectEmptyState, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
@@ -932,7 +933,7 @@ pub struct GitPanel {
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
     signoff_enabled: bool,
-    no_verify_enabled: bool,
+    skip_hooks_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -1152,20 +1153,10 @@ impl GitPanel {
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
-            let mut was_no_verify_allowed =
-                ProjectSettings::get_global(cx).git.allow_no_verify_commit;
-            let _settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
                 let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
-                let is_no_verify_allowed =
-                    ProjectSettings::get_global(cx).git.allow_no_verify_commit;
-                let cleared_no_verify =
-                    !is_no_verify_allowed && std::mem::take(&mut this.no_verify_enabled);
-                if was_ai_enabled != is_ai_enabled
-                    || was_no_verify_allowed != is_no_verify_allowed
-                    || cleared_no_verify
-                {
+                if was_ai_enabled != is_ai_enabled {
                     was_ai_enabled = is_ai_enabled;
-                    was_no_verify_allowed = is_no_verify_allowed;
                     cx.notify();
                 }
             });
@@ -1244,7 +1235,7 @@ impl GitPanel {
                 original_commit_message,
                 pending_commit_message_restores,
                 signoff_enabled,
-                no_verify_enabled: false,
+                skip_hooks_enabled: false,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
                 single_tracked_entry: None,
@@ -2921,7 +2912,7 @@ impl GitPanel {
             amend: self.amend_pending,
             signoff: self.signoff_enabled,
             allow_empty: false,
-            no_verify: self.no_verify_enabled,
+            no_verify: self.skip_hooks_enabled,
         }
     }
 
@@ -3001,7 +2992,7 @@ impl GitPanel {
 
                 match result {
                     Ok(()) => {
-                        this.set_no_verify_enabled(false, cx);
+                        this.set_skip_hooks_enabled(false, cx);
                         if options.amend {
                             this.set_amend_pending(false, cx);
                         } else {
@@ -4363,7 +4354,7 @@ impl GitPanel {
         let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
             != new_active_repository.as_ref().map(Entity::entity_id);
         if active_repository_changed {
-            self.set_no_verify_enabled(false, cx);
+            self.set_skip_hooks_enabled(false, cx);
             if self.amend_pending {
                 // Leaving a repository with a pending amend: undo it so the amend
                 // state doesn't carry over to the newly active repository. The
@@ -5385,9 +5376,7 @@ impl GitPanel {
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
-                let no_verify = self.no_verify_enabled;
-                let allow_no_verify_commit =
-                    ProjectSettings::get_global(cx).git.allow_no_verify_commit;
+                let skip_hooks = self.skip_hooks_enabled;
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -5420,17 +5409,17 @@ impl GitPanel {
                                 Some(Box::new(Signoff)),
                                 move |window, cx| window.dispatch_action(Box::new(Signoff), cx),
                             )
-                            .when(allow_no_verify_commit, |this| {
-                                this.toggleable_entry(
-                                    "No Verify",
-                                    no_verify,
-                                    IconPosition::Start,
-                                    Some(Box::new(NoVerify)),
-                                    move |window, cx| {
-                                        window.dispatch_action(Box::new(NoVerify), cx)
-                                    },
-                                )
-                            })
+                            .item(
+                                ContextMenuEntry::new("Skip Hooks")
+                                    .toggleable(IconPosition::Start, skip_hooks)
+                                    .action(Box::new(SkipHooks))
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(Box::new(SkipHooks), cx)
+                                    })
+                                    .documentation_aside(DocumentationSide::Left, |_| {
+                                        Label::new("git commit --no-verify").into_any_element()
+                                    }),
+                            )
                     }))
                 }
             })
@@ -7789,38 +7778,24 @@ impl GitPanel {
         self.signoff_enabled
     }
 
-    pub fn no_verify_enabled(&self) -> bool {
-        self.no_verify_enabled
+    pub fn skip_hooks_enabled(&self) -> bool {
+        self.skip_hooks_enabled
     }
 
-    fn set_no_verify_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
-        if self.no_verify_enabled != value {
-            self.no_verify_enabled = value;
+    fn set_skip_hooks_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
+        if self.skip_hooks_enabled != value {
+            self.skip_hooks_enabled = value;
             cx.notify();
         }
     }
 
-    pub fn toggle_no_verify_enabled(
+    pub fn toggle_skip_hooks(
         &mut self,
-        _: &NoVerify,
-        window: &mut Window,
+        _: &SkipHooks,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if ProjectSettings::get_global(cx).git.allow_no_verify_commit {
-            self.set_no_verify_enabled(!self.no_verify_enabled, cx);
-        } else {
-            let prompt = window.prompt(
-                PromptLevel::Warning,
-                "Commits without verification are not allowed",
-                Some("Enable git.allow_no_verify_commit to use this option."),
-                &["OK"],
-                cx,
-            );
-            cx.spawn(async move |_, _| match prompt.await {
-                Ok(_) | Err(Canceled) => {}
-            })
-            .detach();
-        }
+        self.set_skip_hooks_enabled(!self.skip_hooks_enabled, cx);
     }
 
     pub fn set_signoff_enabled(&mut self, value: bool, cx: &mut Context<Self>) {
@@ -8024,7 +7999,7 @@ impl Render for GitPanel {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(Self::stage_range))
                     .on_action(cx.listener(GitPanel::on_commit))
-                    .on_action(cx.listener(GitPanel::toggle_no_verify_enabled))
+                    .on_action(cx.listener(GitPanel::toggle_skip_hooks))
                     .on_action(cx.listener(GitPanel::on_amend))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
@@ -8966,14 +8941,6 @@ mod tests {
         });
     }
 
-    fn set_allow_no_verify_commit(allow: bool, cx: &mut App) {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings.git.get_or_insert_default().allow_no_verify_commit = Some(allow);
-            });
-        });
-    }
-
     async fn setup_git_panel_with_changes(
         cx: &mut TestAppContext,
         tree: serde_json::Value,
@@ -9028,7 +8995,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_verify_toggle_follows_allow_setting(cx: &mut TestAppContext) {
+    async fn test_skip_hooks_toggle(cx: &mut TestAppContext) {
         init_test(cx);
         let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
             cx,
@@ -9041,39 +9008,20 @@ mod tests {
         .await;
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            assert!(!panel.no_verify_enabled());
-            panel.toggle_no_verify_enabled(&NoVerify, window, cx);
-            assert!(!panel.no_verify_enabled());
-        });
-        assert_eq!(
-            cx.pending_prompt(),
-            Some((
-                "Commits without verification are not allowed".to_string(),
-                "Enable git.allow_no_verify_commit to use this option.".to_string(),
-            ))
-        );
-        cx.simulate_prompt_answer("OK");
-        cx.run_until_parked();
-
-        cx.update(|_, cx| set_allow_no_verify_commit(true, cx));
-        cx.run_until_parked();
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.toggle_no_verify_enabled(&NoVerify, window, cx);
-            assert!(panel.no_verify_enabled());
+            assert!(!panel.skip_hooks_enabled());
+            panel.toggle_skip_hooks(&SkipHooks, window, cx);
+            assert!(panel.skip_hooks_enabled());
             assert!(panel.commit_options().no_verify);
-        });
 
-        cx.update(|_, cx| set_allow_no_verify_commit(false, cx));
-        cx.run_until_parked();
-        panel.read_with(&cx, |panel, _| {
-            assert!(!panel.no_verify_enabled());
+            panel.toggle_skip_hooks(&SkipHooks, window, cx);
+            assert!(!panel.skip_hooks_enabled());
+            assert!(!panel.commit_options().no_verify);
         });
     }
 
     #[gpui::test]
-    async fn test_no_verify_clears_after_successful_commit(cx: &mut TestAppContext) {
+    async fn test_skip_hooks_clears_after_successful_commit(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| set_allow_no_verify_commit(true, cx));
         let (fs, _, _, panel, mut cx) = setup_git_panel_with_changes(
             cx,
             json!({
@@ -9088,7 +9036,7 @@ mod tests {
             panel
                 .commit_message_buffer(cx)
                 .update(cx, |buffer, cx| buffer.set_text("Test commit", cx));
-            panel.toggle_no_verify_enabled(&NoVerify, window, cx);
+            panel.toggle_skip_hooks(&SkipHooks, window, cx);
             assert!(panel.commit_options().no_verify);
 
             let focus_handle = panel.commit_editor.focus_handle(cx);
@@ -9098,7 +9046,7 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, _| {
-            assert!(!panel.no_verify_enabled());
+            assert!(!panel.skip_hooks_enabled());
         });
         let commit_count = fs
             .with_git_state(path!("/project/.git").as_ref(), false, |state| {
@@ -9109,9 +9057,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_verify_remains_enabled_after_failed_commit(cx: &mut TestAppContext) {
+    async fn test_skip_hooks_remains_enabled_after_failed_commit(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| set_allow_no_verify_commit(true, cx));
         let (fs, _, _, panel, mut cx) = setup_git_panel_with_changes(
             cx,
             json!({
@@ -9137,7 +9084,7 @@ mod tests {
             panel
                 .commit_message_buffer(cx)
                 .update(cx, |buffer, cx| buffer.set_text("Test commit", cx));
-            panel.toggle_no_verify_enabled(&NoVerify, window, cx);
+            panel.toggle_skip_hooks(&SkipHooks, window, cx);
             assert!(panel.commit_options().no_verify);
 
             let focus_handle = panel.commit_editor.focus_handle(cx);
@@ -9147,7 +9094,7 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, _| {
-            assert!(panel.no_verify_enabled());
+            assert!(panel.skip_hooks_enabled());
         });
         let commit_count = fs
             .with_git_state(path!("/project/.git").as_ref(), false, |state| {
@@ -11366,8 +11313,8 @@ mod tests {
                 buffer.edit([(start..end, "Amended message")], None, cx);
             });
             assert!(panel.amend_pending());
-            panel.set_no_verify_enabled(true, cx);
-            assert!(panel.no_verify_enabled());
+            panel.set_skip_hooks_enabled(true, cx);
+            assert!(panel.skip_hooks_enabled());
         });
 
         // Switching the active repository away exits the amend state instead of
@@ -11377,7 +11324,7 @@ mod tests {
 
         panel.update(cx, |panel, cx| {
             assert!(!panel.amend_pending());
-            assert!(!panel.no_verify_enabled());
+            assert!(!panel.skip_hooks_enabled());
             // Only the active repository may serialize a pending amend, and we
             // just left repository A's amend, so nothing is left pending.
             let serialized = panel.serialized_commit_messages(cx);

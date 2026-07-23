@@ -487,10 +487,6 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: bool,
-    /// Whether commits that skip pre-commit and commit-msg hooks are allowed.
-    ///
-    /// Default: false
-    pub allow_no_verify_commit: bool,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory. When the resolved directory is outside the project
     /// root, the project's directory name is automatically appended so that
@@ -709,7 +705,6 @@ impl Settings for ProjectSettings {
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
             show_stage_restore_buttons: git.show_stage_restore_buttons.unwrap_or(true),
-            allow_no_verify_commit: git.allow_no_verify_commit.unwrap_or(false),
             worktree_directory: git
                 .worktree_directory
                 .clone()

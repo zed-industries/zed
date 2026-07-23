@@ -692,14 +692,12 @@ impl VsCodeSettings {
     }
 
     fn git_settings_content(&self) -> Option<GitSettings> {
+        let inline_blame = self.read_bool("git.blame.editorDecoration.enabled")?;
         skip_default(GitSettings {
-            inline_blame: self
-                .read_bool("git.blame.editorDecoration.enabled")
-                .map(|enabled| InlineBlameSettings {
-                    enabled: Some(enabled),
-                    ..Default::default()
-                }),
-            allow_no_verify_commit: self.read_bool("git.allowNoVerifyCommit"),
+            inline_blame: Some(InlineBlameSettings {
+                enabled: Some(inline_blame),
+                ..Default::default()
+            }),
             ..Default::default()
         })
     }
@@ -1160,35 +1158,5 @@ mod tests {
             None
         );
         assert_eq!(imported_reduce_motion("{}"), None);
-    }
-
-    fn imported_git_settings(content: &str) -> Option<GitSettings> {
-        VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
-            .unwrap()
-            .settings_content()
-            .git
-    }
-
-    #[test]
-    fn test_import_git_allow_no_verify_commit() {
-        assert_eq!(
-            imported_git_settings(r#"{ "git.allowNoVerifyCommit": true }"#)
-                .and_then(|git| git.allow_no_verify_commit),
-            Some(true)
-        );
-        assert_eq!(
-            imported_git_settings(r#"{ "git.allowNoVerifyCommit": false }"#)
-                .and_then(|git| git.allow_no_verify_commit),
-            Some(false)
-        );
-        assert_eq!(imported_git_settings("{}"), None);
-
-        // The inline blame setting must not gate the rest of the git settings.
-        let git = imported_git_settings(
-            r#"{ "git.allowNoVerifyCommit": true, "git.blame.editorDecoration.enabled": true }"#,
-        )
-        .unwrap();
-        assert_eq!(git.allow_no_verify_commit, Some(true));
-        assert_eq!(git.inline_blame.and_then(|blame| blame.enabled), Some(true));
     }
 }

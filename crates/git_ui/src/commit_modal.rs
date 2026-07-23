@@ -3,12 +3,12 @@ use crate::git_panel::{
     GitPanel, commit_message_editor, commit_title_exceeds_limit, git_commit_editor_style,
 };
 use crate::git_panel_settings::GitPanelSettings;
-use git::{Amend, Commit, GenerateCommitMessage, NoVerify, Signoff};
-use project::{DisableAiSettings, project_settings::ProjectSettings};
+use git::{Amend, Commit, GenerateCommitMessage, Signoff, SkipHooks};
+use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
-    ButtonLike, ContextMenu, ElevationIndex, KeybindingHint, PopoverMenu, PopoverMenuHandle,
-    SplitButton, Tooltip, prelude::*,
+    ButtonLike, ContextMenu, ContextMenuEntry, DocumentationSide, ElevationIndex, KeybindingHint,
+    PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
@@ -286,10 +286,8 @@ impl CommitModal {
                     let git_panel = git_panel_entity.read(cx);
                     let amend_enabled = git_panel.amend_pending();
                     let signoff_enabled = git_panel.signoff_enabled();
-                    let no_verify_enabled = git_panel.no_verify_enabled();
+                    let skip_hooks_enabled = git_panel.skip_hooks_enabled();
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
-                    let allow_no_verify_commit =
-                        ProjectSettings::get_global(cx).git.allow_no_verify_commit;
 
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                         context_menu
@@ -328,17 +326,17 @@ impl CommitModal {
                                     }
                                 },
                             )
-                            .when(allow_no_verify_commit, |this| {
-                                this.toggleable_entry(
-                                    "No Verify",
-                                    no_verify_enabled,
-                                    IconPosition::Start,
-                                    Some(Box::new(NoVerify)),
-                                    move |window, cx| {
-                                        window.dispatch_action(Box::new(NoVerify), cx)
-                                    },
-                                )
-                            })
+                            .item(
+                                ContextMenuEntry::new("Skip Hooks")
+                                    .toggleable(IconPosition::Start, skip_hooks_enabled)
+                                    .action(Box::new(SkipHooks))
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(Box::new(SkipHooks), cx)
+                                    })
+                                    .documentation_aside(DocumentationSide::Left, |_| {
+                                        Label::new("git commit --no-verify").into_any_element()
+                                    }),
+                            )
                     }))
                 }
             })
@@ -528,14 +526,14 @@ impl CommitModal {
         }
     }
 
-    fn on_toggle_no_verify(
+    fn on_toggle_skip_hooks(
         &mut self,
-        action: &git::NoVerify,
+        action: &git::SkipHooks,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.toggle_no_verify_enabled(action, window, cx)
+            git_panel.toggle_skip_hooks(action, window, cx)
         });
     }
 
@@ -615,7 +613,7 @@ impl Render for CommitModal {
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::on_commit))
-            .on_action(cx.listener(Self::on_toggle_no_verify))
+            .on_action(cx.listener(Self::on_toggle_skip_hooks))
             .on_action(cx.listener(Self::on_amend))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))

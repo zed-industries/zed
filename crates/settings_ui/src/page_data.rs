@@ -7554,35 +7554,6 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_commit_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SectionHeader("Git Commits"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Allow No-Verify Commits",
-                description: "Allow commits that skip pre-commit and commit-msg hooks.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("git.allow_no_verify_commit"),
-                    pick: |settings_content| {
-                        settings_content
-                            .git
-                            .as_ref()?
-                            .allow_no_verify_commit
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .git
-                            .get_or_insert_default()
-                            .allow_no_verify_commit = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
-    }
-
     fn git_gutter_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Gutter"),
@@ -7964,7 +7935,6 @@ fn version_control_page() -> SettingsPage {
         title: "Version Control",
         items: concat_sections![
             git_integration_section(),
-            git_commit_section(),
             git_gutter_section(),
             inline_git_blame_section(),
             git_blame_view_section(),

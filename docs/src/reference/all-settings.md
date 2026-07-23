@@ -2516,24 +2516,6 @@ Example:
 }
 ```
 
-### Allow No-Verify Commits
-
-- Description: Whether commits that skip pre-commit and commit-msg hooks are allowed. When enabled, a "No Verify" option is added to the commit menu that commits with `git commit --no-verify`.
-- Setting: `allow_no_verify_commit`
-- Default: `false`
-
-**Options**
-
-`boolean` values
-
-```json [settings]
-{
-  "git": {
-    "allow_no_verify_commit": true
-  }
-}
-```
-
 ## Go to Definition Fallback
 
 - Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition

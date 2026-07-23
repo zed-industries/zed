@@ -100,8 +100,8 @@ actions!(
         FetchFrom,
         /// Creates a new commit with staged changes.
         Commit,
-        /// Enable the --no-verify option.
-        NoVerify,
+        /// Runs the next commit with `git commit --no-verify`.
+        SkipHooks,
         /// Amends the last commit with staged changes.
         Amend,
         /// Enable the --signoff option.
