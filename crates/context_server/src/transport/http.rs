@@ -71,6 +71,8 @@ pub struct HttpTransport {
     /// the start of each send so it always describes the most recent attempt.
     /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
+    /// `x-mcp-header` bookkeeping (MCP 2026-07-28).
+    param_headers: Arc<ParamHeaderState>,
     /// Abort handles for in-flight SSE response streams, keyed by the
     /// serialized request id. From MCP 2026-07-28 closing a request's
     /// response stream is the cancellation signal, replacing the
@@ -90,6 +92,9 @@ struct OutgoingMessage {
     /// The protocol version stamped in the message's own `params._meta`.
     /// Present exactly when the protocol layer built a modern request.
     protocol_version: Option<String>,
+    /// `params.arguments` of a `tools/call` request, for `Mcp-Param-*`
+    /// header extraction.
+    arguments: Option<serde_json::Value>,
     /// `params.requestId` of a `notifications/cancelled` notification.
     cancelled_request_id: Option<serde_json::Value>,
 }
@@ -119,6 +124,9 @@ fn parse_outgoing_message(message: &str) -> OutgoingMessage {
         .and_then(|params| params.get("_meta")?.get(types::meta_keys::PROTOCOL_VERSION))
         .and_then(|version| version.as_str())
         .map(str::to_string);
+    let arguments = (method.as_deref() == Some("tools/call"))
+        .then(|| params?.get("arguments").cloned())
+        .flatten();
     let cancelled_request_id = (method.as_deref() == Some("notifications/cancelled"))
         .then(|| params?.get("requestId").cloned())
         .flatten();
@@ -127,6 +135,7 @@ fn parse_outgoing_message(message: &str) -> OutgoingMessage {
         method,
         name,
         protocol_version,
+        arguments,
         cancelled_request_id,
     }
 }
@@ -148,6 +157,223 @@ fn encode_header_value(value: &str) -> String {
             "=?base64?{}?=",
             base64::engine::general_purpose::STANDARD.encode(value)
         )
+    }
+}
+
+/// A tool parameter annotated with `x-mcp-header` in the tool's
+/// `inputSchema`: its value is mirrored into an `Mcp-Param-{name}` header on
+/// `tools/call` requests (MCP 2026-07-28).
+#[derive(Debug, Clone, PartialEq)]
+struct ParamHeader {
+    /// The header name portion; the full header is `Mcp-Param-{name}`.
+    name: String,
+    /// The chain of `properties` keys leading to the annotated parameter.
+    path: Vec<String>,
+}
+
+/// Collect the `x-mcp-header` annotations of a tool's `inputSchema`, or the
+/// reason the tool definition is invalid and must be rejected.
+fn collect_param_headers(input_schema: &serde_json::Value) -> Result<Vec<ParamHeader>, String> {
+    fn is_token(value: &str) -> bool {
+        !value.is_empty()
+            && value.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
+            })
+    }
+
+    fn count_annotations(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::Object(object) => {
+                object.iter().fold(0, |count, (key, child)| {
+                    count
+                        + usize::from(key == "x-mcp-header")
+                        + count_annotations(child)
+                })
+            }
+            serde_json::Value::Array(array) => array.iter().map(count_annotations).sum(),
+            _ => 0,
+        }
+    }
+
+    fn walk(
+        schema: &serde_json::Value,
+        path: &mut Vec<String>,
+        found: &mut Vec<ParamHeader>,
+    ) -> Result<(), String> {
+        let Some(properties) = schema.get("properties").and_then(|value| value.as_object())
+        else {
+            return Ok(());
+        };
+        for (key, property) in properties {
+            path.push(key.clone());
+            if let Some(annotation) = property.get("x-mcp-header") {
+                let name = annotation
+                    .as_str()
+                    .filter(|name| is_token(name))
+                    .ok_or_else(|| format!("invalid x-mcp-header value for parameter {key:?}"))?;
+                let property_type = property.get("type").and_then(|value| value.as_str());
+                if !matches!(property_type, Some("string" | "integer" | "boolean")) {
+                    return Err(format!(
+                        "x-mcp-header on parameter {key:?} with non-primitive type {property_type:?}"
+                    ));
+                }
+                found.push(ParamHeader {
+                    name: name.to_string(),
+                    path: path.clone(),
+                });
+            }
+            walk(property, path, found)?;
+            path.pop();
+        }
+        Ok(())
+    }
+
+    let mut found = Vec::new();
+    walk(input_schema, &mut Vec::new(), &mut found)?;
+
+    // Annotations reachable only through array, composition, conditional, or
+    // $ref keywords invalidate the tool definition; the walk above visits
+    // pure `properties` chains only, so any surplus occurrence is one of
+    // those.
+    if count_annotations(input_schema) != found.len() {
+        return Err(
+            "x-mcp-header annotation outside a statically reachable properties chain".to_string(),
+        );
+    }
+
+    let mut names = found
+        .iter()
+        .map(|header| header.name.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    if names.len() != found.len() {
+        return Err("case-insensitively duplicated x-mcp-header names".to_string());
+    }
+
+    Ok(found)
+}
+
+/// Encode a `tools/call` argument for an `Mcp-Param-*` header. `None` means
+/// the header is omitted (absent or null value, or a value that is not of
+/// the annotated primitive type).
+fn encode_param_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) => Some(encode_header_value(value)),
+        // JSON integers out of the JavaScript safe range are not permitted
+        // as header parameters.
+        serde_json::Value::Number(value) => {
+            let value = value.as_i64()?;
+            const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+            (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER)
+                .contains(&value)
+                .then(|| value.to_string())
+        }
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+/// Tracks `x-mcp-header` annotations across the transport: outgoing
+/// `tools/list` requests are remembered so their responses can be validated
+/// and filtered, and the surviving annotations drive `Mcp-Param-*` headers
+/// on subsequent `tools/call` requests.
+#[derive(Default)]
+struct ParamHeaderState {
+    /// Ids of in-flight modern `tools/list` requests, serialized to strings
+    /// for hashing.
+    pending_tools_list_ids: SyncMutex<collections::HashSet<String>>,
+    headers_by_tool: SyncMutex<HashMap<String, Vec<ParamHeader>>>,
+}
+
+impl ParamHeaderState {
+    fn note_outgoing(&self, outgoing: &OutgoingMessage) {
+        if outgoing.method.as_deref() == Some("tools/list")
+            && let Some(id) = &outgoing.id
+        {
+            self.pending_tools_list_ids
+                .lock()
+                .insert(id.to_string());
+        }
+    }
+
+    /// Rewrite a `tools/list` response, excluding tools whose `x-mcp-header`
+    /// annotations are invalid (the spec requires rejecting such tool
+    /// definitions) and recording the annotations of the rest. Other
+    /// messages pass through unchanged.
+    fn process_incoming(&self, message: String) -> String {
+        let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&message) else {
+            return message;
+        };
+        {
+            let mut pending = self.pending_tools_list_ids.lock();
+            let Some(id) = parsed.get("id").filter(|id| !id.is_null()) else {
+                return message;
+            };
+            if !pending.remove(&id.to_string()) {
+                return message;
+            }
+        }
+        let Some(tools) = parsed
+            .get_mut("result")
+            .and_then(|result| result.get_mut("tools"))
+            .and_then(|tools| tools.as_array_mut())
+        else {
+            return message;
+        };
+
+        let mut headers_by_tool = HashMap::default();
+        tools.retain(|tool| {
+            let Some(name) = tool.get("name").and_then(|name| name.as_str()) else {
+                return true;
+            };
+            let Some(input_schema) = tool.get("inputSchema") else {
+                return true;
+            };
+            match collect_param_headers(input_schema) {
+                Ok(headers) => {
+                    if !headers.is_empty() {
+                        headers_by_tool.insert(name.to_string(), headers);
+                    }
+                    true
+                }
+                Err(reason) => {
+                    log::warn!(
+                        "rejecting tool {name:?} with invalid x-mcp-header annotations: {reason}"
+                    );
+                    false
+                }
+            }
+        });
+        *self.headers_by_tool.lock() = headers_by_tool;
+
+        serde_json::to_string(&parsed).unwrap_or(message)
+    }
+
+    /// The `Mcp-Param-*` headers for a `tools/call` request.
+    fn headers_for_call(&self, outgoing: &OutgoingMessage) -> Vec<(String, String)> {
+        let Some(tool_name) = outgoing
+            .name
+            .as_deref()
+            .filter(|_| outgoing.method.as_deref() == Some("tools/call"))
+        else {
+            return Vec::new();
+        };
+        let headers_by_tool = self.headers_by_tool.lock();
+        let Some(param_headers) = headers_by_tool.get(tool_name) else {
+            return Vec::new();
+        };
+        param_headers
+            .iter()
+            .filter_map(|header| {
+                let mut value = outgoing.arguments.as_ref()?;
+                for key in &header.path {
+                    value = value.get(key)?;
+                }
+                let encoded = encode_param_value(value)?;
+                Some((format!("Mcp-Param-{}", header.name), encoded))
+            })
+            .collect()
     }
 }
 
@@ -224,6 +450,7 @@ impl HttpTransport {
             headers,
             token_provider,
             auth_challenge: SyncMutex::new(None),
+            param_headers: Arc::new(ParamHeaderState::default()),
             active_streams: Arc::new(SyncMutex::new(HashMap::default())),
         }
     }
@@ -279,6 +506,9 @@ impl HttpTransport {
                 request_builder =
                     request_builder.header(HEADER_MCP_NAME, encode_header_value(name));
             }
+            for (header, value) in self.param_headers.headers_for_call(outgoing) {
+                request_builder = request_builder.header(header, value);
+            }
         } else {
             // Add session ID if we have one (except for initialize).
             if let Some(ref session_id) = *self.session_id.lock() {
@@ -317,6 +547,8 @@ impl HttpTransport {
         let outgoing = parse_outgoing_message(&message);
         let is_modern = self.modern_version_for(&outgoing).is_some();
         if is_modern {
+            self.param_headers.note_outgoing(&outgoing);
+
             // From MCP 2026-07-28 there are no client-to-server
             // notifications over streamable HTTP: cancellation is signaled
             // by closing the request's response stream instead.
@@ -405,6 +637,7 @@ impl HttpTransport {
 
                         // Only send non-empty responses
                         if !body.is_empty() {
+                            let body = self.param_headers.process_incoming(body);
                             self.response_tx
                                 .send(body)
                                 .await
@@ -470,6 +703,8 @@ impl HttpTransport {
     ) -> Result<()> {
         let response_tx = self.response_tx.clone();
         let error_tx = self.error_tx.clone();
+        let param_headers = self.param_headers.clone();
+
         let active_streams = self.active_streams.clone();
         let request_id = request_id.cloned();
         let stream_key = request_id.as_ref().map(|id| id.to_string());
@@ -526,6 +761,7 @@ impl HttpTransport {
 
                                     // Filter out ping messages and empty data
                                     if !message.trim().is_empty() && message != "ping" {
+                                        let message = param_headers.process_incoming(message);
                                         if let Err(e) = response_tx.send(message).await {
                                             log::error!("Failed to send SSE message: {}", e);
                                             break;
@@ -1007,6 +1243,188 @@ mod tests {
         assert_eq!(
             encode_header_value("=?base64?literal?="),
             "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="
+        );
+    }
+
+    #[test]
+    fn test_collect_param_headers() {
+        // Valid: primitive types reachable through pure properties chains.
+        let headers = collect_param_headers(&serde_json::json!({
+            "type": "object",
+            "properties": {
+                "region": { "type": "string", "x-mcp-header": "Region" },
+                "options": {
+                    "type": "object",
+                    "properties": {
+                        "retries": { "type": "integer", "x-mcp-header": "Retries" }
+                    }
+                },
+                "query": { "type": "string" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            headers,
+            vec![
+                ParamHeader {
+                    name: "Region".into(),
+                    path: vec!["region".into()],
+                },
+                ParamHeader {
+                    name: "Retries".into(),
+                    path: vec!["options".into(), "retries".into()],
+                },
+            ]
+        );
+
+        // Invalid: non-primitive type.
+        collect_param_headers(&serde_json::json!({
+            "properties": { "amount": { "type": "number", "x-mcp-header": "Amount" } }
+        }))
+        .unwrap_err();
+        // Invalid: annotation buried in a composition keyword.
+        collect_param_headers(&serde_json::json!({
+            "properties": {
+                "choice": {
+                    "oneOf": [
+                        { "properties": { "a": { "type": "string", "x-mcp-header": "A" } } }
+                    ]
+                }
+            }
+        }))
+        .unwrap_err();
+        // Invalid: case-insensitive duplicate names.
+        collect_param_headers(&serde_json::json!({
+            "properties": {
+                "a": { "type": "string", "x-mcp-header": "Region" },
+                "b": { "type": "string", "x-mcp-header": "region" }
+            }
+        }))
+        .unwrap_err();
+        // Invalid: non-token characters in the name.
+        collect_param_headers(&serde_json::json!({
+            "properties": { "a": { "type": "string", "x-mcp-header": "bad name" } }
+        }))
+        .unwrap_err();
+    }
+
+    #[gpui::test]
+    async fn test_tools_call_mirrors_annotated_params_into_headers(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_headers = captured_headers.clone();
+            move |req| {
+                let is_call = req
+                    .headers()
+                    .get("Mcp-Method")
+                    .is_some_and(|method| method == "tools/call");
+                if is_call {
+                    captured_headers.lock().push((
+                        req.headers()
+                            .get("Mcp-Param-Region")
+                            .map(|value| value.to_str().unwrap().to_string()),
+                        req.headers()
+                            .get("Mcp-Param-Verbose")
+                            .map(|value| value.to_str().unwrap().to_string()),
+                    ));
+                    Box::pin(async {
+                        json_response(
+                            200,
+                            r#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","content":[]}}"#,
+                        )
+                    })
+                } else {
+                    Box::pin(async {
+                        json_response(
+                            200,
+                            &serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "result": {
+                                    "resultType": "complete",
+                                    "tools": [
+                                        {
+                                            "name": "execute_sql",
+                                            "inputSchema": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "region": { "type": "string", "x-mcp-header": "Region" },
+                                                    "verbose": { "type": "boolean", "x-mcp-header": "Verbose" },
+                                                    "query": { "type": "string" }
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "name": "broken_tool",
+                                            "inputSchema": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "amount": { "type": "number", "x-mcp-header": "Amount" }
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "ttlMs": 60000,
+                                    "cacheScope": "private"
+                                }
+                            })
+                            .to_string(),
+                        )
+                    })
+                }
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        let meta = serde_json::json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" });
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                    "params": { "_meta": meta }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        // The invalid tool is excluded from the response the client sees.
+        let list_response: serde_json::Value =
+            serde_json::from_str(&transport.receive().next().await.unwrap()).unwrap();
+        let tools = list_response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "execute_sql");
+
+        // Annotated arguments are mirrored into Mcp-Param-* headers; null or
+        // missing values omit the header.
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "execute_sql",
+                        "arguments": { "region": "us-west1", "query": "SELECT 1" },
+                        "_meta": meta
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            captured_headers.lock().clone(),
+            vec![(Some("us-west1".into()), None)]
         );
     }
 
