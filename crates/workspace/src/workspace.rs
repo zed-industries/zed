@@ -3478,7 +3478,7 @@ impl Workspace {
                                         // (Note that the tests always do this implicitly, so you must manually test with something like:
                                         //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                                         // )
-                                        window.draw(cx).clear();
+                                        window.draw(cx).clear(cx);
                                         return true;
                                     }
                                     false
@@ -4749,7 +4749,7 @@ impl Workspace {
             );
             (**cx)
                 .spawn(async move |cx| {
-                    if let Err(_) = task.await {
+                    if task.await.is_err() {
                         cx.update(|cx| cx.open_url(&url_or_path));
                     }
                 })
@@ -4768,6 +4768,7 @@ impl Workspace {
         // Not a valid URL - treat as a file path
         let project = self.project();
         let path_style = project.read(cx).path_style(cx);
+        let project_is_local = project.read(cx).is_local();
 
         // If it's an absolute path, open it directly
         if path_style.is_absolute(url_or_path) {
@@ -4777,29 +4778,36 @@ impl Workspace {
 
         let path = Path::new(url_or_path);
         // Try to resolve relative path against base_path first
-        if let Some(base) = base_path
-            // TODO: remotes, the exists check below hits the local FS, unsure
-            // if this runs on the remote or not
-            && project.read(cx).is_local()
-        {
-            let resolved = path_style.join(base, path).map(PathBuf::from);
-            if let Some(resolved) = resolved
-                && resolved.exists()
-            {
-                open_abs_path(self, resolved, cx);
-                return;
+        let path_from_base = if let Some(base) = base_path {
+            let resolved_path = path_style.join(base, path).map(PathBuf::from);
+            if project_is_local {
+                if let Some(resolved_path) = resolved_path
+                    && resolved_path.exists()
+                {
+                    open_abs_path(self, resolved_path, cx);
+                    return;
+                }
+                None
+            } else {
+                resolved_path
             }
-        }
+        } else {
+            None
+        };
 
         // Try to resolve against project worktrees
-        if let Some(project_path) =
-            project.update(cx, |project, cx| project.find_project_path(url_or_path, cx))
-        {
+        let project_path = project.update(cx, |project, cx| {
+            path_from_base
+                .as_deref()
+                .and_then(|base_path| project.find_project_path(base_path, cx))
+                .or_else(|| project.find_project_path(path, cx))
+        });
+        if let Some(project_path) = project_path {
             let url_or_path = url_or_path.to_owned();
             let task = self.open_path(project_path, None, true, window, cx);
             (**cx)
                 .spawn(async move |cx| {
-                    if let Err(_) = task.await {
+                    if task.await.is_err() {
                         cx.update(|cx| cx.open_url(&url_or_path));
                     }
                 })
@@ -14852,6 +14860,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reopen_last_picker_with_active_leader_modal(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Stash a reopenable modal.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, ReopenableTestModal::new);
+        });
+        cx.executor().run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+        });
+        cx.executor().run_until_parked();
+
+        // A non-reopenable modal (e.g. the which-key popup) is already
+        // active when the reopen fires, and it dismisses *after* the action rather
+        // than before it (which-key dismisses when pending input clears).
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Reopen fires first (chord completes and dispatches the action)...
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+            // ...then the modal dismisses
+            let modal = workspace.active_modal::<TestModal>(cx).unwrap();
+            modal.update(cx, |_, cx| cx.emit(DismissEvent));
+        });
+        cx.executor().run_until_parked();
+        assert!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .is_some()),
+            "reopen with an active modal that dismisses after the action should reveal the stash"
+        );
+    }
+
+    #[gpui::test]
     async fn test_panels(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -16225,9 +16277,12 @@ mod tests {
         // View
         struct TestPngItemView {
             focus_handle: FocusHandle,
+            project_path: ProjectPath,
         }
         // Model
-        struct TestPngItem {}
+        struct TestPngItem {
+            project_path: ProjectPath,
+        }
 
         impl project::ProjectItem for TestPngItem {
             fn try_open(
@@ -16236,7 +16291,8 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
-                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestPngItem {}))))
+                    let project_path = path.clone();
+                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestPngItem { project_path }))))
                 } else {
                     None
                 }
@@ -16247,7 +16303,7 @@ mod tests {
             }
 
             fn project_path(&self, _: &App) -> Option<ProjectPath> {
-                None
+                Some(self.project_path.clone())
             }
 
             fn is_dirty(&self) -> bool {
@@ -16284,7 +16340,7 @@ mod tests {
             fn for_project_item(
                 _project: Entity<Project>,
                 _pane: Option<&Pane>,
-                _item: Entity<Self::Item>,
+                item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
             ) -> Self
@@ -16293,6 +16349,7 @@ mod tests {
             {
                 Self {
                     focus_handle: cx.focus_handle(),
+                    project_path: item.read(cx).project_path.clone(),
                 }
             }
         }
@@ -16481,6 +16538,43 @@ mod tests {
                 })
                 .await;
             assert!(handle.is_err());
+        }
+
+        #[gpui::test]
+        async fn test_open_url_or_file_resolves_remote_base_path(cx: &mut TestAppContext) {
+            init_test(cx);
+            cx.update(register_project_item::<TestPngItemView>);
+
+            let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+            let worktree = project.update(cx, |project, cx| {
+                let worktree = project.add_test_remote_worktree("/remote/project", cx);
+                project.mark_as_collab_for_testing();
+                worktree
+            });
+            let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.open_url_or_file(
+                    "./sibling.png",
+                    Some(Path::new("/remote/project/docs")),
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+
+            let opened_item = workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace
+                        .active_item(cx)
+                        .and_then(|item| item.downcast::<TestPngItemView>())
+                })
+                .expect("resolved remote project item should be opened");
+            let project_path = opened_item.read_with(cx, |item, _| item.project_path.clone());
+            assert_eq!(project_path.worktree_id, worktree_id);
+            assert_eq!(project_path.path.as_ref(), rel_path("docs/sibling.png"));
         }
 
         #[gpui::test]

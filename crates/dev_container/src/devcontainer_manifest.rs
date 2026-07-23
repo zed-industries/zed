@@ -1186,11 +1186,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             docker_compose_resources.files.push(config_location);
 
             let project_name = self.project_name().await?;
+            let compose_services =
+                compose_service_list(&main_service_name, dev_container.run_services.as_ref());
             self.docker_client
                 .docker_compose_build(
                     &docker_compose_resources.files,
                     &project_name,
-                    dev_container.run_services.as_ref(),
+                    compose_services.as_ref(),
                 )
                 .await?;
             (
@@ -1283,11 +1285,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 docker_compose_resources.files.push(config_location);
 
                 let project_name = self.project_name().await?;
+                let compose_services =
+                    compose_service_list(&main_service_name, dev_container.run_services.as_ref());
                 self.docker_client
                     .docker_compose_build(
                         &docker_compose_resources.files,
                         &project_name,
-                        dev_container.run_services.as_ref(),
+                        compose_services.as_ref(),
                     )
                     .await?;
 
@@ -2023,6 +2027,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
     ) -> Result<(), DevContainerError> {
         let mut command = Command::new(self.docker_client.docker_cli());
         let project_name = self.project_name().await?;
+        let compose_services = match self.dev_container().run_services.as_ref() {
+            Some(run_services) => {
+                let (main_service_name, _) = find_primary_service(&resources, self)?;
+                compose_service_list(&main_service_name, Some(run_services))
+            }
+            None => None,
+        };
         command.args(&["compose", "--project-name", &project_name]);
         for docker_compose_file in &resources.files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
@@ -2031,8 +2042,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if matches!(behavior, ComposeUpBehavior::Resume) {
             command.arg("--no-recreate");
         }
-        if let Some(run_services) = self.dev_container().run_services.as_ref() {
-            command.args(run_services);
+        if let Some(services) = compose_services.as_ref() {
+            command.args(services);
         }
 
         let output = self
@@ -2789,6 +2800,24 @@ fn find_primary_service(
         Some(service) => Ok((service_name.clone(), service.clone())),
         None => Err(DevContainerError::DevContainerParseFailed),
     }
+}
+
+/// The compose service list for `build` and `up`. Per the devcontainer spec
+/// `runServices` are *additional*, so the primary `service` is always prepended.
+/// `None` (no `runServices`) lets compose operate every service.
+fn compose_service_list(
+    main_service_name: &str,
+    run_services: Option<&Vec<String>>,
+) -> Option<Vec<String>> {
+    let run_services = run_services?;
+    let mut services = Vec::with_capacity(run_services.len() + 1);
+    services.push(main_service_name.to_string());
+    for service in run_services {
+        if service != main_service_name {
+            services.push(service.clone());
+        }
+    }
+    Some(services)
 }
 
 /// Resolves a compose service's dockerfile path according to the Docker Compose spec:
@@ -5165,6 +5194,130 @@ ENV DOCKER_BUILDKIT=1
         )
     }
 
+    #[gpui::test]
+    async fn test_compose_build_includes_primary_service_when_run_services_excludes_it(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        // `app` (the primary `service`) is intentionally left out of `runServices`;
+        // the spec still implies it, so its features image must still be built.
+        let given_devcontainer_contents = r#"
+            {
+              "features": {
+                "ghcr.io/devcontainers/features/aws-cli:1": {},
+                "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+              },
+              "name": "Rust and PostgreSQL",
+              "dockerComposeFile": "docker-compose.yml",
+              "service": "app",
+              "runServices": ["db"],
+              "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}"
+            }
+            "#;
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.yml"),
+                r#"
+volumes:
+    postgres-data:
+
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        volumes:
+            - ../..:/workspaces:cached
+        command: sleep infinity
+        network_mode: service:db
+
+    db:
+        image: postgres:14.1
+        restart: unless-stopped
+        volumes:
+            - postgres-data:/var/lib/postgresql/data
+                    "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                r#"
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+RUN apt-get update
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let recorded = test_dependencies.docker.recorded_compose_build_services();
+        let build_services = recorded
+            .iter()
+            .find_map(|services| services.clone())
+            .expect("docker_compose_build should have been invoked with a service list");
+
+        assert!(
+            build_services.iter().any(|s| s == "app"),
+            "compose build must include the primary service `app` even when \
+             runServices omits it; got {build_services:?}"
+        );
+        assert_eq!(
+            build_services.iter().filter(|s| *s == "app").count(),
+            1,
+            "primary service `app` must appear exactly once (de-duplicated); \
+             got {build_services:?}"
+        );
+
+        // The implied-primary rule applies to `up -d` too, not just the build.
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        let compose_up = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.first().map(String::as_str) == Some("compose")
+                    && c.args.iter().any(|a| a == "up")
+            })
+            .expect("docker compose up command recorded");
+        let up_index = compose_up
+            .args
+            .iter()
+            .position(|a| a == "up")
+            .expect("up token present");
+        let up_service_args = &compose_up.args[up_index + 2..];
+        assert!(
+            up_service_args.iter().any(|s| s == "app"),
+            "compose up must start the primary service `app` even when \
+             runServices omits it; got {:?}",
+            compose_up.args
+        );
+        assert_eq!(
+            up_service_args.iter().filter(|s| *s == "app").count(),
+            1,
+            "primary service `app` must appear exactly once in the up service \
+             args (de-duplicated); got {:?}",
+            compose_up.args
+        );
+    }
+
     #[test]
     fn derive_project_name_env_wins_over_everything() {
         // CLI precedence rule 1: `COMPOSE_PROJECT_NAME` env var short-circuits
@@ -7141,6 +7294,9 @@ RUN echo $RUBY_VERSION2
         /// `MultipleMatchingContainers` with these IDs. Used to exercise the
         /// duplicate-container error path.
         duplicate_container_ids: Mutex<Option<Vec<String>>>,
+        /// Records the `services` argument passed to each `docker_compose_build`
+        /// call so tests can assert which services were built.
+        compose_build_services: Mutex<Vec<Option<Vec<String>>>>,
     }
 
     impl FakeDocker {
@@ -7150,7 +7306,15 @@ RUN echo $RUBY_VERSION2
                 has_buildx: true,
                 exec_commands_recorded: Mutex::new(Vec::new()),
                 duplicate_container_ids: Mutex::new(None),
+                compose_build_services: Mutex::new(Vec::new()),
             }
+        }
+
+        fn recorded_compose_build_services(&self) -> Vec<Option<Vec<String>>> {
+            self.compose_build_services
+                .lock()
+                .expect("should be available")
+                .clone()
         }
         #[cfg(not(target_os = "windows"))]
         fn set_podman(&mut self, podman: bool) {
@@ -7467,6 +7631,10 @@ RUN echo $RUBY_VERSION2
             _project_name: &str,
             _services: Option<&Vec<String>>,
         ) -> Result<(), DevContainerError> {
+            self.compose_build_services
+                .lock()
+                .expect("should be available")
+                .push(_services.cloned());
             Ok(())
         }
         async fn run_docker_exec(
