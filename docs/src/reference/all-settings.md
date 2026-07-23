@@ -2518,6 +2518,42 @@ Example:
 }
 ```
 
+### Diff Base
+
+- Description: Which base git features use when displaying changes.
+- Setting: `diff_base`
+- Default:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+**Options**
+
+1. Show working changes relative to HEAD:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+2. Show all branch changes relative to the merge base with the repository's default branch:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "merge_base"
+  }
+}
+```
+
 ## Go to Definition Fallback
 
 - Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition
