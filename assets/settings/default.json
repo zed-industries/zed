@@ -824,6 +824,10 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
+    // Whether to fold a directory that contains a single file into one "dir/file" row
+    // that opens the file on click. Independent of "auto_fold_dirs" and combines with it,
+    // so "a/b/file" collapses to a single row when both apply.
+    "fold_single_file_dirs": false,
     // Whether to show folder names with bold text in the project panel.
     "bold_folder_labels": false,
     // Scrollbar-related settings

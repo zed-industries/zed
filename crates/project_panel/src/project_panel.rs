@@ -79,7 +79,7 @@ use workspace::{
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Snapshot};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -102,8 +102,8 @@ struct VisibleEntriesForWorktree {
 struct State {
     last_worktree_root_id: Option<ProjectEntryId>,
     /// Maps from leaf project entry ID to the currently selected ancestor.
-    /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
-    /// project entries (and all non-leaf nodes are guaranteed to be directories).
+    /// Relevant for auto-fold dirs and single-file folds, where a single project panel entry may actually
+    /// consist of several project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     visible_entries: Vec<VisibleEntriesForWorktree>,
     max_width_item_index: Option<usize>,
@@ -828,6 +828,11 @@ impl ProjectPanel {
                     if project_panel_settings.sort_order != new_settings.sort_order {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.fold_single_file_dirs
+                        != new_settings.fold_single_file_dirs
+                    {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }
@@ -1082,19 +1087,18 @@ impl ProjectPanel {
         });
 
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
+            let settings = ProjectPanelSettings::get_global(cx);
             let worktree = worktree.read(cx);
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
-            let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
-            let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
+            let is_foldable = self.is_foldable(entry, worktree, settings);
+            let is_unfoldable = self.is_unfoldable(entry, worktree, settings);
             let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
             let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
 
-            let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
             let should_hide_rename = is_root
                 && (cfg!(target_os = "windows")
@@ -1258,35 +1262,69 @@ impl ProjectPanel {
         false
     }
 
-    fn is_unfoldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
+    fn lone_child_entry<'a>(snapshot: &'a Snapshot, path: &'a RelPath) -> Option<&'a Entry> {
+        let mut child_entries = snapshot.child_entries(path);
+        let child = child_entries.next()?;
+        child_entries.next().is_none().then_some(child)
+    }
+
+    /// Whether a directory's lone child makes it eligible for single-file folding. The
+    /// child must be a file the panel actually renders: folding a directory away
+    /// together with a child that `hide_gitignore`/`hide_hidden` filters out would leave
+    /// no row for either entry.
+    fn is_foldable_lone_file(child: &Entry, settings: &ProjectPanelSettings) -> bool {
+        child.kind.is_file()
+            && (!settings.hide_gitignore || !child.is_ignored)
+            && (!settings.hide_hidden || !child.is_hidden)
+    }
+
+    fn is_unfoldable(
+        &self,
+        entry: &Entry,
+        worktree: &Worktree,
+        settings: &ProjectPanelSettings,
+    ) -> bool {
+        if entry.is_file() {
+            return settings.fold_single_file_dirs && self.state.ancestors.contains_key(&entry.id);
+        }
         if !entry.is_dir() || self.state.unfolded_dir_ids.contains(&entry.id) {
             return false;
         }
 
-        if let Some(parent_path) = entry.path.parent() {
-            let snapshot = worktree.snapshot();
-            let mut child_entries = snapshot.child_entries(parent_path);
-            if let Some(child) = child_entries.next()
-                && child_entries.next().is_none()
-            {
-                return child.kind.is_dir();
-            }
-        };
+        let snapshot = worktree.snapshot();
+        if settings.fold_single_file_dirs
+            && let Some(child) = Self::lone_child_entry(&snapshot, &entry.path)
+            && Self::is_foldable_lone_file(child, settings)
+        {
+            return true;
+        }
+        if settings.auto_fold_dirs
+            && let Some(parent_path) = entry.path.parent()
+            && let Some(child) = Self::lone_child_entry(&snapshot, parent_path)
+        {
+            return child.kind.is_dir();
+        }
         false
     }
 
-    fn is_foldable(&self, entry: &Entry, worktree: &Worktree) -> bool {
-        if entry.is_dir() {
-            let snapshot = worktree.snapshot();
-
-            let mut child_entries = snapshot.child_entries(&entry.path);
-            if let Some(child) = child_entries.next()
-                && child_entries.next().is_none()
-            {
-                return child.kind.is_dir();
-            }
+    fn is_foldable(
+        &self,
+        entry: &Entry,
+        worktree: &Worktree,
+        settings: &ProjectPanelSettings,
+    ) -> bool {
+        if !entry.is_dir() {
+            return false;
         }
-        false
+        let snapshot = worktree.snapshot();
+        let Some(child) = Self::lone_child_entry(&snapshot, &entry.path) else {
+            return false;
+        };
+        if child.kind.is_dir() {
+            settings.auto_fold_dirs
+        } else {
+            settings.fold_single_file_dirs && Self::is_foldable_lone_file(child, settings)
+        }
     }
 
     fn expand_selected_entry(
@@ -4243,8 +4281,9 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         let now = Instant::now();
-        let settings = ProjectPanelSettings::get_global(cx);
+        let settings = *ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
+        let fold_single_file_dirs = settings.fold_single_file_dirs;
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
         let sort_order = settings.sort_order;
@@ -4306,22 +4345,33 @@ impl ProjectPanel {
                                 entry_iter.advance();
                                 continue;
                             }
+                            let mut single_child = None;
+                            if entry.kind.is_dir()
+                                && (auto_collapse_dirs || fold_single_file_dirs)
+                                && !new_state.is_unfolded(&entry.id)
+                                && let Some(root_path) = worktree_snapshot.root_entry()
+                                && entry.path != root_path.path
+                            {
+                                single_child =
+                                    Self::lone_child_entry(&worktree_snapshot, &entry.path);
+                            }
+                            // A directory that's the parent of an in-progress new entry stays
+                            // unfolded so the filename editor renders as its child row.
+                            if fold_single_file_dirs
+                                && new_entry_parent_id != Some(entry.id)
+                                && let Some(child) = single_child
+                                && Self::is_foldable_lone_file(child, &settings)
+                            {
+                                auto_folded_ancestors.push(entry.id);
+                                entry_iter.advance();
+                                continue;
+                            }
                             if auto_collapse_dirs && entry.kind.is_dir() {
                                 auto_folded_ancestors.push(entry.id);
-                                if !new_state.is_unfolded(&entry.id)
-                                    && let Some(root_path) = worktree_snapshot.root_entry()
-                                {
-                                    let mut child_entries =
-                                        worktree_snapshot.child_entries(&entry.path);
-                                    if let Some(child) = child_entries.next()
-                                        && entry.path != root_path.path
-                                        && child_entries.next().is_none()
-                                        && child.kind.is_dir()
-                                    {
-                                        entry_iter.advance();
+                                if single_child.is_some_and(|child| child.kind.is_dir()) {
+                                    entry_iter.advance();
 
-                                        continue;
-                                    }
+                                    continue;
                                 }
                                 let depth = temporary_unfolded_pending_state
                                     .as_ref()
@@ -4362,7 +4412,25 @@ impl ProjectPanel {
                                     );
                                 }
                             }
-                            auto_folded_ancestors.clear();
+                            if entry.is_file() && !auto_folded_ancestors.is_empty() {
+                                auto_folded_ancestors.push(entry.id);
+                                let mut ancestors = std::mem::take(&mut auto_folded_ancestors);
+                                ancestors.reverse();
+                                let depth = old_ancestors
+                                    .get(&entry.id)
+                                    .map(|ancestor| ancestor.current_ancestor_depth)
+                                    .unwrap_or_default()
+                                    .min(ancestors.len() - 1);
+                                new_state.ancestors.insert(
+                                    entry.id,
+                                    FoldedAncestors {
+                                        current_ancestor_depth: depth,
+                                        ancestors,
+                                    },
+                                );
+                            } else {
+                                auto_folded_ancestors.clear();
+                            }
                             if (!hide_gitignore || !entry.is_ignored)
                                 && (!hide_hidden || !entry.is_hidden)
                             {
@@ -4398,7 +4466,9 @@ impl ProjectPanel {
                                 };
                                 let depth = 0;
                                 (depth, path_name.to_string_lossy().chars().count())
-                            } else if entry.is_file() {
+                            } else if entry.is_file()
+                                && !new_state.ancestors.contains_key(&entry.id)
+                            {
                                 let Some(path_name) = entry
                                     .path
                                     .file_name()

@@ -4972,7 +4972,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 29] {
+    fn project_panel_section() -> [SettingsPageItem; 30] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5206,6 +5206,29 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .auto_fold_dirs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Fold Single File Directories",
+                description: "Whether to fold a directory that contains a single file into one dir/file row that opens the file on click.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.fold_single_file_dirs"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .fold_single_file_dirs
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .fold_single_file_dirs = value;
                     },
                 }),
                 metadata: None,

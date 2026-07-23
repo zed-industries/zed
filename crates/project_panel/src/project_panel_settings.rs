@@ -26,6 +26,7 @@ pub struct ProjectPanelSettings {
     pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
+    pub fold_single_file_dirs: bool,
     pub bold_folder_labels: bool,
     pub starts_open: bool,
     pub scrollbar: ScrollbarSettings,
@@ -120,6 +121,7 @@ impl Settings for ProjectPanelSettings {
             sticky_scroll: project_panel.sticky_scroll.unwrap(),
             auto_reveal_entries: project_panel.auto_reveal_entries.unwrap(),
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
+            fold_single_file_dirs: project_panel.fold_single_file_dirs.unwrap(),
             bold_folder_labels: project_panel.bold_folder_labels.unwrap(),
             starts_open: project_panel.starts_open.unwrap(),
             scrollbar: {
