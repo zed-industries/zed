@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
+use encoding_rs::Encoding;
 use futures::{
     AsyncReadExt as _, FutureExt as _,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
@@ -20,6 +21,7 @@ use semver::Version;
 pub use settings::SshPortForwardOption;
 use smol::fs;
 use std::{
+    borrow::Cow,
     net::IpAddr,
     path::{Path, PathBuf},
     sync::{
@@ -146,6 +148,7 @@ struct SshSocket {
     connection_options: SshConnectionOptions,
     #[cfg(not(windows))]
     socket_path: std::path::PathBuf,
+    remote_output_encoding: Option<&'static Encoding>,
     /// Extra environment variables needed for the ssh process
     envs: HashMap<String, String>,
     #[cfg(windows)]
@@ -761,8 +764,12 @@ impl SshRemoteConnection {
             (socket, Some(master_process))
         };
 
+        let mut socket = socket;
         let is_windows = socket.probe_is_windows().await;
         log::info!("Remote is windows: {}", is_windows);
+        if is_windows {
+            socket.remote_output_encoding = socket.fetch_windows_output_encoding().await;
+        }
 
         let ssh_shell = socket.shell(is_windows).await;
         log::info!("Remote shell discovered: {}", ssh_shell);
@@ -1271,6 +1278,7 @@ impl SshSocket {
         Ok(Self {
             connection_options: options,
             envs: HashMap::default(),
+            remote_output_encoding: None,
             socket_path,
         })
     }
@@ -1299,6 +1307,7 @@ impl SshSocket {
         Ok(Self {
             connection_options: options,
             envs,
+            remote_output_encoding: None,
             _proxy,
         })
     }
@@ -1360,9 +1369,49 @@ impl SshSocket {
         anyhow::ensure!(
             output.status.success(),
             "failed to run command {command:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            decode_command_output_with_encoding(&output.stderr, self.remote_output_encoding)
         );
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(
+            decode_command_output_with_encoding(&output.stdout, self.remote_output_encoding)
+                .to_string(),
+        )
+    }
+
+    async fn fetch_windows_output_encoding(&self) -> Option<&'static Encoding> {
+        let output = self
+            .run_command(
+                ShellKind::Cmd,
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "[Console]::OutputEncoding.WebName",
+                ],
+                false,
+            )
+            .await;
+
+        let output = match output {
+            Ok(output) => output,
+            Err(error) => {
+                log::error!("Failed to fetch remote Windows output encoding: {error:#}");
+                return None;
+            }
+        };
+
+        let label = output.trim();
+        let encoding = Encoding::for_label(label.as_bytes());
+        if let Some(encoding) = encoding {
+            log::info!(
+                "Remote Windows output encoding is {} ({})",
+                label,
+                encoding.name()
+            );
+        } else {
+            log::error!("Unsupported remote Windows output encoding: {label}");
+        }
+        encoding
     }
 
     fn ssh_options<'a>(
@@ -1534,6 +1583,21 @@ impl SshSocket {
     }
 }
 
+fn decode_command_output_with_encoding<'a>(
+    output: &'a [u8],
+    fallback_encoding: Option<&'static Encoding>,
+) -> Cow<'a, str> {
+    if let Ok(output) = std::str::from_utf8(output) {
+        return Cow::Borrowed(output);
+    }
+
+    if let Some(encoding) = fallback_encoding {
+        let (decoded, _, _) = encoding.decode(output);
+        return Cow::Owned(decoded.into_owned());
+    }
+
+    String::from_utf8_lossy(output)
+}
 fn parse_port_number(port_str: &str) -> Result<u16> {
     port_str
         .parse()
@@ -2309,5 +2373,15 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_decode_command_output_with_fallback_encoding() {
+        let gbk_bytes_for_hello = [0xc4, 0xe3, 0xba, 0xc3];
+
+        assert_eq!(
+            decode_command_output_with_encoding(&gbk_bytes_for_hello, Some(encoding_rs::GBK)),
+            "\u{4f60}\u{597d}"
+        );
     }
 }
