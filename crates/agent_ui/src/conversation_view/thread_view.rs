@@ -1859,7 +1859,7 @@ impl ThreadView {
                 ThreadError::PaymentRequired => (
                     "payment_required",
                     None,
-                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+                    "The selected provider rejected the request because its account usage limit was reached. Configure a BYOK or local provider to continue."
                         .into(),
                 ),
                 ThreadError::Refusal => {
@@ -10965,18 +10965,18 @@ impl ThreadView {
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
-        const ERROR_MESSAGE: &str =
-            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+        const ERROR_MESSAGE: &str = "The selected provider rejected the request because its account usage limit was reached. Configure a BYOK or local provider to continue.";
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
-            .title("Free Usage Exceeded")
+            .title("Provider Usage Limit")
             .description(ERROR_MESSAGE)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.upgrade_button(cx))
+                    .child(self.open_llm_providers_settings_button(cx))
+                    .child(self.open_model_selector_button(cx))
                     .child(self.create_copy_button(ERROR_MESSAGE)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
@@ -11140,18 +11140,6 @@ impl ThreadView {
             .on_click(cx.listener(|this, _, window, cx| {
                 this.clear_thread_error(cx);
                 window.dispatch_action(NewThread.boxed_clone(), cx);
-            }))
-    }
-
-    fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Button::new("upgrade", "Upgrade")
-            .label_size(LabelSize::Small)
-            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-            .on_click(cx.listener({
-                move |this, _, _, cx| {
-                    this.clear_thread_error(cx);
-                    cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx));
-                }
             }))
     }
 
