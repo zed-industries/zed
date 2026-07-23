@@ -186,7 +186,7 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 
 ### Milestone 1 — The core loop (thinnest thing that proves it)
 - [x] **Daily & Weekly Area** — first packaged Area, shipped as the installable **Timeline Area** (scaffolded folders + weekly dashboard + Week Review skill; the daily note's page-aware context view shipped later as the Milestone 3 Day Planner rail). _(shipped)_
-- [ ] **Daily Closure skill** — reads tasks + commits, appends a review to the day's note. _(planned)_
+- [x] **Daily Closure skill** — shipped as the Timeline Area's **Wrap Today / Wrap Yesterday** skills: read the day's tasks, pull its commits (`gh` / `glab` / local git), scan the prior few daily notes for multi-day context, and append a `# Daily Closure` review to the day's note — append-only, never rewriting what the user wrote. _(shipped)_
 - [ ] **Invisible git — restore UI** — human "history / restore this version" surface; no git vocabulary. _(planned)_
 - [ ] **Checkpoint triggers** — autosave / idle / pre-AI-write commit points. _(planned)_
 - [ ] **BYO-LLM connection** — ride Zed's existing agent/console rails; user brings their own key. _(planned)_
