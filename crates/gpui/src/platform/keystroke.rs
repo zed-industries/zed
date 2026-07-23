@@ -235,6 +235,28 @@ impl Keystroke {
                 || self.modifiers.alt)
     }
 
+    /// Returns the character this keystroke should insert as text input.
+    ///
+    /// Modifier shortcuts can carry a `key_char` that is identical to the key,
+    /// such as `alt-g` on Linux. These must not be treated as text input. A
+    /// modifier-generated character, such as `option-s` producing `ß`, is
+    /// still text input.
+    pub fn key_char_for_text_input(&self) -> Option<&str> {
+        let key_char = self.key_char.as_deref()?;
+        let key = match self.key.as_str() {
+            "space" => " ",
+            "tab" => "\t",
+            "enter" => "\n",
+            key => key,
+        };
+
+        if self.modifiers.is_subset_of(&Modifiers::shift()) || !key.eq_ignore_ascii_case(key_char) {
+            Some(key_char)
+        } else {
+            None
+        }
+    }
+
     /// Returns a new keystroke with the key_char filled.
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
@@ -773,4 +795,54 @@ fn unparse(modifiers: &Modifiers, key: &str) -> String {
     }
     result.push_str(&key);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Keystroke, Modifiers};
+
+    #[test]
+    fn test_key_char_for_text_input_distinguishes_shortcuts_from_text() {
+        let text = Keystroke {
+            key: "g".into(),
+            key_char: Some("g".into()),
+            ..Default::default()
+        };
+        assert_eq!(text.key_char_for_text_input(), Some("g"));
+
+        let shifted_text = Keystroke {
+            modifiers: Modifiers::shift(),
+            key: "g".into(),
+            key_char: Some("G".into()),
+        };
+        assert_eq!(shifted_text.key_char_for_text_input(), Some("G"));
+
+        let shortcut = Keystroke {
+            modifiers: Modifiers::alt(),
+            key: "g".into(),
+            key_char: Some("g".into()),
+        };
+        assert_eq!(shortcut.key_char_for_text_input(), None);
+
+        let shortcut_with_caps_lock = Keystroke {
+            modifiers: Modifiers::alt(),
+            key: "g".into(),
+            key_char: Some("G".into()),
+        };
+        assert_eq!(shortcut_with_caps_lock.key_char_for_text_input(), None);
+
+        let option_text = Keystroke {
+            modifiers: Modifiers::alt(),
+            key: "s".into(),
+            key_char: Some("ß".into()),
+        };
+        assert_eq!(option_text.key_char_for_text_input(), Some("ß"));
+
+        let shortcut_space = Keystroke {
+            modifiers: Modifiers::alt(),
+            key: "space".into(),
+            key_char: Some(" ".into()),
+        };
+        assert_eq!(shortcut_space.key_char_for_text_input(), None);
+    }
 }

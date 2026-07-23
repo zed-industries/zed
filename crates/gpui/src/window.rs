@@ -4776,10 +4776,10 @@ impl Window {
             return true;
         }
 
-        if let Some(input) = keystroke.key_char
+        if let Some(input) = keystroke.key_char_for_text_input()
             && let Some(mut input_handler) = self.platform_window.take_input_handler()
         {
-            input_handler.dispatch_input(&input, self, cx);
+            input_handler.dispatch_input(input, self, cx);
             self.platform_window.set_input_handler(input_handler);
             return true;
         }
@@ -5079,7 +5079,7 @@ impl Window {
 
             let text_input_requires_timeout = event
                 .downcast_ref::<KeyDownEvent>()
-                .filter(|key_down| key_down.keystroke.key_char.is_some())
+                .filter(|key_down| key_down.keystroke.key_char_for_text_input().is_some())
                 .and_then(|_| self.platform_window.take_input_handler())
                 .map_or(false, |mut input_handler| {
                     let accepts = input_handler.accepts_text_input(self, cx);
@@ -5283,10 +5283,10 @@ impl Window {
             if !cx.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
+            if let Some(input) = replay.keystroke.key_char_for_text_input()
                 && let Some(mut input_handler) = self.platform_window.take_input_handler()
             {
-                input_handler.dispatch_input(&input, self, cx);
+                input_handler.dispatch_input(input, self, cx);
                 self.platform_window.set_input_handler(input_handler)
             }
         }
