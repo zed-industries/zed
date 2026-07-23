@@ -16,11 +16,13 @@ doctest = false
 test-support = [
     "rand",
     "collections/test-support",
+    "grammars",
     "lsp/test-support",
     "text/test-support",
     "tree-sitter-rust",
     "tree-sitter-python",
     "tree-sitter-typescript",
+    "tree-sitter-json",
     "tree-sitter-md",
     "settings/test-support",
     "util/test-support",
@@ -64,11 +66,13 @@ text.workspace = true
 theme.workspace = true
 toml.workspace = true
 tracing.workspace = true
+grammars = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
 tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 unicase = "2.6"
 util.workspace = true
 watch.workspace = true
@@ -79,6 +83,7 @@ diffy = "0.4.2"
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
+grammars.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 lsp = { workspace = true, features = ["test-support"] }

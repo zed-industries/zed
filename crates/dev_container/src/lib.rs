@@ -1579,11 +1579,12 @@ fn dispatch_apply_templates(
             };
 
             if files.project_files.contains(&Arc::from(
-                RelPath::unix(".devcontainer/devcontainer.json").unwrap(),
+                RelPath::from_unix_str(".devcontainer/devcontainer.json").unwrap(),
             )) {
                 let Some(workspace_task) = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let Ok(path) = RelPath::unix(".devcontainer/devcontainer.json") else {
+                        let Ok(path) = RelPath::from_unix_str(".devcontainer/devcontainer.json")
+                        else {
                             return Task::ready(Err(anyhow!(
                                 "Couldn't create path for .devcontainer/devcontainer.json"
                             )));

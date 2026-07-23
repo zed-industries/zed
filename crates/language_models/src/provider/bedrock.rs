@@ -5,8 +5,11 @@ use anyhow::{Context as _, Result, anyhow};
 use async_lock::OnceCell;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
+use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_credential_types::{Credentials, Token};
 use aws_http_client::AwsHttpClient;
+use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
+use aws_sigv4::sign::v4;
 use bedrock::BedrockSystemContentBlock;
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
@@ -20,37 +23,54 @@ use bedrock::{
     BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
     BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
     BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
-    Model, value_to_aws_document,
+    ConverseModel, MantleModel, MantleProtocol, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{
+    AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, io::BufReader,
+    stream::BoxStream,
+};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window,
-    actions,
+    App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
 };
 use gpui_tokio::Tokio;
-use http_client::HttpClient;
-use language_model::{
-    AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage, env_var,
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    http::{HeaderValue, header::AUTHORIZATION},
 };
+use language_model::{
+    AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role,
+    SubPageProviderSettings, TokenUsage, env_var,
+};
+use open_ai::responses::Request as OpenAiResponseRequest;
+use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
+use settings::{
+    BedrockAvailableModel as AvailableModel, BedrockMantleAvailableModel as MantleAvailableModel,
+    Settings, SettingsStore,
+};
 use std::sync::LazyLock;
+use std::time::SystemTime;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use http_client::CustomHeaders;
+use crate::provider::open_ai::{
+    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    into_open_ai_response,
+};
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
+use open_ai::{ReasoningEffort, RequestError, ResponseStreamEvent};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -116,6 +136,7 @@ impl BedrockCredentials {
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
     pub available_models: Vec<AvailableModel>,
+    pub mantle_available_models: Vec<MantleAvailableModel>,
     pub custom_headers: CustomHeaders,
     pub region: Option<String>,
     pub endpoint: Option<String>,
@@ -148,6 +169,13 @@ impl From<settings::BedrockAuthMethodContent> for BedrockAuthMethod {
             settings::BedrockAuthMethodContent::NamedProfile => BedrockAuthMethod::NamedProfile,
             settings::BedrockAuthMethodContent::ApiKey => BedrockAuthMethod::ApiKey,
         }
+    }
+}
+
+fn mantle_protocol_from_settings(value: settings::BedrockMantleProtocolContent) -> MantleProtocol {
+    match value {
+        settings::BedrockMantleProtocolContent::ChatCompletions => MantleProtocol::ChatCompletions,
+        settings::BedrockMantleProtocolContent::Responses => MantleProtocol::Responses,
     }
 }
 
@@ -199,6 +227,115 @@ static ZED_AWS_PROFILE_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_PROFILE");
 static ZED_BEDROCK_REGION_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_REGION");
 static ZED_AWS_ENDPOINT_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_ENDPOINT");
 static ZED_BEDROCK_BEARER_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_BEDROCK_BEARER_TOKEN");
+
+/// AWS Regions where the `bedrock-mantle` endpoint is available.
+/// See <https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions>.
+const MANTLE_SUPPORTED_REGIONS: &[&str] = &[
+    "us-east-2",
+    "us-east-1",
+    "us-west-2",
+    "ap-southeast-3",
+    "ap-south-1",
+    "ap-southeast-2",
+    "ap-northeast-1",
+    "eu-central-1",
+    "eu-west-1",
+    "eu-west-2",
+    "eu-south-1",
+    "eu-north-1",
+    "sa-east-1",
+    "us-gov-west-1",
+];
+
+fn mantle_endpoint_url(region: &str) -> String {
+    format!("https://bedrock-mantle.{region}.api.aws/openai/v1")
+}
+
+enum MantleAuth {
+    ApiKey { api_key: String },
+    SigV4 { credentials: Credentials },
+}
+
+impl MantleAuth {
+    fn apply(&self, request: &mut HttpRequest<AsyncBody>, body: &[u8], region: &str) -> Result<()> {
+        match self {
+            MantleAuth::ApiKey { api_key } => {
+                let value = HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
+                    .context("building Mantle bearer token authorization header")?;
+                request.headers_mut().insert(AUTHORIZATION, value);
+            }
+            MantleAuth::SigV4 { credentials } => {
+                sign_mantle_request_sigv4(request, body, credentials, region)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn sign_mantle_request_sigv4(
+    request: &mut HttpRequest<AsyncBody>,
+    body: &[u8],
+    credentials: &Credentials,
+    region: &str,
+) -> Result<()> {
+    sign_mantle_request_sigv4_at(request, body, credentials, region, SystemTime::now())
+}
+
+fn sign_mantle_request_sigv4_at(
+    request: &mut HttpRequest<AsyncBody>,
+    body: &[u8],
+    credentials: &Credentials,
+    region: &str,
+    time: SystemTime,
+) -> Result<()> {
+    if !request
+        .headers()
+        .contains_key(http_client::http::header::HOST)
+        && let Some(authority) = request.uri().authority()
+    {
+        let host = HeaderValue::from_str(authority.as_str())
+            .context("invalid host header derived from Mantle request URI")?;
+        request
+            .headers_mut()
+            .insert(http_client::http::header::HOST, host);
+    }
+
+    let identity = credentials.clone().into();
+    let signing_params: aws_sigv4::http_request::SigningParams = v4::SigningParams::builder()
+        .identity(&identity)
+        .region(region)
+        .name("bedrock-mantle")
+        .time(time)
+        .settings(SigningSettings::default())
+        .build()
+        .context("building Mantle SigV4 signing params")?
+        .into();
+
+    let method = request.method().as_str();
+    let uri = request.uri().to_string();
+    let headers = request
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|value| (name.as_str(), value))
+                .with_context(|| format!("header {name} is not valid UTF-8 and cannot be signed"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let signable_request =
+        SignableRequest::new(method, uri, headers.into_iter(), SignableBody::Bytes(body))
+            .context("constructing Mantle SigV4 request")?;
+
+    let (instructions, _signature) = sign(signable_request, &signing_params)
+        .context("signing Mantle request with SigV4")?
+        .into_parts();
+    instructions.apply_to_request_http1x(request);
+
+    Ok(())
+}
 
 pub struct State {
     /// The resolved authentication method. Settings take priority over UX credentials.
@@ -407,6 +544,7 @@ impl State {
 
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
+    plain_http_client: Arc<dyn HttpClient>,
     handle: tokio::runtime::Handle,
     state: Entity<State>,
 }
@@ -428,13 +566,14 @@ impl BedrockLanguageModelProvider {
         });
 
         Self {
-            http_client: AwsHttpClient::new(http_client),
+            http_client: AwsHttpClient::new(http_client.clone()),
+            plain_http_client: http_client,
             handle: Tokio::handle(cx),
             state,
         }
     }
 
-    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+    fn create_language_model(&self, model: bedrock::ConverseModel) -> Arc<dyn LanguageModel> {
         Arc::new(BedrockModel {
             id: LanguageModelId::from(model.id().to_string()),
             model,
@@ -442,6 +581,17 @@ impl BedrockLanguageModelProvider {
             handle: self.handle.clone(),
             state: self.state.clone(),
             client: OnceCell::new(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
+
+    fn create_mantle_language_model(&self, model: bedrock::MantleModel) -> Arc<dyn LanguageModel> {
+        Arc::new(BedrockMantleModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            http_client: self.plain_http_client.clone(),
+            state: self.state.clone(),
+            credentials_provider: Arc::new(OnceCell::new()),
             request_limiter: RateLimiter::new(4),
         })
     }
@@ -461,32 +611,29 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(bedrock::Model::default()))
+        Some(self.create_language_model(bedrock::ConverseModel::default()))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let region = self.state.read(cx).get_region();
-        Some(self.create_language_model(bedrock::Model::default_fast(region.as_str())))
+        Some(self.create_language_model(bedrock::ConverseModel::default_fast(region.as_str())))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let bedrock_settings = &AllLanguageModelSettings::get_global(cx).bedrock;
         let mut models = BTreeMap::default();
 
-        for model in bedrock::Model::iter() {
-            if !matches!(model, bedrock::Model::Custom { .. }) {
+        for model in bedrock::ConverseModel::iter() {
+            if !matches!(model, bedrock::ConverseModel::Custom { .. }) {
                 models.insert(model.id().to_string(), model);
             }
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .bedrock
-            .available_models
-            .iter()
-        {
+        for model in bedrock_settings.available_models.iter() {
             models.insert(
                 model.name.clone(),
-                bedrock::Model::Custom {
+                bedrock::ConverseModel::Custom {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
@@ -502,10 +649,43 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             );
         }
 
-        models
+        let mut models: Vec<Arc<dyn LanguageModel>> = models
             .into_values()
             .map(|model| self.create_language_model(model))
-            .collect()
+            .collect();
+
+        let mut mantle_models = BTreeMap::default();
+
+        for model in bedrock::MantleModel::iter() {
+            if !matches!(model, bedrock::MantleModel::Custom { .. }) {
+                mantle_models.insert(model.id().to_string(), model);
+            }
+        }
+
+        // Override with available Mantle models from settings
+        for model in bedrock_settings.mantle_available_models.iter() {
+            mantle_models.insert(
+                model.name.clone(),
+                bedrock::MantleModel::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    protocol: mantle_protocol_from_settings(model.protocol),
+                    supports_tools: model.supports_tools.unwrap_or(false),
+                    supports_images: model.supports_images.unwrap_or(false),
+                    supports_thinking: model.supports_thinking.unwrap_or(false),
+                },
+            );
+        }
+
+        models.extend(
+            mantle_models
+                .into_values()
+                .map(|model| self.create_mantle_language_model(model)),
+        );
+
+        models
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -516,18 +696,17 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_auth(cx))
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
+            )),
+        ))
     }
 }
 
@@ -541,7 +720,7 @@ impl LanguageModelProviderState for BedrockLanguageModelProvider {
 
 struct BedrockModel {
     id: LanguageModelId,
-    model: Model,
+    model: ConverseModel,
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
@@ -671,6 +850,18 @@ impl LanguageModel for BedrockModel {
         self.model.supports_thinking()
     }
 
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self
+            .model
+            .id()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+        {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
         if self.model.supports_adaptive_thinking() {
             vec![
@@ -747,6 +938,13 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
+        if request.contains_custom_tool_input() {
+            return async move {
+                Err(anyhow::anyhow!("Bedrock does not support custom tools").into())
+            }
+            .boxed();
+        }
+
         let (region, allow_global, guardrail_identifier, guardrail_version) =
             cx.read_entity(&self.state, |state, _cx| {
                 let (gid, gv) = state.get_guardrail_config();
@@ -829,6 +1027,919 @@ impl LanguageModel for BedrockModel {
     }
 }
 
+const MANTLE_SELECTABLE_REASONING_EFFORTS: &[ReasoningEffort] = &[
+    ReasoningEffort::Low,
+    ReasoningEffort::Medium,
+    ReasoningEffort::High,
+    ReasoningEffort::XHigh,
+];
+
+fn mantle_default_reasoning_effort(model: &MantleModel) -> Option<ReasoningEffort> {
+    model.supports_thinking().then_some(ReasoningEffort::Medium)
+}
+
+fn mantle_selected_reasoning_effort(
+    request: &LanguageModelRequest,
+    model: &MantleModel,
+) -> Option<ReasoningEffort> {
+    if !model.supports_thinking() {
+        return None;
+    }
+
+    if request.thinking_allowed {
+        request
+            .thinking_effort
+            .as_deref()
+            .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+            .filter(|effort| *effort != ReasoningEffort::None)
+            .or_else(|| mantle_default_reasoning_effort(model))
+    } else {
+        Some(ReasoningEffort::None)
+    }
+}
+
+fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffortLevel> {
+    let Some(default_effort) = mantle_default_reasoning_effort(model) else {
+        return Vec::new();
+    };
+
+    MANTLE_SELECTABLE_REASONING_EFFORTS
+        .iter()
+        .copied()
+        .map(|effort| LanguageModelEffortLevel {
+            name: effort.label().into(),
+            value: effort.value().into(),
+            is_default: effort == default_effort,
+        })
+        .collect()
+}
+
+/// Special-cases Mantle authorization failures with a message that points at
+/// the separate `bedrock-mantle` IAM policy namespace instead of regular
+/// `bedrock-runtime` permissions.
+fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCompletionError {
+    if let RequestError::HttpResponseError { status_code, .. } = &error
+        && *status_code == http_client::http::StatusCode::FORBIDDEN
+    {
+        return LanguageModelCompletionError::PermissionError {
+            provider: PROVIDER_NAME,
+            message: format!(
+                "Bedrock Mantle denied this request for {}. Mantle-only models require IAM \
+                 permissions for the `bedrock-mantle` endpoint (for example via the \
+                 `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever \
+                 permissions your existing Bedrock credentials already have.",
+                model.display_name()
+            ),
+        };
+    }
+    error.into()
+}
+
+/// Resolves an AWS credentials provider for profile/SSO/automatic auth.
+/// Cached in `cell` since building it may read config files from disk;
+/// credentials themselves are still re-resolved on every call. Async so this
+/// never blocks the foreground thread (unlike `BedrockModel::get_or_init_client`).
+async fn resolve_mantle_credentials_provider(
+    cell: &OnceCell<SharedCredentialsProvider>,
+    profile_name: Option<String>,
+    region: String,
+) -> Result<SharedCredentialsProvider> {
+    let provider = cell
+        .get_or_try_init(move || async move {
+            let mut config_builder =
+                aws_config::defaults(BehaviorVersion::latest()).region(Region::new(region));
+
+            if let Some(profile_name) = profile_name.filter(|name| !name.is_empty()) {
+                config_builder = config_builder.profile_name(profile_name);
+            }
+
+            let config = config_builder.load().await;
+            config
+                .credentials_provider()
+                .context("no AWS credentials provider is configured")
+        })
+        .await
+        .context("resolving AWS credentials for Bedrock Mantle")?;
+    Ok(provider.clone())
+}
+
+/// Resolves provider settings into concrete Mantle request auth. A configured
+/// Bedrock API key is sent as bearer auth; every AWS-credential-based method
+/// signs the Mantle HTTP request directly with SigV4.
+async fn resolve_mantle_auth(
+    credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
+    auth: Option<BedrockAuth>,
+    region: String,
+) -> Result<MantleAuth> {
+    match auth {
+        Some(BedrockAuth::ApiKey { api_key }) => Ok(MantleAuth::ApiKey { api_key }),
+        Some(BedrockAuth::IamCredentials {
+            access_key_id,
+            secret_access_key,
+            session_token,
+        }) => Ok(MantleAuth::SigV4 {
+            credentials: Credentials::new(
+                access_key_id,
+                secret_access_key,
+                session_token,
+                None,
+                "zed-bedrock-provider",
+            ),
+        }),
+        Some(BedrockAuth::NamedProfile { profile_name })
+        | Some(BedrockAuth::SingleSignOn { profile_name }) => {
+            let provider = resolve_mantle_credentials_provider(
+                &credentials_provider,
+                Some(profile_name),
+                region.clone(),
+            )
+            .await?;
+            let credentials = provider
+                .provide_credentials()
+                .await
+                .context("failed to resolve AWS credentials")?;
+            Ok(MantleAuth::SigV4 { credentials })
+        }
+        Some(BedrockAuth::Automatic) | None => {
+            let provider =
+                resolve_mantle_credentials_provider(&credentials_provider, None, region.clone())
+                    .await?;
+            let credentials = provider
+                .provide_credentials()
+                .await
+                .context("failed to resolve AWS credentials")?;
+            Ok(MantleAuth::SigV4 { credentials })
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MantleChatStreamResult {
+    Ok(ResponseStreamEvent),
+    Err { error: MantleChatStreamError },
+}
+
+#[derive(Deserialize)]
+struct MantleChatStreamError {
+    message: String,
+}
+
+fn parse_mantle_chat_stream_line(line: &str) -> Result<ResponseStreamEvent> {
+    match serde_json::from_str(line) {
+        Ok(MantleChatStreamResult::Ok(response)) => Ok(response),
+        Ok(MantleChatStreamResult::Err { error }) => Err(anyhow!(error.message)),
+        Err(error) => {
+            log::error!(
+                "Failed to parse Mantle chat completion stream event: `{}`\nResponse: `{}`",
+                error,
+                line,
+            );
+            Err(anyhow!(error))
+        }
+    }
+}
+
+fn parse_mantle_response_stream_line(line: &str) -> Result<open_ai::responses::StreamEvent> {
+    serde_json::from_str(line).map_err(|error| {
+        log::error!(
+            "Failed to parse Mantle responses stream event: `{}`\nResponse: `{}`",
+            error,
+            line,
+        );
+        anyhow!(error)
+    })
+}
+
+async fn stream_mantle_sse<Request, Event>(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    url: &str,
+    region: &str,
+    auth: &MantleAuth,
+    request: Request,
+    extra_headers: &CustomHeaders,
+    parse_stream_line: fn(&str) -> Result<Event>,
+) -> std::result::Result<BoxStream<'static, Result<Event>>, RequestError>
+where
+    Request: Serialize,
+    Event: Send + 'static,
+{
+    let body = serde_json::to_vec(&request).map_err(|error| RequestError::Other(error.into()))?;
+    let mut request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(url)
+        .header("Content-Type", "application/json")
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(body.clone()))
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    auth.apply(&mut request, &body, region)
+        .map_err(RequestError::Other)?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(move |line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line
+                            .strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))?;
+                        if line == "[DONE]" || line.is_empty() {
+                            None
+                        } else {
+                            Some(parse_stream_line(line))
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| RequestError::Other(error.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
+fn strip_unsupported_mantle_response_fields(request: &mut OpenAiResponseRequest) {
+    request.context_management = None;
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum MantleMessageSnapshotKind {
+    Undetermined,
+    Cumulative,
+    Independent,
+}
+
+struct MantleMessageSnapshot {
+    item_id: String,
+    text: String,
+    emitted_text_length: usize,
+    kind: MantleMessageSnapshotKind,
+    phase: Option<String>,
+    output_index: usize,
+    content_index: Option<usize>,
+}
+
+/// The most recently completed message item, used to detect Mantle's cumulative
+/// snapshot replays.
+#[derive(Clone)]
+struct MantlePreviousMessage {
+    text: String,
+    phase: Option<String>,
+}
+
+/// Adapts Mantle's cumulative Responses message snapshots to incremental events.
+///
+/// Mantle can emit a new message item containing all text produced so far, then
+/// replay the corresponding output deltas. The shared OpenAI mapper assumes each
+/// delta is new text, so forwarding those events directly duplicates the reply.
+///
+/// Only adjacent, same-phase, strict-prefix extensions are collapsed. Equal,
+/// shrinking, divergent, or different-phase messages stay visible. Any non-message
+/// output item (reasoning, tool call, etc.) is a hard boundary: it is forwarded
+/// unchanged and clears the snapshot used for collapsing, so a message after a
+/// tool call is never merged with the one before it.
+struct MantleResponseEventMapper {
+    open_ai_mapper: OpenAiResponseEventMapper,
+    current_message: Option<MantleMessageSnapshot>,
+    previous_message: Option<MantlePreviousMessage>,
+    pending_message_events: Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+}
+
+impl MantleResponseEventMapper {
+    fn new() -> Self {
+        Self {
+            open_ai_mapper: OpenAiResponseEventMapper::new(),
+            current_message: None,
+            previous_message: None,
+            pending_message_events: Vec::new(),
+        }
+    }
+
+    fn map_stream(
+        mut self,
+        events: BoxStream<'static, Result<OpenAiResponseStreamEvent>>,
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events
+            .flat_map(move |event| {
+                futures::stream::iter(match event {
+                    Ok(event) => self.map_event(event),
+                    Err(error) => {
+                        let mut events = self.finish_current_message();
+                        events.push(Err(LanguageModelCompletionError::from(error)));
+                        events
+                    }
+                })
+            })
+            .boxed()
+    }
+
+    fn map_event(
+        &mut self,
+        event: OpenAiResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        match event {
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index,
+                sequence_number,
+                item,
+            } => match &item {
+                ResponseOutputItem::Message(message) => {
+                    let mut events = self.finish_current_message();
+                    let item_id = message.id.clone();
+                    let phase = message.phase.clone();
+                    if let Some(item_id) = item_id {
+                        self.current_message = Some(MantleMessageSnapshot {
+                            item_id,
+                            text: String::new(),
+                            emitted_text_length: 0,
+                            kind: MantleMessageSnapshotKind::Undetermined,
+                            phase,
+                            output_index,
+                            content_index: None,
+                        });
+
+                        self.map_message_added(OpenAiResponseStreamEvent::OutputItemAdded {
+                            output_index,
+                            sequence_number,
+                            item,
+                        });
+                    } else {
+                        self.flush_pending_message(&mut events, false);
+                        events.extend(self.open_ai_mapper.map_event(
+                            OpenAiResponseStreamEvent::OutputItemAdded {
+                                output_index,
+                                sequence_number,
+                                item,
+                            },
+                        ));
+                    }
+                    events
+                }
+                _ => {
+                    let mut events = self.finish_current_message();
+                    self.previous_message = None;
+                    events.extend(self.open_ai_mapper.map_event(
+                        OpenAiResponseStreamEvent::OutputItemAdded {
+                            output_index,
+                            sequence_number,
+                            item,
+                        },
+                    ));
+                    events
+                }
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id,
+                output_index,
+                content_index,
+                delta,
+            } => self.map_text_delta(item_id, output_index, content_index, delta),
+            OpenAiResponseStreamEvent::OutputTextDone {
+                item_id,
+                output_index,
+                content_index,
+                text,
+            } => {
+                let suffix = self
+                    .current_message
+                    .as_ref()
+                    .filter(|message| message.item_id == item_id)
+                    .and_then(|message| text.strip_prefix(&message.text))
+                    .map(str::to_string);
+                if let Some(suffix) = suffix {
+                    if suffix.is_empty() {
+                        return Vec::new();
+                    }
+                    return self.map_text_delta(item_id, output_index, content_index, suffix);
+                }
+
+                let mut events = self.finish_current_message();
+                events.extend(self.open_ai_mapper.map_event(
+                    OpenAiResponseStreamEvent::OutputTextDone {
+                        item_id,
+                        output_index,
+                        content_index,
+                        text,
+                    },
+                ));
+                events
+            }
+            OpenAiResponseStreamEvent::ContentPartAdded { ref item_id, .. }
+            | OpenAiResponseStreamEvent::ContentPartDone { ref item_id, .. }
+            | OpenAiResponseStreamEvent::RefusalDelta { ref item_id, .. }
+            | OpenAiResponseStreamEvent::RefusalDone { ref item_id, .. }
+                if self
+                    .current_message
+                    .as_ref()
+                    .is_some_and(|message| &message.item_id == item_id) =>
+            {
+                self.open_ai_mapper.map_event(event)
+            }
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index,
+                sequence_number,
+                item,
+            } => {
+                if let ResponseOutputItem::Message(message) = &item
+                    && let Some(item_id) = message.id.as_ref()
+                    && let Some(current_message) = self.current_message.as_mut()
+                    && &current_message.item_id == item_id
+                {
+                    current_message.phase = message.phase.clone();
+                }
+
+                let is_non_message = !matches!(item, ResponseOutputItem::Message(_));
+                let was_merged = matches!(
+                    self.current_message.as_ref(),
+                    Some(current_message)
+                        if current_message.kind == MantleMessageSnapshotKind::Cumulative
+                );
+                let mut events = self.finish_current_message();
+                if is_non_message {
+                    self.previous_message = None;
+                }
+                let done_events =
+                    self.open_ai_mapper
+                        .map_event(OpenAiResponseStreamEvent::OutputItemDone {
+                            output_index,
+                            sequence_number,
+                            item,
+                        });
+                if was_merged {
+                    // The message was merged into the previous one, so the phase/
+                    // reasoning metadata this `OutputItemDone` would otherwise emit
+                    // again is already reflected by the metadata emitted earlier.
+                    events.extend(done_events.into_iter().filter(|event| {
+                        !matches!(event, Ok(LanguageModelCompletionEvent::ReasoningDetails(_)))
+                    }));
+                } else {
+                    events.extend(done_events);
+                }
+                events
+            }
+            event => {
+                let mut events = self.finish_current_message();
+                events.extend(self.open_ai_mapper.map_event(event));
+                events
+            }
+        }
+    }
+
+    fn map_message_added(&mut self, event: OpenAiResponseStreamEvent) {
+        debug_assert!(
+            self.pending_message_events.is_empty(),
+            "pending message events must be flushed before a new message is added"
+        );
+        self.pending_message_events = self.open_ai_mapper.map_event(event);
+    }
+
+    fn map_text_delta(
+        &mut self,
+        item_id: String,
+        output_index: usize,
+        content_index: Option<usize>,
+        delta: String,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        if !self
+            .current_message
+            .as_ref()
+            .is_some_and(|current_message| current_message.item_id == item_id)
+        {
+            let mut events = self.finish_current_message();
+            events.extend(self.open_ai_mapper.map_event(
+                OpenAiResponseStreamEvent::OutputTextDelta {
+                    item_id,
+                    output_index,
+                    content_index,
+                    delta,
+                },
+            ));
+            return events;
+        }
+
+        let Some(current_message) = self.current_message.as_mut() else {
+            return Vec::new();
+        };
+        current_message.text.push_str(&delta);
+        current_message.output_index = output_index;
+        current_message.content_index = content_index;
+        let kind = current_message.kind;
+
+        match kind {
+            MantleMessageSnapshotKind::Undetermined => {
+                let snapshot = current_message.text.clone();
+                let phase = current_message.phase.clone();
+                let previous = self.previous_message.clone();
+
+                if let Some(previous) = previous
+                    && previous.phase == phase
+                {
+                    // Strict same-phase extension: previous text is a proper prefix of
+                    // the new snapshot. Collapse the replayed prefix and emit only the
+                    // suffix.
+                    if snapshot.starts_with(&previous.text) && snapshot.len() > previous.text.len()
+                    {
+                        if let Some(current_message) = self.current_message.as_mut() {
+                            current_message.kind = MantleMessageSnapshotKind::Cumulative;
+                            current_message.emitted_text_length = previous.text.len();
+                        }
+                        let mut events = Vec::new();
+                        self.flush_pending_message(&mut events, true);
+                        events.extend(self.map_snapshot_suffix(output_index, content_index));
+                        return events;
+                    }
+
+                    // The snapshot is still a prefix of (or equal to) the previous
+                    // message. A genuine cumulative replay keeps growing past the
+                    // previous text, so defer the decision and withhold emission
+                    // until it either exceeds the previous text or diverges.
+                    if previous.text.starts_with(&snapshot) {
+                        return Vec::new();
+                    }
+                }
+
+                // Diverged from the previous message, had a different phase, or there
+                // was no previous message: this is an independent message.
+                if let Some(current_message) = self.current_message.as_mut() {
+                    current_message.kind = MantleMessageSnapshotKind::Independent;
+                }
+                let mut events = Vec::new();
+                self.flush_pending_message(&mut events, false);
+                events.extend(self.map_text_event(item_id, output_index, content_index, snapshot));
+                events
+            }
+            MantleMessageSnapshotKind::Cumulative => {
+                self.map_snapshot_suffix(output_index, content_index)
+            }
+            MantleMessageSnapshotKind::Independent => {
+                self.map_text_event(item_id, output_index, content_index, delta)
+            }
+        }
+    }
+
+    fn map_snapshot_suffix(
+        &mut self,
+        output_index: usize,
+        content_index: Option<usize>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let (item_id, suffix) = {
+            let Some(current_message) = self.current_message.as_mut() else {
+                return Vec::new();
+            };
+
+            if current_message.text.len() <= current_message.emitted_text_length {
+                return Vec::new();
+            }
+
+            let suffix = current_message.text[current_message.emitted_text_length..].to_string();
+            current_message.emitted_text_length = current_message.text.len();
+            (current_message.item_id.clone(), suffix)
+        };
+
+        self.map_text_event(item_id, output_index, content_index, suffix)
+    }
+
+    fn map_text_event(
+        &mut self,
+        item_id: String,
+        output_index: usize,
+        content_index: Option<usize>,
+        delta: String,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        if delta.is_empty() {
+            return Vec::new();
+        }
+
+        self.open_ai_mapper
+            .map_event(OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id,
+                output_index,
+                content_index,
+                delta,
+            })
+    }
+
+    fn finish_current_message(
+        &mut self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        self.finish_current_message_into(&mut events);
+        events
+    }
+
+    fn finish_current_message_into(
+        &mut self,
+        events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+    ) {
+        let Some(current_message) = self.current_message.take() else {
+            self.flush_pending_message(events, false);
+            return;
+        };
+
+        match current_message.kind {
+            MantleMessageSnapshotKind::Cumulative => {
+                self.flush_pending_message(events, true);
+            }
+            MantleMessageSnapshotKind::Independent => {
+                self.flush_pending_message(events, false);
+            }
+            MantleMessageSnapshotKind::Undetermined => {
+                // The message never exceeded or diverged from the previous one, so
+                // it could not be confirmed as a cumulative replay. Treat it as an
+                // independent message: emit the withheld StartMessage and any text
+                // accumulated while deferring the decision.
+                self.flush_pending_message(events, false);
+                if !current_message.text.is_empty() {
+                    events.extend(self.map_text_event(
+                        current_message.item_id.clone(),
+                        current_message.output_index,
+                        current_message.content_index,
+                        current_message.text.clone(),
+                    ));
+                }
+            }
+        }
+
+        if !current_message.text.is_empty() {
+            self.previous_message = Some(MantlePreviousMessage {
+                text: current_message.text,
+                phase: current_message.phase,
+            });
+        }
+    }
+
+    fn flush_pending_message(
+        &mut self,
+        events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        suppress_start_message: bool,
+    ) {
+        for event in self.pending_message_events.drain(..) {
+            // When merging into the previous message, the phase/reasoning metadata
+            // can't have changed since it was last emitted (a merge only happens for
+            // adjacent, same-phase messages with no reasoning item in between), so
+            // suppress both the StartMessage and the now-redundant ReasoningDetails.
+            if suppress_start_message
+                && matches!(
+                    event,
+                    Ok(LanguageModelCompletionEvent::StartMessage { .. })
+                        | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
+                )
+            {
+                continue;
+            }
+            events.push(event);
+        }
+    }
+}
+
+struct BedrockMantleModel {
+    id: LanguageModelId,
+    model: MantleModel,
+    http_client: Arc<dyn HttpClient>,
+    state: Entity<State>,
+    credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
+    request_limiter: RateLimiter,
+}
+
+impl BedrockMantleModel {
+    fn stream_mantle_request<Request, Event>(
+        &self,
+        request: Request,
+        cx: &AsyncApp,
+        endpoint: &'static str,
+        parse_stream_line: fn(&str) -> Result<Event>,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Event>>, LanguageModelCompletionError>>
+    where
+        Request: Serialize + Send + 'static,
+        Event: Send + 'static,
+    {
+        let http_client = self.http_client.clone();
+        let model = self.model.clone();
+        let credentials_provider = self.credentials_provider.clone();
+        let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
+            (state.auth.clone(), state.get_region())
+        });
+        let url = format!("{}/{}", mantle_endpoint_url(&region), endpoint);
+        let extra_headers = cx.read_entity(&self.state, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .custom_headers
+                .clone()
+        });
+        let provider_name = PROVIDER_NAME.0.to_string();
+        let auth_task = Tokio::spawn_result(
+            cx,
+            resolve_mantle_auth(credentials_provider, auth, region.clone()),
+        );
+
+        let future = self.request_limiter.stream(async move {
+            let auth = auth_task
+                .await
+                .map_err(LanguageModelCompletionError::Other)?;
+            stream_mantle_sse(
+                http_client.as_ref(),
+                &provider_name,
+                &url,
+                &region,
+                &auth,
+                request,
+                &extra_headers,
+                parse_stream_line,
+            )
+            .await
+            .map_err(|err| map_mantle_error(&model, err))
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_completion(
+        &self,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
+    > {
+        self.stream_mantle_request(
+            request,
+            cx,
+            "chat/completions",
+            parse_mantle_chat_stream_line,
+        )
+    }
+
+    fn stream_response(
+        &self,
+        request: OpenAiResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<open_ai::responses::StreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let mut request = request;
+        strip_unsupported_mantle_response_fields(&mut request);
+        self.stream_mantle_request(request, cx, "responses", parse_mantle_response_stream_line)
+    }
+}
+
+impl LanguageModel for BedrockMantleModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.model.supports_tools()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchemaSubset
+    }
+
+    fn supports_images(&self) -> bool {
+        self.model.supports_images()
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
+                self.model.supports_tools()
+            }
+            LanguageModelToolChoice::None => true,
+        }
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        mantle_supported_effort_levels(&self.model)
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("bedrock-mantle/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        Some(self.model.max_output_tokens())
+    }
+
+    fn stream_completion(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
+
+        if !MANTLE_SUPPORTED_REGIONS.contains(&region.as_str()) {
+            let display_name = self.model.display_name().to_string();
+            let supported = MANTLE_SUPPORTED_REGIONS.join(", ");
+            return futures::future::ready(Err(LanguageModelCompletionError::Other(anyhow!(
+                "{display_name} is not available in {region} because Bedrock Mantle isn't offered \
+                 there. Try switching to one of the following regions: {supported}."
+            ))))
+            .boxed();
+        }
+
+        let model_id = self.model.request_id().to_string();
+        let max_output_tokens = Some(self.model.max_output_tokens());
+
+        match self.model.protocol() {
+            MantleProtocol::Responses => {
+                let request = into_open_ai_response(
+                    request,
+                    &model_id,
+                    self.model.supports_tools(),
+                    false,
+                    max_output_tokens,
+                    mantle_default_reasoning_effort(&self.model),
+                    self.model.supports_thinking(),
+                );
+                let completions = self.stream_response(request, cx);
+                async move {
+                    let mapper = MantleResponseEventMapper::new();
+                    Ok(mapper.map_stream(completions.await?).boxed())
+                }
+                .boxed()
+            }
+            MantleProtocol::ChatCompletions => {
+                let reasoning_effort = mantle_selected_reasoning_effort(&request, &self.model);
+                let request = match into_open_ai(
+                    request,
+                    &model_id,
+                    self.model.supports_tools(),
+                    false,
+                    max_output_tokens,
+                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                    reasoning_effort,
+                    false,
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
+                let completions = self.stream_completion(request, cx);
+                async move {
+                    let mapper = OpenAiEventMapper::new();
+                    Ok(mapper.map_stream(completions.await?).boxed())
+                }
+                .boxed()
+            }
+        }
+    }
+}
+
 fn deny_tool_use_events(
     events: impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
@@ -857,6 +1968,10 @@ pub fn into_bedrock(
     guardrail_identifier: Option<String>,
     guardrail_version: Option<String>,
 ) -> Result<bedrock::Request> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("Bedrock does not support custom tools");
+    }
+
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
 
@@ -884,7 +1999,7 @@ pub fn into_bedrock(
                         }
                         MessageContent::Compaction(_) => None,
                         MessageContent::Thinking { text, signature } => {
-                            if model.contains(Model::DeepSeekR1.request_id()) {
+                            if model.contains(ConverseModel::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
                                 return None;
@@ -907,7 +2022,7 @@ pub fn into_bedrock(
                             ))
                         }
                         MessageContent::RedactedThinking(blob) => {
-                            if model.contains(Model::DeepSeekR1.request_id()) {
+                            if model.contains(ConverseModel::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
                                 return None;
@@ -919,12 +2034,19 @@ pub fn into_bedrock(
                         }
                         MessageContent::ToolUse(tool_use) => {
                             messages_contain_tool_content = true;
-                            let input = if tool_use.input.is_null() {
-                                // Bedrock API requires valid JsonValue, not null, for tool use input
-                                value_to_aws_document(&serde_json::json!({}))
-                            } else {
-                                value_to_aws_document(&tool_use.input)
-                            };
+                            let input =
+                                if let language_model::LanguageModelToolUseInput::Json(input) =
+                                    &tool_use.input
+                                {
+                                    if input.is_null() {
+                                        // Bedrock API requires valid JsonValue, not null, for tool use input
+                                        value_to_aws_document(&serde_json::json!({}))
+                                    } else {
+                                        value_to_aws_document(input)
+                                    }
+                                } else {
+                                    value_to_aws_document(&serde_json::json!({}))
+                                };
                             BedrockToolUseBlock::builder()
                                 .name(tool_use.name.to_string())
                                 .tool_use_id(tool_use.id.to_string())
@@ -1014,7 +2136,7 @@ pub fn into_bedrock(
                         }
                     })
                     .collect();
-                if message.cache && supports_caching {
+                if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
                             .r#type(CachePointType::Default)
@@ -1058,19 +2180,25 @@ pub fn into_bedrock(
         request
             .tools
             .iter()
-            .filter_map(|tool| {
-                Some(BedrockTool::ToolSpec(
+            .map(|tool| {
+                let language_model::LanguageModelRequestToolInput::Function {
+                    input_schema, ..
+                } = &tool.input
+                else {
+                    anyhow::bail!("Bedrock does not support custom tools");
+                };
+                Ok(BedrockTool::ToolSpec(
                     BedrockToolSpec::builder()
                         .name(tool.name.clone())
                         .description(tool.description.clone())
                         .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
-                            &tool.input_schema,
+                            input_schema,
                         )))
                         .build()
-                        .log_err()?,
+                        .context("failed to build Bedrock tool spec")?,
                 ))
             })
-            .collect()
+            .collect::<Result<_>>()?
     } else {
         Vec::new()
     };
@@ -1225,7 +2353,10 @@ pub fn map_to_language_model_completion_events(
                                                 name: tool_use.name.clone().into(),
                                                 is_input_complete: false,
                                                 raw_input: tool_use.input_json.clone(),
-                                                input,
+                                                input:
+                                                    language_model::LanguageModelToolUseInput::Json(
+                                                        input,
+                                                    ),
                                                 thought_signature: None,
                                             },
                                         )))
@@ -1290,7 +2421,9 @@ pub fn map_to_language_model_completion_events(
                                         name: tool_use.name.into(),
                                         is_input_complete: true,
                                         raw_input: tool_use.input_json,
-                                        input,
+                                        input: language_model::LanguageModelToolUseInput::Json(
+                                            input,
+                                        ),
                                         thought_signature: None,
                                     },
                                 ))
@@ -1492,10 +2625,6 @@ impl ConfigurationView {
             .detach_and_log_err(cx);
     }
 
-    fn should_render_editor(&self, cx: &Context<Self>) -> bool {
-        self.state.read(cx).is_authenticated()
-    }
-
     fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_next(cx);
     }
@@ -1577,13 +2706,15 @@ impl Render for ConfigurationView {
             None
         };
 
-        if self.should_render_editor(cx) {
-            return ConfiguredApiCard::new(configured_label)
+        let credentials_control = if self.state.read(cx).is_authenticated() {
+            ConfiguredApiCard::new("bedrock-reset", configured_label)
                 .disabled(env_var_set || is_settings_derived)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
                 .when_some(tooltip_label, |this, label| this.tooltip_label(label))
-                .into_any_element();
-        }
+                .into_any_element()
+        } else {
+            self.render_static_credentials_ui().into_any_element()
+        };
 
         v_flex()
             .min_w_0()
@@ -1592,15 +2723,29 @@ impl Render for ConfigurationView {
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials."))
-            .child(Label::new("But first, to access models on AWS, you need to:").mt_1())
+            .gap_1()
+            .child(Headline::new("Amazon Bedrock").size(HeadlineSize::Small))
+            .child(
+                Label::new(
+                    "To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                Label::new("But first, to access models on AWS, you need to:")
+                    .mt_1()
+                    .color(Color::Muted),
+            )
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new(
-                                "Grant permissions to the strategy you'll use according to the:",
-                            ))
+                            .child(
+                                Label::new(
+                                    "Grant permissions to the strategy you'll use according to the:",
+                                )
+                                .color(Color::Muted),
+                            )
                             .child(ButtonLink::new(
                                 "Prerequisites",
                                 "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
@@ -1608,33 +2753,32 @@ impl Render for ConfigurationView {
                     )
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Select the models you would like access to:"))
+                            .child(
+                                Label::new("Select the models you would like access to:")
+                                    .color(Color::Muted),
+                            )
                             .child(ButtonLink::new(
                                 "Bedrock Model Catalog",
                                 "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/model-catalog",
                             )),
                     ),
             )
-            .child(self.render_static_credentials_ui())
+            .child(credentials_control)
             .into_any()
     }
 }
 
 impl ConfigurationView {
     fn render_static_credentials_ui(&self) -> impl IntoElement {
-        let section_header = |title: SharedString| {
-            h_flex()
-                .gap_2()
-                .child(Label::new(title).size(LabelSize::Default))
-                .child(Divider::horizontal())
-        };
-
         let list_item = List::new()
             .child(
                 ListBulletItem::new("")
-                    .child(Label::new(
-                        "For access keys: Create an IAM user in the AWS console with programmatic access",
-                    ))
+                    .child(
+                        Label::new(
+                            "For access keys: Create an IAM user in the AWS console with programmatic access",
+                        )
+                        .color(Color::Muted),
+                    )
                     .child(ButtonLink::new(
                         "IAM Console",
                         "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users",
@@ -1642,7 +2786,10 @@ impl ConfigurationView {
             )
             .child(
                 ListBulletItem::new("")
-                    .child(Label::new("For Bedrock API Keys: Generate an API key from the"))
+                    .child(
+                        Label::new("For Bedrock API Keys: Generate an API key from the")
+                            .color(Color::Muted),
+                    )
                     .child(ButtonLink::new(
                         "Bedrock Console",
                         "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html",
@@ -1650,28 +2797,42 @@ impl ConfigurationView {
             )
             .child(
                 ListBulletItem::new("")
-                    .child(Label::new("Attach the necessary Bedrock permissions to"))
+                    .child(
+                        Label::new("Attach the necessary Bedrock permissions to")
+                            .color(Color::Muted),
+                    )
                     .child(ButtonLink::new(
                         "this user",
                         "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
                     )),
             )
-            .child(ListBulletItem::new(
-                "Enter either access keys OR a Bedrock API Key below (not both)",
-            ));
+            .child(
+                ListBulletItem::new(
+                    "Enter either access keys OR a Bedrock API Key below (not both)",
+                )
+                .label_color(Color::Muted),
+            );
 
         v_flex()
             .my_2()
             .tab_group()
             .gap_1p5()
-            .child(section_header("Static Credentials".into()))
-            .child(Label::new(
-                "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
-            ))
+            .child(Divider::horizontal())
+            .child(Label::new("Static Credentials").mt_2())
+            .child(
+                Label::new(
+                    "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
+                )
+                .color(Color::Muted),
+            )
             .child(list_item)
-            .child(self.access_key_id_editor.clone())
-            .child(self.secret_access_key_editor.clone())
-            .child(self.session_token_editor.clone())
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(self.access_key_id_editor.clone())
+                    .child(self.secret_access_key_editor.clone())
+                    .child(self.session_token_editor.clone()),
+            )
             .child(
                 Label::new(format!(
                     "You can also set the {}, {} and {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.",
@@ -1695,7 +2856,8 @@ impl ConfigurationView {
                 .mt_1()
                 .mb_2p5(),
             )
-            .child(section_header("Using the an API key".into()))
+            .child(Divider::horizontal())
+            .child(Label::new("Using the API key").mt_2().mb_1())
             .child(self.bearer_token_editor.clone())
             .child(
                 Label::new(format!(
@@ -1705,5 +2867,850 @@ impl ConfigurationView {
                 .size(LabelSize::Small)
                 .color(Color::Muted)
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::LanguageModelRequestMessage;
+    use open_ai::responses::{
+        ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem,
+    };
+
+    fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
+        into_bedrock(
+            LanguageModelRequest {
+                messages,
+                ..Default::default()
+            },
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            BedrockModelMode::Default,
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_cache_marked_message_that_filters_to_empty_is_dropped() {
+        let request = into_bedrock_request(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("What's the weather?".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Thinking {
+                    text: "Let me think about this...".into(),
+                    signature: None,
+                }],
+                cache: true,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Summarize this conversation.".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        for message in &request.messages {
+            assert!(
+                message
+                    .content()
+                    .iter()
+                    .any(|block| !matches!(block, BedrockInnerContent::CachePoint(_))),
+                "message must not consist solely of cache points: {:?}",
+                message
+            );
+        }
+        assert!(
+            request
+                .messages
+                .iter()
+                .all(|message| *message.role() == bedrock::BedrockRole::User),
+            "the assistant message stripped to empty content should be dropped entirely"
+        );
+    }
+
+    #[test]
+    fn test_cache_marked_message_with_content_gets_cache_point() {
+        let request = into_bedrock_request(vec![LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("What's the weather?".into())],
+            cache: true,
+            reasoning_details: None,
+        }]);
+
+        assert_eq!(request.messages.len(), 1);
+        assert!(
+            matches!(
+                request.messages[0].content().last(),
+                Some(BedrockInnerContent::CachePoint(_))
+            ),
+            "a cache-marked message with content should end with a cache point"
+        );
+    }
+
+    #[test]
+    fn test_sign_mantle_request_sigv4_uses_mantle_service() {
+        let credentials = Credentials::new(
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            None,
+            None,
+            "test",
+        );
+        let body = br#"{"model":"openai.gpt-5.5"}"#;
+        let mut request = HttpRequest::builder()
+            .method(Method::POST)
+            .uri("https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses")
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(body.to_vec()))
+            .unwrap();
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+
+        sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time).unwrap();
+
+        assert_eq!(
+            request
+                .headers()
+                .get(http_client::http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("bedrock-mantle.us-east-1.api.aws")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-amz-date")
+                .and_then(|value| value.to_str().ok()),
+            Some("20231114T221320Z")
+        );
+        let authorization = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap();
+        assert!(authorization.starts_with("AWS4-HMAC-SHA256 "));
+        assert!(
+            authorization
+                .contains("Credential=AKIDEXAMPLE/20231114/us-east-1/bedrock-mantle/aws4_request")
+        );
+        assert!(authorization.contains("SignedHeaders=content-type;host"));
+        assert!(authorization.contains("Signature="));
+    }
+
+    #[test]
+    fn test_mantle_endpoint_url_uses_openai_path_prefix() {
+        assert_eq!(
+            mantle_endpoint_url("us-east-1"),
+            "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
+        );
+        assert_eq!(
+            mantle_endpoint_url("us-west-2"),
+            "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
+        );
+    }
+
+    #[test]
+    fn test_mantle_protocol_from_settings() {
+        assert_eq!(
+            mantle_protocol_from_settings(settings::BedrockMantleProtocolContent::ChatCompletions),
+            MantleProtocol::ChatCompletions
+        );
+        assert_eq!(
+            mantle_protocol_from_settings(settings::BedrockMantleProtocolContent::Responses),
+            MantleProtocol::Responses
+        );
+    }
+
+    #[test]
+    fn test_mantle_supported_regions_matches_docs() {
+        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"us-east-1"));
+        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"eu-west-1"));
+        assert!(!MANTLE_SUPPORTED_REGIONS.contains(&"ap-southeast-1"));
+    }
+
+    fn mantle_message_item(id: &str) -> ResponseOutputItem {
+        mantle_message_item_with_phase(id, None)
+    }
+
+    fn mantle_message_item_with_phase(id: &str, phase: Option<&str>) -> ResponseOutputItem {
+        ResponseOutputItem::Message(ResponseOutputMessage {
+            id: Some(id.to_string()),
+            content: Vec::new(),
+            role: Some("assistant".to_string()),
+            status: Some("in_progress".to_string()),
+            phase: phase.map(str::to_string),
+        })
+    }
+
+    fn mantle_function_call_item(id: &str, name: &str, call_id: &str) -> ResponseOutputItem {
+        ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
+            id: Some(id.to_string()),
+            arguments: String::new(),
+            call_id: Some(call_id.to_string()),
+            name: Some(name.to_string()),
+            status: Some("in_progress".to_string()),
+        })
+    }
+
+    fn mantle_reasoning_item(id: &str) -> ResponseOutputItem {
+        ResponseOutputItem::Reasoning(ResponseReasoningItem {
+            id: Some(id.to_string()),
+            summary: Vec::new(),
+            content: Vec::new(),
+            encrypted_content: None,
+            status: Some("in_progress".to_string()),
+        })
+    }
+
+    fn text_delta(item_id: &str, output_index: usize, delta: &str) -> OpenAiResponseStreamEvent {
+        OpenAiResponseStreamEvent::OutputTextDelta {
+            item_id: item_id.to_string(),
+            output_index,
+            content_index: Some(0),
+            delta: delta.to_string(),
+        }
+    }
+
+    fn item_added(output_index: usize, item: ResponseOutputItem) -> OpenAiResponseStreamEvent {
+        OpenAiResponseStreamEvent::OutputItemAdded {
+            output_index,
+            sequence_number: None,
+            item,
+        }
+    }
+
+    fn item_done(output_index: usize, item: ResponseOutputItem) -> OpenAiResponseStreamEvent {
+        OpenAiResponseStreamEvent::OutputItemDone {
+            output_index,
+            sequence_number: None,
+            item,
+        }
+    }
+
+    fn map_mantle_response_events(
+        events: Vec<OpenAiResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        let mut mapper = MantleResponseEventMapper::new();
+        events
+            .into_iter()
+            .flat_map(|event| mapper.map_event(event))
+            .map(|event| event.expect("Mantle response event should map successfully"))
+            .collect()
+    }
+
+    // Keeps only StartMessage and Text events so phase/reasoning tests can assert on
+    // message boundaries without depending on incidental ReasoningDetails metadata.
+    fn start_messages_and_texts(
+        events: Vec<LanguageModelCompletionEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        events
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    LanguageModelCompletionEvent::StartMessage { .. }
+                        | LanguageModelCompletionEvent::Text(_)
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mantle_response_mapper_coalesces_cumulative_message_snapshots() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_1".to_string(),
+                output_index: 0,
+                content_index: Some(0),
+                delta: "Plan: rename".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message,
+            },
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: "Plan: rename".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: " and regenerate".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message,
+            },
+            OpenAiResponseStreamEvent::Completed {
+                response: open_ai::responses::ResponseSummary::default(),
+            },
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename".to_string()),
+                LanguageModelCompletionEvent::Text(" and regenerate".to_string()),
+                LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_preserves_independent_messages() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_1".to_string(),
+                output_index: 0,
+                content_index: Some(0),
+                delta: "Plan".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message,
+            },
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: "Final answer".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message,
+            },
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Final answer".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_coalesces_chained_cumulative_snapshots() {
+        // Each merge must thread `previous_message`/`emitted_text_length`
+        // through to the next.
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let third_message = mantle_message_item("msg_3");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan and go"),
+            item_done(1, second_message),
+            item_added(2, third_message.clone()),
+            text_delta("msg_3", 2, "Plan and go further"),
+            item_done(2, third_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::Text(" and go".to_string()),
+                LanguageModelCompletionEvent::Text(" further".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_keeps_message_state_across_content_events() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            OpenAiResponseStreamEvent::ContentPartAdded {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: 0,
+                part: serde_json::json!({"type": "output_text", "text": ""}),
+            },
+            text_delta("msg_2", 1, "Plan"),
+            text_delta("msg_2", 1, " and continue"),
+            OpenAiResponseStreamEvent::OutputTextDone {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                text: "Plan and continue".to_string(),
+            },
+            OpenAiResponseStreamEvent::ContentPartDone {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: 0,
+                part: serde_json::json!({"type": "output_text", "text": "Plan and continue"}),
+            },
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::Text(" and continue".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_resets_on_non_message_item_done() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let tool_call = mantle_function_call_item("call_1", "get_weather", "server_call_1");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_done(1, tool_call),
+            item_added(2, second_message.clone()),
+            text_delta("msg_2", 2, "Plan continued"),
+            item_done(2, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan continued".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_keeps_post_tool_message_separate_when_extending_prior_text() {
+        // A tool call sits between two messages. Even though the second message's
+        // text happens to extend the first message's text, the tool call is a hard
+        // boundary and the second message must remain a separate, visible message.
+        let first_message = mantle_message_item("msg_1");
+        let tool_call = mantle_function_call_item("call_1", "get_weather", "server_call_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, tool_call.clone()),
+            OpenAiResponseStreamEvent::FunctionCallArgumentsDone {
+                item_id: "call_1".to_string(),
+                output_index: 1,
+                arguments: "{\"city\":\"Boston\"}".to_string(),
+                sequence_number: None,
+            },
+            item_done(1, tool_call),
+            item_added(2, second_message.clone()),
+            text_delta("msg_2", 2, "Plan continued"),
+            item_done(2, second_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: language_model::LanguageModelToolUseId::from("server_call_1"),
+                    name: Arc::<str>::from("get_weather"),
+                    is_input_complete: true,
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::json!({"city": "Boston"}),
+                    ),
+                    raw_input: "{\"city\":\"Boston\"}".to_string(),
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan continued".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_treats_reasoning_as_collapse_boundary() {
+        // A reasoning item between two messages breaks adjacency, so the second
+        // message is emitted independently even though it repeats the first's text.
+        let first_message = mantle_message_item("msg_1");
+        let reasoning = mantle_reasoning_item("rsn_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, reasoning.clone()),
+            item_done(1, reasoning),
+            item_added(2, second_message.clone()),
+            text_delta("msg_2", 2, "Plan"),
+            item_done(2, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_preserves_equal_and_shrinking_messages() {
+        // Equal and strict-prefix (shrinking) adjacent messages must not be dropped:
+        // they are emitted as independent messages rather than collapsed away.
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let third_message = mantle_message_item("msg_3");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Hello world"),
+            item_done(0, first_message),
+            // Equal to the previous message.
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Hello world"),
+            item_done(1, second_message),
+            // Strict prefix of (shorter than) the previous message.
+            item_added(2, third_message.clone()),
+            text_delta("msg_3", 2, "Hello"),
+            item_done(2, third_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Hello world".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Hello world".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_3".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Hello".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_keeps_different_phase_messages_separate() {
+        // Two messages share a text prefix but have different phases; only same-phase
+        // strict extensions collapse, so the second message stays visible.
+        let first_message = mantle_message_item_with_phase("msg_1", Some("commentary"));
+        let second_message = mantle_message_item_with_phase("msg_2", Some("final_answer"));
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan: rename and regenerate"),
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename and regenerate".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_coalesces_same_phase_strict_extension() {
+        // Same phase, strict extension: the replayed prefix is collapsed and only the
+        // new suffix is emitted, so no second StartMessage appears.
+        let first_message = mantle_message_item_with_phase("msg_1", Some("final_answer"));
+        let second_message = mantle_message_item_with_phase("msg_2", Some("final_answer"));
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan: rename"),
+            text_delta("msg_2", 1, " and regenerate"),
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename".to_string()),
+                LanguageModelCompletionEvent::Text(" and regenerate".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_does_not_duplicate_reasoning_details_on_merge() {
+        // Merging a second message into the first must not emit any additional
+        // phase/reasoning metadata events beyond what the first message alone would
+        // have produced, since the metadata can't have changed by merging.
+        fn reasoning_details_count(events: &[LanguageModelCompletionEvent]) -> usize {
+            events
+                .iter()
+                .filter(|event| matches!(event, LanguageModelCompletionEvent::ReasoningDetails(_)))
+                .count()
+        }
+
+        let first_message = mantle_message_item_with_phase("msg_1", Some("final_answer"));
+        let baseline_events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message.clone()),
+        ]);
+
+        let second_message = mantle_message_item_with_phase("msg_2", Some("final_answer"));
+        let merged_events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan: rename"),
+            text_delta("msg_2", 1, " and regenerate"),
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            reasoning_details_count(&merged_events),
+            reasoning_details_count(&baseline_events),
+        );
+    }
+
+    #[test]
+    fn test_builtin_mantle_models_support_thinking() {
+        assert!(MantleModel::Gpt5_6Sol.supports_thinking());
+        assert!(MantleModel::Gpt5_6Terra.supports_thinking());
+        assert!(MantleModel::Gpt5_6Luna.supports_thinking());
+        assert!(MantleModel::Gpt5_5.supports_thinking());
+        assert!(MantleModel::Gpt5_4.supports_thinking());
+        assert!(MantleModel::Grok4_3.supports_thinking());
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Sol),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Terra),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_6Luna),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_5),
+            Some(ReasoningEffort::Medium)
+        );
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Grok4_3),
+            Some(ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn test_mantle_supported_effort_levels_hide_none() {
+        let effort_levels = mantle_supported_effort_levels(&MantleModel::Gpt5_5);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("medium")
+        );
+    }
+
+    #[test]
+    fn test_custom_mantle_model_can_disable_thinking() {
+        let model = MantleModel::Custom {
+            name: "custom-mantle-model".to_string(),
+            display_name: None,
+            max_tokens: 128_000,
+            max_output_tokens: None,
+            protocol: MantleProtocol::Responses,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+        };
+
+        assert!(!model.supports_thinking());
+        assert_eq!(mantle_default_reasoning_effort(&model), None);
+        assert!(mantle_supported_effort_levels(&model).is_empty());
+        assert_eq!(
+            mantle_selected_reasoning_effort(
+                &LanguageModelRequest {
+                    thinking_effort: Some("high".to_string()),
+                    ..Default::default()
+                },
+                &model,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_disabled_mantle_thinking_serializes_none() {
+        let request = into_open_ai_response(
+            LanguageModelRequest {
+                thinking_allowed: false,
+                ..Default::default()
+            },
+            MantleModel::Grok4_3.request_id(),
+            true,
+            false,
+            Some(MantleModel::Grok4_3.max_output_tokens()),
+            mantle_default_reasoning_effort(&MantleModel::Grok4_3),
+            MantleModel::Grok4_3.supports_thinking(),
+        );
+
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["reasoning"],
+            serde_json::json!({ "effort": "none" })
+        );
+    }
+
+    #[test]
+    fn test_mantle_reasoning_passes_known_efforts_through() {
+        for effort in ["low", "medium", "high", "xhigh", "minimal", "max"] {
+            assert_eq!(
+                mantle_selected_reasoning_effort(
+                    &LanguageModelRequest {
+                        thinking_allowed: true,
+                        thinking_effort: Some(effort.to_string()),
+                        ..Default::default()
+                    },
+                    &MantleModel::Gpt5_5,
+                )
+                .map(|effort| effort.value()),
+                Some(effort)
+            );
+        }
+
+        assert_eq!(
+            mantle_selected_reasoning_effort(
+                &LanguageModelRequest {
+                    thinking_allowed: true,
+                    thinking_effort: Some("none".to_string()),
+                    ..Default::default()
+                },
+                &MantleModel::Gpt5_5,
+            ),
+            Some(ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn test_strip_unsupported_mantle_response_fields_removes_context_management() {
+        let mut request = into_open_ai_response(
+            LanguageModelRequest {
+                compact_at_tokens: Some(10_000),
+                ..Default::default()
+            },
+            "openai.gpt-5.5",
+            true,
+            false,
+            Some(128_000),
+            Some(ReasoningEffort::Medium),
+            false,
+        );
+
+        assert!(request.context_management.is_some());
+        strip_unsupported_mantle_response_fields(&mut request);
+        assert!(request.context_management.is_none());
+
+        let request = serde_json::to_value(&request).unwrap();
+        assert!(request.get("context_management").is_none());
     }
 }

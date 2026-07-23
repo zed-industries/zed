@@ -27,6 +27,7 @@ pub(crate) fn bump_version(args: &GenerateWorkflowArgs) -> Workflow {
             )
             .pull_request(PullRequest::default().add_type(PullRequestType::Labeled))
             .workflow_dispatch(WorkflowDispatch::default()))
+        .permissions(Permissions::default())
         .concurrency(one_workflow_per_non_main_branch_and_token("labels"))
         .add_job(determine_bump_type.name, determine_bump_type.job)
         .add_job(call_bump_version.name, call_bump_version.job)

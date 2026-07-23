@@ -12,6 +12,9 @@ name: PR Issue Labeler
 on:
   issues:
     types: [opened]
+  # zizmor: ignore[dangerous-triggers]
+  # Fork PRs must be labeled, but this workflow only passes GitHub-provided event
+  # metadata to a pinned action; it never checks out or executes PR code.
   pull_request_target:
     types: [opened]
 
@@ -30,6 +33,10 @@ jobs:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
+          repositories: zed
+          permission-issues: write
+          permission-members: read
+          permission-pull-requests: write
 
       - id: apply-authorship-label
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
@@ -41,47 +48,9 @@ jobs:
             const STAFF_TEAM_SLUG = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
             const GUILD_LABEL = 'guild';
-            const GUILD_MEMBERS = [
-              '11happy',
-              'AidanV',
-              'alanpjohn',
-              'AmaanBilwar',
-              'arjunkomath',
-              'austincummings',
-              'ayushk-1801',
-              'criticic',
-              'dongdong867',
-              'emamulandalib',
-              'eureka928',
-              'feitreim',
-              'iam-liam',
-              'iksuddle',
-              'ishaksebsib',
-              'lingyaochu',
-              'loadingalias',
-              'marcocondrache',
-              'mchisolm0',
-              'MostlyKIGuess',
-              'nairadithya',
-              'nihalxkumar',
-              'notJoon',
-              'OmChillure',
-              'Palanikannan1437',
-              'polyesterswing',
-              'prayanshchh',
-              'razeghi71',
-              'sarmadgulzar',
-              'seanstrom',
-              'Shivansh-25',
-              'SkandaBhat',
-              'th0jensen',
-              'tommyming',
-              'transitoryangel',
-              'TwistingTwists',
-              'virajbhartiya',
-              'YEDASAVG',
-              'Ziqi-Yang',
-            ];
+            // Guild cohort members are outside collaborators holding this custom
+            // repository role, not members of an org team.
+            const GUILD_ROLE_NAME = 'Guild Assign issues/PRs';
             const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const COMMUNITY_CHAMPIONS = [
               '0x2CA',
@@ -161,14 +130,35 @@ jobs:
               return members.some((member) => member.toLowerCase() === authorLower);
             };
 
-            const isStaffMember = async (author) => {
+            const isTeamMember = async (teamSlug, author) => {
               try {
                 const response = await github.rest.teams.getMembershipForUserInOrg({
                   org: 'zed-industries',
-                  team_slug: STAFF_TEAM_SLUG,
+                  team_slug: teamSlug,
                   username: author
                 });
                 return response.data.state === 'active';
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                return false;
+              }
+            };
+
+            const isStaffMember = (author) => isTeamMember(STAFF_TEAM_SLUG, author);
+
+            const isGuildMember = async (author) => {
+              try {
+                const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: 'zed-industries',
+                  repo: 'zed',
+                  username: author
+                });
+                // role_name is the effective (highest) role; for cohort outside
+                // collaborators that is the custom role. Built-in roles come back
+                // lowercased and won't match.
+                return (response.data.role_name || '').toLowerCase() === GUILD_ROLE_NAME.toLowerCase();
               } catch (error) {
                 if (error.status !== 404) {
                   throw error;
@@ -202,7 +192,7 @@ jobs:
                 labelsToAdd.push(COMMUNITY_CHAMPION_LABEL);
               }
 
-              if (listIncludesAuthor(GUILD_MEMBERS, author)) {
+              if (await isGuildMember(author)) {
                 labelsToAdd.push(GUILD_LABEL);
               }
 

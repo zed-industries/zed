@@ -4,11 +4,10 @@ use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 use telemetry_events::EditPredictionRating;
 
 pub use zeta_prompt::udiff::{
-    CURSOR_POSITION_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
+    CURSOR_POSITION_MARKER, INLINE_CURSOR_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
 };
 
 use crate::data_collection::format_cursor_excerpt;
-pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 /// Maximum cursor file size to capture (64KB).
 /// Files larger than this will not have their content captured,
@@ -494,8 +493,7 @@ impl ExampleSpec {
     /// to the start of the hunk.
     ///
     /// In the serialized representation of this example, the cursor position is represented
-    /// using a comment line in the diff, beginning with `#`, and containing a `[CURSOR_POSITION]`
-    /// marker with the same format as the [`Self::cursor_excerpt`].
+    /// using an inline `<|user_cursor|>` marker in an added diff line.
     pub fn expected_patches_with_cursor_positions(&self) -> Vec<(String, Option<usize>)> {
         self.expected_patches
             .iter()
@@ -784,8 +782,7 @@ mod tests {
             +// prints a greeting
              fn main() {
             -    println!("hi");
-            +    println!("hello, {}", );
-            #                          ^[CURSOR_POSITION]
+            +    println!("hello, {}", <|user_cursor|>);
                  let x = 42;
              }
         "#}
@@ -814,8 +811,7 @@ mod tests {
             +++ b/test.rs
             @@ -1,2 +1,2 @@
             -fn old() {}
-            +fn new_name() {}
-            #       ^[CURSOR_POSITION]
+            +fn new_<|user_cursor|>name() {}
         "#};
 
         let cursor_offset = "fn new_name() {}".find("name").unwrap();
@@ -826,7 +822,7 @@ mod tests {
         assert_eq!(
             encoded_once
                 .lines()
-                .filter(|line| line.contains(CURSOR_POSITION_MARKER))
+                .filter(|line| line.contains(INLINE_CURSOR_MARKER))
                 .count(),
             1
         );

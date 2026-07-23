@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
-use sysinfo::{Pid, Process, ProcessRefreshKind, RefreshKind, System, UpdateKind};
+use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use crate::{Event, Terminal};
 
@@ -72,28 +72,108 @@ pub(crate) struct ProcessInfo {
     pub(crate) argv: Vec<String>,
 }
 
+/// Process (group) ids of a terminal's shell and foreground job, snapshotted
+/// while the PTY master is still open: reading the foreground process group
+/// requires `tcgetpgrp` on the PTY fd, which the event loop closes when the
+/// terminal shuts down, so these ids must be captured before shutdown and
+/// signalled afterwards.
+#[derive(Clone, Copy)]
+pub(crate) struct TerminalProcessIds {
+    #[cfg_attr(not(unix), allow(dead_code))]
+    foreground: Option<Pid>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    child: Pid,
+}
+
+#[cfg(unix)]
+impl TerminalProcessIds {
+    /// The spawned child (the shell) leads its own process group, but under
+    /// job control a foreground job runs in a separate process group that
+    /// `killpg` on the shell's group never reaches, so both are signalled
+    /// (see #47412).
+    fn process_group_ids(self) -> impl Iterator<Item = i32> {
+        std::iter::once(self.child)
+            .chain(
+                self.foreground
+                    .filter(|foreground| *foreground != self.child),
+            )
+            .map(|pid| pid.as_u32() as i32)
+            // `killpg(0, ...)` signals the caller's own process group, i.e.
+            // Zed itself, so never let a zero id (or a negative one from an
+            // implausibly large pid wrapping the cast) through.
+            .filter(|process_group_id| *process_group_id > 0)
+    }
+
+    /// Returns whether at least one process group was signalled successfully;
+    /// `killpg` failing with `ESRCH` (the group already exited) is expected and
+    /// reported as an unsuccessful signal.
+    fn signal_process_groups(&self, signal: i32) -> bool {
+        let mut signalled = false;
+        for process_group_id in self.process_group_ids() {
+            signalled |= unsafe { libc::killpg(process_group_id, signal) } == 0;
+        }
+        signalled
+    }
+
+    pub(crate) fn terminate(&self) -> bool {
+        self.signal_process_groups(libc::SIGTERM)
+    }
+
+    pub(crate) fn kill(&self) -> bool {
+        self.signal_process_groups(libc::SIGKILL)
+    }
+}
+
+#[cfg(not(unix))]
+impl TerminalProcessIds {
+    pub(crate) fn terminate(&self) -> bool {
+        false
+    }
+
+    // Windows has no process groups to escalate on; killing the child relies
+    // on [`PtyProcessInfo::kill_child_process`] instead.
+    pub(crate) fn kill(&self) -> bool {
+        false
+    }
+}
+
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
 pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
+    last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
 }
 
 impl PtyProcessInfo {
     pub(crate) fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
+        // Task enumeration is on by default and would retain a `Process` entry
+        // per thread, each pinning an open `/proc/<pid>/task/<tid>/stat` handle
+        // on Linux (#58651).
         let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
-            .with_exe(UpdateKind::Always);
-        let refresh_kind = RefreshKind::nothing().with_processes(process_refresh_kind);
-        let system = System::new_with_specifics(refresh_kind);
+            .with_exe(UpdateKind::Always)
+            .without_tasks();
+        // `System::new_with_specifics` with a process refresh kind would
+        // snapshot every process on the machine into this terminal's `System`,
+        // retaining one open procfs handle per process for the lifetime of the
+        // terminal (#58651). Refresh only the spawned child so that
+        // `kill_child_process` works before the first foreground refresh.
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid_getter.fallback_pid()]),
+            true,
+            process_refresh_kind,
+        );
 
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
             pid_getter,
+            last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
         }
@@ -103,18 +183,34 @@ impl PtyProcessInfo {
         &self.pid_getter
     }
 
+    pub(crate) fn capture_process_ids(&self) -> TerminalProcessIds {
+        TerminalProcessIds {
+            foreground: self.pid_getter.pid(),
+            child: self.pid_getter.fallback_pid(),
+        }
+    }
+
     fn refresh(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
         let pid = self.pid_getter.pid()?;
-        if self.system.write().refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[pid]),
-            true,
-            self.refresh_kind,
-        ) == 1
-        {
-            RwLockReadGuard::try_map(self.system.read(), |system| system.process(pid)).ok()
-        } else {
-            None
+        let fallback_pid = self.pid_getter.fallback_pid();
+        let mut system = self.system.write();
+        // sysinfo never evicts processes that are absent from the refreshed pid
+        // set, so entries for former foreground processes (each pinning an open
+        // `/proc/<pid>/stat` handle on Linux) would otherwise accumulate for as
+        // long as this terminal lives (#58651). Rebuild the `System` whenever
+        // the foreground process changes to keep the map bounded.
+        if self.last_foreground_pid.lock().replace(pid) != Some(pid) {
+            *system = System::new();
         }
+        let pids = [pid, fallback_pid];
+        let pids = if pid == fallback_pid {
+            &pids[..1]
+        } else {
+            &pids[..]
+        };
+        system.refresh_processes_specifics(ProcessesToUpdate::Some(pids), true, self.refresh_kind);
+        drop(system);
+        RwLockReadGuard::try_map(self.system.read(), |system| system.process(pid)).ok()
     }
 
     fn get_child(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
@@ -137,17 +233,6 @@ impl PtyProcessInfo {
 
     pub(crate) fn kill_child_process(&self) -> bool {
         self.get_child().is_some_and(|process| process.kill())
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn terminate_child_process(&self) -> bool {
-        let pid = self.pid_getter.fallback_pid();
-        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
-    }
-
-    #[cfg(not(unix))]
-    pub(crate) fn terminate_child_process(&self) -> bool {
-        false
     }
 
     fn load(&self) -> Option<ProcessInfo> {
@@ -204,5 +289,53 @@ impl PtyProcessInfo {
 
     pub(crate) fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// Regression test for <https://github.com/zed-industries/zed/issues/58651>:
+    /// on Linux, sysinfo keeps an open `/proc/<pid>/stat` handle for every
+    /// `Process` entry retained in a `System`, and never evicts entries that are
+    /// absent from the refreshed pid set. The per-terminal `System` must
+    /// therefore not snapshot every process on the machine, nor accumulate an
+    /// entry per foreground process that has ever run in this terminal.
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the test needs real short-lived child processes and may block"
+    )]
+    fn process_map_stays_bounded() {
+        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()));
+        assert!(
+            info.get_child().is_some(),
+            "the spawned child must be inspectable for kill_child_process \
+             before the first foreground refresh"
+        );
+        assert!(info.load_for_test().is_some());
+        let initial_len = info.system.read().processes().len();
+        assert!(
+            initial_len <= 2,
+            "creating a terminal retained {initial_len} process entries"
+        );
+
+        for _ in 0..3 {
+            let mut child = std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .expect("failed to spawn child process");
+            info.pid_getter = ProcessIdGetter::new(-1, child.id());
+            assert!(info.load_for_test().is_some());
+            child.kill().expect("failed to kill child process");
+            child.wait().expect("failed to wait for child process");
+        }
+
+        let churned_len = info.system.read().processes().len();
+        assert!(
+            churned_len <= 2,
+            "foreground process churn retained {churned_len} process entries"
+        );
     }
 }

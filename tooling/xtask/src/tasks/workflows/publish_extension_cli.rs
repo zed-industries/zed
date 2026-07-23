@@ -4,8 +4,8 @@ use indoc::{formatdoc, indoc};
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, DEFAULT_REPOSITORY_OWNER_GUARD, GitRef, NamedJob, RefSha, RepositoryTarget,
-        TokenPermissions, generate_token, named,
+        self, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, GitRef, NamedJob, RefSha,
+        RepositoryTarget, TokenPermissions, generate_token, named,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -22,6 +22,7 @@ pub fn publish_extension_cli() -> Workflow {
     let update_sha_in_extensions = update_sha_in_extensions(&publish, &message);
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default().add_input(message.name, message.input()),
         ))
@@ -85,7 +86,14 @@ fn publish_job() -> NamedJob {
 
 fn update_sha_in_zed(publish_job: &NamedJob, message: &WorkflowInput) -> NamedJob {
     let (generate_token, generated_token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into();
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(RepositoryTarget::current())
+            .with_permissions([
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
+                (TokenPermissions::Workflows, Level::Write),
+            ])
+            .into();
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
@@ -149,6 +157,11 @@ fn update_sha_in_extensions(publish_job: &NamedJob, message: &WorkflowInput) -> 
     let (generate_token, generated_token) =
         generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
             .for_repository(extensions_repo)
+            .with_permissions([
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
+                (TokenPermissions::Workflows, Level::Write),
+            ])
             .into();
 
     fn checkout_extensions_repo(token: &StepOutput) -> Step<Use> {

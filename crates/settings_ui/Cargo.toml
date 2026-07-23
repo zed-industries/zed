@@ -21,6 +21,7 @@ agent_settings.workspace = true
 agent_skills.workspace = true
 anyhow.workspace = true
 audio.workspace = true
+client.workspace = true
 cloud_api_types.workspace = true
 component.workspace = true
 codestral.workspace = true

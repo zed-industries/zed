@@ -18,9 +18,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 db.workspace = true
-editor.workspace = true
 language.workspace = true
-rope.workspace = true
 gpui.workspace = true
 menu.workspace = true
 project.workspace = true
@@ -34,7 +32,6 @@ ui.workspace = true
 ui_input.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-multi_buffer.workspace = true
 util.workspace = true
 
 [dev-dependencies]

@@ -30,6 +30,8 @@ impl Render for SearchButton {
         button.child(
             IconButton::new("project-search-indicator", SEARCH_ICON)
                 .icon_size(IconSize::Small)
+                .tab_index(0isize)
+                .aria_label("Project Search")
                 .tooltip(move |_window, cx| {
                     if let Some(focus_handle) = &focus_handle {
                         Tooltip::for_action_in(

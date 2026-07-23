@@ -448,7 +448,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .choose(rng)
                                     .unwrap();
                                 if entry.path.as_ref().is_empty() {
-                                    worktree.root_name().into()
+                                    worktree.root_name().to_rel_path_buf()
                                 } else {
                                     worktree.root_name().join(&entry.path)
                                 }
@@ -1047,10 +1047,11 @@ impl RandomizedTest for ProjectCollaborationTest {
         client.language_registry().add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,
@@ -1524,7 +1525,7 @@ fn buffer_for_full_path(
                 else {
                     return false;
                 };
-                worktree.read(cx).root_name().join(&file.path()).as_ref() == full_path
+                worktree.read(cx).root_name().join(&file.path()) == *full_path
             })
         })
         .cloned()

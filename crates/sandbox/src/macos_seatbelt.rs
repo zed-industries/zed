@@ -88,9 +88,8 @@ impl SeatbeltConfigFile {
     /// directory of the command, since that is model-controlled and would
     /// let the model widen its own writable scope.
     ///
-    /// `protected_paths` lists paths whose file data reads and writes should
-    /// be blocked even if they fall under a readable or writable directory.
-    /// File metadata remains readable.
+    /// `protected_paths` lists paths whose writes should be blocked even if they
+    /// fall under a writable directory. Contents remain readable.
     ///
     /// `allowed_unix_socket_paths` lists Unix domain sockets the command may
     /// connect to for local IPC even when IP network access is otherwise
@@ -138,9 +137,8 @@ impl SeatbeltConfigFile {
 ///   the project's worktree paths here, not the working directory of the
 ///   command (the working directory is model-controlled, and using it as
 ///   the writable scope would let the model write outside the project).
-/// * `protected_paths` - Paths whose file data reads and writes should be
-///   denied even if they fall under a readable or writable directory. File
-///   metadata remains readable.
+/// * `protected_paths` - Paths whose writes should be denied even if they fall
+///   under a writable directory. Contents remain readable.
 /// * `allowed_unix_socket_paths` - Unix domain sockets the command may
 ///   connect to for local IPC even when IP network access is otherwise
 ///   disabled. This does not permit sending packets to other machines.
@@ -191,9 +189,8 @@ pub fn wrap_invocation(
 /// Writes to each entry in `writable_directories` (typically the project's
 /// worktree paths plus any per-command scratch directory the caller wants
 /// allowed) and the standard `/dev/*` write targets are also allowed by
-/// default. File data reads and writes to paths in `protected_paths` are
-/// denied even when they would otherwise be readable or writable; file
-/// metadata remains readable. Unix domain socket paths in
+/// default. Writes to paths in `protected_paths` are denied even when they
+/// would otherwise be writable; contents remain readable. Unix domain socket paths in
 /// `allowed_unix_socket_paths` are reachable for local IPC even when IP
 /// network access is otherwise blocked. This does not permit sending packets
 /// to other machines.
@@ -209,21 +206,19 @@ fn generate_seatbelt_config(
     allowed_unix_socket_paths: &[&Path],
     permissions: SandboxPermissions,
 ) -> Result<String> {
-    // Canonicalize each writable path to resolve symlinks (e.g.,
-    // /var -> /private/var on macOS). Fall back to the original path if
-    // canonicalization fails.
+    // These paths are already the canonical identities captured once, at
+    // validation time, inside each `HostFilesystemLocation` (resolving symlinks
+    // and, for a not-yet-created leaf, its existing parent). We deliberately do
+    // NOT re-canonicalize here: re-resolving a path at profile-generation time
+    // is the time-of-check-to-time-of-use hole this design closes. Use them
+    // verbatim as Seatbelt rule literals.
     let canonical_writable_directories: Vec<PathBuf> = writable_directories
         .iter()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        .map(|path| path.to_path_buf())
         .collect();
-    // Use `canonicalize_allowing_missing_leaf` rather than a plain
-    // `canonicalize` so a not-yet-created `.git` (before `git init`) still
-    // resolves through its existing parent and matches the canonicalized
-    // writable worktree above; otherwise the deny rule would miss the real path
-    // on a symlinked root (`/tmp` -> `/private/tmp`).
     let canonical_protected_paths: Vec<PathBuf> = protected_paths
         .iter()
-        .map(|path| crate::canonicalize_allowing_missing_leaf(path))
+        .map(|path| path.to_path_buf())
         .collect();
     // Unlike file paths, Unix socket literals are emitted verbatim: it isn't
     // guaranteed whether Seatbelt resolves symlinks before matching a
@@ -248,8 +243,44 @@ fn generate_seatbelt_config(
 ; Allow sysctl reads (needed for many system calls)
 (allow sysctl-read)
 
-; Allow mach lookups (needed for IPC)
-(allow mach-lookup)
+; Mach service lookups. This is an ALLOWLIST, not a blanket `(allow mach-lookup)`.
+; An unrestricted mach-lookup lets a sandboxed command reach LaunchServices /
+; launchd and have a process spawned *outside* the sandbox (e.g. `open -a
+; Terminal`, or opening a crafted `.app`) — the launched process does not inherit
+; this profile, so that is a full sandbox escape. So we allow only the services
+; ordinary dev tooling needs and deliberately EXCLUDE the LaunchServices/launchd
+; endpoints (closing that escape), the pasteboard (silent clipboard theft), and
+; audio (mic/privacy). Curated from Codex's and Chromium's Seatbelt policies; add
+; an entry here (with a comment) if a legitimate toolchain needs another service.
+; A non-existent name is simply never matched, so erring toward including
+; plausible infrastructure services is safe.
+(allow mach-lookup
+    ; identity: user & group resolution (getpwuid, id, whoami, perm checks)
+    (global-name "com.apple.system.opendirectoryd.libinfo")
+    (global-name "com.apple.system.opendirectoryd.membership")
+    (global-name "com.apple.system.DirectoryService.libinfo_v1")
+    ; per-user temp/cache dir resolution ($TMPDIR, /var/folders/...)
+    (global-name "com.apple.bsd.dirhelper")
+    ; CFPreferences (pervasive in Apple frameworks linked by dev tools).
+    ; Chromium denies cfprefsd.daemon to force in-process prefs; we follow Codex
+    ; and allow it since dev commands legitimately use many prefs domains — it's
+    ; a prefs read/write, not an escape.
+    (global-name "com.apple.cfprefsd.daemon")
+    (global-name "com.apple.cfprefsd.agent")
+    (local-name "com.apple.cfprefsd.agent")
+    ; logging / diagnostics (os_log, ASL, Darwin notifications)
+    (global-name "com.apple.logd")
+    (global-name "com.apple.logd.events")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.diagnosticd")
+    (global-name "com.apple.system.notification_center")
+    ; Apple telemetry (data goes to Apple only; harmless, avoids init latency)
+    (global-name "com.apple.analyticsd")
+    (global-name "com.apple.analyticsd.messagetracer")
+    ; power assertions (caffeinate / prevent idle sleep during long builds)
+    (global-name "com.apple.PowerManagement.control")
+    ; developer-tools automation-mode flag (our workload is dev tooling)
+    (global-name "com.apple.dt.automationmode.reader"))
 
 ; Allow pseudo-terminal operations
 (allow pseudo-tty)
@@ -313,12 +344,11 @@ fn generate_seatbelt_config(
     for protected_path in &canonical_protected_paths {
         let escaped_path = escape_sandbox_path(protected_path)?;
         // `subpath` already matches the path itself plus everything beneath it,
-        // so it covers both a `.git` directory and a linked worktree's `.git`
-        // gitlink file without a redundant `literal` rule.
+        // so no redundant `literal` rule is needed.
         config.push_str(&format!(
             r#"
-; Block Git metadata content access unless Git access is approved
-(deny file-read-data file-write*
+; Block protected path writes
+(deny file-write*
     (subpath "{escaped_path}"))
 "#
         ));
@@ -349,6 +379,33 @@ fn generate_seatbelt_config(
 "#,
             ));
         }
+    }
+
+    // When outbound network is permitted at all, tools that do their own DNS
+    // resolution, TLS trust evaluation, and network-configuration lookups need a
+    // few more Mach services. Kept out of the base allowlist so a no-network
+    // command can't reach them. Still an allowlist (mirrors Codex's Seatbelt
+    // network policy) that excludes LaunchServices/launchd.
+    if !matches!(permissions.network, NetworkAccess::None) {
+        config.push_str(
+            r#"
+; Extra Mach services for DNS / TLS-trust / network configuration, needed only
+; when outbound network is permitted. Still an allowlist that excludes
+; LaunchServices/launchd. If hostname resolution fails, add
+; `com.apple.mDNSResponder`; if offline code-signature verification of loaded
+; dylibs/plugins fails, move the trust services into the base block above.
+(allow mach-lookup
+    ; network / DNS configuration
+    (global-name "com.apple.SystemConfiguration.configd")
+    (global-name "com.apple.SystemConfiguration.DNSConfiguration")
+    (global-name "com.apple.networkd")
+    ; TLS certificate trust / keychain / revocation
+    (global-name "com.apple.SecurityServer")
+    (global-name "com.apple.trustd")
+    (global-name "com.apple.trustd.agent")
+    (global-name "com.apple.ocspd"))
+"#,
+        );
     }
 
     if !allowed_unix_socket_paths.is_empty() {
@@ -402,6 +459,19 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// Strip SBPL comment lines (`;`-prefixed) from a generated Seatbelt profile
+    /// so assertions match on the actual rules rather than on documentation.
+    /// Several comments legitimately mention rule syntax (for example the
+    /// blanket `(allow mach-lookup)` form they explain we avoid), which would
+    /// otherwise cause a naive substring check to spuriously match.
+    fn seatbelt_rules_only(config: &str) -> String {
+        config
+            .lines()
+            .filter(|line| !line.trim_start().starts_with(';'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn test_generate_seatbelt_config_contains_read_and_project_write_permissions_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
@@ -447,6 +517,57 @@ mod tests {
         assert!(config.contains("(allow file-ioctl"));
         assert!(config.contains("/dev/ptmx"));
         assert!(config.contains("^/dev/ttys[0-9]+"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_scopes_mach_lookup_and_excludes_escape_services() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let config =
+            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
+                .unwrap();
+        // Assert on the rules only: the mach-lookup comment intentionally spells
+        // out the blanket `(allow mach-lookup)` form it avoids, which a raw
+        // `config.contains` would match.
+        let rules = seatbelt_rules_only(&config);
+
+        // A scoped allowlist, never the blanket form — a blanket `(allow
+        // mach-lookup)` would let a command reach LaunchServices/launchd and
+        // escape the sandbox via `open`.
+        assert!(rules.contains("(allow mach-lookup"));
+        assert!(!rules.contains("(allow mach-lookup)"));
+        assert!(rules.contains("com.apple.cfprefsd.daemon"));
+
+        // The escape/abuse endpoints must fall through to `(deny default)`.
+        assert!(!rules.contains("launchservicesd"));
+        assert!(!rules.contains("com.apple.lsd"));
+        assert!(!rules.contains("com.apple.pasteboard"));
+
+        // Network-only services must not be granted without network.
+        assert!(!rules.contains("com.apple.SecurityServer"));
+        assert!(!rules.contains("com.apple.SystemConfiguration.configd"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_adds_network_mach_services_when_network_allowed() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[],
+            &[],
+            SandboxPermissions {
+                network: NetworkAccess::All,
+                allow_fs_write: false,
+            },
+        )
+        .unwrap();
+
+        // DNS / TLS / network-config services appear only when network is allowed.
+        assert!(config.contains("com.apple.SystemConfiguration.configd"));
+        assert!(config.contains("com.apple.SecurityServer"));
+        assert!(config.contains("com.apple.trustd"));
+        assert!(config.contains("com.apple.trustd.agent"));
+        // ...but never the escape endpoints.
+        assert!(!config.contains("launchservicesd"));
     }
 
     #[test]
@@ -542,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_seatbelt_config_denies_protected_path_data_and_writes() {
+    fn test_generate_seatbelt_config_denies_protected_path_writes() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let protected = dir.join(".gitignore");
         let config = generate_seatbelt_config(
@@ -553,18 +674,23 @@ mod tests {
         )
         .unwrap();
 
-        assert!(config.contains("(deny file-read-data file-write*"));
+        assert!(config.contains("(deny file-write*"));
+        assert!(!config.contains("file-read-data"));
         assert!(config.contains("(subpath \"/Users/test/projects/myproject/.gitignore\")"));
         // `subpath` already covers the path itself, so no redundant `literal`.
         assert!(!config.contains("(literal \"/Users/test/projects/myproject/.gitignore\")"));
     }
 
     #[test]
-    fn test_sandbox_blocks_protected_path_contents_but_allows_metadata() {
+    fn test_sandbox_allows_protected_path_reads_but_blocks_writes() {
         use std::process::Command;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let protected_file = temp_dir.path().join(".gitignore");
+        // Canonicalize so the policy paths resolve the macOS `/var` -> `/private/var`
+        // symlink; Seatbelt matches rules against the resolved path, as production
+        // does via `HostFilesystemLocation`.
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let protected_file = dir.join(".gitignore");
         std::fs::write(&protected_file, "target\n").unwrap();
 
         let (program, args, _config_file) = wrap_invocation(
@@ -572,13 +698,13 @@ mod tests {
             &[
                 "-c".to_string(),
                 format!(
-                    "test -e '{}' && ! cat '{}' >/dev/null 2>&1 && ! sh -c 'echo changed > {}'",
+                    "test -e '{}' && cat '{}' >/dev/null 2>&1 && ! sh -c 'echo changed > {}'",
                     protected_file.display(),
                     protected_file.display(),
                     protected_file.display(),
                 ),
             ],
-            &[temp_dir.path()],
+            &[dir.as_path()],
             &[protected_file.as_path()],
             &[],
             SandboxPermissions::default(),
@@ -592,7 +718,7 @@ mod tests {
 
         assert!(
             output.status.success(),
-            "sandbox should allow metadata but deny protected data reads and writes: stderr={} stdout={}",
+            "sandbox should allow protected reads but deny protected writes: stderr={} stdout={}",
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout),
         );
@@ -607,7 +733,10 @@ mod tests {
         use std::process::Command;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let protected_file = temp_dir.path().join(".gitignore");
+        // See the sibling protected-path test: canonicalize so policy paths resolve
+        // the macOS `/var` -> `/private/var` symlink that Seatbelt matches against.
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let protected_file = dir.join(".gitignore");
         std::fs::write(&protected_file, "target\n").unwrap();
 
         let (program, args, _config_file) = wrap_invocation(
@@ -615,12 +744,12 @@ mod tests {
             &[
                 "-c".to_string(),
                 format!(
-                    "! cat '{}' >/dev/null 2>&1 && ! sh -c 'echo changed > {}'",
+                    "cat '{}' >/dev/null 2>&1 && ! sh -c 'echo changed > {}'",
                     protected_file.display(),
                     protected_file.display(),
                 ),
             ],
-            &[temp_dir.path()],
+            &[dir.as_path()],
             &[protected_file.as_path()],
             &[],
             SandboxPermissions {
@@ -637,7 +766,7 @@ mod tests {
 
         assert!(
             output.status.success(),
-            "protected paths should stay blocked even with unrestricted writes: stderr={} stdout={}",
+            "protected paths should stay readable but not writable even with unrestricted writes: stderr={} stdout={}",
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout),
         );
@@ -870,7 +999,11 @@ mod tests {
 
         let project_dir = tempfile::tempdir().unwrap();
         let scratch_dir = tempfile::tempdir().unwrap();
-        let test_file = scratch_dir.path().join("test_write.txt");
+        // Canonicalize so the writable subpaths resolve the macOS `/var` ->
+        // `/private/var` symlink that Seatbelt matches against.
+        let project_path = std::fs::canonicalize(project_dir.path()).unwrap();
+        let scratch_path = std::fs::canonicalize(scratch_dir.path()).unwrap();
+        let test_file = scratch_path.join("test_write.txt");
 
         let (program, args, _config_file) = wrap_invocation(
             "/bin/sh",
@@ -878,7 +1011,7 @@ mod tests {
                 "-c".to_string(),
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
-            &[project_dir.path(), scratch_dir.path()],
+            &[project_path.as_path(), scratch_path.as_path()],
             &[],
             &[],
             SandboxPermissions::default(),
@@ -903,7 +1036,10 @@ mod tests {
         use std::process::Command;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let test_file = temp_dir.path().join("test_write.txt");
+        // Canonicalize so the writable subpath resolves the macOS `/var` ->
+        // `/private/var` symlink that Seatbelt matches against.
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let test_file = dir.join("test_write.txt");
 
         let (program, args, _config_file) = wrap_invocation(
             "/bin/sh",
@@ -911,7 +1047,7 @@ mod tests {
                 "-c".to_string(),
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
-            &[temp_dir.path()],
+            &[dir.as_path()],
             &[],
             &[],
             SandboxPermissions::default(),

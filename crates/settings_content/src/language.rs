@@ -1,4 +1,4 @@
-use std::num::NonZeroU32;
+use std::{borrow::Cow, num::NonZeroU32};
 
 use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
@@ -44,7 +44,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
+    pub file_types: Option<FileTypeMap>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
@@ -54,10 +54,37 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 
         // A user's global settings override the default global settings and
         // all default language-specific settings.
-        //
         self.defaults.merge_from(&other.defaults);
+        let globally_disabled_servers = other.defaults.language_servers.as_ref().map(|servers| {
+            servers
+                .iter()
+                .filter(|entry| entry.disabled)
+                .cloned()
+                .collect::<Vec<_>>()
+        });
         for language_settings in self.languages.0.values_mut() {
+            let language_server_overrides = language_settings.language_servers.clone();
             language_settings.merge_from(&other.defaults);
+            if let Some(mut language_server_overrides) = language_server_overrides {
+                if let Some(disabled) = &globally_disabled_servers {
+                    for disabled_server in disabled {
+                        language_server_overrides
+                            .retain(|entry| entry.disabled || entry.name != disabled_server.name);
+                    }
+
+                    let insert_before = language_server_overrides
+                        .iter()
+                        .position(|entry| entry.name.as_ref() == REST_OF_LANGUAGE_SERVERS)
+                        .unwrap_or(language_server_overrides.len());
+                    for disabled_server in disabled {
+                        if !language_server_overrides.contains(disabled_server) {
+                            language_server_overrides
+                                .insert(insert_before, disabled_server.clone());
+                        }
+                    }
+                }
+                language_settings.language_servers = Some(language_server_overrides);
+            }
         }
 
         // A user's language-specific settings override default language-specific settings.
@@ -390,6 +417,65 @@ pub enum SoftWrap {
     Bounded,
 }
 
+pub const REST_OF_LANGUAGE_SERVERS: &str = "...";
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[schemars(with = "String")]
+pub struct ConfiguredLanguageServer {
+    pub name: Arc<str>,
+    pub disabled: bool,
+}
+
+impl ConfiguredLanguageServer {
+    const DISABLED_CHAR: char = '!';
+
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
+        Self {
+            name: name.into(),
+            disabled: false,
+        }
+    }
+
+    pub fn new_disabled(name: impl Into<Arc<str>>) -> Self {
+        Self {
+            name: name.into(),
+            disabled: true,
+        }
+    }
+}
+
+impl From<&str> for ConfiguredLanguageServer {
+    fn from(value: &str) -> Self {
+        match value.strip_prefix(Self::DISABLED_CHAR) {
+            Some(name) => Self::new_disabled(name),
+            None => Self::new(value),
+        }
+    }
+}
+
+impl Serialize for ConfiguredLanguageServer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.disabled {
+            serializer.collect_str(&format_args!("{}{}", Self::DISABLED_CHAR, self.name))
+        } else {
+            serializer.serialize_str(&self.name)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfiguredLanguageServer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Cow::<'de, str>::deserialize(deserializer)?;
+        Ok(Self::from(value.as_ref()))
+    }
+}
+
 /// The settings for a particular language.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -481,7 +567,7 @@ pub struct LanguageSettingsContent {
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     ///
     /// Default: ["..."]
-    pub language_servers: Option<Vec<String>>,
+    pub language_servers: Option<Vec<ConfiguredLanguageServer>>,
     /// Controls how semantic tokens from language servers are used for syntax highlighting.
     ///
     /// Options:
@@ -899,12 +985,22 @@ pub struct PrettierSettingsContent {
     strum::VariantArray,
     strum::VariantNames,
 )]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
+    /// Only lines with unstaged changes are formatted on save.
+    /// Requires source control and LSP range formatting support.
+    /// If no git diff is available or if the LSP doesn't support
+    /// range formatting, formatting is skipped.
+    Modifications,
+    /// Only lines with unstaged changes are formatted on save.
+    /// If no git diff is available (e.g., when source control is
+    /// unavailable) or if the LSP doesn't support range formatting,
+    /// falls back to formatting the whole file.
+    ModificationsIfAvailable,
 }
 
 /// Controls how line endings are normalized when a buffer is saved.
@@ -1104,6 +1200,20 @@ pub struct LanguageTaskSettingsContent {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageToSettingsMap(pub HashMap<String, LanguageSettingsContent>);
 
+/// Map from language name to file patterns.
+#[with_fallible_options]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct FileTypeMap(pub HashMap<Arc<str>, ExtendingVec<String>>);
+
+impl<'a> IntoIterator for &'a FileTypeMap {
+    type Item = (&'a Arc<str>, &'a ExtendingVec<String>);
+    type IntoIter = std::collections::hash_map::Iter<'a, Arc<str>, ExtendingVec<String>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
 /// Determines how indent guides are colored.
 #[derive(
     Default,
@@ -1157,7 +1267,7 @@ pub enum IndentGuideBackgroundColoring {
 #[cfg(test)]
 mod test {
 
-    use crate::{ParseStatus, fallible_options};
+    use crate::{ParseStatus, fallible_options, merge_from::MergeFrom};
 
     use super::*;
 
@@ -1226,6 +1336,308 @@ mod test {
         let raw_auto = "{\"formatter\": {}}";
         let (_, result) = fallible_options::parse_json::<LanguageSettingsContent>(raw_auto);
         assert!(matches!(result, ParseStatus::Failed { .. }));
+    }
+
+    #[test]
+    fn test_configured_language_server_serialization() {
+        let enabled = ConfiguredLanguageServer::new("rust-analyzer");
+        let disabled = ConfiguredLanguageServer::new_disabled("rust-analyzer");
+
+        assert_eq!(
+            serde_json::to_string(&enabled).expect("enabled server should serialize"),
+            "\"rust-analyzer\""
+        );
+        assert_eq!(
+            serde_json::to_string(&disabled).expect("disabled server should serialize"),
+            "\"!rust-analyzer\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfiguredLanguageServer>("\"rust-analyzer\"")
+                .expect("enabled server should deserialize"),
+            enabled
+        );
+        assert_eq!(
+            serde_json::from_str::<ConfiguredLanguageServer>("\"!rust-analyzer\"")
+                .expect("disabled server should deserialize"),
+            disabled
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_preserves_per_language_config() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![
+                    "!tailwindcss-language-server".into(),
+                    "!eslint".into(),
+                    REST_OF_LANGUAGE_SERVERS.into(),
+                ]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                ConfiguredLanguageServer::new_disabled("typescript-language-server"),
+                ConfiguredLanguageServer::new("vtsls"),
+                ConfiguredLanguageServer::new_disabled("eslint"),
+                ConfiguredLanguageServer::new_disabled("tailwindcss-language-server"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]
+        );
+
+        let default_servers = base.defaults.language_servers.as_ref().unwrap();
+        assert_eq!(
+            default_servers,
+            &vec![
+                ConfiguredLanguageServer::new_disabled("tailwindcss-language-server"),
+                ConfiguredLanguageServer::new_disabled("eslint"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_global_language_server_disable_overrides_per_language_enable() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!vtsls".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let expected = vec![
+            ConfiguredLanguageServer::new_disabled("typescript-language-server"),
+            ConfiguredLanguageServer::new_disabled("vtsls"),
+            ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+        ];
+        assert_eq!(
+            base.languages
+                .0
+                .get("TypeScript")
+                .and_then(|settings| settings.language_servers.as_deref()),
+            Some(expected.as_slice()),
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_no_per_language_config_uses_global() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "Rust".into(),
+                    LanguageSettingsContent {
+                        tab_size: Some(std::num::NonZeroU32::new(4).unwrap()),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!eslint".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let rust_servers = base.languages.0["Rust"].language_servers.as_ref().unwrap();
+        assert_eq!(
+            rust_servers,
+            &vec![
+                ConfiguredLanguageServer::new_disabled("eslint"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_user_per_language_overrides() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!eslint".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "deno".into(),
+                            "!vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                ConfiguredLanguageServer::new("deno"),
+                ConfiguredLanguageServer::new_disabled("vtsls"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_user_per_language_config_overrides_default_disables() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "typescript-language-server".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                ConfiguredLanguageServer::new("typescript-language-server"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]
+        );
     }
 
     #[test]

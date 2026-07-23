@@ -52,7 +52,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -300,8 +300,13 @@ impl Render for TitleBar {
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
-                                render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                                // Hide the project/branch items to make room when the
+                                // menu bar is expanded -- except in accessible mode,
+                                // where the menu bar is always expanded but those
+                                // controls must still remain reachable.
+                                render_project_items &= !menu
+                                    .update(cx, |menu, cx| menu.all_menus_shown(cx))
+                                    || cx.accessible_mode();
                                 title_bar.child(menu)
                             },
                         )
@@ -340,8 +345,6 @@ impl Render for TitleBar {
         let status = self.client.status();
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();
-
-        let signed_in = user.is_some();
         let is_signing_in = user.is_none()
             && matches!(
                 status,
@@ -357,13 +360,7 @@ impl Render for TitleBar {
 
         children.push(
             h_flex()
-                .map(|this| {
-                    if signed_in {
-                        this.pr_1p5()
-                    } else {
-                        this.pr_1()
-                    }
-                })
+                .pr_1()
                 .gap_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(self.render_call_controls(window, cx))
@@ -755,13 +752,14 @@ impl TitleBar {
             .get(&host_user.legacy_id)?;
 
         Some(
-            Button::new("project_owner_trigger", host_user.github_login.clone())
+            Button::new("project_owner_trigger", host_user.username.clone())
                 .color(Color::Player(participant_index.0))
                 .label_size(LabelSize::Small)
+                .tab_index(0isize)
                 .tooltip(move |_, cx| {
                     let tooltip_title = format!(
                         "{} is sharing this project. Click to follow.",
-                        host_user.github_login
+                        host_user.username
                     );
 
                     Tooltip::with_meta(tooltip_title, None, "Click to Follow", cx)
@@ -843,6 +841,7 @@ impl TitleBar {
             .trigger_with_tooltip(
                 Button::new("project_name_trigger", display_name)
                     .label_size(LabelSize::Small)
+                    .tab_index(0isize)
                     .when(self.worktree_count(cx) > 1, |this| {
                         this.end_icon(
                             Icon::new(IconName::ChevronDown)
@@ -894,6 +893,7 @@ impl TitleBar {
             .trigger_with_tooltip(
                 Button::new("project_name_trigger", display_name)
                     .label_size(LabelSize::Small)
+                    .tab_index(0isize)
                     .when(self.worktree_count(cx) > 1, |this| {
                         this.end_icon(
                             Icon::new(IconName::ChevronDown)
@@ -980,7 +980,7 @@ impl TitleBar {
             worktree_label.clone()
         };
 
-        let worktree_button = {
+        let worktree_button = settings.show_worktree_name.then(|| {
             let project = self.project.clone();
             let workspace_handle = workspace.downgrade();
             PopoverMenu::new("worktree-picker-menu")
@@ -997,6 +997,7 @@ impl TitleBar {
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .label_size(LabelSize::Small)
                         .color(Color::Muted)
+                        .tab_index(0isize)
                         .loading(is_creating)
                         .start_icon(
                             Icon::new(IconName::GitWorktree)
@@ -1013,7 +1014,7 @@ impl TitleBar {
                     },
                 )
                 .anchor(gpui::Anchor::TopLeft)
-        };
+        });
 
         let branch_picker = branch_name.and_then(|branch_name| {
             settings.show_branch_name.then(|| {
@@ -1028,6 +1029,7 @@ impl TitleBar {
                     Button::new("project_branch_trigger", "Create Branch")
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .label_size(LabelSize::Small)
+                        .tab_index(0isize)
                         .start_icon(
                             Icon::new(IconName::GitBranchPlus)
                                 .size(IconSize::XSmall)
@@ -1038,6 +1040,7 @@ impl TitleBar {
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                         .label_size(LabelSize::Small)
                         .color(Color::Muted)
+                        .tab_index(0isize)
                         .start_icon(
                             Icon::new(branch_icon)
                                 .size(IconSize::XSmall)
@@ -1073,19 +1076,25 @@ impl TitleBar {
             })
         });
 
+        if worktree_button.is_none() && branch_picker.is_none() {
+            return None;
+        }
+
+        let show_separator = worktree_button.is_some() && branch_picker.is_some();
+
         Some(
             h_flex()
                 .gap_px()
-                .child(worktree_button)
-                .when_some(branch_picker, |this, branch_picker| {
+                .children(worktree_button)
+                .when(show_separator, |this| {
                     this.child(
                         Label::new("/")
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .alpha(0.25),
                     )
-                    .child(branch_picker)
                 })
+                .children(branch_picker)
                 .into_any_element(),
         )
     }
@@ -1194,6 +1203,7 @@ impl TitleBar {
         let workspace = self.workspace.clone();
         Button::new("sign_in", "Sign In")
             .label_size(LabelSize::Small)
+            .tab_index(0isize)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
                 let workspace = workspace.clone();
@@ -1216,7 +1226,7 @@ impl TitleBar {
         let user = user_store.read(cx).current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
-        let user_login = user.as_ref().map(|u| u.github_login.clone());
+        let username = user.as_ref().map(|u| u.username.clone());
 
         let is_signed_in = user.is_some();
 
@@ -1251,24 +1261,28 @@ impl TitleBar {
                 }
             });
 
-            ButtonLike::new("user-menu").aria_label("User menu").child(
-                h_flex()
-                    .when_some(business_organization, |this, organization| {
-                        this.gap_2()
-                            .child(Label::new(&organization.name).size(LabelSize::Small))
-                    })
-                    .children(avatar),
-            )
+            ButtonLike::new("user-menu")
+                .aria_label("User menu")
+                .tab_index(0isize)
+                .child(
+                    h_flex()
+                        .when_some(business_organization, |this, organization| {
+                            this.gap_2()
+                                .child(Label::new(&organization.name).size(LabelSize::Small))
+                        })
+                        .children(avatar),
+                )
         } else {
             ButtonLike::new("user-menu")
                 .aria_label("User menu")
+                .tab_index(0isize)
                 .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
         };
 
         PopoverMenu::new("user-menu")
             .trigger(trigger)
             .menu(move |window, cx| {
-                let user_login = user_login.clone();
+                let username = username.clone();
                 let current_organization = current_organization.clone();
                 let organizations = organizations.clone();
                 let user_store = user_store.clone();
@@ -1282,15 +1296,15 @@ impl TitleBar {
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(is_signed_in, |this| {
-                        let user_login = user_login.clone();
+                        let username = username.clone();
                         this.custom_entry(
                             move |_window, _cx| {
-                                let user_login = user_login.clone().unwrap_or_default();
+                                let username = username.clone().unwrap_or_default();
 
                                 h_flex()
                                     .w_full()
                                     .justify_between()
-                                    .child(Label::new(user_login))
+                                    .child(Label::new(username))
                                     .into_any_element()
                             },
                             move |_, cx| {

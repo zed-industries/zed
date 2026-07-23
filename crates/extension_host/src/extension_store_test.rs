@@ -56,7 +56,7 @@ fn remote_sync_language_entry(extension: &str, path: &str) -> ExtensionIndexLang
     ExtensionIndexLanguageEntry {
         extension: extension.into(),
         path: path.into(),
-        matcher: LanguageMatcher::default(),
+        matcher: LanguageMatcher::default().into(),
         hidden: false,
         grammar: None,
     }
@@ -393,11 +393,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     path: "languages/erb".into(),
                     grammar: Some("embedded_template".into()),
                     hidden: false,
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
                         ..LanguageMatcher::default()
-                    },
+                    })
+                    .into(),
                 },
             ),
             (
@@ -407,11 +408,12 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     path: "languages/ruby".into(),
                     grammar: Some("ruby".into()),
                     hidden: false,
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
                         ..LanguageMatcher::default()
-                    },
+                    })
+                    .into(),
                 },
             ),
         ]
@@ -769,7 +771,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     language_extension::init(
-        LspAccess::ViaLspStore(project.update(cx, |project, _| project.lsp_store())),
+        LspAccess::ViaLspStore(
+            project
+                .update(cx, |project, _| project.lsp_store())
+                .downgrade(),
+        ),
         proxy.clone(),
         language_registry.clone(),
     );

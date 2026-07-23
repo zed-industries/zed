@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::tasks::workflows::{
     steps::{
-        CommonJobConditions, cache_rust_dependencies_namespace, repository_owner_guard_expression,
-        use_clang,
+        CommonJobConditions, CommonPermissionSets, cache_rust_dependencies_namespace,
+        repository_owner_guard_expression, use_clang,
     },
     vars::{self, PathCondition},
 };
@@ -105,6 +105,7 @@ pub(crate) fn run_tests() -> Workflow {
     ); // could be more specific here?
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default()
                 .push(
@@ -220,12 +221,17 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
           # Map directory names to package names
           FILE_CHANGED_PKGS=""
           for dir in $CHANGED_DIRS; do
-            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1 || true)
+            # Only add directories that map to a real root-workspace package.
+            # Some directories (e.g. tooling/lints) belong to a separate workspace
+            # and are not root members, so they have no mapping here. Previously we
+            # fell back to the raw directory name, which fabricated a bogus package
+            # (e.g. "lints") and produced a nextest filter like rdeps(lints) that
+            # hard-errors ("operator didn't match any packages"). Skipping such
+            # directories leaves the package set empty, which falls through to the
+            # "run all tests" path below.
             if [ -n "$pkg" ]; then
               FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
-            else
-              # Fall back to directory name if no mapping found
-              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
             fi
           done
           FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
@@ -493,7 +499,7 @@ fn check_wasm() -> NamedJob {
     fn cargo_check_wasm() -> Step<Run> {
         named::bash(concat!(
             "cargo -Zbuild-std=std,panic_abort ",
-            "check --target wasm32-unknown-unknown -p gpui_platform",
+            "check --target wasm32-unknown-unknown -p gpui_platform -p cloud_api_client",
         ))
         .add_env((
             "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
@@ -795,6 +801,17 @@ pub(crate) fn check_scripts(harden: bool) -> NamedJob {
         named::bash("./script/shellcheck-scripts error")
     }
 
+    fn run_zizmor() -> Step<Use> {
+        named::uses(
+            "zizmorcore",
+            "zizmor-action",
+            "6599ee8b7a49aef6a770f63d261d214911a7ce02", // v0.6.0
+        )
+        .add_with(("advanced-security", false))
+        .add_with(("min-severity", "high"))
+        .add_with(("version", "latest"))
+    }
+
     fn check_xtask_workflows() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             cargo xtask workflows
@@ -812,10 +829,11 @@ pub(crate) fn check_scripts(harden: bool) -> NamedJob {
             .when(harden, |this| this.add_step(steps::harden_runner()))
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
+            .add_step(cache_rust_dependencies_namespace())
+            .add_step(check_xtask_workflows())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
-            .add_step(cache_rust_dependencies_namespace())
-            .add_step(check_xtask_workflows()),
+            .add_step(run_zizmor()),
     )
 }
 
