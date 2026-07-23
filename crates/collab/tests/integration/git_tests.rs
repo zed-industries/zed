@@ -8,7 +8,9 @@ use client::RECEIVE_TIMEOUT;
 use collections::HashMap;
 use git::{
     Oid,
-    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree as GitWorktree},
+    repository::{
+        CommitData, GitCommitTemplate, InitialGraphCommitData, RepoPath, Worktree as GitWorktree,
+    },
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
 use git_ui::git_graph::GitGraph;
@@ -1402,4 +1404,61 @@ async fn test_diff_stat_sync_between_host_and_downstream_client(
         stats_b, expected_after_edit,
         "remote diff stats should be restored from the database after rejoining the call"
     );
+}
+
+#[gpui::test]
+async fn test_load_commit_template_over_collab(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "README.md": "# Project's README"
+            }),
+        )
+        .await;
+
+    client_a
+        .fs()
+        .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "feat: add awesome feature".to_string(),
+            })
+        })
+        .expect("Should update git state");
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repository_b = project_b.update(cx_b, |project, cx| project.active_repository(cx).unwrap());
+    let commit_template = repository_b
+        .update(cx_b, |repository, _cx| {
+            repository.load_commit_template_text()
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .expect("Guest should be able to load the host's commit template");
+
+    assert_eq!(commit_template.template, "feat: add awesome feature");
 }

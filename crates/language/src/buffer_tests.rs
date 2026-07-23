@@ -20,7 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
-use syntax_map::TreeSitterOptions;
+use syntax_map::{MAX_BYTES_TO_QUERY, TreeSitterOptions};
 use text::network::Network;
 use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
@@ -281,7 +281,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |settings| {
-            settings.file_types.get_or_insert_default().extend([
+            settings.file_types.get_or_insert_default().0.extend([
                 ("TypeScript".into(), vec!["js".into()].into()),
                 (
                     "JavaScript".into(),
@@ -778,9 +778,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
         "(source_file (expression_statement (block)))"
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(json_lang())), cx)
-    });
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(json_lang()), cx));
     cx.executor().run_until_parked();
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
@@ -1429,6 +1427,51 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
         Vec::new(),
         cx,
     );
+}
+
+#[gpui::test]
+fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut App) {
+    let mut text = String::from("{\n  \"theme\": {\n");
+    let mut property_object_open_offsets = Vec::new();
+    for index in 0..500 {
+        text.push_str(&format!("    \"scope_{index:03}\": "));
+        property_object_open_offsets.push(text.len());
+        text.push_str("{\n      \"color\": \"#ffffff\"\n    },\n");
+    }
+    text.push_str("    \"last\": {}\n  }\n}\n");
+    assert!(
+        text.len() > MAX_BYTES_TO_QUERY,
+        "fixture should exceed the bounded tree-sitter query window"
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(json_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let late_open_offset = property_object_open_offsets[400];
+    let late_matches = snapshot.fetch_bracket_ranges(late_open_offset..late_open_offset + 1, None);
+    let late_color_index = color_index_for_open(&late_matches, late_open_offset);
+
+    assert_eq!(
+        late_color_index,
+        Some(2),
+        "Jumping directly into a later row chunk should preserve enclosing JSON object depth"
+    );
+
+    let first_open_offset = property_object_open_offsets[0];
+    let all_matches = snapshot.fetch_bracket_ranges(0..snapshot.len(), None);
+    assert_eq!(
+        color_index_for_open(&all_matches, first_open_offset),
+        late_color_index,
+        "Sibling object braces should keep the same color across row chunks"
+    );
+
+    for open_offset in property_object_open_offsets {
+        assert_eq!(
+            color_index_for_open(&all_matches, open_offset),
+            late_color_index,
+            "All generated sibling object braces should share the same depth color"
+        );
+    }
 }
 
 #[gpui::test]
@@ -4407,19 +4450,15 @@ fn erb_lang() -> Language {
     .unwrap()
 }
 
-fn json_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Json".into(),
-            matcher: (LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
-                ..Default::default()
-            })
-            .into(),
-            ..Default::default()
-        },
-        Some(tree_sitter_json::LANGUAGE.into()),
-    )
+fn color_index_for_open(
+    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>>,
+    open_offset: usize,
+) -> Option<usize> {
+    matches
+        .values()
+        .flatten()
+        .find(|bracket_match| bracket_match.open_range.start == open_offset)
+        .and_then(|bracket_match| bracket_match.color_index)
 }
 
 fn javascript_lang() -> Language {
@@ -4562,6 +4601,100 @@ fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
         }
         Buffer::local("", cx)
     });
+}
+
+#[gpui::test]
+fn test_completion_triggers_across_language_servers(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    let replica = cx.new(|cx| {
+        Buffer::from_proto(
+            ReplicaId::new(1),
+            Capability::ReadWrite,
+            buffer.read(cx).to_proto(cx),
+            None,
+        )
+        .unwrap()
+    });
+    replica.update(cx, |_, cx| {
+        cx.subscribe(&buffer, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+
+    let server_a = LanguageServerId(1);
+    let server_b = LanguageServerId(2);
+    let triggers = |buffer: &Entity<Buffer>, cx: &mut TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::from_iter([".".to_string()]), cx);
+        buffer.set_completion_triggers(server_b, BTreeSet::from_iter([":".to_string()]), cx);
+    });
+    let expected = BTreeSet::from_iter([".".to_string(), ":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected triggers from both servers to be combined",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to combine triggers from both servers",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::from_iter([",".to_string()]), cx);
+    });
+    let expected = BTreeSet::from_iter([",".to_string(), ":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected replaced triggers to not linger in the combined set",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to not keep replaced triggers in the combined set",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::new(), cx);
+    });
+    let expected = BTreeSet::from_iter([":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected the other server's triggers to survive clearing one server's triggers",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to keep the other server's triggers",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_b, BTreeSet::new(), cx);
+    });
+    assert_eq!(
+        triggers(&buffer, cx),
+        BTreeSet::new(),
+        "expected no triggers after clearing all servers",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        BTreeSet::new(),
+        "expected no triggers on the replica after clearing all servers",
+    );
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
