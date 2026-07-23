@@ -114,7 +114,6 @@ const NSDragOperationCopy: NSDragOperation = 1;
 const NSDragOperationMove: NSDragOperation = 16;
 const NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION: NSInteger = 0;
 const NSDRAGGING_CONTEXT_WITHIN_APPLICATION: NSInteger = 1;
-const NS_LEFT_MOUSE_BUTTON_MASK: NSUInteger = 1;
 #[derive(PartialEq)]
 pub enum UserTabbingPreference {
     Never,
@@ -526,7 +525,7 @@ struct MacWindowState {
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
-    last_left_mouse_dragged_event: Option<Retained<Objc2Object>>,
+    last_left_mouse_down_event: Option<Retained<Objc2Object>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     traffic_light_frames: Option<TrafficLightFrames>,
@@ -928,7 +927,7 @@ impl MacWindow {
                 appearance_changed_callback: None,
                 input_handler: None,
                 last_key_equivalent: None,
-                last_left_mouse_dragged_event: None,
+                last_left_mouse_down_event: None,
                 synthetic_drag_counter: 0,
                 traffic_light_position: titlebar
                     .as_ref()
@@ -1874,46 +1873,31 @@ impl PlatformWindow for MacWindow {
             return false;
         }
 
-        let (native_view, native_window, last_left_mouse_dragged_event) = {
+        let (native_view, native_window, last_left_mouse_down_event) = {
             let state = self.0.lock();
             (
                 state.native_view.as_ptr(),
                 state.native_window,
-                state.last_left_mouse_dragged_event.clone(),
+                state.last_left_mouse_down_event.clone(),
             )
+        };
+
+        let Some(last_left_mouse_down_event) = last_left_mouse_down_event else {
+            log::warn!("start_file_drag declined: no retained left mouse down event");
+            return false;
         };
 
         // SAFETY: This method runs on the AppKit/foreground path during drag initiation. The
         // native view/window are retained by MacWindowState, copied out under a short lock above,
         // and Objective-C results that may be nil are checked before use.
         unsafe {
-            let app = NSApplication::sharedApplication(nil);
-            let current_event: id = msg_send![app, currentEvent];
-            let pressed_mouse_buttons = NSEvent::pressedMouseButtons(nil);
-            let current_event_type = (!current_event.is_null()).then(|| current_event.eventType());
-            let event = if matches!(
-                current_event_type,
-                Some(
-                    NSEventType::NSLeftMouseDragged
-                        | NSEventType::NSRightMouseDragged
-                        | NSEventType::NSOtherMouseDragged
-                )
-            ) {
-                current_event
-            } else if pressed_mouse_buttons & NS_LEFT_MOUSE_BUTTON_MASK != 0
-                && let Some(last_left_mouse_dragged_event) = &last_left_mouse_dragged_event
-            {
-                Retained::as_ptr(last_left_mouse_dragged_event).cast()
-            } else {
-                log::warn!(
-                    "start_file_drag declined: no usable mouse dragged event: current_event_type={current_event_type:?}, pressed_mouse_buttons={pressed_mouse_buttons:#x}, cached_left_drag_event={}",
-                    last_left_mouse_dragged_event.is_some()
-                );
-                return false;
-            };
-
+            let event: id = Retained::as_ptr(&last_left_mouse_down_event)
+                .cast_mut()
+                .cast();
             let dragging_items: id = msg_send![class!(NSMutableArray), array];
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            // AppKit keeps this frame's distance from the event's location as the drag image's
+            // offset from the cursor, so it has to stay anchored on `event`.
             let location: NSPoint = msg_send![event, locationInWindow];
             let frame = NSRect::new(
                 NSPoint::new(location.x - 16., location.y - 16.),
@@ -2397,14 +2381,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_height = lock.content_size().height;
     let native_event_type = unsafe { native_event.eventType() };
     match native_event_type {
-        NSEventType::NSLeftMouseDown | NSEventType::NSLeftMouseUp => {
-            lock.last_left_mouse_dragged_event = None;
-        }
-        NSEventType::NSLeftMouseDragged => {
-            // AppKit owns `native_event` for the callback; retain it so a later pressure or
-            // tracking event can still initiate the same drag gesture.
-            lock.last_left_mouse_dragged_event =
+        NSEventType::NSLeftMouseDown => {
+            // AppKit owns `native_event` for the callback; retain it so the drag session can still
+            // be started later, once the pointer leaves the window.
+            lock.last_left_mouse_down_event =
                 unsafe { Retained::retain(native_event.cast::<Objc2Object>()) };
+        }
+        NSEventType::NSLeftMouseUp => {
+            lock.last_left_mouse_down_event = None;
         }
         _ => {}
     }
@@ -3178,7 +3162,7 @@ extern "C" fn dragging_session_ended(
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     lock.synthetic_drag_counter += 1;
-    lock.last_left_mouse_dragged_event = None;
+    lock.last_left_mouse_down_event = None;
 }
 
 async fn synthetic_drag(

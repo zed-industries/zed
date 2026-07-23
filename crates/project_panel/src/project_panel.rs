@@ -4765,8 +4765,7 @@ impl ProjectPanel {
                     return None;
                 }
                 let project_path = project.path_for_entry(selection.entry_id, cx)?.path;
-                let absolute_path = worktree.absolutize(&project_path);
-                absolute_path.exists().then_some(absolute_path)
+                Some(worktree.absolutize(&project_path))
             })
             .collect::<SmallVec<[_; 2]>>();
 
