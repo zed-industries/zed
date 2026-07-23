@@ -2294,6 +2294,11 @@ impl Editor {
         pane.update(cx, |pane, cx| {
             if allow_preview && !was_existing {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+                editor.update(cx, |editor, cx| {
+                    editor
+                        .buffer
+                        .update(cx, |buffer, cx| buffer.refresh_preview(cx))
+                });
             }
             if was_existing && !allow_preview {
                 pane.unpreview_item_if_preview(item.item_id());
@@ -2455,10 +2460,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let multibuffer = self.buffer().read(cx);
-        if !multibuffer.is_singleton() {
+        let Some(buffer) = multibuffer.as_singleton() else {
             return;
         };
-        let anchor_range = range.to_anchors(&multibuffer.snapshot(cx));
+        let Some(start) = multibuffer.buffer_point_to_anchor(&buffer, range.start, cx) else {
+            return;
+        };
+        let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
+            return;
+        };
         self.change_selections(
             SelectionEffects::scroll(Autoscroll::for_go_to_definition(
                 self.cursor_top_offset(cx),
@@ -2467,7 +2477,7 @@ impl Editor {
             .nav_history(record_nav_history),
             window,
             cx,
-            |s| s.select_anchor_ranges([anchor_range]),
+            |s| s.select_anchor_ranges([start..end]),
         );
     }
 

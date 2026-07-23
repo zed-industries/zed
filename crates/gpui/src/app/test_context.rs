@@ -3,9 +3,10 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
+    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
+    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
+    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -369,6 +370,32 @@ impl TestAppContext {
     /// All the urls that have been opened with cx.open_url() during this test.
     pub fn opened_url(&self) -> Option<String> {
         self.test_platform.opened_url.borrow().clone()
+    }
+
+    /// Returns the application identity configured during this test.
+    pub fn app_identity(&self) -> Option<(SharedString, SharedString)> {
+        self.test_platform.app_identity()
+    }
+
+    /// Returns all system notifications shown during this test, in order.
+    pub fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.test_platform.shown_system_notifications()
+    }
+
+    /// Returns the system notifications currently delivered by the test platform.
+    pub fn delivered_system_notifications(&self) -> Vec<SystemNotification> {
+        self.test_platform.delivered_system_notifications()
+    }
+
+    /// Returns the tags of all system notifications dismissed during this test, in order.
+    pub fn dismissed_system_notifications(&self) -> Vec<SharedString> {
+        self.test_platform.dismissed_system_notifications()
+    }
+
+    /// Simulates the user activating a system notification.
+    pub fn simulate_system_notification_response(&self, response: SystemNotificationResponse) {
+        self.test_platform
+            .simulate_system_notification_response(response);
     }
 
     /// Simulates the user resizing the window to the new size.
@@ -873,7 +900,7 @@ impl VisualTestContext {
         E: Element,
     {
         self.update(|window, cx| {
-            let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+            let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
             window.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
@@ -887,7 +914,7 @@ impl VisualTestContext {
             window.refresh();
 
             drop(element);
-            cx.element_arena.borrow_mut().clear();
+            arena_scope.exit(&cx.element_arena).clear(cx);
 
             (request_layout_state, prepaint_state)
         })
@@ -1115,8 +1142,153 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::{PathPromptOptions, TestAppContext};
+    use crate::{
+        PathPromptOptions, SystemNotification, SystemNotificationAction,
+        SystemNotificationResponse, TestAppContext,
+    };
+    use std::cell::RefCell;
     use std::path::PathBuf;
+    use std::rc::Rc;
+
+    #[gpui::test]
+    async fn test_system_notifications_require_identity_and_replace_matching_tags(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            cx.show_system_notification(SystemNotification {
+                tag: "thread-1".into(),
+                title: "Task started".into(),
+                body: "Running tests".into(),
+                actions: Vec::new(),
+            });
+        });
+        assert!(cx.shown_system_notifications().is_empty());
+        assert!(cx.delivered_system_notifications().is_empty());
+
+        cx.update(|cx| {
+            cx.set_app_identity("com.example.tasks", "Tasks");
+            cx.show_system_notification(SystemNotification {
+                tag: "thread-1".into(),
+                title: "Task started".into(),
+                body: "Running tests".into(),
+                actions: Vec::new(),
+            });
+            cx.show_system_notification(SystemNotification {
+                tag: "thread-1".into(),
+                title: "Task finished".into(),
+                body: "All tests passed".into(),
+                actions: vec![SystemNotificationAction {
+                    id: "open".into(),
+                    label: "Open".into(),
+                }],
+            });
+        });
+
+        assert_eq!(
+            cx.app_identity(),
+            Some(("com.example.tasks".into(), "Tasks".into()))
+        );
+        assert_eq!(cx.shown_system_notifications().len(), 2);
+        assert_eq!(
+            cx.delivered_system_notifications(),
+            [SystemNotification {
+                tag: "thread-1".into(),
+                title: "Task finished".into(),
+                body: "All tests passed".into(),
+                actions: vec![SystemNotificationAction {
+                    id: "open".into(),
+                    label: "Open".into(),
+                }],
+            }]
+        );
+
+        cx.update(|cx| cx.dismiss_system_notification("thread-1"));
+        assert!(cx.delivered_system_notifications().is_empty());
+        assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
+    }
+
+    #[gpui::test]
+    async fn test_system_notification_body_and_action_responses(cx: &mut TestAppContext) {
+        let responses = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            cx.on_system_notification_response({
+                let responses = responses.clone();
+                move |response, _cx| responses.borrow_mut().push(response)
+            });
+        });
+
+        cx.simulate_system_notification_response(SystemNotificationResponse {
+            tag: "thread-1".into(),
+            action_id: None,
+        });
+        cx.simulate_system_notification_response(SystemNotificationResponse {
+            tag: "thread-1".into(),
+            action_id: Some("default".into()),
+        });
+
+        assert_eq!(
+            responses.borrow().as_slice(),
+            &[
+                SystemNotificationResponse {
+                    tag: "thread-1".into(),
+                    action_id: None,
+                },
+                SystemNotificationResponse {
+                    tag: "thread-1".into(),
+                    action_id: Some("default".into()),
+                },
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_system_notification_response_handler_can_be_replaced(cx: &mut TestAppContext) {
+        let first_responses = Rc::new(RefCell::new(Vec::new()));
+        let second_responses = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            cx.on_system_notification_response({
+                let first_responses = first_responses.clone();
+                move |response, _cx| first_responses.borrow_mut().push(response)
+            });
+            cx.on_system_notification_response({
+                let second_responses = second_responses.clone();
+                move |response, _cx| second_responses.borrow_mut().push(response)
+            });
+        });
+
+        let response = SystemNotificationResponse {
+            tag: "thread-1".into(),
+            action_id: None,
+        };
+        cx.simulate_system_notification_response(response.clone());
+
+        assert!(first_responses.borrow().is_empty());
+        assert_eq!(second_responses.borrow().as_slice(), &[response]);
+    }
+
+    #[gpui::test]
+    async fn test_system_notification_response_handler_can_reenter_app(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_app_identity("com.example.tasks", "Tasks");
+            cx.show_system_notification(SystemNotification {
+                tag: "thread-1".into(),
+                title: "Task finished".into(),
+                body: "All tests passed".into(),
+                actions: Vec::new(),
+            });
+            cx.on_system_notification_response(|response, cx| {
+                cx.dismiss_system_notification(&response.tag);
+            });
+        });
+
+        cx.simulate_system_notification_response(SystemNotificationResponse {
+            tag: "thread-1".into(),
+            action_id: None,
+        });
+
+        assert!(cx.delivered_system_notifications().is_empty());
+        assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
+    }
 
     #[gpui::test]
     async fn test_simulate_path_prompt_response(cx: &mut TestAppContext) {

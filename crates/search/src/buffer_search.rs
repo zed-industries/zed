@@ -15,7 +15,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     DiffStyleControls, Editor, EditorSettings, MultiBufferOffset, SplittableEditor,
-    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
+    actions::{Backtab, FoldAll, Tab, ToggleFoldAll, ToggleSoftWrap, UnfoldAll},
     scroll::Autoscroll,
 };
 use futures::channel::oneshot;
@@ -462,6 +462,7 @@ impl Render for BufferSearchBar {
             .capture_action(cx.listener(Self::tab))
             .capture_action(cx.listener(Self::backtab))
             .capture_action(cx.listener(Self::toggle_fold_all))
+            .capture_action(cx.listener(Self::toggle_soft_wrap))
             .on_action(cx.listener(Self::previous_history_query))
             .on_action(cx.listener(Self::next_history_query))
             .on_action(cx.listener(Self::dismiss))
@@ -608,13 +609,13 @@ impl ToolbarItemView for BufferSearchBar {
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
             drop(self.update_matches(true, false, window, cx));
-            if self.needs_expand_collapse_option(cx) {
+            if self.needs_expand_collapse_option(cx) && self.is_dismissed() {
                 return ToolbarItemLocation::PrimaryLeft;
             } else if !self.is_dismissed() {
                 if is_project_search {
                     self.dismiss(&Default::default(), window, cx);
                 } else {
-                    return ToolbarItemLocation::Secondary;
+                    return self.deployed_toolbar_location(cx);
                 }
             }
         }
@@ -944,13 +945,25 @@ impl BufferSearchBar {
         cx.notify();
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(
-            if self.needs_expand_collapse_option(cx) {
-                ToolbarItemLocation::PrimaryLeft
-            } else {
-                ToolbarItemLocation::Secondary
-            },
+            self.deployed_toolbar_location(cx),
         ));
         true
+    }
+
+    fn deployed_toolbar_location(&self, cx: &App) -> ToolbarItemLocation {
+        if self.needs_expand_collapse_option(cx) && !self.uses_hidden_splittable_editor(cx) {
+            ToolbarItemLocation::PrimaryLeft
+        } else {
+            ToolbarItemLocation::Secondary
+        }
+    }
+
+    fn uses_hidden_splittable_editor(&self, cx: &App) -> bool {
+        self.splittable_editor.is_none()
+            && self.active_searchable_item.as_ref().is_some_and(|item| {
+                item.act_as_type(TypeId::of::<SplittableEditor>(), cx)
+                    .is_some()
+            })
     }
 
     fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
@@ -963,24 +976,46 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        if let Some(item) = &self.active_searchable_item {
-            let buffer_kind = item.buffer_kind(cx);
-
-            if buffer_kind == ItemBufferKind::Singleton {
-                return false;
-            }
-
-            let workspace::searchable::SearchOptions {
-                find_in_results, ..
-            } = item.supported_options(cx);
-            !find_in_results
-        } else {
-            false
-        }
+        self.active_searchable_item.as_ref().is_some_and(|item| {
+            item.buffer_kind(cx) == ItemBufferKind::Multibuffer
+                && !item.supported_options(cx).find_in_results
+        })
     }
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_fold_all_in_item(window, cx);
+    }
+
+    // The query editor is an editor itself and would otherwise swallow this
+    // action without any visible effect, so relay it to the searched editor
+    // while keeping the focus in the search bar.
+    fn toggle_soft_wrap(
+        &mut self,
+        action: &ToggleSoftWrap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = &self.active_searchable_item else {
+            return;
+        };
+        // A split diff editor picks which side to toggle and keeps both sides
+        // in sync, while its `act_as_type(Editor)` only exposes the RHS
+        // editor, so relay to the split editor itself when it is split.
+        if let Some(split_editor) = item.act_as_type(TypeId::of::<SplittableEditor>(), cx) {
+            let split_editor = split_editor
+                .downcast::<SplittableEditor>()
+                .expect("Is a splittable editor");
+            if split_editor.read(cx).is_split() {
+                split_editor.update(cx, |split_editor, cx| {
+                    split_editor.toggle_soft_wrap(action, window, cx)
+                });
+                return;
+            }
+        }
+        if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
+            let editor = item.downcast::<Editor>().expect("Is an editor");
+            editor.update(cx, |editor, cx| editor.toggle_soft_wrap(action, window, cx));
+        }
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1834,11 +1869,11 @@ mod tests {
     use super::*;
     use editor::{
         DisplayPoint, Editor, HighlightKey, MultiBuffer, PathKey,
-        SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects,
+        SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects, SoftWrap,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use futures::stream::StreamExt as _;
-    use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{FocusHandle, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     #[cfg(target_os = "macos")]
     use project::Project;
@@ -1847,6 +1882,7 @@ mod tests {
     use util_macros::perf;
     #[cfg(target_os = "macos")]
     use workspace::{AppState, MultiWorkspace, Workspace};
+    use workspace::{item::Item, searchable::SearchableItem};
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3176,6 +3212,55 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_toggle_soft_wrap_relays_to_searched_editor(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let (editor, search_bar, cx) = init_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(
+                &Deploy {
+                    focus: true,
+                    replace_enabled: false,
+                    selection_search_enabled: false,
+                },
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "query editor should be focused after deploying the search bar",
+            );
+        });
+        editor.update_in(cx, |editor, _, cx| {
+            assert!(
+                matches!(editor.soft_wrap_mode(cx), SoftWrap::None),
+                "soft wrap should be disabled initially",
+            );
+        });
+
+        cx.dispatch_action(ToggleSoftWrap);
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _, cx| {
+            assert!(
+                matches!(editor.soft_wrap_mode(cx), SoftWrap::EditorWidth),
+                "toggling soft wrap while the search bar is focused should affect the searched editor",
+            );
+        });
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "focus should stay in the search bar",
+            );
+        });
+    }
+
     #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_cmd_e_then_cmd_g_uses_selection_for_find(cx: &mut TestAppContext) {
@@ -3515,6 +3600,144 @@ mod tests {
             events.try_recv().unwrap(),
             (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::PrimaryLeft))
         );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_no_expand_collapse_option_when_item_is_not_buffer_backed(
+        cx: &mut TestAppContext,
+    ) {
+        // Items that are backed by neither a singleton buffer nor a
+        // multibuffer, for example, the LSP log view, report
+        // `ItemBufferKind::None` and must not show the expand/collapse all
+        // files button.
+
+        // A searchable item that reports `ItemBufferKind::None`, like the LSP
+        // log view.
+        struct NonBufferSearchableItem {
+            focus_handle: FocusHandle,
+        }
+
+        impl EventEmitter<()> for NonBufferSearchableItem {}
+        impl EventEmitter<SearchEvent> for NonBufferSearchableItem {}
+
+        impl Focusable for NonBufferSearchableItem {
+            fn focus_handle(&self, _: &App) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for NonBufferSearchableItem {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        impl Item for NonBufferSearchableItem {
+            type Event = ();
+
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "Non-buffer item".into()
+            }
+
+            fn as_searchable(
+                &self,
+                handle: &Entity<Self>,
+                _: &App,
+            ) -> Option<Box<dyn SearchableItemHandle>> {
+                Some(Box::new(handle.clone()))
+            }
+
+            fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+                ItemBufferKind::None
+            }
+        }
+
+        impl SearchableItem for NonBufferSearchableItem {
+            type Match = ();
+
+            fn clear_matches(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+            fn update_matches(
+                &mut self,
+                _: &[Self::Match],
+                _: Option<usize>,
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn query_suggestion(
+                &mut self,
+                _: Option<SeedQuerySetting>,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> String {
+                String::new()
+            }
+            fn activate_match(
+                &mut self,
+                _: usize,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn select_matches(
+                &mut self,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn replace(
+                &mut self,
+                _: &Self::Match,
+                _: &SearchQuery,
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn find_matches(
+                &mut self,
+                _: Arc<SearchQuery>,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Task<Vec<Self::Match>> {
+                Task::ready(Vec::new())
+            }
+            fn active_match_index(
+                &mut self,
+                _: Direction,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Option<usize> {
+                None
+            }
+        }
+
+        init_globals(cx);
+        let window = cx.add_window(|window, cx| {
+            let item = cx.new(|cx| NonBufferSearchableItem {
+                focus_handle: cx.focus_handle(),
+            });
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&item), window, cx);
+            search_bar
+        });
+        let search_bar = window.root(cx).unwrap();
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert!(
+                !search_bar.needs_expand_collapse_option(cx),
+                "Items reporting ItemBufferKind::None must not get the expand/collapse button"
+            );
+        });
     }
 
     #[perf]

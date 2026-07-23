@@ -249,7 +249,7 @@ pub struct ExtensionIndexIconThemeEntry {
 pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
-    pub matcher: LanguageMatcher,
+    pub matcher: Arc<LanguageMatcher>,
     pub hidden: bool,
     pub grammar: Option<Arc<str>>,
 }
