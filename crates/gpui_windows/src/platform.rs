@@ -483,9 +483,27 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn activate(&self, _ignoring_other_apps: bool) {}
+    fn activate(&self, _ignoring_other_apps: bool) {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .for_each(|hwnd|
+                unsafe {
+                    ShowWindow(hwnd.as_raw(), SW_SHOW).ok().log_err();
+                }
+            );
+    }
 
-    fn hide(&self) {}
+    fn hide(&self) {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .for_each(|hwnd|
+                unsafe {
+                    ShowWindow(hwnd.as_raw(), SW_HIDE).ok().log_err();
+                }
+            );
+    }
 
     // todo(windows)
     fn hide_other_apps(&self) {
