@@ -1126,6 +1126,7 @@ fn save_llm_provider_form(
                                     Arc::from(provider_name.as_str()),
                                     OpenAiCompatibleSettingsContent {
                                         api_url: api_url.clone(),
+                                        auto_discover: None,
                                         available_models,
                                         custom_headers: None,
                                     },

@@ -491,6 +491,21 @@ You can also configure the provider in your settings file:
 }
 ```
 
+Set `auto_discover` to `true` to have Zed query the provider's `/models` endpoint and populate the model list automatically. Discovered models are merged with any `available_models` you list explicitly (explicit entries override discovered models with the same name). Discovery runs asynchronously on startup and whenever the API URL or API key changes; if it fails, the manually-configured `available_models` remain available. Discovered models use a default context window of 128,000 tokens — list them in `available_models` to set an accurate `max_tokens` or capabilities.
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "my-provider": {
+        "api_url": "https://example.com/v1",
+        "auto_discover": true
+      }
+    }
+  }
+}
+```
+
 By default, OpenAI-compatible models inherit these capabilities:
 
 - `tools`: `true`

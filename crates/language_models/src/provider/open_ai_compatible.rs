@@ -1,8 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use http_client::{CustomHeaders, HttpClient};
+use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
@@ -15,6 +18,7 @@ use open_ai::{
     responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
     stream_completion,
 };
+use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
@@ -34,6 +38,7 @@ const API_KEY_PLACEHOLDER: &str = "000000000000000000000000000000000000000000000
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
+    pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
     pub custom_headers: CustomHeaders,
 }
@@ -51,6 +56,7 @@ pub struct OpenAiCompatibleLanguageModelProvider {
     name: LanguageModelProviderName,
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    discovery_state: Entity<OpenAiCompatibleDiscoveryState>,
 }
 
 impl OpenAiCompatibleLanguageModelProvider {
@@ -71,11 +77,16 @@ impl OpenAiCompatibleLanguageModelProvider {
             cx,
         );
 
+        let discovery_state = cx
+            .new(|cx| OpenAiCompatibleDiscoveryState::new(http_client.clone(), state.clone(), cx));
+        discovery_state.update(cx, |discovery, cx| discovery.handle_settings_change(cx));
+
         Self {
             id: id.clone().into(),
             name: id.into(),
             http_client,
             state,
+            discovery_state,
         }
     }
 
@@ -90,13 +101,34 @@ impl OpenAiCompatibleLanguageModelProvider {
             request_limiter: RateLimiter::new(4),
         })
     }
+
+    /// Returns the effective model list: discovered models (when `auto_discover`
+    /// is on) form the base set, and manually-configured `available_models`
+    /// override entries with the same name and add any discovery didn't surface.
+    fn merged_available_models(&self, cx: &App) -> Vec<AvailableModel> {
+        let state = self.state.read(cx);
+        let mut models: HashMap<String, AvailableModel> = HashMap::default();
+
+        if state.settings.auto_discover {
+            for model in self.discovery_state.read(cx).discovered_models.iter() {
+                models.insert(model.name.clone(), model.clone());
+            }
+        }
+        for model in state.settings.available_models.iter() {
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        let mut models: Vec<_> = models.into_values().collect();
+        models.sort_by(|a, b| a.name.cmp(&b.name));
+        models
+    }
 }
 
 impl LanguageModelProviderState for OpenAiCompatibleLanguageModelProvider {
-    type ObservableEntity = State;
+    type ObservableEntity = OpenAiCompatibleDiscoveryState;
 
     fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
-        Some(self.state.clone())
+        Some(self.discovery_state.clone())
     }
 }
 
@@ -114,12 +146,10 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
-            .settings
-            .available_models
-            .first()
-            .map(|model| self.create_language_model(model.clone()))
+        self.merged_available_models(cx)
+            .into_iter()
+            .next()
+            .map(|model| self.create_language_model(model))
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -127,12 +157,9 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
-            .settings
-            .available_models
-            .iter()
-            .map(|model| self.create_language_model(model.clone()))
+        self.merged_available_models(cx)
+            .into_iter()
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -166,6 +193,187 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
+
+/// Fallback `max_tokens` (context window) for models discovered from the
+/// `/models` endpoint, which does not report context length. Provide an
+/// accurate value by listing the model in `available_models`.
+const DISCOVERED_MODEL_DEFAULT_MAX_TOKENS: u64 = 128_000;
+
+/// Models discovered from the provider's `/models` endpoint when `auto_discover`
+/// is enabled.
+///
+/// This is a dedicated entity (separate from the shared `ApiCompatibleProviderState`)
+/// so the registry can observe it via `LanguageModelProviderState::observable_entity`
+/// and re-query `provided_models` once discovery resolves. It observes the
+/// settings/api-key state so that URL, credential, or `auto_discover` changes
+/// re-run discovery and refresh the model list.
+pub struct OpenAiCompatibleDiscoveryState {
+    http_client: Arc<dyn HttpClient>,
+    settings_state: Entity<State>,
+    discovered_models: Vec<AvailableModel>,
+    fetch_task: Option<Task<()>>,
+    last_api_url: String,
+    has_fetched: bool,
+    _settings_subscription: Subscription,
+}
+
+impl OpenAiCompatibleDiscoveryState {
+    fn new(
+        http_client: Arc<dyn HttpClient>,
+        settings_state: Entity<State>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let _settings_subscription = cx.observe(&settings_state, |this, _settings_state, cx| {
+            this.handle_settings_change(cx);
+        });
+
+        Self {
+            http_client,
+            settings_state,
+            discovered_models: Vec::new(),
+            fetch_task: None,
+            last_api_url: String::new(),
+            has_fetched: false,
+            _settings_subscription,
+        }
+    }
+
+    /// Re-evaluates whether discovery should run based on the current settings
+    /// and api-key state. Called once after construction and whenever that state
+    /// changes (settings reload, api key loaded, URL change, ...).
+    fn handle_settings_change(&mut self, cx: &mut Context<Self>) {
+        let (auto_discover, api_url) = {
+            let state = self.settings_state.read(cx);
+            (state.settings.auto_discover, state.settings.api_url.clone())
+        };
+
+        if !auto_discover {
+            // Cancel any in-flight discovery and drop previously discovered models.
+            self.fetch_task.take();
+            self.has_fetched = false;
+            self.discovered_models.clear();
+            self.last_api_url = api_url;
+            cx.notify();
+            return;
+        }
+
+        let url_changed = self.last_api_url != api_url;
+        self.last_api_url = api_url.clone();
+        // (Re)run discovery when the URL changed, or when we haven't yet completed
+        // a successful fetch (e.g. the API key just loaded after a prior failure).
+        if url_changed || !self.has_fetched {
+            self.restart_fetch(&api_url, cx);
+        }
+        cx.notify();
+    }
+
+    fn restart_fetch(&mut self, api_url: &str, cx: &mut Context<Self>) {
+        let (api_key, extra_headers) = {
+            let state = self.settings_state.read(cx);
+            (
+                state.api_key_state.key(api_url),
+                state.settings.custom_headers.clone(),
+            )
+        };
+        let http_client = self.http_client.clone();
+        let api_url = api_url.to_string();
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_discovered_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                &extra_headers,
+            )
+            .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(models) => {
+                        this.discovered_models = models;
+                        this.has_fetched = true;
+                        log::info!(
+                            "openai_compatible: discovered {} model(s) from {api_url}",
+                            this.discovered_models.len()
+                        );
+                    }
+                    Err(error) => {
+                        // Keep any previously discovered models; manually
+                        // configured `available_models` remain available
+                        // regardless, so discovery failures are non-fatal.
+                        log::error!(
+                            "openai_compatible: failed to discover models from {api_url}: {error:#}"
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.fetch_task.replace(task);
+    }
+}
+
+/// Fetches `GET {api_url}/models` and maps the OpenAI-style
+/// `{"data":[{"id":"..."}]}` response into `AvailableModel`s. Any network,
+/// HTTP, or parse error propagates to the caller, which logs it and falls back
+/// to the manually-configured `available_models`.
+async fn fetch_discovered_models(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<&str>,
+    extra_headers: &CustomHeaders,
+) -> Result<Vec<AvailableModel>> {
+    let uri = format!("{api_url}/models");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Accept", "application/json");
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
+    }
+    let request = request_builder
+        .extra_headers(extra_headers)
+        .body(AsyncBody::default())?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "openai_compatible: models request failed: {} {}",
+        response.status(),
+        body,
+    );
+
+    let parsed: ModelsResponse = serde_json::from_str(&body)
+        .context("openai_compatible: unable to parse models response")?;
+
+    let mut models = Vec::new();
+    for entry in parsed.data {
+        if let Some(id) = entry.id {
+            models.push(AvailableModel {
+                name: id,
+                display_name: None,
+                max_tokens: DISCOVERED_MODEL_DEFAULT_MAX_TOKENS,
+                max_output_tokens: None,
+                max_completion_tokens: None,
+                reasoning_effort: None,
+                capabilities: ModelCapabilities::default(),
+            });
+        }
+    }
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(models)
+}
+
+#[derive(Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelEntry {
+    id: Option<String>,
 }
 
 pub struct OpenAiCompatibleLanguageModel {
@@ -468,7 +676,9 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 mod tests {
     use super::*;
 
+    use http_client::FakeHttpClient;
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
 
     fn available_model(reasoning_effort: Option<open_ai::ReasoningEffort>) -> AvailableModel {
         AvailableModel {
@@ -721,5 +931,122 @@ mod tests {
         disable_response_thinking_for_none_effort(&mut request, &model);
         assert!(!request.thinking_allowed);
         assert_eq!(request.thinking_effort, None);
+    }
+
+    #[test]
+    fn fetch_discovered_models_parses_ids() {
+        let http_client = FakeHttpClient::create(move |_request| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from(
+                    r#"{"data":[{"id":"gpt-4o"},{"id":"gpt-3.5-turbo"}]}"#,
+                ))?)
+        });
+
+        let models = smol::block_on(fetch_discovered_models(
+            http_client.as_ref(),
+            "https://example.com/v1",
+            None,
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+
+        assert_eq!(models.len(), 2);
+        // Results are sorted by name.
+        assert_eq!(models[0].name, "gpt-3.5-turbo");
+        assert_eq!(models[1].name, "gpt-4o");
+        assert_eq!(models[0].max_tokens, DISCOVERED_MODEL_DEFAULT_MAX_TOKENS);
+    }
+
+    #[test]
+    fn fetch_discovered_models_skips_entries_without_id() {
+        let http_client = FakeHttpClient::create(move |_request| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from(
+                    r#"{"data":[{"id":"gpt-4o"},{"object":"model"},{"id":"claude-3-opus"}]}"#,
+                ))?)
+        });
+
+        let models = smol::block_on(fetch_discovered_models(
+            http_client.as_ref(),
+            "https://example.com/v1",
+            None,
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+
+        let names: Vec<_> = models.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["claude-3-opus", "gpt-4o"]);
+    }
+
+    #[test]
+    fn fetch_discovered_models_errors_on_non_success() {
+        let http_client = FakeHttpClient::create(move |_request| async move {
+            Ok(http_client::Response::builder()
+                .status(404)
+                .body(http_client::AsyncBody::from("not found"))?)
+        });
+
+        let result = smol::block_on(fetch_discovered_models(
+            http_client.as_ref(),
+            "https://example.com/v1",
+            None,
+            &CustomHeaders::default(),
+        ));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fetch_discovered_models_errors_on_invalid_json() {
+        let http_client = FakeHttpClient::create(move |_request| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from("not json"))?)
+        });
+
+        let result = smol::block_on(fetch_discovered_models(
+            http_client.as_ref(),
+            "https://example.com/v1",
+            None,
+            &CustomHeaders::default(),
+        ));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fetch_discovered_models_requests_models_endpoint_with_bearer_auth() {
+        let captured: Arc<Mutex<Option<(String, Option<String>)>>> = Arc::new(Mutex::new(None));
+        let captured_for_handler = captured.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured = captured_for_handler.clone();
+            async move {
+                *captured.lock().unwrap() = Some((
+                    request.uri().to_string(),
+                    request
+                        .headers()
+                        .get("Authorization")
+                        .map(|value| value.to_str().unwrap().to_string()),
+                ));
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(http_client::AsyncBody::from(r#"{"data":[]}"#))?)
+            }
+        });
+
+        let models = smol::block_on(fetch_discovered_models(
+            http_client.as_ref(),
+            "https://example.com/v1",
+            Some("sk-test"),
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+        assert!(models.is_empty());
+
+        let (uri, auth) = captured.lock().unwrap().take().unwrap();
+        assert_eq!(uri, "https://example.com/v1/models");
+        assert_eq!(auth.as_deref(), Some("Bearer sk-test"));
     }
 }
