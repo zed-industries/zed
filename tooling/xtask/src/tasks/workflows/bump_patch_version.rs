@@ -65,7 +65,10 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
         .id("bump-version")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
+        .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
+        .into();
     let channel_step = read_channel();
     let tag_suffix = StepOutput::new(&channel_step, "tag_suffix");
     let bump_version_step = bump_version();
