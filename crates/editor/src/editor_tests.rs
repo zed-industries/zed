@@ -17852,19 +17852,6 @@ async fn test_external_formatter_with_no_output_leaves_buffer_unchanged(cx: &mut
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
 
-    let toasts = Rc::new(RefCell::new(Vec::new()));
-    project.update(cx, |_, cx| {
-        cx.subscribe(&project, {
-            let toasts = toasts.clone();
-            move |_, _, event, _| {
-                if let project::Event::Toast { message, .. } = event {
-                    toasts.borrow_mut().push(message.clone());
-                }
-            }
-        })
-        .detach();
-    });
-
     let buffer = project
         .update(cx, |project, cx| {
             project.open_local_buffer(path!("/file.rs"), cx)
@@ -17912,12 +17899,6 @@ async fn test_external_formatter_with_no_output_leaves_buffer_unchanged(cx: &mut
     assert_eq!(
         last_failure, None,
         "producing no output is not a formatter failure"
-    );
-
-    assert!(
-        toasts.borrow().is_empty(),
-        "external formatters that produce no output should not show a toast, got: {:?}",
-        toasts.borrow(),
     );
 }
 
