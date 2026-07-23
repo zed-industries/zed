@@ -1499,10 +1499,7 @@ impl ContextServerStore {
             anyhow::bail!("OAuth state parameter mismatch (possible CSRF)");
         }
 
-        oauth::validate_issuer(
-            callback.iss.as_deref(),
-            &discovery.auth_server_metadata.issuer,
-        )?;
+        oauth::validate_issuer(callback.iss.as_deref(), &discovery.auth_server_metadata)?;
 
         let tokens = oauth::exchange_code(
             &http_client,

@@ -202,10 +202,10 @@ mod server {
                             error_description = Some(value.into_owned());
                         }
                     }
+                    // An empty `iss` is preserved (not treated as absent) so
+                    // issuer validation rejects it as malformed.
                     "iss" => {
-                        if !value.is_empty() {
-                            iss = Some(value.into_owned());
-                        }
+                        iss = Some(value.into_owned());
                     }
                     _ => {}
                 }

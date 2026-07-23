@@ -149,6 +149,11 @@ pub struct AuthServerMetadata {
     pub grant_types_supported: Option<Vec<String>>,
     pub code_challenge_methods_supported: Option<Vec<String>>,
     pub client_id_metadata_document_supported: bool,
+    /// Whether the server includes the RFC 9207 `iss` parameter in
+    /// authorization responses. When advertised, a callback without `iss`
+    /// must be rejected.
+    #[serde(default)]
+    pub authorization_response_iss_parameter_supported: bool,
 }
 
 /// The result of client registration — either CIMD or DCR.
@@ -738,11 +743,20 @@ pub fn dcr_registration_body(
 
 /// Validate the `iss` authorization-response parameter against the recorded
 /// issuer, per RFC 9207 (required by MCP 2026-07-28 to mitigate authorization
-/// server mix-up attacks). A missing `iss` is accepted — the parameter is
-/// optional for authorization servers — but a present one must match the
-/// issuer whose authorization endpoint the flow started at.
-pub fn validate_issuer(callback_iss: Option<&str>, issuer: &Url) -> Result<()> {
+/// server mix-up attacks). A present `iss` must match the issuer whose
+/// authorization endpoint the flow started at; a missing one is accepted
+/// only when the authorization server does not advertise RFC 9207 support.
+pub fn validate_issuer(callback_iss: Option<&str>, metadata: &AuthServerMetadata) -> Result<()> {
+    let issuer = &metadata.issuer;
     let Some(callback_iss) = callback_iss else {
+        // RFC 9207: a server that advertises issuer identification must
+        // send `iss` on every authorization response — its absence is how a
+        // mix-up attacker would evade the check.
+        anyhow::ensure!(
+            !metadata.authorization_response_iss_parameter_supported,
+            "OAuth callback is missing the 'iss' parameter, but the authorization server \
+             advertises RFC 9207 support; refusing to redeem the authorization code"
+        );
         return Ok(());
     };
     let callback_iss =
@@ -858,6 +872,9 @@ pub async fn fetch_auth_server_metadata(
                     code_challenge_methods_supported: response.code_challenge_methods_supported,
                     client_id_metadata_document_supported: response
                         .client_id_metadata_document_supported
+                        .unwrap_or(false),
+                    authorization_response_iss_parameter_supported: response
+                        .authorization_response_iss_parameter_supported
                         .unwrap_or(false),
                 });
             }
@@ -1189,6 +1206,8 @@ struct AuthServerMetadataResponse {
     grant_types_supported: Option<Vec<String>>,
     #[serde(default)]
     code_challenge_methods_supported: Option<Vec<String>>,
+    #[serde(default)]
+    authorization_response_iss_parameter_supported: Option<bool>,
     #[serde(default)]
     client_id_metadata_document_supported: Option<bool>,
 }
@@ -1691,6 +1710,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: true,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         assert_eq!(
@@ -1712,6 +1732,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         assert_eq!(
@@ -1732,6 +1753,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         assert_eq!(
@@ -1789,6 +1811,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: true,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         let pkce = PkceChallenge {
@@ -1832,6 +1855,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         let pkce = PkceChallenge {
@@ -1935,16 +1959,31 @@ mod tests {
 
     #[test]
     fn test_validate_issuer() {
-        let issuer = Url::parse("https://auth.example.com").unwrap();
-        // A missing iss parameter is accepted (RFC 9207 support is optional
-        // for authorization servers).
-        validate_issuer(None, &issuer).unwrap();
-        validate_issuer(Some("https://auth.example.com"), &issuer).unwrap();
+        let metadata = |iss_supported| AuthServerMetadata {
+            issuer: Url::parse("https://auth.example.com").unwrap(),
+            authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+            token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            grant_types_supported: None,
+            code_challenge_methods_supported: None,
+            client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: iss_supported,
+        };
+
+        // A missing iss parameter is accepted only while the authorization
+        // server does not advertise RFC 9207 support; once advertised, its
+        // absence is how a mix-up attacker would evade the check.
+        validate_issuer(None, &metadata(false)).unwrap();
+        validate_issuer(None, &metadata(true)).unwrap_err();
+
+        validate_issuer(Some("https://auth.example.com"), &metadata(true)).unwrap();
         // URL normalization differences don't cause false mismatches.
-        validate_issuer(Some("https://auth.example.com/"), &issuer).unwrap();
+        validate_issuer(Some("https://auth.example.com/"), &metadata(true)).unwrap();
         // A different issuer (mix-up attack) is rejected.
-        validate_issuer(Some("https://attacker.example.com"), &issuer).unwrap_err();
-        validate_issuer(Some("not a url"), &issuer).unwrap_err();
+        validate_issuer(Some("https://attacker.example.com"), &metadata(false)).unwrap_err();
+        validate_issuer(Some("not a url"), &metadata(false)).unwrap_err();
+        validate_issuer(Some(""), &metadata(false)).unwrap_err();
     }
 
     #[test]
@@ -2505,6 +2544,7 @@ mod tests {
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
                 client_id_metadata_document_supported: true,
+                authorization_response_iss_parameter_supported: false,
                 grant_types_supported: None,
             };
 
@@ -2582,6 +2622,7 @@ mod tests {
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
                 client_id_metadata_document_supported: true,
+                authorization_response_iss_parameter_supported: false,
                 grant_types_supported: None,
             };
 
