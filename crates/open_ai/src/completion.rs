@@ -266,7 +266,25 @@ pub fn into_open_ai_response(
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
     let mut tool_use_kinds_by_id = HashMap::default();
+    let mut system_instructions = Vec::new();
     for (index, message) in messages.into_iter().enumerate() {
+        // System messages go to the top-level `instructions` field rather
+        // than the input item list. `instructions` is applied per request
+        // (the Responses API documents it as a system message inserted into
+        // the model's context), so the current system prompt survives when
+        // replaying provider compaction state replaces the accumulated input
+        // items below. This also matches the Codex backend, which rejects
+        // system-role input items outright.
+        if message.role == Role::System {
+            for content in message.content {
+                if let MessageContent::Text(text) = content
+                    && !text.trim().is_empty()
+                {
+                    system_instructions.push(text);
+                }
+            }
+            continue;
+        }
         append_message_to_response_items(
             message,
             index,
@@ -340,7 +358,11 @@ pub fn into_open_ai_response(
 
     Ok(ResponseRequest {
         model: model_id.into(),
-        instructions: None,
+        instructions: if system_instructions.is_empty() {
+            None
+        } else {
+            Some(system_instructions.join("\n\n"))
+        },
         input: crate::responses::ResponseInput::new(provider_items, input_items),
         store: Some(false),
         include,
@@ -1873,14 +1895,8 @@ mod tests {
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
             "model": "custom-model",
+            "instructions": "System context",
             "input": [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": [
-                        { "type": "input_text", "text": "System context" }
-                    ]
-                },
                 {
                     "type": "message",
                     "role": "user",
@@ -4317,6 +4333,144 @@ mod tests {
                     "role": "assistant",
                     "content": [
                         { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_hoists_system_messages_into_instructions() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are a coding assistant.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Prefer terse answers.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["instructions"],
+            json!("You are a coding assistant.\n\nPrefer terse answers.")
+        );
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Hello." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    /// Replaying provider compaction state discards all input items
+    /// accumulated before it, but the system prompt must not be lost with
+    /// them: it lives in the per-request `instructions` field, outside the
+    /// compacted window, so the model keeps running on the current prompt
+    /// rather than whatever was frozen into the window at compaction time.
+    #[test]
+    fn into_open_ai_response_preserves_system_prompt_across_compaction_replay() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Current system prompt.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Old context.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        state,
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["instructions"], json!("Current system prompt."));
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted-blob"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Continue." }
                     ]
                 }
             ])
