@@ -39,6 +39,7 @@ use std::{
     borrow::Cow,
     cmp::{self, min},
     fmt::{self, Display, Formatter},
+    future::Future,
     ops::{BitOr, BitOrAssign, Deref, Range as StdRange},
     path::{Path, PathBuf},
     process::ExitStatus,
@@ -73,6 +74,33 @@ use crate::alacritty::{
 };
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
+
+/// How long the shell and its foreground job get to exit gracefully after a
+/// closed terminal sends SIGHUP/SIGTERM, before being SIGKILLed. Must stay
+/// comfortably below [`gpui::SHUTDOWN_TIMEOUT`] so the escalation also
+/// completes when the whole app is quitting.
+const PROCESS_KILL_GRACE_PERIOD: Duration = Duration::from_millis(100);
+
+/// Sends SIGTERM to the terminal's shell and foreground process groups, and
+/// returns a future that SIGKILLs whatever survives [`PROCESS_KILL_GRACE_PERIOD`].
+/// Closing the PTY only delivers SIGHUP, and a foreground job that ignores
+/// SIGHUP/SIGTERM would otherwise be orphaned (#47412).
+///
+/// Must be called while the PTY master is still open (i.e. before
+/// `pty_tx.shutdown()`): reading the foreground process group requires
+/// `tcgetpgrp` on the PTY fd.
+fn terminate_processes_with_grace_period(
+    info: Arc<PtyProcessInfo>,
+    executor: BackgroundExecutor,
+) -> impl Future<Output = ()> {
+    let process_ids = info.capture_process_ids();
+    process_ids.terminate();
+    async move {
+        executor.timer(PROCESS_KILL_GRACE_PERIOD).await;
+        process_ids.kill();
+        info.kill_child_process();
+    }
+}
 
 /// Process-wide flag set by headless hosts (e.g. the eval CLI) that have no
 /// controlling TTY. In such sandboxes PTY allocation and acquiring a
@@ -1313,6 +1341,32 @@ impl TerminalBuilder {
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
+        // `Terminal::drop` escalates to SIGKILL on a detached background task,
+        // which never gets to run when the whole app quits: the process exits
+        // as soon as the `on_app_quit` futures resolve. Perform the same
+        // escalation in a quit observer, whose future keeps the app alive for
+        // the grace period, so that processes ignoring SIGHUP/SIGTERM don't
+        // outlive Zed (#47412). The subscription can't be stored on `Terminal`
+        // (`Subscription` is not `Send`, and `TerminalBuilder` is built on a
+        // background thread), so its lifetime is tied to the entity's release
+        // instead.
+        let app_quit_subscription = cx.on_app_quit(|terminal, cx| {
+            let kill_processes = match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => Some(terminate_processes_with_grace_period(
+                    info.clone(),
+                    cx.background_executor().clone(),
+                )),
+                TerminalType::DisplayOnly => None,
+            };
+            async move {
+                if let Some(kill_processes) = kill_processes {
+                    kill_processes.await;
+                }
+            }
+        });
+        cx.on_release(move |_, _| drop(app_quit_subscription))
+            .detach();
+
         //Event loop
         self.terminal.event_loop_task = cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
@@ -3126,16 +3180,10 @@ impl Drop for Terminal {
         if let TerminalType::Pty { pty_tx, info } =
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
+            let kill_processes =
+                terminate_processes_with_grace_period(info, self.background_executor.clone());
             pty_tx.shutdown();
-            info.terminate_child_process();
-
-            let timer = self.background_executor.timer(Duration::from_millis(100));
-            self.background_executor
-                .spawn(async move {
-                    timer.await;
-                    info.kill_child_process();
-                })
-                .detach();
+            self.background_executor.spawn(kill_processes).detach();
         }
     }
 }
@@ -4877,6 +4925,104 @@ mod tests {
         assert!(
             content.contains("test_output_before_kill"),
             "Output from before kill should be captured, got: {content}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn parse_pid_marker(content: &str, prefix: &str, suffix: &str) -> i32 {
+        content
+            .split(prefix)
+            .nth(1)
+            .and_then(|rest| rest.split(suffix).next())
+            .and_then(|pid| pid.trim().parse().ok())
+            .unwrap_or_else(|| {
+                panic!("failed to parse pid between {prefix:?} and {suffix:?} from: {content}")
+            })
+    }
+
+    /// Regression test for <https://github.com/zed-industries/zed/issues/47412>:
+    /// closing a terminal must not orphan processes that ignore SIGHUP and
+    /// SIGTERM. The shell ignores both signals and the `sleep`s inherit the
+    /// ignored dispositions, so only the SIGKILL escalation can terminate them.
+    ///
+    /// Two process groups are covered: the background `sleep` is spawned before
+    /// `set -m` and stays in the shell's own group, while job control places
+    /// the foreground job (an inner shell that `exec`s `sleep`) in a separate
+    /// group that killing the shell's group never reaches — it is only found
+    /// via the foreground-group capture (`tcgetpgrp`).
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_dropping_terminal_kills_processes_ignoring_sighup_and_sigterm(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+
+        let (terminal, _completion_rx) = build_test_terminal_with_arguments(
+            cx,
+            "/bin/sh".to_string(),
+            vec![
+                "-c".to_string(),
+                "trap '' HUP TERM; sleep 300 & echo bg_marker_${!}_bgend; set -m; \
+                 /bin/sh -c 'echo fg_marker_$$_fgend; exec sleep 300'"
+                    .to_string(),
+            ],
+        )
+        .await;
+
+        assert_content_eventually(&terminal, "_fgend", cx).await;
+        let content = terminal.update(cx, |term, _| term.get_content());
+        let background_sleep_pid = parse_pid_marker(&content, "bg_marker_", "_bgend");
+        let foreground_sleep_pid = parse_pid_marker(&content, "fg_marker_", "_fgend");
+
+        let shell_pid = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+            TerminalType::Pty { info, .. } => info.pid_getter().fallback_pid().as_u32() as i32,
+            TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+        });
+
+        for pid in [background_sleep_pid, foreground_sleep_pid] {
+            assert_eq!(
+                unsafe { libc::kill(pid, 0) },
+                0,
+                "process {pid} should be running before the terminal is dropped"
+            );
+        }
+
+        // The foreground-group escalation is only exercised if `set -m`
+        // actually placed the foreground job in its own process group; assert
+        // the arrangement so this test fails loudly instead of silently
+        // degrading into a shell-group-only test.
+        let shell_pgid = unsafe { libc::getpgid(shell_pid) };
+        let foreground_pgid = unsafe { libc::getpgid(foreground_sleep_pid) };
+        assert!(shell_pgid > 0 && foreground_pgid > 0);
+        assert_ne!(
+            foreground_pgid, shell_pgid,
+            "job control should place the foreground sleep in its own process group"
+        );
+        assert_eq!(
+            unsafe { libc::getpgid(background_sleep_pid) },
+            shell_pgid,
+            "the background sleep should stay in the shell's process group"
+        );
+
+        drop(terminal);
+        // Flush effects so the released terminal entity is actually dropped.
+        cx.update(|_| {});
+
+        for _ in 0..300 {
+            let background_dead = unsafe { libc::kill(background_sleep_pid, 0) } != 0;
+            let foreground_dead = unsafe { libc::kill(foreground_sleep_pid, 0) } != 0;
+            if background_dead && foreground_dead {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        panic!(
+            "processes survived dropping the terminal: background sleep {background_sleep_pid} \
+             alive: {}, foreground sleep {foreground_sleep_pid} alive: {}",
+            unsafe { libc::kill(background_sleep_pid, 0) } == 0,
+            unsafe { libc::kill(foreground_sleep_pid, 0) } == 0,
         );
     }
 
