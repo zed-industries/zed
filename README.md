@@ -12,12 +12,12 @@
 
 ### Why Citadel exists
 
-| 怒り (Frustration) | 対策 (Countermeasure) |
+| Frustration | Countermeasure |
 |---|---|
-| IDEがクソ重くて作業効率が下がる | ZedのGPU超高速描画（GPUI）とRust製の爆速コアで解決 |
-| ビルドが通っても実機でフリーズして原因不明 | コアロジックをRust (no_std) で実装し、メモリ破壊をコンパイル時に排除 |
-| 不正終了でIDEが固まり、マイコンのポートも掴みっぱなしで詰む | バックエンドを完全別プロセス化。自動WDT挿入＆レスキューシーケンスで物理・論理の両面からフェイルセーフ |
-| 微妙なコードの変更をGitで綺麗に管理・追跡しにくい | Zed標準のインラインGit連携とブランチ連動型ビルドで進捗を地続きに |
+| IDEs are so heavy they kill productivity | Zed's GPU-accelerated rendering (GPUI) and a Rust-powered core cut through it |
+| Code compiles fine, then freezes on real hardware for no clear reason | Core logic is written in Rust (no_std), eliminating memory corruption at compile time |
+| A crash freezes the IDE and leaves the microcontroller's port locked up | Backend runs as a fully separate process; auto-inserted watchdog timer + rescue sequence provide fail-safety at both the process and hardware level |
+| Small code changes are hard to track cleanly in Git | Zed's built-in inline Git integration and branch-linked builds keep progress traceable end to end |
 
 Full architecture, scope, and roadmap: see the project RFC (in progress).
 
