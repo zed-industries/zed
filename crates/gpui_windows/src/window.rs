@@ -24,9 +24,11 @@ use windows::{
             Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
         },
         UI::{
-            Controls::*, HiDpi::*,
+            Controls::*,
+            HiDpi::*,
             Input::{Ime::*, KeyboardAndMouse::*},
-            Shell::*, WindowsAndMessaging::*,
+            Shell::*,
+            WindowsAndMessaging::*,
         },
     },
     core::*,
