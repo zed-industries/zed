@@ -1,9 +1,8 @@
 use crate::{
     LocationLink,
     lsp_command::{
-        LspCommand, file_path_to_lsp_url, location_link_from_lsp, location_link_from_proto,
-        location_link_to_proto, location_links_from_lsp, location_links_from_proto,
-        location_links_to_proto,
+        LspCommand, location_link_from_lsp, location_link_from_proto, location_link_to_proto,
+        location_links_from_lsp, location_links_from_proto, location_links_to_proto,
     },
     lsp_store::LspStore,
     make_lsp_text_document_position, make_text_document_identifier,
@@ -19,10 +18,7 @@ use language::{
 use lsp::{AdapterServerCapabilities, LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use task::TaskTemplate;
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
@@ -74,13 +70,13 @@ impl LspCommand for ExpandMacro {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        uri: &lsp::Uri,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<ExpandMacroParams> {
         Ok(ExpandMacroParams {
-            text_document: make_text_document_identifier(path)?,
+            text_document: make_text_document_identifier(uri),
             position: point_to_lsp(self.position),
         })
     }
@@ -206,15 +202,13 @@ impl LspCommand for OpenDocs {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        uri: &lsp::Uri,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<OpenDocsParams> {
-        let uri = lsp::Uri::from_file_path(path)
-            .map_err(|()| anyhow::anyhow!("{path:?} is not a valid URI"))?;
         Ok(OpenDocsParams {
-            text_document: lsp::TextDocumentIdentifier { uri },
+            text_document: lsp::TextDocumentIdentifier { uri: uri.clone() },
             position: point_to_lsp(self.position),
         })
     }
@@ -340,14 +334,12 @@ impl LspCommand for SwitchSourceHeader {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        uri: &lsp::Uri,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<SwitchSourceHeaderParams> {
-        Ok(SwitchSourceHeaderParams(make_text_document_identifier(
-            path,
-        )?))
+        Ok(SwitchSourceHeaderParams(make_text_document_identifier(uri)))
     }
 
     async fn response_from_lsp(
@@ -422,12 +414,12 @@ impl LspCommand for GoToParentModule {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        uri: &lsp::Uri,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::TextDocumentPositionParams> {
-        make_lsp_text_document_position(path, self.position)
+        Ok(make_lsp_text_document_position(uri, self.position))
     }
 
     async fn response_from_lsp(
@@ -679,14 +671,13 @@ impl LspCommand for GetLspRunnables {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        uri: &lsp::Uri,
         buffer: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<RunnablesParams> {
-        let url = file_path_to_lsp_url(path)?;
         Ok(RunnablesParams {
-            text_document: lsp::TextDocumentIdentifier::new(url),
+            text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
             position: self
                 .position
                 .map(|anchor| point_to_lsp(anchor.to_point_utf16(&buffer.snapshot()))),
