@@ -133,6 +133,24 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
+    /// Window title template.
+    ///
+    /// Available variables are `${projectName}`, `${fileName}`,
+    /// `${filePath}`, `${relativePath}`, `${fileStem}`, `${remoteName}`,
+    /// `${remoteHost}`, `${appName}`, `${branch}`,
+    /// and `${separator}`.
+    /// `${separator}` is omitted when adjacent variables are empty,
+    /// but literal text is preserved.
+    /// The collaboration indicator, when present, is appended after the
+    /// rendered template.
+    ///
+    /// Default: `${projectName}${separator}${fileName}`
+    pub window_title_format: Option<String>,
+    /// String substituted for `${separator}` in the window title format.
+    /// Include any surrounding whitespace in the value.
+    ///
+    /// Default: ` — `
+    pub window_title_separator: Option<String>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
