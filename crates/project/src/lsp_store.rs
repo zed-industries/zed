@@ -3535,6 +3535,35 @@ impl LocalLspStore {
 
                     fs.rename(&source_abs_path, &target_abs_path, options)
                         .await?;
+
+                    // Preserve the entry id across the rename so an open buffer follows it
+                    // to the new path, instead of being stranded at the old path when the
+                    // filesystem watcher reports the deletion before the creation. Only a
+                    // rename within one worktree can do this; anything else falls back to
+                    // the watcher.
+                    let refresh = this.update(cx, |this, cx| {
+                        let (source_worktree, source_rel_path) = this
+                            .worktree_store()
+                            .read(cx)
+                            .find_worktree(&source_abs_path, cx)?;
+                        let (target_worktree, target_rel_path) = this
+                            .worktree_store()
+                            .read(cx)
+                            .find_worktree(&target_abs_path, cx)?;
+                        if source_worktree != target_worktree {
+                            return None;
+                        }
+                        target_worktree.update(cx, |worktree, cx| {
+                            Some(worktree.as_local()?.refresh_entry(
+                                target_rel_path,
+                                Some(source_rel_path),
+                                cx,
+                            ))
+                        })
+                    });
+                    if let Some(refresh) = refresh {
+                        refresh.await?;
+                    }
                 }
 
                 lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {

@@ -7897,8 +7897,10 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
 // Regression test for https://github.com/zed-industries/zed/issues/59077:
 // a "rename symbol" whose workspace edit also renames the file used to swap the
-// two files' contents. The edited content must end up in the renamed file.
-#[gpui::test]
+// two files' contents. The edited content must end up in the renamed file, and
+// the open buffer must follow the rename regardless of the order the filesystem
+// watcher reports the change (hence the seed iterations).
+#[gpui::test(iterations = 30)]
 async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
