@@ -2315,11 +2315,7 @@ impl EditPredictionStore {
 
         let trigger = predict_edits_request_trigger_from_editor_trigger(trigger);
 
-        self.queue_prediction_refresh(
-            project.clone(),
-            buffer.entity_id(),
-            debounce_duration,
-            cx,
+        self.queue_prediction_refresh(project.clone(), buffer.entity_id(), debounce_duration, cx,
             move |this, cx| {
                 let Some(request_task) = this
                     .update(cx, |this, cx| {
