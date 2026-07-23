@@ -580,6 +580,18 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// Whether to discover and monitor nested Git repositories inside the
+    /// opened workspace folder. When enabled, every `.git` directory found
+    /// during file scanning creates an active repository with its own
+    /// status tracking, diff bases, and branch queries.
+    ///
+    /// Disable this if your workspace contains many nested Git repositories
+    /// that you keep around for reference but do not actively develop in.
+    /// Those repositories will still be visible in the project panel but
+    /// will not cause background Git work.
+    ///
+    /// Default: true
+    pub discover_nested_repositories: Option<bool>,
 }
 
 #[with_fallible_options]

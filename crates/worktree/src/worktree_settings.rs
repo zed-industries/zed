@@ -21,6 +21,7 @@ pub struct WorktreeSettings {
     pub private_files: PathMatcher,
     pub hidden_files: PathMatcher,
     pub read_only_files: PathMatcher,
+    pub discover_nested_repositories: bool,
 }
 
 impl WorktreeSettings {
@@ -98,6 +99,11 @@ impl Settings for WorktreeSettings {
                 .log_err()
                 .unwrap_or_default(),
             scan_symlinks,
+            discover_nested_repositories: content
+                .git
+                .as_ref()
+                .and_then(|git| git.discover_nested_repositories)
+                .unwrap_or(true),
         }
     }
 }

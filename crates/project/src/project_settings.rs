@@ -499,6 +499,11 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,
+    /// Whether to discover and monitor nested Git repositories inside the
+    /// workspace folder.
+    ///
+    /// Default: true
+    pub discover_nested_repositories: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -714,6 +719,7 @@ impl Settings for ProjectSettings {
                 .worktree_directory
                 .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
+            discover_nested_repositories: git.discover_nested_repositories.unwrap_or(true),
         };
         Self {
             context_servers: project

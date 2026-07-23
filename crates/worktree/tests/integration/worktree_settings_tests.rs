@@ -19,6 +19,7 @@ fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
         )
         .unwrap(),
         scan_symlinks: Default::default(),
+        discover_nested_repositories: true,
     }
 }
 
