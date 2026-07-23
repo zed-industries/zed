@@ -14,6 +14,8 @@ pub struct KeyBinding {
     pub(crate) meta: Option<KeyBindingMetaIndex>,
     /// The json input string used when building the keybinding, if any
     pub(crate) action_input: Option<SharedString>,
+    /// Whether this is a library default registered via [`crate::keybinding!`].
+    pub(crate) default: bool,
 }
 
 impl Clone for KeyBinding {
@@ -24,6 +26,7 @@ impl Clone for KeyBinding {
             context_predicate: self.context_predicate.clone(),
             meta: self.meta,
             action_input: self.action_input.clone(),
+            default: self.default,
         }
     }
 }
@@ -71,7 +74,13 @@ impl KeyBinding {
             context_predicate,
             meta: None,
             action_input,
+            default: false,
         })
+    }
+
+    /// Whether this is a library default registered via [`crate::keybinding!`].
+    pub fn is_default(&self) -> bool {
+        self.default
     }
 
     /// Set the metadata for this binding.
@@ -141,3 +150,121 @@ impl std::fmt::Debug for KeyBinding {
 /// associated with the binding, such as the source of the binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBindingMetaIndex(pub u32);
+
+/// A default key binding registered at link time via [`crate::keybinding!`].
+/// Collected into the keymap when an [`crate::App`] is created, before any
+/// user bindings, so user bindings take precedence via declaration order.
+///
+/// This type is public so the macro can construct it in other crates; it is
+/// not intended to be used directly.
+#[doc(hidden)]
+pub struct DefaultKeyBinding {
+    /// The keystrokes to bind, in the same format as [`KeyBinding::new`].
+    pub keystrokes: &'static str,
+    /// An optional key context predicate to scope the binding.
+    pub context: Option<&'static str>,
+    /// Builds the action this binding dispatches.
+    pub build_action: fn() -> Box<dyn Action>,
+}
+
+inventory::collect!(DefaultKeyBinding);
+
+impl DefaultKeyBinding {
+    /// Construct a registration record. Used by [`crate::keybinding!`].
+    #[doc(hidden)]
+    pub const fn new(
+        keystrokes: &'static str,
+        context: Option<&'static str>,
+        build_action: fn() -> Box<dyn Action>,
+    ) -> Self {
+        DefaultKeyBinding {
+            keystrokes,
+            context,
+            build_action,
+        }
+    }
+
+    /// Load all registered default key bindings, marking them as defaults.
+    /// Invalid registrations are programmer errors in the registering crate:
+    /// they panic in debug builds and are logged and skipped in release.
+    pub(crate) fn load_all() -> Vec<KeyBinding> {
+        let mut bindings = Vec::new();
+        for registration in inventory::iter::<DefaultKeyBinding> {
+            let action = (registration.build_action)();
+            let context_predicate = match registration.context {
+                Some(context) => match KeyBindingContextPredicate::parse(context) {
+                    Ok(predicate) => Some(Rc::new(predicate)),
+                    Err(error) => {
+                        gpui_util::debug_panic!(
+                            "invalid context {:?} in default key binding for {}: {}",
+                            context,
+                            action.name(),
+                            error
+                        );
+                        continue;
+                    }
+                },
+                None => None,
+            };
+            match KeyBinding::load(
+                registration.keystrokes,
+                action,
+                context_predicate,
+                false,
+                None,
+                &DummyKeyboardMapper,
+            ) {
+                Ok(mut binding) => {
+                    binding.default = true;
+                    bindings.push(binding);
+                }
+                Err(error) => {
+                    gpui_util::debug_panic!(
+                        "invalid keystrokes {:?} in default key binding: {}",
+                        registration.keystrokes,
+                        error
+                    );
+                }
+            }
+        }
+        bindings
+    }
+}
+
+/// Declares an action and registers a default key binding for it, in one step.
+///
+/// The action is registered under the crate's namespace (like `actions!` with
+/// the crate name as the namespace), and the binding is added to every
+/// [`crate::App`]'s keymap at creation time — before any user bindings, so
+/// user keymaps shadow it via declaration-order precedence. Applications can
+/// opt out of all library defaults with
+/// [`crate::Application::without_default_key_bindings`], or mask individual
+/// ones by binding [`crate::NoAction`] over them.
+///
+/// ```ignore
+/// keybinding!("enter", Confirm);
+/// keybinding!("escape", Cancel, "TextInput");  // scoped to a key context
+/// ```
+#[macro_export]
+macro_rules! keybinding {
+    ($keystrokes:literal, $name:ident) => {
+        gpui::keybinding!(@impl $keystrokes, $name, ::std::option::Option::None);
+    };
+    ($keystrokes:literal, $name:ident, $context:literal) => {
+        gpui::keybinding!(@impl $keystrokes, $name, ::std::option::Option::Some($context));
+    };
+    (@impl $keystrokes:literal, $name:ident, $context:expr) => {
+        #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
+        #[action(namespace = crate)]
+        pub struct $name;
+
+        const _: () = {
+            fn build_action() -> ::std::boxed::Box<dyn gpui::Action> {
+                ::std::boxed::Box::new($name)
+            }
+            gpui::private::inventory::submit! {
+                gpui::DefaultKeyBinding::new($keystrokes, $context, build_action)
+            }
+        };
+    };
+}

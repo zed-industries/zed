@@ -72,6 +72,7 @@ macro_rules! actions {
 /// Multiple arguments separated by commas may be specified in `#[action(...)]`:
 ///
 /// - `namespace = some_namespace` sets the namespace. In Zed this is required.
+///   `namespace = crate` uses the name of the crate being compiled.
 ///
 /// - `name = "ActionName"` overrides the action's name. This must not contain `::`.
 ///

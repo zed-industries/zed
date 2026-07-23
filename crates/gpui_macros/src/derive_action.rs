@@ -38,8 +38,16 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                         return Err(meta.error("'namespace' argument specified multiple times"));
                     }
                     meta.input.parse::<Token![=]>()?;
-                    let ident: Ident = meta.input.parse()?;
-                    namespace = Some(ident.to_string());
+                    if meta.input.peek(Token![crate]) {
+                        // `namespace = crate` uses the name of the crate being compiled.
+                        meta.input.parse::<Token![crate]>()?;
+                        namespace = Some(std::env::var("CARGO_CRATE_NAME").map_err(|_| {
+                            meta.error("CARGO_CRATE_NAME must be set to use 'namespace = crate'")
+                        })?);
+                    } else {
+                        let ident: Ident = meta.input.parse()?;
+                        namespace = Some(ident.to_string());
+                    }
                 } else if meta.path.is_ident("no_json") {
                     if no_json {
                         return Err(meta.error("'no_json' argument specified multiple times"));

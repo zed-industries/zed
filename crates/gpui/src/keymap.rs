@@ -85,6 +85,20 @@ impl Keymap {
         self.version.0 += 1;
     }
 
+    /// Remove all library-default bindings registered via [`crate::keybinding!`],
+    /// preserving the relative order of the remaining bindings.
+    pub fn remove_default_bindings(&mut self) {
+        if !self.bindings.iter().any(|binding| binding.default) {
+            return;
+        }
+        let bindings = std::mem::take(&mut self.bindings);
+        self.binding_indices_by_action_id.clear();
+        self.disabled_binding_indices.clear();
+        // Re-adding rebuilds the index structures, which refer to bindings by
+        // position and would otherwise be invalidated by removal.
+        self.add_bindings(bindings.into_iter().filter(|binding| !binding.default));
+    }
+
     /// Iterate over all bindings, in the order they were added.
     pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> + ExactSizeIterator {
         self.bindings.iter()
@@ -299,6 +313,46 @@ mod tests {
         test_only,
         [ActionAlpha, ActionBeta, ActionGamma, ActionDelta,]
     );
+
+    crate::keybinding!(
+        "ctrl-alt-shift-f19",
+        KeybindingMacroTest,
+        "GpuiKeybindingMacroTest"
+    );
+
+    #[test]
+    fn keybinding_macro_registers_action_and_default_binding() {
+        use crate::{Action as _, TestAppContext};
+
+        assert_eq!(KeybindingMacroTest.name(), "gpui::KeybindingMacroTest");
+
+        let mut cx = TestAppContext::single();
+        cx.update(|cx| {
+            {
+                let keymap = cx.keymap.borrow();
+                let bindings: Vec<_> = keymap.bindings_for_action(&KeybindingMacroTest).collect();
+                assert_eq!(bindings.len(), 1);
+                assert!(bindings[0].is_default());
+                assert!(bindings[0].context_predicate.is_some());
+            }
+
+            cx.bind_keys([KeyBinding::new(
+                "ctrl-alt-shift-f18",
+                KeybindingMacroTest,
+                None,
+            )]);
+
+            let mut keymap = cx.keymap.borrow_mut();
+            keymap.remove_default_bindings();
+            let bindings: Vec<_> = keymap.bindings_for_action(&KeybindingMacroTest).collect();
+            assert_eq!(
+                bindings.len(),
+                1,
+                "defaults are removed, user bindings survive"
+            );
+            assert!(!bindings[0].is_default());
+        });
+    }
 
     #[test]
     fn test_keymap() {

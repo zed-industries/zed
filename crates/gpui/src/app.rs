@@ -220,6 +220,16 @@ impl Application {
         self
     }
 
+    /// Run without the library-default key bindings registered via
+    /// [`crate::keybinding!`]. Applications that own their entire keymap (like
+    /// Zed) can use this to ensure no bindings exist except the ones they load
+    /// themselves. Individual defaults can instead be masked by binding
+    /// [`crate::NoAction`] over their keystrokes.
+    pub fn without_default_key_bindings(self) -> Self {
+        self.0.borrow_mut().default_key_bindings_enabled = false;
+        self
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
@@ -230,6 +240,7 @@ impl Application {
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
+            cx.load_default_key_bindings();
             on_finish_launching(cx);
         }));
     }
@@ -251,6 +262,7 @@ impl Application {
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
+            cx.load_default_key_bindings();
             on_finish_launching(cx);
         }));
         ApplicationHandle { app: self.0 }
@@ -691,6 +703,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) default_key_bindings_enabled: bool,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
     pub(crate) global_action_listeners:
@@ -811,6 +824,7 @@ impl App {
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                default_key_bindings_enabled: true,
                 keyboard_layout,
                 keyboard_mapper,
                 global_action_listeners: Default::default(),
@@ -2130,6 +2144,20 @@ impl App {
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
         self.pending_effects.push_back(Effect::RefreshWindows);
+    }
+
+    /// Load the library-default key bindings registered via
+    /// [`crate::keybinding!`], unless the application opted out with
+    /// [`crate::Application::without_default_key_bindings`]. Called at the
+    /// beginning of `run` (and at test/headless app construction), before any
+    /// user bindings, so user keymaps shadow the defaults via
+    /// declaration-order precedence.
+    pub(crate) fn load_default_key_bindings(&mut self) {
+        if self.default_key_bindings_enabled {
+            self.keymap
+                .borrow_mut()
+                .add_bindings(crate::DefaultKeyBinding::load_all());
+        }
     }
 
     /// Clear all key bindings in the app.
