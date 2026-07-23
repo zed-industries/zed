@@ -126,6 +126,8 @@ impl Editor {
 mod tests {
     use futures::StreamExt as _;
     use gpui::TestAppContext;
+    use indoc::indoc;
+    use languages::markdown_lang;
     use lsp::FoldingRange;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_eq;
@@ -133,7 +135,9 @@ mod tests {
 
     use crate::{
         editor_tests::{init_test, update_test_language_settings},
-        test::editor_lsp_test_context::EditorLspTestContext,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
     };
 
     #[gpui::test]
@@ -1187,6 +1191,173 @@ mod tests {
         });
         cx.update_editor(|editor, _window, cx| {
             assert_eq!(editor.display_text(cx), "fn multibyte() {⋯\n",);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_syntax_fold_markdown_sections(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+        cx.set_state(indoc! {"
+            ˇ# A
+            alpha
+
+            ## B
+            bravo
+
+            ### C
+            charlie
+
+            ## D
+            delta
+        "});
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            for row in [0, 3, 6, 9] {
+                assert!(
+                    snapshot
+                        .crease_for_buffer_row(MultiBufferRow(row))
+                        .is_some(),
+                    "expected heading row {row} to be foldable"
+                );
+            }
+            for row in [1, 2, 4, 10] {
+                assert!(
+                    snapshot
+                        .crease_for_buffer_row(MultiBufferRow(row))
+                        .is_none(),
+                    "expected non-heading row {row} to not be foldable"
+                );
+            }
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(3), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "# A\nalpha\n\n## B⋯\n\n## D\ndelta\n",
+                "folding ## B should swallow ### C, keep the heading visible, \
+                and trim the blank row before ## D"
+            );
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_at(MultiBufferRow(3), window, cx);
+        });
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(6), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "# A\nalpha\n\n## B\nbravo\n\n### C⋯\n\n## D\ndelta\n",
+                "### C should fold independently of its parent ## B"
+            );
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_all(&crate::actions::FoldAll, window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(editor.display_text(cx), "# A⋯\n");
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_all(&crate::actions::UnfoldAll, window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                editor.buffer.read(cx).read(cx).text()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_syntax_fold_from_section_body(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+        cx.set_state(indoc! {"
+            # A
+            alpha
+
+            ## B
+            bravo
+
+            ### C
+            charˇlie
+
+            ## D
+            delta
+        "});
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold(&crate::actions::Fold, window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "# A\nalpha\n\n## B\nbravo\n\n### C⋯\n\n## D\ndelta\n",
+                "folding from inside a section body should fold the innermost section"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_syntax_fold_markdown_edge_cases(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+        cx.set_state(
+            "ˇ# Ünïcödé √√\nböd¥ ❤\n\n## Émpty\n\n## Trailing blanks\ncontent\n\n\n## End",
+        );
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            assert!(
+                snapshot.crease_for_buffer_row(MultiBufferRow(3)).is_none(),
+                "a heading followed only by blank lines should not be foldable"
+            );
+            assert!(
+                snapshot.crease_for_buffer_row(MultiBufferRow(9)).is_none(),
+                "a heading with no body on the last line should not be foldable"
+            );
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(5), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "# Ünïcödé √√\nböd¥ ❤\n\n## Émpty\n\n## Trailing blanks⋯\n\n\n## End",
+                "trailing blank rows should be trimmed from the fold"
+            );
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_at(MultiBufferRow(5), window, cx);
+        });
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(0), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "# Ünïcödé √√⋯",
+                "multi-byte headings and bodies should fold on byte-correct boundaries"
+            );
         });
     }
 }

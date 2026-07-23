@@ -6283,6 +6283,34 @@ impl MultiBufferSnapshot {
         Some((node, output_range))
     }
 
+    pub fn fold_ranges_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<Vec<Range<MultiBufferOffset>>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let results =
+            self.map_excerpt_ranges(range, |buffer, excerpt_range, input_buffer_range| {
+                buffer
+                    .fold_ranges_containing(input_buffer_range)
+                    .filter_map(|fold_range| {
+                        let fold_range = buffer.point_to_offset(fold_range.start)
+                            ..buffer.point_to_offset(fold_range.end);
+                        if excerpt_range.context.start.0 <= fold_range.start
+                            && fold_range.end <= excerpt_range.context.end.0
+                        {
+                            Some((
+                                BufferOffset(fold_range.start)..BufferOffset(fold_range.end),
+                                (),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })?;
+        Some(results.into_iter().map(|(range, ())| range).collect())
+    }
+
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let buffer_snapshot = self.as_singleton()?;
         let excerpt = self.excerpts.first()?;
