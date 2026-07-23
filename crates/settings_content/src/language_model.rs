@@ -26,6 +26,8 @@ pub struct AllLanguageModelSettingsContent {
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel_ai_gateway: Option<VercelAiGatewaySettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
+    pub zhipu: Option<ZhipuSettingsContent>,
+    pub zhipu_anthropic: Option<ZhipuAnthropicSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
 }
@@ -529,6 +531,67 @@ pub struct XaiAvailableModel {
     pub supports_images: Option<bool>,
     pub supports_tools: Option<bool>,
     pub parallel_tool_calls: Option<bool>,
+}
+
+// ── Zhipu ────────────────────────────────────────────────────────────
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub enum ZhipuRegion {
+    #[default]
+    #[serde(rename = "international")]
+    International,
+    #[serde(rename = "china")]
+    China,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub enum ZhipuBillingType {
+    #[serde(rename = "standard")]
+    Standard,
+    #[default]
+    #[serde(rename = "coding_plan")]
+    CodingPlan,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct ZhipuSettingsContent {
+    pub api_url: Option<String>,
+    pub region: Option<ZhipuRegion>,
+    pub billing: Option<ZhipuBillingType>,
+    pub available_models: Option<Vec<ZhipuAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ZhipuAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct ZhipuAnthropicSettingsContent {
+    pub api_url: Option<String>,
+    pub region: Option<ZhipuRegion>,
+    pub available_models: Option<Vec<ZhipuAnthropicAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ZhipuAnthropicAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub default_temperature: Option<f32>,
+    pub supports_thinking: Option<bool>,
 }
 
 #[with_fallible_options]

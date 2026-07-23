@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use settings::RegisterSetting;
+use zhipu;
 
 use crate::provider::{
     anthropic, anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
@@ -11,6 +12,7 @@ use crate::provider::{
     open_ai_compatible::OpenAiCompatibleSettings, open_router, open_router::OpenRouterSettings,
     opencode, opencode::OpenCodeSettings, resolve_custom_headers,
     vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    zhipu_anthropic::ZhipuAnthropicSettings, zhipu_open_ai::ZhipuOpenAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -30,6 +32,8 @@ pub struct AllLanguageModelSettings {
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel_ai_gateway: VercelAiGatewaySettings,
     pub x_ai: XAiSettings,
+    pub zhipu: ZhipuOpenAiSettings,
+    pub zhipu_anthropic: ZhipuAnthropicSettings,
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
@@ -64,6 +68,8 @@ impl settings::Settings for AllLanguageModelSettings {
         let openai_compatible = language_models.openai_compatible.unwrap();
         let vercel_ai_gateway = language_models.vercel_ai_gateway.unwrap();
         let x_ai = language_models.x_ai.unwrap();
+        let zhipu = language_models.zhipu.unwrap();
+        let zhipu_anthropic = language_models.zhipu_anthropic.unwrap();
         let zed_dot_dev = language_models.zed_dot_dev.unwrap();
         Self {
             anthropic: AnthropicSettings {
@@ -205,6 +211,41 @@ impl settings::Settings for AllLanguageModelSettings {
                 api_url: x_ai.api_url.unwrap(),
                 available_models: x_ai.available_models.unwrap_or_default(),
                 custom_headers: custom_headers_from("xAI", x_ai.custom_headers, &[]),
+            },
+            zhipu: ZhipuOpenAiSettings {
+                api_url: zhipu.api_url.unwrap_or_default(),
+                region: zhipu
+                    .region
+                    .map(|r| match r {
+                        settings::ZhipuRegion::International => zhipu::Region::International,
+                        settings::ZhipuRegion::China => zhipu::Region::China,
+                    })
+                    .unwrap_or_default(),
+                billing: zhipu
+                    .billing
+                    .map(|b| match b {
+                        settings::ZhipuBillingType::Standard => zhipu::BillingType::Standard,
+                        settings::ZhipuBillingType::CodingPlan => zhipu::BillingType::CodingPlan,
+                    })
+                    .unwrap_or_default(),
+                available_models: zhipu.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("Zhipu", zhipu.custom_headers, &[]),
+            },
+            zhipu_anthropic: ZhipuAnthropicSettings {
+                api_url: zhipu_anthropic.api_url.unwrap_or_default(),
+                region: zhipu_anthropic
+                    .region
+                    .map(|r| match r {
+                        settings::ZhipuRegion::International => zhipu::Region::International,
+                        settings::ZhipuRegion::China => zhipu::Region::China,
+                    })
+                    .unwrap_or_default(),
+                available_models: zhipu_anthropic.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from(
+                    "Zhipu Anthropic",
+                    zhipu_anthropic.custom_headers,
+                    &[],
+                ),
             },
             zed_dot_dev: ZedDotDevSettings {
                 available_models: zed_dot_dev.available_models.unwrap_or_default(),

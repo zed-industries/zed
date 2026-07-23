@@ -2490,6 +2490,12 @@
     "x_ai": {
       "api_url": "https://api.x.ai/v1",
     },
+    "zhipu": {
+      "region": "international",
+      "billing": "coding_plan",
+      "api_url": "",
+    },
+    "zhipu_anthropic": {},
     "zed.dev": {},
   },
   "session": {

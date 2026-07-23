@@ -22,6 +22,8 @@ pub mod opencode;
 
 pub mod vercel_ai_gateway;
 pub mod x_ai;
+pub mod zhipu_anthropic;
+pub mod zhipu_open_ai;
 
 const COMMON_RESERVED_HEADER_NAMES: &[&str] = &["Authorization", "Content-Type", "Accept"];
 

@@ -54,6 +54,7 @@ members = [
     "crates/deepseek",
     "crates/dev_container",
     "crates/diagnostics",
+    "crates/zhipu",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_cli",
@@ -499,6 +500,7 @@ zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_metrics = { path = "crates/edit_prediction_metrics" }
 zeta_prompt = { path = "crates/zeta_prompt" }
+zhipu = { path = "crates/zhipu" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
 ztracing = { path = "crates/ztracing" }

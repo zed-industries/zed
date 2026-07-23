@@ -9905,6 +9905,7 @@ dependencies = [
  "url",
  "util",
  "x_ai",
+ "zhipu",
 ]
 
 [[package]]
@@ -23658,6 +23659,15 @@ dependencies = [
  "anyhow",
  "imara-diff",
  "indoc",
+ "serde",
+ "strum 0.27.2",
+]
+
+[[package]]
+name = "zhipu"
+version = "0.1.0"
+dependencies = [
+ "schemars 1.0.4",
  "serde",
  "strum 0.27.2",
 ]

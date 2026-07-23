@@ -15,6 +15,7 @@ pub enum IconName {
     AiClaude,
     AiDeepSeek,
     AiEdit,
+    AiZhipu,
     AiGemini,
     AiGoogle,
     AiLlamaCpp,

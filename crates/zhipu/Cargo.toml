@@ -1,0 +1,21 @@
+[package]
+name = "zhipu"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zhipu.rs"
+
+[features]
+default = []
+schemars = ["dep:schemars"]
+
+[dependencies]
+schemars = { workspace = true, optional = true }
+serde.workspace = true
+strum.workspace = true
