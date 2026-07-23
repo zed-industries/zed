@@ -8689,7 +8689,7 @@ fn language_settings_field_mut<T>(
 }
 
 fn language_settings_data() -> Box<[SettingsPageItem]> {
-    fn indentation_section() -> [SettingsPageItem; 5] {
+    fn indentation_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Indentation"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8766,6 +8766,25 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.auto_indent_on_paste = value;
+                        })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Indent On Move Line Up or Down",
+                description: "Whether indentation of move line up or down keybind should be adjusted based on the context.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).auto_indent_on_move"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.auto_indent_on_move.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.auto_indent_on_move = value;
                         })
                     },
                 }),

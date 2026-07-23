@@ -8193,6 +8193,86 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_move_line_up_down_autoindent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("line0\n    line1\nline2\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+        editor.move_line_up(&MoveLineUp, window, cx);
+        assert_eq!(editor.text(cx), "line0\nline2\n    line1\n");
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.move_line_down(&MoveLineDown, window, cx);
+    });
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.auto_indent_on_move = Some(true);
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+        editor.move_line_up(&MoveLineUp, window, cx);
+        assert_eq!(editor.text(cx), "line0\n    line2\n    line1\n");
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+        editor.move_line_down(&MoveLineDown, window, cx);
+        assert_eq!(editor.text(cx), "    line2\n    line0\n    line1\n");
+    });
+}
+
+#[gpui::test]
+fn test_move_line_up_down_autoindent_special_cases(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.auto_indent_on_move = Some(true);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("{\n    line1\n    line2\n}\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+        editor.move_line_down(&MoveLineDown, window, cx);
+        assert_eq!(editor.text(cx), "{\n    line1\n}\nline2\n");
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(3, 0)..Point::new(3, 0)])
+        });
+        editor.move_line_up(&MoveLineUp, window, cx);
+        assert_eq!(editor.text(cx), "{\n    line1\n    line2\n}\n");
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+        editor.move_line_up(&MoveLineUp, window, cx);
+        assert_eq!(editor.text(cx), "{\n    line2\n    line1\n}\n");
+    });
+}
+
+#[gpui::test]
 async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

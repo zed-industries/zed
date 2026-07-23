@@ -468,6 +468,8 @@
   "auto_indent": "syntax_aware",
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
+  // Whether indentation of moved lines should be adjusted based on the context.
+  "auto_indent_on_move": false,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.

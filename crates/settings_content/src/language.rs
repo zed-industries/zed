@@ -678,6 +678,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub auto_indent_on_paste: Option<bool>,
+    /// Whether indentation of move line up/down content should be adjusted based on the context.
+    ///
+    /// Default: false
+    pub auto_indent_on_move: Option<bool>,
     /// Task configuration for this language.
     ///
     /// Default: {}

@@ -536,6 +536,7 @@ impl VsCodeSettings {
             always_treat_brackets_as_autoclosed: None,
             auto_indent: None,
             auto_indent_on_paste: self.read_bool("editor.formatOnPaste"),
+            auto_indent_on_move: None,
             code_actions_on_format: None,
             completions: skip_default(CompletionSettingsContent {
                 words: self.read_bool("editor.suggest.showWords").map(|b| {

@@ -144,6 +144,8 @@ pub struct LanguageSettings {
     pub auto_indent: AutoIndentMode,
     /// Whether indentation of pasted content should be adjusted based on the context.
     pub auto_indent_on_paste: bool,
+    /// Whether indentation of move line up/down content should be adjusted based on the context.
+    pub auto_indent_on_move: bool,
     /// Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
@@ -788,6 +790,7 @@ impl settings::Settings for AllLanguageSettings {
                 use_on_type_format: settings.use_on_type_format.unwrap(),
                 auto_indent: settings.auto_indent.unwrap(),
                 auto_indent_on_paste: settings.auto_indent_on_paste.unwrap(),
+                auto_indent_on_move: settings.auto_indent_on_move.unwrap(),
                 always_treat_brackets_as_autoclosed: settings
                     .always_treat_brackets_as_autoclosed
                     .unwrap(),

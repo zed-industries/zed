@@ -7361,12 +7361,90 @@ impl Editor {
                     .excerpt_containing(insertion_point..range_to_move.end)
                     .is_some()
                 {
-                    let text = buffer
+                    let mut text = buffer
                         .text_for_range(range_to_move.clone())
                         .flat_map(|s| s.chars())
                         .skip(1)
                         .chain(['\n'])
                         .collect::<String>();
+
+                    let settings = buffer.language_settings_at(Point::new(start_row.0, 0), cx);
+                    let mut col_delta = 0;
+                    if settings.auto_indent_on_move {
+                        let prev_row = start_row.previous_row();
+
+                        if buffer.line_len(prev_row) > 0 {
+                            // Figures out tab amount & type
+                            let prev_line = buffer
+                                .text_for_range(
+                                    Point::new(prev_row.0, 0)
+                                        ..Point::new(prev_row.0, buffer.line_len(prev_row)),
+                                )
+                                .flat_map(|s| s.chars())
+                                .collect::<String>();
+
+                            let current_indent_amount = buffer
+                                .text_for_range(
+                                    Point::new(start_row.0, 0)
+                                        ..Point::new(start_row.0, buffer.line_len(start_row)),
+                                )
+                                .flat_map(|s| s.chars())
+                                .take_while(|c| c.is_whitespace())
+                                .count();
+
+                            let suggested_indents =
+                                buffer.suggested_indents(std::iter::once(prev_row.0), cx);
+                            let mut indent_amount = suggested_indents
+                                .get(&prev_row)
+                                .map(|indent| indent.len as usize)
+                                .unwrap_or_else(|| {
+                                    // fallback: count leading whitespace of next_line
+                                    prev_line.chars().take_while(|c| c.is_whitespace()).count()
+                                });
+
+                            // Bracket checking, for adding to indent
+                            if prev_line.trim_start().starts_with('}')
+                                || prev_line.trim_start().starts_with("end")
+                                || prev_line.trim_start().starts_with("]")
+                                || prev_line.trim_start().starts_with(")")
+                                || prev_line.trim_start().starts_with("</")
+                            {
+                                if settings.hard_tabs {
+                                    indent_amount += 1;
+                                } else {
+                                    indent_amount += settings.tab_size.get() as usize;
+                                }
+                            }
+
+                            col_delta = indent_amount as i32 - current_indent_amount as i32;
+
+                            let indent = if settings.hard_tabs {
+                                "\t".repeat(indent_amount)
+                            } else {
+                                " ".repeat(indent_amount)
+                            };
+
+                            let trimmed_text = text
+                                .split('\n')
+                                .map(|line| {
+                                    let to_skip = line
+                                        .chars()
+                                        .take(current_indent_amount)
+                                        .take_while(|c| c.is_whitespace())
+                                        .map(|c| c.len_utf8())
+                                        .sum();
+                                    &line[to_skip..]
+                                })
+                                .collect::<Vec<_>>()
+                                .join(&format!("\n{indent}"));
+
+                            text = format!("{indent}{trimmed_text}");
+                            // Removes extra indents from join
+                            if text.ends_with(indent.as_str()) {
+                                text.truncate(text.len() - indent.len());
+                            }
+                        }
+                    }
 
                     edits.push((
                         buffer.anchor_after(range_to_move.start)
@@ -7383,6 +7461,10 @@ impl Editor {
                         |mut selection| {
                             selection.start.row -= row_delta;
                             selection.end.row -= row_delta;
+                            selection.start.column =
+                                selection.start.column.saturating_add_signed(col_delta);
+                            selection.end.column =
+                                selection.end.column.saturating_add_signed(col_delta);
                             selection
                         },
                     ));
@@ -7471,6 +7553,110 @@ impl Editor {
                     let mut text = String::from("\n");
                     text.extend(buffer.text_for_range(range_to_move.clone()));
                     text.pop(); // Drop trailing newline
+
+                    let settings = buffer.language_settings_at(Point::new(end_row.0, 0), cx);
+                    let mut col_delta = 0;
+                    if settings.auto_indent_on_move {
+                        let next_row = end_row.next_row();
+
+                        if end_row.0 < buffer.max_point().row {
+                            // Figures out tab amount & type
+                            let read_line = |row: MultiBufferRow| {
+                                buffer
+                                    .text_for_range(
+                                        Point::new(row.0, 0)
+                                            ..Point::new(row.0, buffer.line_len(row)),
+                                    )
+                                    .flat_map(|s| s.chars())
+                                    .collect::<String>()
+                            };
+
+                            let next_line = read_line(next_row);
+                            let current_indent_amount = read_line(start_row)
+                                .chars()
+                                .take_while(|c| c.is_whitespace())
+                                .count();
+
+                            let maybe_indent_amount = if !next_line.trim().is_empty() {
+                                let next_line_indent =
+                                    next_line.chars().take_while(|c| c.is_whitespace()).count();
+                                let suggested_indents =
+                                    buffer.suggested_indents(std::iter::once(next_row.0), cx);
+                                let mut indent_amount = suggested_indents
+                                    .get(&next_row)
+                                    .map(|indent| indent.len as usize)
+                                    .unwrap_or(next_line_indent)
+                                    .min(next_line_indent);
+
+                                let trimmed = next_line.trim_start();
+                                if trimmed.starts_with('}')
+                                    || trimmed.starts_with(')')
+                                    || trimmed.starts_with("end")
+                                    || trimmed.starts_with("</")
+                                {
+                                    indent_amount += if settings.hard_tabs {
+                                        1
+                                    } else {
+                                        settings.tab_size.get() as usize
+                                    };
+                                }
+                                Some(indent_amount)
+                            } else {
+                                // Exiting block: only re-indent when jumping over a closing delimiter
+                                let prev_line = read_line(end_row);
+                                let trimmed = prev_line.trim_start();
+                                if trimmed.starts_with('}')
+                                    || trimmed.starts_with(')')
+                                    || trimmed.starts_with("end")
+                                    || trimmed.starts_with("</")
+                                {
+                                    let prev_line_indent =
+                                        prev_line.chars().take_while(|c| c.is_whitespace()).count();
+                                    let suggested_indents =
+                                        buffer.suggested_indents(std::iter::once(next_row.0), cx);
+                                    Some(
+                                        suggested_indents
+                                            .get(&next_row)
+                                            .map(|indent| indent.len as usize)
+                                            .unwrap_or(prev_line_indent)
+                                            .min(prev_line_indent),
+                                    )
+                                } else {
+                                    None
+                                }
+                            };
+
+                            if let Some(indent_amount) = maybe_indent_amount {
+                                col_delta = indent_amount as i32 - current_indent_amount as i32;
+
+                                let indent = if settings.hard_tabs {
+                                    "\t".repeat(indent_amount)
+                                } else {
+                                    " ".repeat(indent_amount)
+                                };
+
+                                let trimmed_text = text
+                                    .split('\n')
+                                    .map(|line| {
+                                        let to_skip: usize = line
+                                            .chars()
+                                            .take(current_indent_amount)
+                                            .take_while(|c| c.is_whitespace())
+                                            .map(|c| c.len_utf8())
+                                            .sum();
+                                        &line[to_skip..]
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(&format!("\n{indent}"));
+
+                                text = trimmed_text;
+                                if text.ends_with(indent.as_str()) {
+                                    text.truncate(text.len() - indent.len());
+                                }
+                            }
+                        }
+                    }
+
                     edits.push((
                         buffer.anchor_after(range_to_move.start)
                             ..buffer.anchor_before(range_to_move.end),
@@ -7486,6 +7672,10 @@ impl Editor {
                         |mut selection| {
                             selection.start.row += row_delta;
                             selection.end.row += row_delta;
+                            selection.start.column =
+                                selection.start.column.saturating_add_signed(col_delta);
+                            selection.end.column =
+                                selection.end.column.saturating_add_signed(col_delta);
                             selection
                         },
                     ));
