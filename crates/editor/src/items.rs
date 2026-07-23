@@ -759,11 +759,10 @@ impl Item for Editor {
                     let buffer_id = buffer.remote_id();
                     let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
-                    let (repo, repo_path) = project
+                    let status = project
                         .git_store()
                         .read(cx)
-                        .repository_and_path_for_buffer_id(buffer_id, cx)?;
-                    let status = repo.read(cx).status_for_path(&repo_path)?.status;
+                        .git_status_for_buffer_id(buffer_id, cx)?;
 
                     Some(entry_git_aware_label_color(
                         status.summary(),

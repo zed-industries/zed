@@ -113,6 +113,16 @@ impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
             let Some(buffer) = hunks.buffer else {
                 continue;
             };
+            let buffer_id = buffer.read(cx).remote_id();
+            if project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .diff_base_for_buffer(buffer_id, cx)
+                .is_some()
+            {
+                continue;
+            }
             let ranges = hunks
                 .hunks
                 .into_iter()
@@ -2944,6 +2954,26 @@ pub fn render_diff_hunk_controls(
     let show_stage_restore = ProjectSettings::get_global(cx)
         .git
         .show_stage_restore_buttons;
+    let non_head_base = editor
+        .read(cx)
+        .project()
+        .cloned()
+        .zip(
+            editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .text_anchor_for_position(hunk_range.start, cx),
+        )
+        .is_some_and(|(project, (buffer, _))| {
+            let buffer_id = buffer.read(cx).remote_id();
+            project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .diff_base_for_buffer(buffer_id, cx)
+                .is_some()
+        });
 
     h_flex()
         .h(line_height)
@@ -2959,7 +2989,7 @@ pub fn render_diff_hunk_controls(
         .gap_1()
         .block_mouse_except_scroll()
         .shadow_md()
-        .when(show_stage_restore, |el| {
+        .when(show_stage_restore && !non_head_base, |el| {
             el.child(if status.has_secondary_hunk() {
                 Button::new(("stage", row as u64), "Stage")
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
@@ -3127,11 +3157,14 @@ pub(super) fn update_uncommitted_diff_for_buffer(
 ) -> Task<()> {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
-        for buffer in buffers {
-            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+        let git_store = project.git_store().clone();
+        git_store.update(cx, |git_store, cx| {
+            for buffer in buffers {
+                if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                    tasks.push(git_store.open_display_diff(buffer.clone(), cx));
+                }
             }
-        }
+        });
     });
     cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
