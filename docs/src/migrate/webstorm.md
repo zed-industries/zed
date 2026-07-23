@@ -43,6 +43,8 @@ If you're coming from WebStorm, the fastest way to feel at home is to use the Je
 
 This maps familiar shortcuts like {#kb:jetbrains project_symbols::Toggle} for Go to Class and {#kb:jetbrains command_palette::Toggle} for Find Action.
 
+In editors, the JetBrains keymap also makes `Alt+Left` / `Alt+Right` and `Shift+Alt+Left` / `Shift+Alt+Right` move and select by subword, so identifiers like `camelCase` and `snake_case` behave like WebStorm's CamelHumps navigation.
+
 ## Set Up Editor Preferences
 
 You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
@@ -82,31 +84,40 @@ Open buffers appear as tabs across the top. The Project Panel shows your file tr
 
 If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference of common actions and their keybindings with the JetBrains keymap active.
 
-### Common Keybindings
+### Common Shared Keybindings
 
-| Action                 | Zed Keybinding                                  |
-| ---------------------- | ----------------------------------------------- |
-| Command Palette        | {#kb:jetbrains command_palette::Toggle}         |
-| Go to File             | {#kb:jetbrains file_finder::Toggle}             |
-| Go to Symbol           | {#kb:jetbrains project_symbols::Toggle}         |
-| File Outline           | {#kb:jetbrains outline::Toggle}                 |
-| Go to Definition       | {#kb:jetbrains editor::GoToDefinition}          |
-| Find Usages            | {#kb:jetbrains editor::FindAllReferences}       |
-| Rename Symbol          | {#kb:jetbrains editor::Rename}                  |
-| Reformat Code          | {#kb:jetbrains editor::Format}                  |
-| Toggle Project Panel   | {#kb:jetbrains project_panel::ToggleFocus}      |
-| Toggle Terminal        | {#kb:jetbrains terminal_panel::Toggle}          |
-| Duplicate Line         | {#kb:jetbrains editor::DuplicateSelection}      |
-| Delete Line            | {#kb:jetbrains editor::DeleteLine}              |
-| Move Line Up           | {#kb:jetbrains editor::MoveLineUp}              |
-| Move Line Down         | {#kb:jetbrains editor::MoveLineDown}            |
-| Expand Selection       | {#kb:jetbrains editor::SelectLargerSyntaxNode}  |
-| Shrink Selection       | {#kb:jetbrains editor::SelectSmallerSyntaxNode} |
-| Comment Line           | {#kb:jetbrains editor::ToggleComments}          |
-| Go Back                | {#kb:jetbrains pane::GoBack}                    |
-| Go Forward             | {#kb:jetbrains pane::GoForward}                 |
-| Toggle Breakpoint      | {#kb:jetbrains editor::ToggleBreakpoint}        |
-| Navigate to Next Error | {#kb:jetbrains editor::GoToDiagnostic}          |
+| Action                        | Shortcut                   |
+| ----------------------------- | -------------------------- |
+| Search Everywhere             | `Shift Shift`              |
+| Find Action / Command Palette | `Cmd + Shift + A`          |
+| Go to File                    | `Cmd + Shift + O`          |
+| Go to Symbol                  | `Cmd + O`                  |
+| Recent Files                  | `Cmd + E`                  |
+| Go to Definition              | `Cmd + B`                  |
+| Find Usages                   | `Alt + F7`                 |
+| Rename Symbol                 | `Shift + F6`               |
+| Reformat Code                 | `Cmd + Alt + L`            |
+| Toggle Project Panel          | `Cmd + 1`                  |
+| Toggle Terminal               | `Alt + F12`                |
+| Duplicate Line                | `Cmd + D`                  |
+| Delete Line                   | `Cmd + Backspace`          |
+| Move Line Up/Down             | `Shift + Alt + Up/Down`    |
+| Expand/Shrink Selection       | `Alt + Up/Down`            |
+| Move by subword               | `Alt + Left/Right`         |
+| Select by subword             | `Shift + Alt + Left/Right` |
+| Comment Line                  | `Cmd + /`                  |
+| Go Back / Forward             | `Cmd + [` / `Cmd + ]`      |
+| Toggle Breakpoint             | `Ctrl + F8`                |
+
+### Different Keybindings (WebStorm → Zed)
+
+| Action                 | WebStorm    | Zed (JetBrains keymap)   |
+| ---------------------- | ----------- | ------------------------ |
+| File Structure         | `Cmd + F12` | `Cmd + F12` (outline)    |
+| Navigate to Next Error | `F2`        | `F2`                     |
+| Run                    | `Ctrl + R`  | `Ctrl + Alt + R` (tasks) |
+| Debug                  | `Ctrl + D`  | `Alt + Shift + F9`       |
+| Stop                   | `Cmd + F2`  | `Ctrl + F2`              |
 
 ### Unique to Zed
 
