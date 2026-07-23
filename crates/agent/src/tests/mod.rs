@@ -4825,7 +4825,7 @@ fn setup_context_server(
         .on_request::<context_server::types::requests::Initialize, _>(move |_params| async move {
             context_server::types::InitializeResponse {
                 protocol_version: context_server::types::ProtocolVersion(
-                    context_server::types::LATEST_PROTOCOL_VERSION.to_string(),
+                    context_server::types::LATEST_LEGACY_PROTOCOL_VERSION.to_string(),
                 ),
                 server_info: context_server::types::Implementation {
                     name: name.into(),

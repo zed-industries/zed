@@ -151,9 +151,11 @@ fn json_rpc_error_response_for(outgoing: &str, status: u16, error_body: &str) ->
 
     let error = match serde_json::from_str::<serde_json::Value>(error_body) {
         Ok(body) if body.get("error").is_some_and(|error| error.is_object()) => {
-            if body.get("id").is_some_and(|id| !id.is_null()) {
-                // Correlated to a request: forward the server's response
-                // wholesale.
+            if body.get("id") == Some(&request_id) {
+                // Correlated to the request we sent: forward the server's
+                // response wholesale. Any other id (or `id: null`) could
+                // not resolve the pending request, so re-wrap the error
+                // below.
                 return Some(error_body.to_string());
             }
             body.get("error").cloned()?

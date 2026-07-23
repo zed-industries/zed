@@ -86,36 +86,58 @@ impl ModelContextProtocol {
 
         let discover_result = self
             .inner
-            .request::<types::DiscoverResponse>(
+            .request::<Value>(
                 types::requests::ServerDiscover::METHOD,
                 serde_json::json!({ "_meta": request_meta }),
             )
             .await;
 
         match discover_result {
-            Ok(response) => {
-                self.finish_discovery(client_info, request_meta, response)
-                    .await
-            }
+            Ok(result) => match serde_json::from_value::<types::DiscoverResponse>(result) {
+                Ok(response) => {
+                    self.finish_discovery(client_info, request_meta, response)
+                        .await
+                }
+                Err(error) => {
+                    // A modern server must return a valid DiscoverResult;
+                    // anything else is a legacy server answering an unknown
+                    // method leniently.
+                    log::debug!(
+                        "treating malformed server/discover result as a legacy server: {error}"
+                    );
+                    self.legacy_initialize(client_info, None).await
+                }
+            },
             Err(error) => {
                 if let Some(rpc_error) = error.downcast_ref::<client::Error>() {
-                    if rpc_error.code == types::error_codes::UNSUPPORTED_PROTOCOL_VERSION {
-                        // A modern server that rejects our modern version. If
-                        // it also speaks a legacy version we support, use the
-                        // handshake it expects for that version; otherwise
-                        // there is no compatible version.
-                        let supported = rpc_error
-                            .data
-                            .clone()
-                            .and_then(|data| {
-                                serde_json::from_value::<types::UnsupportedProtocolVersionData>(
-                                    data,
-                                )
+                    // A well-formed UnsupportedProtocolVersionError is the
+                    // recognized modern negotiation signal: the server is
+                    // modern but rejects our version, and advertises the
+                    // versions it supports. If it also speaks a legacy
+                    // version we support, use the handshake it expects for
+                    // that version; otherwise there is no compatible
+                    // version. A -32022 without the data payload could as
+                    // well be a legacy server's implementation-defined
+                    // error, so it falls through to the legacy fallback.
+                    if rpc_error.code == types::error_codes::UNSUPPORTED_PROTOCOL_VERSION
+                        && let Some(data) = rpc_error.data.clone().and_then(|data| {
+                            serde_json::from_value::<types::UnsupportedProtocolVersionData>(data)
                                 .ok()
-                            })
-                            .map(|data| data.supported)
-                            .unwrap_or_default();
-                        return self.negotiate_from_supported(client_info, &supported).await;
+                        })
+                    {
+                        return self
+                            .negotiate_from_supported(client_info, &data.supported)
+                            .await;
+                    }
+                    // The other spec-reserved negotiation errors also
+                    // identify a modern server; falling back to a handshake
+                    // it does not implement would not help.
+                    if matches!(
+                        rpc_error.code,
+                        types::error_codes::HEADER_MISMATCH
+                            | types::error_codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+                    ) {
+                        return Err(error);
                     }
                     // Any other JSON-RPC error identifies a legacy server
                     // (they commonly answer unknown pre-initialize methods
@@ -312,7 +334,7 @@ impl InitializedContextServerProtocol {
         loop {
             let result: Value = self
                 .inner
-                .request_with(T::METHOD, &params, cancel_rx.take(), timeout)
+                .request_with(T::METHOD, &params, cancel_rx.as_mut(), timeout)
                 .await?;
 
             // Multi round-trip requests (MCP 2026-07-28): a modern server
@@ -606,6 +628,101 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_discover_advertising_only_legacy_versions_falls_back(cx: &mut TestAppContext) {
+        // A server that implements server/discover but lists only legacy
+        // versions gets the handshake those versions require.
+        let transport = FakeTransport::new(cx.executor())
+            .on_raw_request(requests::ServerDiscover::METHOD, |_params| async {
+                Ok(Some(serde_json::json!({
+                    "resultType": "complete",
+                    "supportedVersions": ["2025-11-25", "2025-06-18"],
+                    "capabilities": {}
+                })))
+            })
+            .on_request::<requests::Initialize, _>(|params| async move {
+                types::InitializeResponse {
+                    protocol_version: params.protocol_version,
+                    server_info: types::Implementation {
+                        name: "discoverable-legacy-server".to_string(),
+                        title: None,
+                        version: "1.0.0".to_string(),
+                        description: None,
+                    },
+                    capabilities: types::ServerCapabilities::default(),
+                    meta: None,
+                }
+            });
+
+        let (protocol, _) = connect(transport, cx).await;
+        let protocol = protocol.unwrap();
+        assert!(!protocol.is_modern());
+        assert_eq!(
+            protocol.protocol_version,
+            types::ProtocolVersion(types::VERSION_2025_11_25.to_string())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_malformed_discover_result_falls_back_to_legacy(cx: &mut TestAppContext) {
+        // Some permissive legacy servers acknowledge unknown methods with an
+        // empty success result.
+        let transport = FakeTransport::new(cx.executor())
+            .on_raw_request(requests::ServerDiscover::METHOD, |_params| async {
+                Ok(Some(serde_json::json!({})))
+            })
+            .on_request::<requests::Initialize, _>(|_params| async {
+                types::InitializeResponse {
+                    protocol_version: types::ProtocolVersion(
+                        types::LATEST_LEGACY_PROTOCOL_VERSION.to_string(),
+                    ),
+                    server_info: types::Implementation {
+                        name: "permissive-legacy-server".to_string(),
+                        title: None,
+                        version: "1.0.0".to_string(),
+                        description: None,
+                    },
+                    capabilities: types::ServerCapabilities::default(),
+                    meta: None,
+                }
+            });
+
+        let (protocol, _) = connect(transport, cx).await;
+        assert!(!protocol.unwrap().is_modern());
+    }
+
+    #[gpui::test]
+    async fn test_bare_unsupported_version_error_falls_back_to_legacy(cx: &mut TestAppContext) {
+        // A -32022 without data.supported could be a legacy server's
+        // implementation-defined error, not the modern negotiation signal.
+        let transport = FakeTransport::new(cx.executor())
+            .on_raw_request(requests::ServerDiscover::METHOD, |_params| async {
+                Err(client::Error {
+                    code: types::error_codes::UNSUPPORTED_PROTOCOL_VERSION,
+                    message: "nope".to_string(),
+                    data: None,
+                })
+            })
+            .on_request::<requests::Initialize, _>(|_params| async {
+                types::InitializeResponse {
+                    protocol_version: types::ProtocolVersion(
+                        types::LATEST_LEGACY_PROTOCOL_VERSION.to_string(),
+                    ),
+                    server_info: types::Implementation {
+                        name: "legacy-server".to_string(),
+                        title: None,
+                        version: "1.0.0".to_string(),
+                        description: None,
+                    },
+                    capabilities: types::ServerCapabilities::default(),
+                    meta: None,
+                }
+            });
+
+        let (protocol, _) = connect(transport, cx).await;
+        assert!(!protocol.unwrap().is_modern());
+    }
+
+    #[gpui::test]
     async fn test_no_mutual_version_fails(cx: &mut TestAppContext) {
         let transport = FakeTransport::new(cx.executor()).on_raw_request(
             requests::ServerDiscover::METHOD,
@@ -693,6 +810,12 @@ mod tests {
                         } else {
                             assert_eq!(params["requestState"], "opaque-state");
                             assert_eq!(params["name"], "my-tool");
+                            // The retry carries the modern `_meta` like the
+                            // original request.
+                            assert_eq!(
+                                params["_meta"][types::meta_keys::PROTOCOL_VERSION],
+                                types::VERSION_2026_07_28
+                            );
                             Ok(Some(serde_json::json!({
                                 "resultType": "complete",
                                 "content": [{ "type": "text", "text": "done" }]

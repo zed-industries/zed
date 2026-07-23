@@ -404,7 +404,7 @@ impl Client {
         &self,
         method: &str,
         params: impl Serialize,
-        cancel_rx: Option<oneshot::Receiver<()>>,
+        cancel_rx: Option<&mut oneshot::Receiver<()>>,
         timeout: Option<Duration>,
     ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
