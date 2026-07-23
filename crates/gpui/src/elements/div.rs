@@ -2838,22 +2838,6 @@ impl Interactivity {
                                 cursor_style: drag_cursor_style,
                                 external_paths,
                             });
-                            // Set `active_drag` first, then hand the paths to the OS: the
-                            // session-end cleanup clears `active_drag`, so it must already be set.
-                            if let Some(paths) = cx
-                                .active_drag
-                                .as_ref()
-                                .and_then(|drag| drag.external_paths.as_ref())
-                            {
-                                log::info!(
-                                    "[DEBUG-file-drag-event] requesting platform file drag: path_count={}, trigger={event:?}",
-                                    paths.paths().len()
-                                );
-                                let started = window.platform_window.start_file_drag(paths);
-                                log::info!(
-                                    "[DEBUG-file-drag-event] platform file drag request completed: started={started}"
-                                );
-                            }
                             pending_mouse_down.take();
                             window.refresh();
                             cx.stop_propagation();

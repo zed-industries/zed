@@ -11,6 +11,7 @@ use image::RgbaImage;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
+    path::PathBuf,
     rc::{Rc, Weak},
     sync::{self, Arc},
 };
@@ -35,6 +36,8 @@ pub(crate) struct TestWindowState {
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
+    file_drag_paths: Vec<PathBuf>,
+    start_file_drag_result: bool,
 }
 
 #[derive(Clone)]
@@ -87,6 +90,8 @@ impl TestWindow {
             moved_callback: None,
             input_handler: None,
             is_fullscreen: false,
+            file_drag_paths: Vec::new(),
+            start_file_drag_result: false,
         })))
     }
 
@@ -122,6 +127,14 @@ impl TestWindow {
         let result = callback(event);
         self.0.lock().input_callback = Some(callback);
         !result.propagate
+    }
+
+    pub fn file_drag_paths(&self) -> Vec<PathBuf> {
+        self.0.lock().file_drag_paths.clone()
+    }
+
+    pub fn set_start_file_drag_result(&self, result: bool) {
+        self.0.lock().start_file_drag_result = result;
     }
 }
 
@@ -333,6 +346,12 @@ impl PlatformWindow for TestWindow {
 
     fn start_window_move(&self) {
         unimplemented!()
+    }
+
+    fn start_file_drag(&self, paths: &crate::ExternalPaths) -> bool {
+        let mut state = self.0.lock();
+        state.file_drag_paths.extend_from_slice(paths.paths());
+        state.start_file_drag_result
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

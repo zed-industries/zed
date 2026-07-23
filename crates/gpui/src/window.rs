@@ -4789,10 +4789,6 @@ impl Window {
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
-            PlatformInput::DragSessionEnded => {
-                cx.stop_active_drag(self);
-                PlatformInput::DragSessionEnded
-            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -4801,6 +4797,10 @@ impl Window {
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
         }
+
+        // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
+        // is the last chance for drag listeners to see the pointer leave and reset their state.
+        self.promote_file_drag_to_platform(&event, cx);
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
@@ -4815,6 +4815,30 @@ impl Window {
         DispatchEventResult {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
+        }
+    }
+
+    fn promote_file_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
+        let PlatformInput::MouseMove(mouse_move) = event else {
+            return;
+        };
+        if mouse_move.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
+            return;
+        }
+        // Taking the paths latches the attempt to once per gesture: synthetic drag moves would
+        // otherwise replay this same out-of-bounds position every 16ms.
+        let Some(paths) = cx
+            .active_drag
+            .as_mut()
+            .and_then(|drag| drag.external_paths.take())
+        else {
+            return;
+        };
+        if self.platform_window.start_file_drag(&paths) {
+            cx.stop_active_drag(self);
         }
     }
 
@@ -6493,11 +6517,17 @@ pub fn outline(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
-        ParentElement as _, Pixels, Render, Styled as _, TestAppContext, Window, canvas, div, px,
-        size,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty, ExternalPaths,
+        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, MouseButton,
+        MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Point, Render,
+        StatefulInteractiveElement as _, Styled as _, TestAppContext, Window, canvas, div, point,
+        px, size,
     };
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        path::PathBuf,
+        rc::Rc,
+    };
 
     struct RootView {
         explicit_size: bool,
@@ -6562,6 +6592,140 @@ mod tests {
         .unwrap();
 
         assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
+    }
+
+    struct FileDragView {
+        path: PathBuf,
+        observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+    }
+
+    impl Render for FileDragView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("file-drag")
+                .size_full()
+                .on_drag_with_external_paths(
+                    self.path.clone(),
+                    |path, _, _| Some(ExternalPaths(vec![path.clone()].into())),
+                    |_, _, _, cx| cx.new(|_| Empty),
+                )
+                .on_drag_move({
+                    let observed_drag_moves = self.observed_drag_moves.clone();
+                    move |event: &DragMoveEvent<PathBuf>, _, _| {
+                        observed_drag_moves.borrow_mut().push(event.event.position);
+                    }
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn file_drag_is_promoted_once_after_leaving_the_viewport(cx: &mut TestAppContext) {
+        struct Drag {
+            window: AnyWindowHandle,
+            observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+        }
+
+        fn start_drag(cx: &mut TestAppContext, path: PathBuf, platform_result: bool) -> Drag {
+            let observed_drag_moves = Rc::new(RefCell::new(Vec::new()));
+            let window: AnyWindowHandle = cx
+                .add_window({
+                    let observed_drag_moves = observed_drag_moves.clone();
+                    move |_, _| FileDragView {
+                        path,
+                        observed_drag_moves,
+                    }
+                })
+                .into();
+            cx.test_window(window)
+                .set_start_file_drag_result(platform_result);
+
+            let update_result = cx.update_window(window, |_, window, cx| {
+                window.draw(cx).clear();
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(10.), px(10.)),
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(20.), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(cx.active_drag.is_some());
+            });
+            assert!(
+                update_result.is_ok(),
+                "failed to start drag: {update_result:?}"
+            );
+
+            assert!(cx.test_window(window).file_drag_paths().is_empty());
+            Drag {
+                window,
+                observed_drag_moves,
+            }
+        }
+
+        let successful_path = PathBuf::from("/tmp/successful-drag");
+        let successful = start_drag(cx, successful_path.clone(), true);
+        let outside_position = point(px(-1.), px(20.));
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to promote drag: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(successful.window).file_drag_paths(),
+            [successful_path]
+        );
+        // Views must still see the move that leaves the window, otherwise they never learn to tear
+        // down the drag state they built up while the pointer was inside.
+        assert_eq!(
+            successful.observed_drag_moves.borrow().last(),
+            Some(&outside_position)
+        );
+
+        let failed_path = PathBuf::from("/tmp/failed-drag");
+        let failed = start_drag(cx, failed_path.clone(), false);
+        let update_result = cx.update_window(failed.window, |_, window, cx| {
+            for x_position in [-1., -2.] {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(x_position), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            assert!(cx.active_drag.is_some());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to retain drag after platform failure: {update_result:?}"
+        );
+        assert_eq!(cx.test_window(failed.window).file_drag_paths(), [failed_path]);
     }
 
     struct FocusForwarder {
