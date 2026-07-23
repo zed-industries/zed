@@ -393,6 +393,7 @@ enum EditPipelineEntry {
         edit_cursor: usize,
         reindenter: Reindenter,
         original_snapshot: text::BufferSnapshot,
+        strip_trailing_newline: bool,
     },
 }
 
@@ -563,6 +564,7 @@ impl EditPipeline {
                         }),
                 );
 
+                let strip_trailing_newline = snapshot.contains_str_at(range.end, "\n");
                 let old_text_in_buffer = snapshot.text_for_range(range.clone()).collect::<String>();
 
                 log::debug!(
@@ -579,6 +581,7 @@ impl EditPipeline {
                     edit_cursor: range.start,
                     reindenter: Reindenter::with_deltas(first_line_delta, rest_delta),
                     original_snapshot: text_snapshot,
+                    strip_trailing_newline,
                 });
 
                 cx.update(|cx| {
@@ -632,11 +635,17 @@ impl EditPipeline {
                     mut edit_cursor,
                     mut reindenter,
                     original_snapshot,
+                    strip_trailing_newline,
                 }) = self.current_edit.take()
                 else {
                     return Ok(());
                 };
 
+                let chunk = if strip_trailing_newline {
+                    chunk.strip_suffix('\n').unwrap_or(chunk)
+                } else {
+                    chunk
+                };
                 let mut final_text = reindenter.push(chunk);
                 final_text.push_str(&reindenter.finish());
 

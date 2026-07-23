@@ -844,39 +844,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_mid_line_fragment_resolves_to_substring() {
-        // Regression test for https://github.com/zed-industries/zed/issues/59369:
-        // `old_text` fragments that only cover the middle of a much longer
-        // line (not the whole trimmed line) should still be found.
-        let buffer = TextBuffer::new(
-            ReplicaId::LOCAL,
-            BufferId::new(1).unwrap(),
-            concat!(
-                "Use the two lines below as edit targets.\n",
-                "\n",
-                "Short line target: SHORT_MARKER_LINE\n",
-                "\n",
-                "3D, first-person perspective, keyboard WASD, voxel-based, singleplayer, targeting steam PC\n",
-            ),
-        );
-        let snapshot = buffer.snapshot();
-
-        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
-        assert_eq!(matcher.push("keyboard WASD, voxel-based", None), None);
-
-        let SearchMatches::Exact(matches) = matcher.finish() else {
-            panic!("expected an exact match");
-        };
-        let [search_match] = matches.as_slice() else {
-            panic!("expected one match, got {}", matches.len());
-        };
-        let matched_text = snapshot
-            .text_for_range(search_match.range.clone())
-            .collect::<String>();
-        assert_eq!(matched_text, "keyboard WASD, voxel-based");
-    }
-
-    #[gpui::test]
     fn test_exact_match_takes_precedence_over_fuzzy_match() {
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
