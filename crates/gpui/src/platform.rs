@@ -1582,7 +1582,11 @@ impl PlatformInputHandler {
     #[allow(dead_code)]
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
         self.cx
-            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .update(|window, cx| {
+                // The next printable key may complete a chord whose prefix bypassed the IME.
+                !window.has_pending_keystrokes()
+                    && self.handler.prefers_ime_for_printable_keys(window, cx)
+            })
             .unwrap_or(false)
     }
 }
