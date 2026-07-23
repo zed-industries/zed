@@ -554,6 +554,42 @@ impl MultiWorkspace {
                 }
             }
 
+            let will_quit = cx.update(|_window, cx| {
+                let workspace_windows = cx
+                    .windows()
+                    .into_iter()
+                    .filter(|w| w.downcast::<MultiWorkspace>().is_some())
+                    .collect::<Vec<_>>();
+                if workspace_windows.len() == 1 {
+                    #[cfg(target_os = "macos")]
+                    {
+                        crate::WorkspaceSettings::get_global(cx)
+                            .on_last_window_closed
+                            .is_quit_app()
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        true
+                    }
+                } else {
+                    false
+                }
+            })?;
+
+            if will_quit {
+                let mut flush_tasks = Vec::new();
+                this.update_in(cx, |multi_workspace, window, cx| {
+                    for workspace in multi_workspace.workspaces() {
+                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx)
+                        }));
+                    }
+                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
+                    flush_tasks.push(multi_workspace.flush_serialization());
+                })?;
+                futures::future::join_all(flush_tasks).await;
+            }
+
             cx.update(|window, _cx| {
                 window.remove_window();
             })?;
