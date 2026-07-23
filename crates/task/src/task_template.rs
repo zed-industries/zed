@@ -32,6 +32,9 @@ pub struct TaskTemplate {
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// The platforms the task is restricted to, defaults to all platforms.
+    #[serde(default)]
+    pub platforms: Vec<Platform>,
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
     pub cwd: Option<String>,
@@ -160,6 +163,9 @@ impl TaskTemplate {
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
+        if !self.platforms.is_empty() && !self.platforms.contains(&Platform::current()) {
+            return None;
+        }
         if self.label.trim().is_empty() || self.command.trim().is_empty() {
             return None;
         }
@@ -370,6 +376,35 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
     Ok(hex::encode(hasher.finalize()))
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, PartialEq, Eq, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Linux,
+    Windows,
+    Darwin,
+}
+
+impl Platform {
+    fn current() -> Platform {
+        #[cfg(target_os = "macos")]
+        {
+            Self::Darwin
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Self::Linux
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Self::Windows
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        {
+            compile_error!("Unknown platform.")
+        }
+    }
 }
 
 pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) -> Option<String> {
@@ -1150,5 +1185,53 @@ mod tests {
                 VariableName::GitRepositoryPath,
             ],
         );
+    }
+
+    #[test]
+    fn test_empty_platform_list_runs_everywhere() {
+        let template = TaskTemplate {
+            label: "My label".to_string(),
+            command: "ls".to_string(),
+            ..Default::default()
+        };
+
+        let resolved = template.resolve_task("foo", &Default::default());
+
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn test_filter_for_current_platform() {
+        let current = Platform::current();
+
+        let template = TaskTemplate {
+            label: "My label".to_string(),
+            command: "ls".to_string(),
+            platforms: vec![current],
+            ..Default::default()
+        };
+
+        let resolved = template.resolve_task("foo", &Default::default());
+
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn test_filter_for_other_platform() {
+        let other = match Platform::current() {
+            Platform::Linux | Platform::Darwin => Platform::Windows,
+            Platform::Windows => Platform::Linux,
+        };
+
+        let template = TaskTemplate {
+            label: "My label".to_string(),
+            command: "ls".to_string(),
+            platforms: vec![other],
+            ..Default::default()
+        };
+
+        let resolved = template.resolve_task("foo", &Default::default());
+
+        assert!(resolved.is_none());
     }
 }
