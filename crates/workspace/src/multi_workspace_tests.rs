@@ -241,6 +241,38 @@ async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut 
 }
 
 #[gpui::test]
+async fn test_open_new_window_opens_existing_project_in_a_new_window(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project"), json!({ "file.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project"))],
+            app_state,
+            OpenOptions {
+                open_mode: OpenMode::NewWindow,
+                ..OpenOptions::default()
+            },
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+}
+
+#[gpui::test]
 async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut TestAppContext) {
     init_test(cx);
 

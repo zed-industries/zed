@@ -10198,7 +10198,7 @@ pub async fn find_existing_workspace(
     let mut open_visible = OpenVisible::All;
     let mut best_match = None;
 
-    if open_options.workspace_matching != WorkspaceMatching::None {
+    if open_options.should_reuse_existing_window() {
         cx.update(|cx| {
             for window in workspace_windows_for_location(location, cx) {
                 if let Ok(multi_workspace) = window.read(cx) {
