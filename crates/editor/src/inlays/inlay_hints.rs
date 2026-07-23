@@ -234,6 +234,7 @@ pub enum InlayHintRefreshReason {
     NewLinesShown,
     BufferEdited(BufferId),
     ServerRemoved,
+    LanguageServerRegistered,
     RefreshRequested { server_id: LanguageServerId },
     BuffersRemoved(Vec<BufferId>),
 }
@@ -320,10 +321,12 @@ impl Editor {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_)
-            | InlayHintRefreshReason::ServerRemoved => true,
-            InlayHintRefreshReason::NewLinesShown
-            | InlayHintRefreshReason::RefreshRequested { .. }
-            | InlayHintRefreshReason::BuffersRemoved(_) => false,
+            | InlayHintRefreshReason::ServerRemoved
+            | InlayHintRefreshReason::LanguageServerRegistered
+            | InlayHintRefreshReason::RefreshRequested { .. } => true,
+            InlayHintRefreshReason::NewLinesShown | InlayHintRefreshReason::BuffersRemoved(_) => {
+                false
+            }
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -363,7 +366,9 @@ impl Editor {
             return;
         };
 
-        if invalidate_cache.should_invalidate() {
+        if invalidate_cache.should_invalidate()
+            && !matches!(reason, InlayHintRefreshReason::RefreshRequested { .. })
+        {
             if invalidate_hints_for_buffers.is_empty() {
                 inlay_hints.clear();
             } else {
@@ -536,7 +541,8 @@ impl Editor {
                 return None;
             }
             InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
-            InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
+            InlayHintRefreshReason::NewLinesShown
+            | InlayHintRefreshReason::LanguageServerRegistered => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested { server_id } => {
                 InvalidationStrategy::RefreshRequested {
@@ -820,6 +826,9 @@ impl Editor {
         // Hence, clear all excerpts' hints in the multi buffer: later, the invalidated ones will re-trigger the LSP query, the rest will be restored
         // from the cache.
         if invalidate_cache.should_invalidate() {
+            for hint_id in &visible_inlay_hint_ids {
+                inlay_hints.added_hints.remove(hint_id);
+            }
             hints_to_remove.extend(visible_inlay_hint_ids);
 
             // When invalidating, this task removes ALL visible hints for the buffer

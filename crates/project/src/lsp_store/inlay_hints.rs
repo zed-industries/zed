@@ -58,6 +58,7 @@ pub struct BufferInlayHints {
     hints_by_id: HashMap<InlayId, HintForId>,
     pending_refreshes: HashSet<LanguageServerId>,
     work_end_refreshes: HashSet<LanguageServerId>,
+    pub(super) fetched_servers: HashSet<LanguageServerId>,
     pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
 }
 
@@ -90,6 +91,7 @@ impl BufferInlayHints {
             fetches_by_chunks: vec![None; chunks.len()],
             pending_refreshes: HashSet::default(),
             work_end_refreshes: HashSet::default(),
+            fetched_servers: HashSet::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
             chunks,
@@ -137,6 +139,7 @@ impl BufferInlayHints {
         }
         self.pending_refreshes.remove(&for_server);
         self.work_end_refreshes.remove(&for_server);
+        self.fetched_servers.remove(&for_server);
     }
 
     fn mark_refresh_pending(&mut self, server_id: LanguageServerId) {
@@ -165,6 +168,7 @@ impl BufferInlayHints {
         self.hint_resolves.clear();
         self.pending_refreshes.clear();
         self.work_end_refreshes.clear();
+        self.fetched_servers.clear();
     }
 
     pub fn insert_new_hints(
@@ -228,6 +232,7 @@ impl BufferInlayHints {
                 self.fetches_by_chunks[chunk_id] = None;
             }
         }
+        self.fetched_servers.remove(&for_server);
 
         true
     }
