@@ -181,13 +181,25 @@ fn collect_param_headers(input_schema: &serde_json::Value) -> Result<Vec<ParamHe
             })
     }
 
+    /// Count `x-mcp-header` keys in schema-keyword position. Keys under a
+    /// `properties` map are property *names* (data, not keywords), and the
+    /// values of data-valued keywords contain instance data where the key
+    /// carries no meaning either.
     fn count_annotations(value: &serde_json::Value) -> usize {
+        const DATA_VALUED_KEYWORDS: &[&str] = &["default", "examples", "const", "enum"];
         match value {
             serde_json::Value::Object(object) => {
                 object.iter().fold(0, |count, (key, child)| {
-                    count
-                        + usize::from(key == "x-mcp-header")
-                        + count_annotations(child)
+                    if key == "properties" {
+                        if let Some(properties) = child.as_object() {
+                            return count
+                                + properties.values().map(count_annotations).sum::<usize>();
+                        }
+                    }
+                    if DATA_VALUED_KEYWORDS.contains(&key.as_str()) {
+                        return count;
+                    }
+                    count + usize::from(key == "x-mcp-header") + count_annotations(child)
                 })
             }
             serde_json::Value::Array(array) => array.iter().map(count_annotations).sum(),
@@ -280,10 +292,20 @@ fn encode_param_value(value: &serde_json::Value) -> Option<String> {
 /// on subsequent `tools/call` requests.
 #[derive(Default)]
 struct ParamHeaderState {
-    /// Ids of in-flight modern `tools/list` requests, serialized to strings
-    /// for hashing.
-    pending_tools_list_ids: SyncMutex<collections::HashSet<String>>,
-    headers_by_tool: SyncMutex<HashMap<String, Vec<ParamHeader>>>,
+    inner: SyncMutex<ParamHeaderStateInner>,
+}
+
+#[derive(Default)]
+struct ParamHeaderStateInner {
+    next_sequence: u64,
+    /// In-flight modern `tools/list` requests: serialized request id to the
+    /// sequence number the request was issued with.
+    pending_tools_list: HashMap<String, u64>,
+    /// The sequence of the response `headers_by_tool` was last built from,
+    /// so a late response to a superseded `tools/list` cannot revert the
+    /// annotations to an older list.
+    applied_sequence: Option<u64>,
+    headers_by_tool: HashMap<String, Vec<ParamHeader>>,
 }
 
 impl ParamHeaderState {
@@ -291,9 +313,10 @@ impl ParamHeaderState {
         if outgoing.method.as_deref() == Some("tools/list")
             && let Some(id) = &outgoing.id
         {
-            self.pending_tools_list_ids
-                .lock()
-                .insert(id.to_string());
+            let mut inner = self.inner.lock();
+            let sequence = inner.next_sequence;
+            inner.next_sequence += 1;
+            inner.pending_tools_list.insert(id.to_string(), sequence);
         }
     }
 
@@ -305,15 +328,16 @@ impl ParamHeaderState {
         let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&message) else {
             return message;
         };
-        {
-            let mut pending = self.pending_tools_list_ids.lock();
+        let sequence = {
+            let mut inner = self.inner.lock();
             let Some(id) = parsed.get("id").filter(|id| !id.is_null()) else {
                 return message;
             };
-            if !pending.remove(&id.to_string()) {
+            let Some(sequence) = inner.pending_tools_list.remove(&id.to_string()) else {
                 return message;
-            }
-        }
+            };
+            sequence
+        };
         let Some(tools) = parsed
             .get_mut("result")
             .and_then(|result| result.get_mut("tools"))
@@ -345,7 +369,12 @@ impl ParamHeaderState {
                 }
             }
         });
-        *self.headers_by_tool.lock() = headers_by_tool;
+        let mut inner = self.inner.lock();
+        if inner.applied_sequence.is_none_or(|applied| sequence > applied) {
+            inner.applied_sequence = Some(sequence);
+            inner.headers_by_tool = headers_by_tool;
+        }
+        drop(inner);
 
         serde_json::to_string(&parsed).unwrap_or(message)
     }
@@ -359,8 +388,8 @@ impl ParamHeaderState {
         else {
             return Vec::new();
         };
-        let headers_by_tool = self.headers_by_tool.lock();
-        let Some(param_headers) = headers_by_tool.get(tool_name) else {
+        let inner = self.inner.lock();
+        let Some(param_headers) = inner.headers_by_tool.get(tool_name) else {
             return Vec::new();
         };
         param_headers
@@ -677,6 +706,9 @@ impl HttpTransport {
                 if let Some(error_response) =
                     json_rpc_error_response_for(&message, status.as_u16(), &error_body)
                 {
+                    // Also releases the param-header bookkeeping of a failed
+                    // tools/list request.
+                    let error_response = self.param_headers.process_incoming(error_response);
                     self.response_tx
                         .send(error_response)
                         .await
@@ -816,7 +848,8 @@ impl HttpTransport {
                             "message": "response stream ended before the response arrived",
                         },
                     });
-                    response_tx.send(error_response.to_string()).await.ok();
+                    let error_response = param_headers.process_incoming(error_response.to_string());
+                    response_tx.send(error_response).await.ok();
                 }
             })
             .detach();
@@ -850,6 +883,11 @@ impl Transport for HttpTransport {
 
 impl Drop for HttpTransport {
     fn drop(&mut self) {
+        // Dropping the abort senders tears down the in-flight SSE reader
+        // tasks (and with them the response bodies), so long-lived streams
+        // like subscriptions/listen do not outlive the transport.
+        self.active_streams.lock().clear();
+
         // Try to cleanup session on drop
         let http_client = self.http_client.clone();
         let endpoint = self.endpoint.clone();
@@ -1275,6 +1313,30 @@ mod tests {
                     path: vec!["options".into(), "retries".into()],
                 },
             ]
+        );
+
+        // The literal key outside annotation position is data, not an
+        // annotation: a parameter named "x-mcp-header", or the key inside
+        // data-valued keywords.
+        assert_eq!(
+            collect_param_headers(&serde_json::json!({
+                "properties": { "x-mcp-header": { "type": "string" } }
+            }))
+            .unwrap(),
+            Vec::new()
+        );
+        assert_eq!(
+            collect_param_headers(&serde_json::json!({
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "default": { "x-mcp-header": "not-an-annotation" },
+                        "examples": [{ "x-mcp-header": "also-data" }]
+                    }
+                }
+            }))
+            .unwrap(),
+            Vec::new()
         );
 
         // Invalid: non-primitive type.
