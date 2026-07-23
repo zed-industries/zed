@@ -1165,6 +1165,10 @@ impl Language {
         self.config.name.lsp_id()
     }
 
+    pub fn snippet_scope_id(&self) -> String {
+        self.config.name.snippet_scope_id()
+    }
+
     pub fn prettier_parser_name(&self) -> Option<&str> {
         self.config.prettier_parser_name.as_deref()
     }
