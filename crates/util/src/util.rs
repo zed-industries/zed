@@ -254,6 +254,55 @@ Error: Running Zed as root or via sudo is unsupported.
     }
 }
 
+/// Raises the soft limit on open file descriptors to the maximum the OS allows.
+///
+/// Processes launched from a GUI (Finder/launchd on macOS) inherit a soft limit
+/// of only 256 open files (Apple's frameworks bump it to 2560 on first use of
+/// some APIs), and Zed doesn't fit: language server pipes, sqlite, and sockets
+/// aside, the macOS FSEvents machinery consumes roughly 11 descriptors per
+/// watched path, so a language server registering a few hundred watched files
+/// exhausts the budget. Once that happens, `FSEventStreamStart` fails and file
+/// events silently stop, leaving buffers, git status, and the project panel
+/// stale. Chromium (8192), the JVM, and Go all raise this limit at startup for
+/// the same class of reasons.
+#[cfg(unix)]
+pub fn increase_open_file_limit() -> Result<()> {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid rlimit struct for getrlimit to fill in.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return Err(anyhow::Error::from(std::io::Error::last_os_error())
+            .context("getrlimit(RLIMIT_NOFILE)"));
+    }
+
+    // macOS rejects rlim_cur values above OPEN_MAX even when rlim_max is
+    // RLIM_INFINITY (see setrlimit(2)). The libc crate doesn't expose OPEN_MAX,
+    // so use its value from <sys/syslimits.h>.
+    #[cfg(target_os = "macos")]
+    let new_soft_limit = {
+        const OPEN_MAX: libc::rlim_t = 10240;
+        limit.rlim_max.min(OPEN_MAX)
+    };
+    #[cfg(not(target_os = "macos"))]
+    let new_soft_limit = limit.rlim_max.min(65536);
+
+    if limit.rlim_cur >= new_soft_limit {
+        return Ok(());
+    }
+
+    limit.rlim_cur = new_soft_limit;
+    // SAFETY: `limit` holds the values just read back from getrlimit, with only
+    // the soft limit raised (never above the hard limit).
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+        return Err(anyhow::Error::from(std::io::Error::last_os_error())
+            .context("setrlimit(RLIMIT_NOFILE)"));
+    }
+    log::info!("raised open file soft limit to {new_soft_limit}");
+    Ok(())
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
