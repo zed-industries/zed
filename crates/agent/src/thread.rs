@@ -1846,12 +1846,12 @@ impl Thread {
         sandboxing_enabled_for_project(self.project.read(cx), cx)
     }
 
-    /// Whether sandboxing is *applicable* for this thread's project (local
-    /// project, supported platform), regardless of whether it's been turned off
-    /// in settings. The UI shows the sandbox indicator whenever this is true,
-    /// drawing it struck-out when sandboxing is disabled.
+    /// Whether sandboxing is *applicable* for this thread's project (feature on,
+    /// local project, supported platform), regardless of whether it's been
+    /// turned off in settings. The UI shows the sandbox indicator whenever this
+    /// is true, drawing it struck-out when sandboxing is disabled.
     pub fn sandboxing_available(&self, cx: &App) -> bool {
-        sandboxing_available_for_project(self.project.read(cx))
+        sandboxing_available_for_project(self.project.read(cx), cx)
     }
 
     /// The directory subtrees the sandbox always grants write access to for this
@@ -3975,15 +3975,47 @@ impl Thread {
         let model = self
             .model()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+        let sandboxing_enabled = crate::sandboxing::sandboxing_enabled(cx);
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
+                    let mut description = tool.description().to_string();
+                    let mut schema = tool.input_schema(model.tool_input_format()).log_err()?;
+                    // TEMPORARY (sandboxing feature flag): with the flag off,
+                    // the fetch and create_directory descriptions/schemas must
+                    // not advertise sandbox-dependent behavior (host grants,
+                    // out-of-project creation via the `reason` field), since
+                    // the corresponding runtime paths are disabled. Restore
+                    // the pre-sandboxing model-facing surface here rather than
+                    // forking the tools; delete this when the flag is removed
+                    // again.
+                    if !sandboxing_enabled {
+                        if tool_name.as_ref() == FetchTool::NAME {
+                            description =
+                                "Fetches a URL and returns the content as Markdown.".to_string();
+                        } else if tool_name.as_ref() == CreateDirectoryTool::NAME {
+                            description = "Creates a new directory at the specified path within \
+                                the project. Returns confirmation that the directory was \
+                                created.\n\nThis tool creates a directory and all necessary \
+                                parent directories. It should be used whenever you need to \
+                                create new directories within the project.\nThe only supported \
+                                path outside the project is `~/.agents/skills` or a descendant, \
+                                for global agent skills."
+                                .to_string();
+                            if let Some(properties) = schema
+                                .get_mut("properties")
+                                .and_then(|value| value.as_object_mut())
+                            {
+                                properties.remove("reason");
+                            }
+                        }
+                    }
                     Some(LanguageModelRequestTool::function(
                         tool_name.to_string(),
-                        tool.description().to_string(),
-                        tool.input_schema(model.tool_input_format()).log_err()?,
+                        description,
+                        schema,
                         tool.supports_input_streaming(),
                     ))
                 })

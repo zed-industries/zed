@@ -22,10 +22,7 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 pub fn supports_fast_mode(model_id: &str) -> bool {
-    matches!(
-        model_id,
-        "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
-    )
+    matches!(model_id, "claude-opus-4-8")
 }
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";

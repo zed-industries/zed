@@ -1050,8 +1050,9 @@ impl Dock {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
         let mut clamped = false;
         for entry in &mut self.panel_entries {
-            let use_flexible = entry.panel.has_flexible_size(window, cx);
-            if use_flexible {
+            let uses_flexible_width =
+                panel_uses_flexible_width(self.position, entry.panel.as_ref(), window, cx);
+            if uses_flexible_width {
                 continue;
             }
 

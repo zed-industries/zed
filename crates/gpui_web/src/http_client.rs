@@ -15,11 +15,34 @@ extern "C" {
 
 pub struct FetchHttpClient {
     user_agent: Option<http_client::http::header::HeaderValue>,
+    credentials: FetchCredentials,
+}
+
+/// Controls whether browser Fetch requests include credentials.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FetchCredentials {
+    /// Never send credentials in the request or include credentials in the response.
+    Omit,
+    /// Only send and include credentials for same-origin requests. This is the default.
+    #[default]
+    SameOrigin,
+    /// Always include credentials, even for cross-origin requests.
+    Include,
 }
 
 impl Default for FetchHttpClient {
     fn default() -> Self {
-        Self { user_agent: None }
+        Self {
+            user_agent: None,
+            credentials: FetchCredentials::default(),
+        }
+    }
+}
+
+impl FetchHttpClient {
+    pub fn with_credentials(mut self, credentials: FetchCredentials) -> Self {
+        self.credentials = credentials;
+        self
     }
 }
 
@@ -40,6 +63,7 @@ impl FetchHttpClient {
             user_agent: Some(http_client::http::header::HeaderValue::from_str(
                 user_agent,
             )?),
+            credentials: FetchCredentials::default(),
         })
     }
 }
@@ -55,6 +79,7 @@ impl FetchHttpClient {
             user_agent: Some(http_client::http::header::HeaderValue::from_str(
                 user_agent,
             )?),
+            credentials: FetchCredentials::default(),
         })
     }
 }
@@ -94,12 +119,18 @@ impl HttpClient for FetchHttpClient {
     ) -> futures::future::BoxFuture<'static, anyhow::Result<http_client::http::Response<AsyncBody>>>
     {
         let (parts, body) = req.into_parts();
+        let credentials = self.credentials;
 
         Box::pin(AssertSend(async move {
             let body_bytes = read_body_to_bytes(body).await?;
 
             let init = web_sys::RequestInit::new();
             init.set_method(parts.method.as_str());
+            init.set_credentials(match credentials {
+                FetchCredentials::Omit => web_sys::RequestCredentials::Omit,
+                FetchCredentials::SameOrigin => web_sys::RequestCredentials::SameOrigin,
+                FetchCredentials::Include => web_sys::RequestCredentials::Include,
+            });
 
             if let Some(redirect_policy) = parts.extensions.get::<RedirectPolicy>() {
                 match redirect_policy {

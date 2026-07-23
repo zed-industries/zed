@@ -512,7 +512,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.33.1"
-agent-client-protocol = { version = "=1.1.0", features = ["unstable"] }
+agent-client-protocol = { version = "=1.3.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -555,11 +555,14 @@ aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 bitflags = "2.6.0"
+block = "0.1"
+block2 = "0.6"
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 brush-parser = "0.3"
+cbindgen = { version = "0.28.0", default-features = false }
 cfg-if = "1.0.3"
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -574,6 +577,8 @@ const_format = "0.2"
 convert_case = "0.11.0"
 core-foundation = "0.10"
 core-foundation-sys = "0.8.6"
+core-graphics = "0.24"
+core-text = "21"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
 crash-handler = "0.7"
@@ -600,10 +605,12 @@ ec4rs = { version = "1.2", features = ["allow-empty-values"] }
 emojis = "0.6.1"
 env_logger = "0.11"
 encoding_rs = "0.8"
+etagere = "0.2"
 exec = "0.3.1"
 fancy-regex = "0.18.0"
 fork = "0.4.0"
 flume = "0.12"
+foreign-types = "0.5"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
@@ -643,7 +650,7 @@ image = { version = "0.25.1", default-features = false, features = [
     "tiff",
     "webp",
 ] }
-imara-diff = "0.1.8"
+imara-diff = "0.2.0"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
@@ -669,6 +676,7 @@ moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+notify-rust = "4"
 nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
@@ -700,6 +708,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSProcessInfo",
     "NSRange",
     "NSRunLoop",
+    "NSSet",
     "NSString",
     "NSURL",
     "NSUndoManager",
@@ -707,12 +716,14 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-user-notifications = "0.3"
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
+pathfinder_geometry = "0.5"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
 percent-encoding = "2.3.2"
@@ -741,6 +752,7 @@ quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
+raw-window-handle = "0.6"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
@@ -793,6 +805,7 @@ stacksafe = "0.1"
 streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.2", features = ["derive"] }
+swash = "0.2.6"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.37.0"
@@ -875,19 +888,20 @@ webrtc-sys = "0.3.23"
 wgpu = "29.0.4"
 windows-core = "0.61"
 yaml-rust2 = "0.8"
-yawc = "0.2.5"
+yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
 zeroize = "1.8"
 zstd = "0.11"
-
 
 [workspace.dependencies.windows]
 version = "0.61"
 features = [
+    "Data_Xml_Dom",
     "Foundation_Numerics",
     "Globalization_DateTimeFormatting",
     "Storage_Search",
     "Storage_Streams",
     "System_Threading",
+    "UI_Notifications",
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Foundation",
@@ -909,6 +923,7 @@ features = [
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
@@ -946,8 +961,8 @@ windows-capture = { git = "https://github.com/zed-industries/windows-capture.git
 calloop = { git = "https://github.com/zed-industries/calloop" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
 libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
-notify = { git = "https://github.com/zed-industries/notify", rev = "faecbc33db4f59313e5225ef766bfd9e54a54cfd" }
-notify-types = { git = "https://github.com/zed-industries/notify", rev = "faecbc33db4f59313e5225ef766bfd9e54a54cfd" }
+notify = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
+notify-types = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
 
 [profile.dev]

@@ -32,12 +32,12 @@ use util::{
 use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
-    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    ActiveSettingsProfileName, FileTypeMap, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
-        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
+        ExtendingVec, ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent,
+        RootUserSettings, SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -58,11 +58,11 @@ pub trait SettingsKey: 'static + Send + Sync {
 ///
 /// Settings can be loaded from a combination of multiple JSON files.
 pub trait Settings: 'static + Send + Sync + Sized {
-    /// The name of the keys in the [`FileContent`](Self::FileContent) that should
+    /// The name of the keys in the [`SettingsContent`] that should
     /// always be written to a settings file, even if their value matches the default
     /// value.
     ///
-    /// This is useful for tagged [`FileContent`](Self::FileContent)s where the tag
+    /// This is useful for tagged [`SettingsContent`]s where the tag
     /// is a "version" field that should always be persisted, even if the current
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
@@ -1199,6 +1199,17 @@ impl SettingsStore {
                     "type": "object",
                     "errorMessage": "No language with this name is installed.",
                     "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
+                })
+            });
+
+            let file_type_patterns_ref =
+                generator.subschema_for::<ExtendingVec<String>>().to_value();
+            replace_subschema::<FileTypeMap>(generator, || {
+                json_schema!({
+                    "type": "object",
+                    "errorMessage": "No language with this name is installed.",
+                    "properties": params.language_names.iter().map(|name| (name.clone(), file_type_patterns_ref.clone())).collect::<serde_json::Map<_, _>>(),
+                    "additionalProperties": file_type_patterns_ref.clone()
                 })
             });
         }
@@ -3164,6 +3175,42 @@ mod tests {
             settings_ref,
             "zed://schemas/settings/lsp/rust-analyzer/settings"
         );
+    }
+
+    #[gpui::test]
+    fn test_file_types_schema_generation(cx: &mut App) {
+        SettingsStore::test(cx);
+
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
+        });
+
+        let file_type_map = schema
+            .pointer("/$defs/FileTypeMap")
+            .expect("schema should have a FileTypeMap definition");
+        let properties = file_type_map
+            .pointer("/properties")
+            .expect("FileTypeMap should have properties")
+            .as_object()
+            .expect("FileTypeMap properties should be an object");
+
+        let mut language_names = properties.keys().collect::<Vec<_>>();
+        language_names.sort();
+        assert_eq!(language_names, ["Rust", "TypeScript"]);
+
+        let patterns_schema = file_type_map
+            .pointer("/additionalProperties")
+            .expect("FileTypeMap should validate values of unknown language names");
+        assert_eq!(properties.get("Rust"), Some(patterns_schema));
+        assert_eq!(properties.get("TypeScript"), Some(patterns_schema));
     }
 
     #[gpui::test]
