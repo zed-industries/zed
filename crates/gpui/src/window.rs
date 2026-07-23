@@ -1594,12 +1594,9 @@ impl Window {
                     {
                         // Don't lose a pending forced render to throttling.
                         deferred_force_render |= force_render;
-                        // Must still complete the frame on platforms that require it.
-                        // On Wayland, `surface.frame()` was already called to request the
-                        // next frame callback, so we must call `surface.commit()` (via
-                        // `complete_frame`) or the compositor won't send another callback.
+                        // Deferred by throttling: ask demand-driven platforms to retry.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .update(&mut cx, |_, window, _| window.complete_frame(true))
                             .log_err();
                         // The demand that entered this branch (a deferred forced
                         // render or pending next-frame callbacks) is still
@@ -1650,9 +1647,11 @@ impl Window {
                         .log_err();
                 }
 
+                let request_next_frame =
+                    invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty();
                 handle
                     .update(&mut cx, |_, window, _| {
-                        window.complete_frame();
+                        window.complete_frame(request_next_frame);
                     })
                     .log_err();
 
@@ -2844,8 +2843,8 @@ impl Window {
         self.capslock
     }
 
-    fn complete_frame(&self) {
-        self.platform_window.completed_frame();
+    fn complete_frame(&self, request_next_frame: bool) {
+        self.platform_window.completed_frame(request_next_frame);
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
