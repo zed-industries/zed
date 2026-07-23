@@ -561,6 +561,17 @@ impl AnthropicEventMapper {
                 ))]
             }
             Event::MessageStop => {
+                // Anthropic closes every content block before ending the
+                // message, so an unclosed compaction block means the stream
+                // was malformed and its finalized summary never arrived.
+                // Consumers would otherwise see `Started` with no terminal
+                // event and treat the compaction as still in progress.
+                if !self.compaction_summaries_by_index.is_empty() {
+                    self.compaction_summaries_by_index.clear();
+                    return vec![Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "Anthropic ended the stream without finishing its compaction summary"
+                    )))];
+                }
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
@@ -1175,6 +1186,44 @@ mod tests {
             error
                 .to_string()
                 .contains("compaction delta before starting")
+        );
+    }
+
+    #[test]
+    fn test_event_mapper_rejects_stream_end_with_unfinished_compaction() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": { "type": "compaction", "content": "Summary " }
+        }))
+        .unwrap();
+        let stop_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_stop"
+        }))
+        .unwrap();
+
+        let started = mapper
+            .map_event(start_event)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            started,
+            vec![
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(
+                    "Summary ".into()
+                )),
+            ]
+        );
+
+        let error = mapper.map_event(stop_event).pop().unwrap().unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("without finishing its compaction summary")
         );
     }
 

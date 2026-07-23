@@ -565,6 +565,7 @@ impl LanguageModel for OpenAiLanguageModel {
             self.model
                 .supported_reasoning_efforts()
                 .contains(&open_ai::ReasoningEffort::None),
+            &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -574,7 +575,7 @@ impl LanguageModel for OpenAiLanguageModel {
         async move {
             let response = response.await?;
             response
-                .into_compacted_context()
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
                 .map_err(LanguageModelCompletionError::Other)
         }
         .boxed()
@@ -629,13 +630,14 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model
                     .supported_reasoning_efforts()
                     .contains(&open_ai::ReasoningEffort::None),
+                &OPEN_AI_PROVIDER_ID,
             ) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
             let completions = self.stream_response(request, cx);
             async move {
-                let mapper = OpenAiResponseEventMapper::new();
+                let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()

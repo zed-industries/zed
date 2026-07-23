@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 use language_model_core::{
-    CompactedContext, OPEN_AI_PROVIDER_ID, ProviderCompactionState, SharedString,
+    CompactedContext, LanguageModelProviderId, ProviderCompactionState, SharedString,
 };
 
 pub const COMPACTION_STATE_FORMAT: &str = "openai.responses.input-items.v1";
@@ -83,24 +83,46 @@ pub struct CompactedResponse {
 }
 
 impl CompactedResponse {
-    pub fn into_compacted_context(self) -> Result<CompactedContext> {
+    pub fn into_compacted_context(
+        self,
+        owner: LanguageModelProviderId,
+    ) -> Result<CompactedContext> {
         Ok(CompactedContext::ProviderState(
-            provider_compaction_state_from_items(self.output)?,
+            provider_compaction_state_from_items(owner, self.output)?,
         ))
     }
 }
 
-pub fn provider_compaction_state_from_items(items: Vec<Value>) -> Result<ProviderCompactionState> {
+/// Packages a canonical replacement window into opaque provider state owned by
+/// `owner`.
+///
+/// Several backends speak the OpenAI Responses protocol (OpenAI itself, Zed
+/// Cloud's OpenAI models, OpenAI-compatible endpoints, and others), but their
+/// encrypted compaction items are not interchangeable: only the backend that
+/// produced an item can decrypt it. The owner recorded here is what
+/// [`provider_compaction_items`] later compares against, so it must identify
+/// the backend whose infrastructure produced the items, not merely the wire
+/// protocol.
+pub fn provider_compaction_state_from_items(
+    owner: LanguageModelProviderId,
+    items: Vec<Value>,
+) -> Result<ProviderCompactionState> {
     validate_compaction_items(&items)?;
     Ok(ProviderCompactionState::new(
-        OPEN_AI_PROVIDER_ID,
+        owner,
         SharedString::new_static(COMPACTION_STATE_FORMAT),
         serde_json::to_string(&items)?,
     ))
 }
 
-pub fn provider_compaction_items(state: &ProviderCompactionState) -> Result<Option<Vec<Value>>> {
-    if state.provider_id() != &OPEN_AI_PROVIDER_ID {
+/// Recovers the canonical replacement window from `state` if it is owned by
+/// `owner`, or `None` when the state belongs to a different backend and the
+/// caller should fall back to replaying the full transcript.
+pub fn provider_compaction_items(
+    state: &ProviderCompactionState,
+    owner: &LanguageModelProviderId,
+) -> Result<Option<Vec<Value>>> {
+    if state.provider_id() != owner {
         return Ok(None);
     }
     if state.format() != COMPACTION_STATE_FORMAT {
@@ -150,6 +172,13 @@ impl ResponseInput {
         self.provider_items.is_empty() && self.generated_items.is_empty()
     }
 
+    /// Filters only the items this crate generated from the request.
+    ///
+    /// Provider items are a canonical replacement window that must be replayed
+    /// verbatim, so they are exempt from filtering. Callers that rewrite the
+    /// input to satisfy backend-specific requirements (and therefore can't
+    /// tolerate arbitrary items inside a replayed window) should not accept
+    /// provider-native compaction state in the first place.
     pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
         self.generated_items.retain(predicate);
     }
@@ -905,6 +934,7 @@ mod tests {
     use super::*;
     use futures::executor::block_on;
     use http_client::FakeHttpClient;
+    use language_model_core::OPEN_AI_PROVIDER_ID;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
@@ -962,10 +992,16 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            provider_compaction_items(&match response.into_compacted_context().unwrap() {
-                CompactedContext::ProviderState(state) => state,
-                CompactedContext::Summary { .. } => panic!("expected provider state"),
-            })
+            provider_compaction_items(
+                &match response
+                    .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                    .unwrap()
+                {
+                    CompactedContext::ProviderState(state) => state,
+                    CompactedContext::Summary { .. } => panic!("expected provider state"),
+                },
+                &OPEN_AI_PROVIDER_ID
+            )
             .unwrap(),
             Some(vec![json!({
                 "type": "compaction",
@@ -1081,11 +1117,16 @@ mod tests {
         }))
         .unwrap();
 
-        let CompactedContext::ProviderState(state) = response.into_compacted_context().unwrap()
+        let CompactedContext::ProviderState(state) = response
+            .into_compacted_context(OPEN_AI_PROVIDER_ID)
+            .unwrap()
         else {
             panic!("expected provider state");
         };
-        assert_eq!(provider_compaction_items(&state).unwrap(), Some(output));
+        assert_eq!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            Some(output)
+        );
     }
 
     #[test]
@@ -1111,7 +1152,7 @@ mod tests {
 
         assert!(
             response
-                .into_compacted_context()
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
                 .unwrap_err()
                 .to_string()
                 .contains("compaction item")
@@ -1137,7 +1178,7 @@ mod tests {
 
         assert!(
             response
-                .into_compacted_context()
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
                 .unwrap_err()
                 .to_string()
                 .contains("empty")
@@ -1151,14 +1192,29 @@ mod tests {
             "id": "cmp_manual",
             "encrypted_content": "opaque-state"
         })];
-        let mut state = provider_compaction_state_from_items(items).unwrap();
+        let state =
+            provider_compaction_state_from_items(OPEN_AI_PROVIDER_ID, items.clone()).unwrap();
 
-        state = ProviderCompactionState::new(
-            language_model_core::LanguageModelProviderId::new("anthropic"),
-            state.format(),
-            state.payload(),
+        assert_eq!(
+            provider_compaction_items(&state, &LanguageModelProviderId::new("anthropic")).unwrap(),
+            None
         );
-        assert_eq!(provider_compaction_items(&state).unwrap(), None);
+
+        // The same window stamped for a different OpenAI-protocol backend is
+        // opaque to OpenAI proper: encrypted compaction items are only
+        // decryptable by the infrastructure that produced them.
+        let compatible_backend = LanguageModelProviderId::new("my-compatible-endpoint");
+        let state =
+            provider_compaction_state_from_items(compatible_backend.clone(), items).unwrap();
+        assert_eq!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+        assert!(
+            provider_compaction_items(&state, &compatible_backend)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -1169,7 +1225,7 @@ mod tests {
             "[]",
         );
         assert!(
-            provider_compaction_items(&state)
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID)
                 .unwrap_err()
                 .to_string()
                 .contains("unsupported OpenAI compaction state format")
@@ -1184,7 +1240,7 @@ mod tests {
             "not valid JSON",
         );
 
-        assert!(provider_compaction_items(&state).is_err());
+        assert!(provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).is_err());
     }
 
     fn compact_test_request() -> CompactRequest {

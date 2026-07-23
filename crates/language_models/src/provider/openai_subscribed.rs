@@ -529,6 +529,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model
                 .supported_reasoning_efforts()
                 .contains(&ReasoningEffort::None),
+            &PROVIDER_ID,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -597,7 +598,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         });
 
         async move {
-            let mapper = OpenAiResponseEventMapper::new();
+            let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
             Ok(mapper.map_stream(future.await?.boxed()).boxed())
         }
         .boxed()

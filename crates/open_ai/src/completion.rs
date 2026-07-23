@@ -4,10 +4,10 @@ use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestToolInput,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role, StopReason,
-    TokenUsage,
+    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
+    StopReason, TokenUsage,
     util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -228,6 +228,11 @@ pub fn into_open_ai(
     })
 }
 
+/// `compaction_state_owner` identifies the backend this request will be sent
+/// to for the purpose of replaying provider-native compaction state. Multiple
+/// backends share this conversion, but their encrypted compaction items are
+/// not interchangeable, so only state owned by this id is replayed; state
+/// owned by any other backend falls back to replaying the full transcript.
 pub fn into_open_ai_response(
     request: LanguageModelRequest,
     model_id: &str,
@@ -236,6 +241,7 @@ pub fn into_open_ai_response(
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
     supports_none_reasoning_effort: bool,
+    compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<ResponseRequest> {
     let stream = !model_id.starts_with("o1-");
 
@@ -264,6 +270,7 @@ pub fn into_open_ai_response(
         append_message_to_response_items(
             message,
             index,
+            compaction_state_owner,
             &mut replayed_reasoning_item_indexes,
             &mut tool_use_kinds_by_id,
             &mut provider_items,
@@ -367,6 +374,7 @@ pub fn into_open_ai_response(
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
+    compaction_state_owner: &LanguageModelProviderId,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
     provider_items: &mut Vec<serde_json::Value>,
@@ -401,16 +409,16 @@ fn append_message_to_response_items(
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
             MessageContent::Compaction(CompactedContext::ProviderState(state)) => {
-                // OpenAI's canonical replacement window already encodes all
+                // The canonical replacement window already encodes all
                 // context retained at the compaction point, so everything
                 // accumulated before it -- earlier input items, earlier parts
                 // of this same message, and replay bookkeeping -- is
                 // superseded and must not be resent. When a transcript
                 // contains multiple compactions, each later window supersedes
                 // the previous one, so the last compaction wins. State owned
-                // by another provider yields `None`, in which case we fall
+                // by another backend yields `None`, in which case we fall
                 // back to replaying the full transcript.
-                if let Some(items) = provider_compaction_items(&state)? {
+                if let Some(items) = provider_compaction_items(&state, compaction_state_owner)? {
                     content_parts.clear();
                     input_items.clear();
                     replayed_reasoning_item_indexes.clear();
@@ -839,11 +847,15 @@ struct RawToolCall {
 }
 
 pub struct OpenAiResponseEventMapper {
+    /// The backend whose infrastructure produced this stream; stamped on any
+    /// compaction state it emits so replay is limited to the same backend.
+    compaction_state_owner: LanguageModelProviderId,
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
+    pending_compaction_items: usize,
 }
 
 #[derive(Default)]
@@ -860,13 +872,15 @@ struct PendingResponseCustomToolCall {
 }
 
 impl OpenAiResponseEventMapper {
-    pub fn new() -> Self {
+    pub fn new(compaction_state_owner: LanguageModelProviderId) -> Self {
         Self {
+            compaction_state_owner,
             function_calls_by_item: HashMap::default(),
             custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
             current_message_phase: None,
             pending_stop_reason: None,
+            pending_compaction_items: 0,
         }
     }
 
@@ -935,6 +949,7 @@ impl OpenAiResponseEventMapper {
                         }
                     }
                     ResponseOutputItem::Compaction(_) => {
+                        self.pending_compaction_items += 1;
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
                             CompactionUpdate::Started,
                         )));
@@ -1118,10 +1133,15 @@ impl OpenAiResponseEventMapper {
                     }
                 }
                 ResponseOutputItem::Compaction(compaction) => {
+                    self.pending_compaction_items = self.pending_compaction_items.saturating_sub(1);
                     match serde_json::to_value(ResponseInputItem::Compaction(compaction))
                         .map_err(anyhow::Error::from)
-                        .and_then(|item| provider_compaction_state_from_items(vec![item]))
-                    {
+                        .and_then(|item| {
+                            provider_compaction_state_from_items(
+                                self.compaction_state_owner.clone(),
+                                vec![item],
+                            )
+                        }) {
                         Ok(state) => vec![Ok(LanguageModelCompletionEvent::Compaction(
                             CompactionUpdate::Finished(CompactedContext::ProviderState(state)),
                         ))],
@@ -1147,6 +1167,16 @@ impl OpenAiResponseEventMapper {
         response: ResponsesSummary,
         default_reason: StopReason,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // A compaction item that was added but never done means the server
+        // already pruned its context, but we never received the canonical
+        // replacement window. Continuing as if the turn succeeded would
+        // leave the conversation unable to continue coherently.
+        if self.pending_compaction_items > 0 {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "response completed with an unfinished compaction item"
+            )))];
+        }
+
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
@@ -1486,7 +1516,8 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, SharedString, Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
+        Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1498,7 +1529,7 @@ mod tests {
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
-            OpenAiResponseEventMapper::new()
+            OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
                 .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
                 .collect::<Vec<_>>()
                 .await
@@ -1835,6 +1866,7 @@ mod tests {
             Some(2048),
             Some(ReasoningEffort::Low),
             false,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2018,9 +2050,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false)
-                .unwrap();
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(response).unwrap();
         assert_eq!(
             serialized,
@@ -2119,6 +2159,7 @@ mod tests {
             None,
             Some(ReasoningEffort::Low),
             false,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2195,9 +2236,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false)
-                .unwrap();
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2261,6 +2310,7 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2298,8 +2348,17 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let response =
-                into_open_ai_response(request, "gpt-5.4", true, true, None, None, true).unwrap();
+            let response = into_open_ai_response(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                None,
+                true,
+                &OPEN_AI_PROVIDER_ID,
+            )
+            .unwrap();
 
             let serialized = serde_json::to_value(&response)?;
             assert_eq!(
@@ -2433,6 +2492,7 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2473,6 +2533,7 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2525,6 +2586,7 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2616,6 +2678,7 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
+            &OPEN_AI_PROVIDER_ID,
         )
         .unwrap();
 
@@ -2697,9 +2760,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false)
-                .unwrap();
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2822,7 +2893,7 @@ mod tests {
 
     #[test]
     fn responses_stream_failed_uses_response_error_message() {
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
@@ -2854,7 +2925,7 @@ mod tests {
         }))
         .expect("documented error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2879,7 +2950,7 @@ mod tests {
         }))
         .expect("nested error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2904,7 +2975,7 @@ mod tests {
         }))
         .expect("nested error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2917,7 +2988,7 @@ mod tests {
 
     #[test]
     fn responses_stream_maps_failed_context_length_exceeded_to_prompt_too_large() {
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
@@ -2949,7 +3020,7 @@ mod tests {
         }))
         .expect("response error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -4033,6 +4104,7 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
                         provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
                             provider_input.as_array().unwrap().clone(),
                         )
                         .unwrap(),
@@ -4050,8 +4122,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response =
-            into_open_ai_response(request, "gpt-5.4", true, true, None, None, false).unwrap();
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -4091,8 +4172,17 @@ mod tests {
             ..Default::default()
         };
 
-        let mut response_request =
-            into_open_ai_response(request, "gpt-5.4", true, true, None, None, false).unwrap();
+        let mut response_request = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         response_request.instructions = Some("Preserve implementation details.".to_string());
         let compact_request = response_request.into_compact_request();
 
@@ -4128,8 +4218,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response =
-            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap();
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["context_management"],
@@ -4149,8 +4248,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response =
-            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap();
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert!(
             serde_json::to_value(&response)
@@ -4162,11 +4270,14 @@ mod tests {
 
     #[test]
     fn into_open_ai_response_replays_provider_compaction_block() {
-        let state = provider_compaction_state_from_items(vec![json!({
-            "type": "compaction",
-            "id": "cmp_1",
-            "encrypted_content": "encrypted-blob"
-        })])
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
         .unwrap();
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
@@ -4181,8 +4292,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response =
-            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap();
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -4221,14 +4341,171 @@ mod tests {
             ..Default::default()
         };
 
-        let error =
-            into_open_ai_response(request, "gpt-5.1", true, true, None, None, false).unwrap_err();
+        let error = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap_err();
 
         assert!(
             error
                 .to_string()
                 .contains("malformed OpenAI compaction state payload")
         );
+    }
+
+    #[test]
+    fn into_open_ai_response_ignores_compaction_state_owned_by_another_backend() {
+        // Several backends share this request conversion (OpenAI itself,
+        // OpenAI-compatible endpoints, Codex, Mantle), but an encrypted
+        // compaction item is only decryptable by the backend that produced
+        // it. Replaying OpenAI-owned state through a different backend would
+        // discard the entire transcript in exchange for an opaque blob that
+        // backend cannot read, so the state must be ignored and the full
+        // transcript replayed instead.
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Set up the project.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Compaction(CompactedContext::ProviderState(state)),
+                        MessageContent::Text("Done.".into()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "compatible-model",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &LanguageModelProviderId::new("my-compatible-endpoint"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Set up the project." }]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Continue." }]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_stamps_compaction_state_with_owning_backend() {
+        let owner = LanguageModelProviderId::new("my-compatible-endpoint");
+        let mut mapper = OpenAiResponseEventMapper::new(owner.clone());
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let mut events = mapper.map_event(ResponsesStreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+
+        let Some(Ok(LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+            CompactedContext::ProviderState(state),
+        )))) = events.pop()
+        else {
+            panic!("expected finished provider compaction state");
+        };
+        assert_eq!(state.provider_id(), &owner);
+        assert!(
+            crate::responses::provider_compaction_items(&state, &owner)
+                .unwrap()
+                .is_some()
+        );
+        // OpenAI proper must not attempt to replay a window produced by a
+        // different backend's infrastructure.
+        assert_eq!(
+            crate::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn responses_stream_rejects_completion_with_unfinished_compaction() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let started = mapper.map_event(ResponsesStreamEvent::OutputItemAdded {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+        assert!(matches!(
+            started.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started
+            ))]
+        ));
+
+        let mut completed = mapper.map_event(ResponsesStreamEvent::Completed {
+            response: ResponseSummary::default(),
+        });
+        let error = completed.pop().unwrap().unwrap_err();
+
+        assert!(error.to_string().contains("unfinished compaction"));
     }
 
     #[test]
@@ -4260,11 +4537,14 @@ mod tests {
                 LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
                 LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
                     CompactedContext::ProviderState(
-                        provider_compaction_state_from_items(vec![json!({
-                            "type": "compaction",
-                            "id": "cmp_1",
-                            "encrypted_content": "encrypted-blob"
-                        })])
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            vec![json!({
+                                "type": "compaction",
+                                "id": "cmp_1",
+                                "encrypted_content": "encrypted-blob"
+                            })],
+                        )
                         .unwrap()
                     )
                 )),

@@ -733,6 +733,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.max_output_tokens(self.subscription),
                     None,
                     supports_none_reasoning_effort,
+                    &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -740,7 +741,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let stream =
                     self.stream_openai_response(response_request, http_client, extra_headers, cx);
                 async move {
-                    let mapper = OpenAiResponseEventMapper::new();
+                    let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
                     Ok(mapper.map_stream(stream.await?).boxed())
                 }
                 .boxed()

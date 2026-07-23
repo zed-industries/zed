@@ -449,6 +449,9 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 open_ai::ReasoningEffort::from_str(&effort.value)
                     .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
             });
+        // Cloud proxies to OpenAI's own infrastructure, so the resulting
+        // compaction state is owned by (and interchangeable with) OpenAI
+        // proper, not by the cloud transport.
         let request = match into_open_ai_response(
             request,
             &self.model.id.0,
@@ -457,6 +460,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             None,
             None,
             supports_none_reasoning_effort,
+            &OPEN_AI_PROVIDER_ID,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -498,7 +502,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 match event.map_err(|error| error.into_completion_error(provider_name.clone()))? {
                     CompletionEvent::Event(response) => {
                         return response
-                            .into_compacted_context()
+                            .into_compacted_context(OPEN_AI_PROVIDER_ID)
                             .map_err(LanguageModelCompletionError::Other);
                     }
                     CompletionEvent::Status(_) => {}
@@ -685,6 +689,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     None,
                     None,
                     supports_none_reasoning_effort,
+                    &OPEN_AI_PROVIDER_ID,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -722,7 +727,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     )
                     .await?;
 
-                    let mut mapper = OpenAiResponseEventMapper::new();
+                    let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
                     Ok(map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
@@ -1183,7 +1188,7 @@ mod tests {
             panic!("expected provider compaction state");
         };
         assert_eq!(
-            open_ai::responses::provider_compaction_items(&state).unwrap(),
+            open_ai::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
             Some(vec![json!({
                 "type": "compaction",
                 "id": "cmp_manual",
