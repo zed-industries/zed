@@ -1230,6 +1230,7 @@ pub struct Window {
     pub(crate) display_observers: SubscriberSet<(), AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
+    last_window_bounds: WindowBounds,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -2145,6 +2146,7 @@ impl Window {
             display_observers: SubscriberSet::new(),
             is_resizable,
             is_minimizable,
+            last_window_bounds: window_bounds,
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -2540,6 +2542,10 @@ impl Window {
         self.platform_window.window_bounds()
     }
 
+    pub(crate) fn last_window_bounds(&self) -> WindowBounds {
+        self.last_window_bounds
+    }
+
     pub(crate) fn display_id(&self) -> Option<DisplayId> {
         self.display_id
     }
@@ -2810,6 +2816,7 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
+        self.last_window_bounds = self.platform_window.window_bounds();
         self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
