@@ -130,19 +130,12 @@ impl ModelContextProtocol {
                             .negotiate_from_supported(client_info, &data.supported)
                             .await;
                     }
-                    // The other spec-reserved negotiation errors also
-                    // identify a modern server; falling back to a handshake
-                    // it does not implement would not help.
-                    if matches!(
-                        rpc_error.code,
-                        types::error_codes::HEADER_MISMATCH
-                            | types::error_codes::MISSING_REQUIRED_CLIENT_CAPABILITY
-                    ) {
-                        return Err(error);
-                    }
-                    // Any other JSON-RPC error identifies a legacy server
-                    // (they commonly answer unknown pre-initialize methods
-                    // with -32601 or -32602).
+                    // Any other JSON-RPC error identifies a legacy server:
+                    // they commonly answer unknown pre-initialize methods
+                    // with -32601 or -32602, but the spec forbids keying the
+                    // fallback to specific codes, since pre-2026 servers
+                    // could use any implementation-defined code. A modern
+                    // server answers a valid probe with a DiscoverResult.
                     return self.legacy_initialize(client_info, None).await;
                 }
                 if error.is::<RequestTimedOut>() {
