@@ -517,14 +517,15 @@ mod numbered_code_block_tests {
 ///
 /// Default (no entry in the map) means the last dropdown choice is selected,
 /// which is typically "Only this time".
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum PermissionSelection {
     /// A specific choice from the dropdown (e.g., "Always for terminal", "Only this time").
     /// The index corresponds to the position in the `choices` list from `PermissionOptions`.
     Choice(usize),
     /// "Select options…" mode where individual command patterns can be toggled.
     /// Contains the indices of checked patterns in the `patterns` list.
-    /// All patterns start checked when this mode is first activated.
+    /// Only the pattern the user clicked is checked when this mode is first activated;
+    /// the user must explicitly check any additional patterns.
     SelectedPatterns(Vec<usize>),
 }
 
@@ -2755,42 +2756,16 @@ impl ThreadView {
         let tool_call_id = acp::ToolCallId::new(action.tool_call_id.clone());
 
         match self.permission_selections.get_mut(&tool_call_id) {
-            Some(PermissionSelection::SelectedPatterns(checked)) => {
-                // Already in pattern mode — toggle the individual pattern.
-                if let Some(pos) = checked.iter().position(|&i| i == action.pattern_index) {
-                    checked.swap_remove(pos);
-                } else {
-                    checked.push(action.pattern_index);
-                }
+            Some(selection @ PermissionSelection::SelectedPatterns(_)) => {
+                selection.toggle_pattern(action.pattern_index);
             }
             _ => {
-                // First click: activate "Select options" with all patterns checked.
-                let thread = self.thread.read(cx);
-                let pattern_count = thread
-                    .entries()
-                    .iter()
-                    .find_map(|entry| {
-                        if let AgentThreadEntry::ToolCall(call) = entry {
-                            if call.id == tool_call_id {
-                                if let ToolCallStatus::WaitingForConfirmation { options, .. } =
-                                    &call.status
-                                {
-                                    if let PermissionOptions::DropdownWithPatterns {
-                                        patterns,
-                                        ..
-                                    } = options
-                                    {
-                                        return Some(patterns.len());
-                                    }
-                                }
-                            }
-                        }
-                        None
-                    })
-                    .unwrap_or(0);
+                // First click: activate "Select options" with only the clicked pattern checked.
+                // Checking the rest is left to the user — checking one pattern must not
+                // implicitly grant the others.
                 self.permission_selections.insert(
                     tool_call_id,
-                    PermissionSelection::SelectedPatterns((0..pattern_count).collect()),
+                    PermissionSelection::SelectedPatterns(vec![action.pattern_index]),
                 );
             }
         }
@@ -9435,7 +9410,6 @@ impl ThreadView {
             })
             .collect();
 
-        let pattern_count = patterns.len();
         let permission_dropdown_handle = self.permission_dropdown_handle.clone();
         let view = cx.entity().downgrade();
 
@@ -9502,6 +9476,13 @@ impl ThreadView {
                                 IconPosition::End,
                                 None,
                                 move |_window, cx| {
+                                    // Mutate selection state directly on the ThreadView (rather
+                                    // than dispatching `SelectPermissionGranularity`). The action
+                                    // dispatch is processed after this closure returns, which
+                                    // races the persistent ContextMenu's own post-click rebuild:
+                                    // the menu re-reads `permission_selections` while it's still
+                                    // stale, producing a "one click behind" render. Mutating
+                                    // synchronously here keeps the menu's rebuild in sync.
                                     view.update(cx, |this, cx| {
                                         this.permission_selections.insert(
                                             tool_call_id_for_entry.clone(),
@@ -9531,27 +9512,28 @@ impl ThreadView {
                                 IconPosition::End,
                                 None,
                                 move |_window, cx| {
+                                    // Mutate synchronously instead of dispatching
+                                    // `ToggleCommandPattern` — see the comment on the granularity
+                                    // entry above. The bug fix is the first-click branch: only
+                                    // the clicked pattern is checked, not every pattern in the
+                                    // pipeline.
                                     view.update(cx, |this, cx| {
-                                        let selection = this
+                                        match this
                                             .permission_selections
-                                            .get_mut(&tool_call_id_for_pattern);
-
-                                        match selection {
-                                            Some(PermissionSelection::SelectedPatterns(_)) => {
-                                                // Already in pattern mode — toggle.
-                                                this.permission_selections
-                                                    .get_mut(&tool_call_id_for_pattern)
-                                                    .expect("just matched above")
-                                                    .toggle_pattern(pattern_index);
+                                            .get_mut(&tool_call_id_for_pattern)
+                                        {
+                                            Some(
+                                                selection
+                                                @ PermissionSelection::SelectedPatterns(_),
+                                            ) => {
+                                                selection.toggle_pattern(pattern_index);
                                             }
                                             _ => {
-                                                // First click: activate pattern mode
-                                                // with all patterns checked.
                                                 this.permission_selections.insert(
                                                     tool_call_id_for_pattern.clone(),
-                                                    PermissionSelection::SelectedPatterns(
-                                                        (0..pattern_count).collect(),
-                                                    ),
+                                                    PermissionSelection::SelectedPatterns(vec![
+                                                        pattern_index,
+                                                    ]),
                                                 );
                                             }
                                         }
