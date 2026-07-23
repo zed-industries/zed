@@ -16,7 +16,7 @@ use gpui::{
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm};
-use project::git_store::Repository;
+use project::git_store::{Repository, diff_buffer_list::DiffBase};
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
@@ -340,8 +340,15 @@ fn open_file_diff(
     cx: &mut App,
 ) {
     window.defer(cx, move |window, cx| {
-        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), window, cx)
-            .detach_and_notify_err(workspace, window, cx);
+        SoloDiffView::open_or_focus(
+            entry,
+            repository,
+            DiffBase::Head,
+            workspace.clone(),
+            window,
+            cx,
+        )
+        .detach_and_notify_err(workspace, window, cx);
     });
 }
 

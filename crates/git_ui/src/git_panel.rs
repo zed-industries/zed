@@ -62,7 +62,8 @@ use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
+        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
+        diff_buffer_list::DiffBase, pending_op,
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -1936,15 +1937,29 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
+            let selected_index = self.selected_entry?;
             let entry = self
                 .entries
-                .get(self.selected_entry?)?
+                .get(selected_index)?
                 .status_entry()?
                 .clone();
             let repository = self.active_repository.clone()?;
+            let section = self.section_for_entry_index(selected_index);
+            let diff_base = match section {
+                Some(Section::Staged) => DiffBase::Staged,
+                Some(Section::Unstaged) => DiffBase::Index,
+                _ => DiffBase::Head,
+            };
 
-            SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
-                .detach_and_notify_err(self.workspace.clone(), window, cx);
+            SoloDiffView::open_or_focus(
+                entry,
+                repository,
+                diff_base,
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+            .detach_and_notify_err(self.workspace.clone(), window, cx);
 
             Some(())
         });

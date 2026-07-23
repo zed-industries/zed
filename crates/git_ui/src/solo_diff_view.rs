@@ -1,12 +1,16 @@
-use crate::{git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon};
+use crate::{
+    git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon,
+    staged_diff::StagedDiffDelegate, unstaged_diff::UnstagedDiffDelegate,
+};
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
-    DiffStyleControls, Direction, Editor, EditorEvent, EditorSettings, SplittableEditor,
-    ToggleSplitDiff,
+    DiffHunkDelegate, DiffStyleControls, Direction, Editor, EditorEvent, EditorSettings,
+    SplittableEditor, ToggleSplitDiff, UncommittedDiffHunkDelegate,
     actions::{GoToHunk, GoToPreviousHunk},
     file_status_label_color,
 };
+use settings::{Settings, SettingsStore, StatusStyle};
 use git::{
     Commit, Restore, StageAndNext, StageFile, ToggleStaged, UnstageAndNext, UnstageFile,
     repository::RepoPath, status::StageStatus,
@@ -19,9 +23,8 @@ use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project,
-    git_store::{Repository, RepositoryId},
+    git_store::{Repository, RepositoryId, diff_buffer_list::DiffBase},
 };
-use settings::{Settings, SettingsStore, StatusStyle};
 use std::{
     any::{Any, TypeId},
     ops::Range,
@@ -41,7 +44,9 @@ pub struct SoloDiffView {
     repository: Entity<Repository>,
     repository_id: RepositoryId,
     repo_path: RepoPath,
+    diff_base: DiffBase,
     buffer: Entity<Buffer>,
+    display_buffer: Entity<Buffer>,
     diff: Entity<buffer_diff::BufferDiff>,
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
@@ -53,6 +58,7 @@ impl SoloDiffView {
     pub fn open_or_focus(
         entry: GitStatusEntry,
         repository: Entity<Repository>,
+        diff_base: DiffBase,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -64,7 +70,7 @@ impl SoloDiffView {
         let existing = workspace_entity
             .read(cx)
             .items_of_type::<SoloDiffView>(cx)
-            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
+            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, &diff_base, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
@@ -85,17 +91,42 @@ impl SoloDiffView {
 
         let project = workspace_entity.read(cx).project().clone();
         let repo_path = entry.repo_path;
+        let diff_base_clone = diff_base.clone();
         window.spawn(cx, async move |cx| {
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
                 })
                 .await?;
-            let diff = project
-                .update(cx, |project, cx| {
-                    project.open_uncommitted_diff(buffer.clone(), cx)
-                })
-                .await?;
+            let (display_buffer, diff, delegate) = match diff_base_clone {
+                DiffBase::Head | DiffBase::Merge { .. } => {
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_uncommitted_diff(buffer.clone(), cx)
+                        })
+                        .await?;
+                    let delegate: Arc<dyn DiffHunkDelegate> = Arc::new(UncommittedDiffHunkDelegate);
+                    (buffer.clone(), diff, delegate)
+                }
+                DiffBase::Index => {
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_unstaged_diff(buffer.clone(), cx)
+                        })
+                        .await?;
+                    let delegate: Arc<dyn DiffHunkDelegate> = Arc::new(UnstagedDiffDelegate);
+                    (buffer.clone(), diff, delegate)
+                }
+                DiffBase::Staged => {
+                    let (diff, index_buffer) = project
+                        .update(cx, |project, cx| {
+                            project.open_staged_diff(buffer.clone(), cx)
+                        })
+                        .await?;
+                    let delegate: Arc<dyn DiffHunkDelegate> = Arc::new(StagedDiffDelegate);
+                    (index_buffer, diff, delegate)
+                }
+            };
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
@@ -104,8 +135,11 @@ impl SoloDiffView {
                         project,
                         repository,
                         repo_path,
+                        diff_base,
                         buffer,
+                        display_buffer,
                         diff,
+                        delegate,
                         workspace_handle,
                         window,
                         cx,
@@ -122,16 +156,21 @@ impl SoloDiffView {
         project: Entity<Project>,
         repository: Entity<Repository>,
         repo_path: RepoPath,
+        diff_base: DiffBase,
         buffer: Entity<Buffer>,
+        display_buffer: Entity<Buffer>,
         diff: Entity<buffer_diff::BufferDiff>,
+        delegate: Arc<dyn DiffHunkDelegate>,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let repository_id = repository.read(cx).id;
         let showing_full_file = EditorSettings::get_global(cx).file_diff.show_full_file;
-        let multibuffer = cx
-            .new(|cx| Self::build_multibuffer(buffer.clone(), diff.clone(), showing_full_file, cx));
+        let multibuffer = cx.new(|cx| {
+            Self::build_multibuffer(display_buffer.clone(), diff.clone(), showing_full_file, cx)
+        });
+        let is_read_only = diff_base == DiffBase::Staged;
         let editor = cx.new(|cx| {
             let editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
@@ -141,7 +180,9 @@ impl SoloDiffView {
                 window,
                 cx,
             );
+            editor.set_diff_hunk_delegate(Some(delegate), cx);
             editor.rhs_editor().update(cx, |editor, cx| {
+                editor.set_read_only(is_read_only);
                 editor.set_should_serialize(false, cx);
                 editor.set_allow_git_diff_scrollbar_markers(showing_full_file, cx);
                 let snapshot = editor.snapshot(window, cx);
@@ -176,7 +217,9 @@ impl SoloDiffView {
             repository,
             repository_id,
             repo_path,
+            diff_base,
             buffer,
+            display_buffer,
             diff,
             editor,
             workspace: workspace.downgrade(),
@@ -238,15 +281,16 @@ impl SoloDiffView {
             return;
         }
 
+        let display_buffer = self.display_buffer.clone();
         let (ranges, context_line_count) =
-            Self::excerpt_ranges(&self.buffer, &self.diff, showing_full_file, cx);
+            Self::excerpt_ranges(&display_buffer, &self.diff, showing_full_file, cx);
 
         self.editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&self.buffer, cx);
+            let path = PathKey::for_buffer(&display_buffer, cx);
             editor.remove_excerpts_for_path(path.clone(), cx);
             editor.update_excerpts_for_path(
                 path,
-                self.buffer.clone(),
+                display_buffer,
                 ranges,
                 context_line_count,
                 self.diff.clone(),
@@ -261,8 +305,16 @@ impl SoloDiffView {
         cx.notify();
     }
 
-    fn matches(&self, repository: &Entity<Repository>, repo_path: &RepoPath, cx: &App) -> bool {
-        self.repository_id == repository.read(cx).id && &self.repo_path == repo_path
+    fn matches(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        diff_base: &DiffBase,
+        cx: &App,
+    ) -> bool {
+        self.repository_id == repository.read(cx).id
+            && &self.repo_path == repo_path
+            && &self.diff_base == diff_base
     }
 
     fn button_states(&self, cx: &App) -> SoloDiffButtonStates {
@@ -294,18 +346,28 @@ impl SoloDiffView {
         let mut stage = false;
         let mut unstage = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-            match hunk.status.secondary {
-                DiffHunkSecondaryStatus::HasSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+            match self.diff_base {
+                DiffBase::Index => {
                     stage = true;
                 }
-                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
-                    stage = true;
+                DiffBase::Staged => {
                     unstage = true;
                 }
-                DiffHunkSecondaryStatus::NoSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
-                    unstage = true;
+                DiffBase::Head | DiffBase::Merge { .. } => {
+                    match hunk.status.secondary {
+                        DiffHunkSecondaryStatus::HasSecondaryHunk
+                        | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                            stage = true;
+                        }
+                        DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                            stage = true;
+                            unstage = true;
+                        }
+                        DiffHunkSecondaryStatus::NoSecondaryHunk
+                        | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
+                            unstage = true;
+                        }
+                    }
                 }
             }
         }
@@ -320,7 +382,8 @@ impl SoloDiffView {
         SoloDiffButtonStates {
             stage,
             unstage,
-            restore: stage || unstage,
+            // The staged view is read-only, so restoring its hunks is a no-op.
+            restore: (stage || unstage) && self.diff_base != DiffBase::Staged,
             prev_next,
             selection,
             stage_file: stage_status.has_unstaged(),
@@ -388,7 +451,8 @@ impl Item for SoloDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.buffer
+        let file_name = self
+            .buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -404,8 +468,12 @@ impl Item for SoloDiffView {
                     .as_ref()
                     .display(PathStyle::local())
                     .into_owned()
-            })
-            .into()
+            });
+        match self.diff_base {
+            DiffBase::Index => format!("{file_name} (Unstaged)").into(),
+            DiffBase::Staged => format!("{file_name} (Staged)").into(),
+            DiffBase::Head | DiffBase::Merge { .. } => file_name.into(),
+        }
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
@@ -759,6 +827,150 @@ mod tests {
         assert_eq!(buffer_count, 1);
         assert!(has_expand_controls);
     }
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_solo_diff_view_diff_bases(cx: &mut TestAppContext) {
+        use git::repository::repo_path;
+        use git::status::{StatusCode, TrackedStatus};
+        use std::path::Path;
+        use util::path;
+        use workspace::MultiWorkspace;
+
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            serde_json::json!({
+                ".git": {},
+                "partial.rs": "worktree one\nworktree two\nworktree three\n",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "partial.rs",
+                TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+            )],
+        );
+        fs.with_git_state(Path::new(path!("/project/.git")), true, |state| {
+            state.head_contents.insert(
+                repo_path("partial.rs"),
+                "head one\nhead two\nhead three\nhead four\n".into(),
+            );
+            state
+                .index_contents
+                .insert(repo_path("partial.rs"), "index one\nindex two\n".into());
+        })
+        .expect("fake repository should exist");
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |p, cx| p.active_repository(cx).unwrap());
+        let entry = GitStatusEntry {
+            repo_path: repo_path("partial.rs"),
+            status: TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            }
+            .into(),
+            staging: git::status::StageStatus::PartiallyStaged,
+            diff_stat: None,
+        };
+
+        let workspace_handle = workspace.downgrade();
+        let unstaged_view = cx
+            .update(|window, cx| {
+                SoloDiffView::open_or_focus(
+                    entry.clone(),
+                    repository.clone(),
+                    DiffBase::Index,
+                    workspace_handle.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        unstaged_view.read_with(cx, |view, cx| {
+            assert_eq!(view.diff_base, DiffBase::Index);
+            assert_eq!(view.tab_content_text(0, cx), "partial.rs (Unstaged)");
+            // The unstaged view diffs the worktree buffer against the index.
+            assert_eq!(
+                view.display_buffer.read(cx).text(),
+                "worktree one\nworktree two\nworktree three\n"
+            );
+            assert_eq!(
+                view.diff.read(cx).base_text_string(cx).as_deref(),
+                Some("index one\nindex two\n")
+            );
+            assert!(!view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
+        });
+
+        let staged_view = cx
+            .update(|window, cx| {
+                SoloDiffView::open_or_focus(
+                    entry,
+                    repository,
+                    DiffBase::Staged,
+                    workspace_handle,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        staged_view.read_with(cx, |view, cx| {
+            assert_eq!(view.diff_base, DiffBase::Staged);
+            assert_eq!(view.tab_content_text(0, cx), "partial.rs (Staged)");
+            // The staged view diffs the index buffer against HEAD.
+            assert_eq!(view.display_buffer.read(cx).text(), "index one\nindex two\n");
+            assert_eq!(
+                view.diff.read(cx).base_text_string(cx).as_deref(),
+                Some("head one\nhead two\nhead three\nhead four\n")
+            );
+            assert!(view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
+            assert!(!view.button_states(cx).restore);
+        });
+    }
 }
 
 impl Render for SoloDiffGitToolbar {
@@ -774,8 +986,11 @@ impl Render for SoloDiffGitToolbar {
             .repository
             .read(cx)
             .status_for_path(&solo_diff.repo_path);
-        let diff_stat = status_entry.and_then(|entry| entry.diff_stat);
-
+        let diff_stat = status_entry.and_then(|entry| match solo_diff.diff_base {
+            DiffBase::Staged => entry.staged_diff_stat,
+            DiffBase::Index => entry.unstaged_diff_stat,
+            _ => entry.diff_stat,
+        });
         h_flex()
             .my_neg_1()
             .py_1()
