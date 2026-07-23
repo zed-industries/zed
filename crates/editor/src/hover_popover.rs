@@ -40,7 +40,8 @@ pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
-    let head = editor.selections.newest_anchor().head();
+    let selection = editor.selections.newest_anchor().clone();
+    let head = editor.symbol_target_anchor(&selection, cx);
     show_hover(editor, head, true, window, cx);
 }
 

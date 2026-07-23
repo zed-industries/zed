@@ -3123,16 +3123,16 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
-    /// Returns the anchor to use as the rename target for a selection.
+    /// Returns the anchor to use as the target of symbol operations (rename,
+    /// go to definition, find references, hover, etc.) for a selection.
     ///
     /// In selection-based modes, like vim's visual mode and helix, the rendered
     /// block cursor sits one position to the left of the selection's head,
     /// since the head is the exclusive end of a forward selection. Using the
-    /// head
-    /// directly would place the rename one character past the symbol, for
+    /// head directly would target one character past the symbol, for
     /// example, trailing whitespace, so for a non-empty forward selection we
     /// shift one point left to land back on the symbol under the cursor.
-    fn rename_target_anchor(&self, selection: &Selection<Anchor>, cx: &mut App) -> Anchor {
+    fn symbol_target_anchor(&self, selection: &Selection<Anchor>, cx: &mut App) -> Anchor {
         let head = selection.head();
 
         if self.cursor_offset_on_selection
@@ -3490,9 +3490,9 @@ impl Editor {
         }
 
         let provider = self.semantics_provider.clone()?;
-        let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
-        let cursor_position = newest_selection.head();
+        let cursor_position = self.symbol_target_anchor(&newest_selection, cx);
+        let buffer = self.buffer.read(cx);
         let (cursor_buffer, cursor_buffer_position) =
             buffer.text_anchor_for_position(cursor_position, cx)?;
         let (tail_buffer, tail_buffer_position) =
@@ -7747,7 +7747,7 @@ impl Editor {
         }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
-        let cursor = self.rename_target_anchor(&selection, cx);
+        let cursor = self.symbol_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         let (head_buffer, head_buffer_position) = self

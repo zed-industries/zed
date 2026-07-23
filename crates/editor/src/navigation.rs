@@ -1204,8 +1204,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        let selection = self.selections.newest_anchor();
-        let head = selection.head();
+        let selection = self.selections.newest_anchor().clone();
+        let head = self.symbol_target_anchor(&selection, cx);
 
         let multi_buffer = self.buffer.read(cx);
 
@@ -1361,12 +1361,13 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
         let always_open_multibuffer = action.always_open_multibuffer;
-        let selection = self.selections.newest_anchor();
+        let selection = self.selections.newest_anchor().clone();
+        let target = self.symbol_target_anchor(&selection, cx);
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let selection_offset = selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot));
         let selection_point = selection.map(|anchor| anchor.to_point(&multi_buffer_snapshot));
-        let head = selection_offset.head();
+        let head = target.to_offset(&multi_buffer_snapshot);
 
         let head_anchor = multi_buffer_snapshot.anchor_at(
             head,
@@ -2376,10 +2377,8 @@ impl Editor {
         let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
-        let head = self
-            .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .head();
+        let selection = self.selections.newest_anchor().clone();
+        let head = self.symbol_target_anchor(&selection, cx);
         let buffer = self.buffer.read(cx);
         let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
             return Task::ready(Ok(Navigated::No));
