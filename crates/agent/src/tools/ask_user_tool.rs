@@ -96,9 +96,12 @@ impl AgentTool for AskUserTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
-            let input = input.recv().await.map_err(|error| AskUserToolOutput::Error {
-                error: error.to_string(),
-            })?;
+            let input = input
+                .recv()
+                .await
+                .map_err(|error| AskUserToolOutput::Error {
+                    error: error.to_string(),
+                })?;
 
             if !input.allow_free_text && input.options.len() < 2 {
                 return Err(AskUserToolOutput::Error {
@@ -111,9 +114,8 @@ impl AgentTool for AskUserTool {
 
             let schema = build_schema(&input.options, input.allow_free_text);
 
-            let prompt = cx.update(|cx| {
-                event_stream.request_elicitation(input.question.clone(), schema, cx)
-            });
+            let prompt = cx
+                .update(|cx| event_stream.request_elicitation(input.question.clone(), schema, cx));
             let response = prompt.await.map_err(|error| AskUserToolOutput::Error {
                 error: error.to_string(),
             })?;
@@ -250,7 +252,10 @@ mod tests {
         assert!(request.schema.properties.contains_key(CHOICE_FIELD));
         assert!(!request.schema.properties.contains_key(OTHER_FIELD));
 
-        request.response.send(accept_with([(CHOICE_FIELD, "Approach B")])).unwrap();
+        request
+            .response
+            .send(accept_with([(CHOICE_FIELD, "Approach B")]))
+            .unwrap();
 
         match task.await {
             Ok(AskUserToolOutput::Answered { selected }) => assert_eq!(selected, "Approach B"),
@@ -278,7 +283,10 @@ mod tests {
         assert!(request.schema.properties.contains_key(OTHER_FIELD));
         assert!(!request.schema.properties.contains_key(CHOICE_FIELD));
 
-        request.response.send(accept_with([(OTHER_FIELD, "widget")])).unwrap();
+        request
+            .response
+            .send(accept_with([(OTHER_FIELD, "widget")]))
+            .unwrap();
 
         match task.await {
             Ok(AskUserToolOutput::Answered { selected }) => assert_eq!(selected, "widget"),

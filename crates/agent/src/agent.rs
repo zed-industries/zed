@@ -2236,9 +2236,10 @@ impl NativeAgentConnection {
                                 response,
                             }) => {
                                 let request_result = acp_thread.update(cx, |thread, cx| {
-                                    let scope =
-                                        acp::ElicitationSessionScope::new(thread.session_id().clone())
-                                            .tool_call_id(tool_call_id);
+                                    let scope = acp::ElicitationSessionScope::new(
+                                        thread.session_id().clone(),
+                                    )
+                                    .tool_call_id(tool_call_id);
                                     let request = acp::CreateElicitationRequest::new(
                                         acp::ElicitationFormMode::new(scope, schema),
                                         message,
