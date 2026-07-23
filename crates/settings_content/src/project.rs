@@ -551,6 +551,10 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
+    /// Which base git features (gutter, panels, tab colors) diff against.
+    ///
+    /// Default: head
+    pub diff_base: Option<GitDiffBaseSetting>,
     /// How file paths are displayed in the git gutter.
     ///
     /// Default: file_name_first
@@ -728,6 +732,32 @@ pub enum GitHunkStyleSetting {
     StagedHollow,
     /// Show unstaged hunks hollow and staged hunks with a filled background.
     UnstagedHollow,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitDiffBaseSetting {
+    /// Diff against HEAD: show working (uncommitted) changes.
+    #[default]
+    Head,
+    /// Diff against the merge base between HEAD and the repository's
+    /// default branch: show all changes on the branch.
+    ///
+    /// Repositories where no default branch can be resolved fall back
+    /// to `head` behavior.
+    MergeBase,
 }
 
 #[with_fallible_options]
