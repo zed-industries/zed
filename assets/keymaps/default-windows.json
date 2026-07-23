@@ -1532,6 +1532,17 @@
     },
   },
   {
+    "context": "SvgPreview",
+    "bindings": {
+      "ctrl-=": "svg::ZoomIn",
+      "ctrl-+": "svg::ZoomIn",
+      "ctrl--": "svg::ZoomOut",
+      "ctrl-0": "svg::ResetZoom",
+      "ctrl-1": "svg::ZoomToActualSize",
+      "ctrl-shift-0": "svg::FitToView",
+    },
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "alt-1": "new_process_modal::ActivateTaskTab",

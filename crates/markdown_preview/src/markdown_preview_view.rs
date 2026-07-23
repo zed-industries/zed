@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
+use editor::{Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
-    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point, px,
+    ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, SharedUri, Subscription, Task,
+    WeakEntity, Window, point, px,
 };
 use language::{LanguageRegistry, Point};
 use markdown::{
@@ -680,6 +681,27 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) {
         self.adjust_font_size(action.persist, px(-1.0), cx);
+    }
+
+    fn handle_scroll_wheel_zoom(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.modifiers.secondary() || !EditorSettings::get_global(cx).mouse_wheel_zoom {
+            return;
+        }
+        let delta_y = match event.delta {
+            ScrollDelta::Pixels(pixels) => f32::from(pixels.y),
+            ScrollDelta::Lines(lines) => lines.y,
+        };
+        if delta_y > 0.0 {
+            self.adjust_font_size(false, px(1.0), cx);
+        } else if delta_y < 0.0 {
+            self.adjust_font_size(false, px(-1.0), cx);
+        }
+        cx.stop_propagation();
     }
 
     fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
@@ -1412,6 +1434,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
             .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
             .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
+            .capture_scroll_wheel(cx.listener(MarkdownPreviewView::handle_scroll_wheel_zoom))
             .w_full()
             .flex_1()
             .min_h_0()

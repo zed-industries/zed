@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 use file_icons::FileIcons;
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Render,
-    RenderImage, Styled, Subscription, Task, WeakEntity, Window, div, img,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent, Pixels,
+    Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent, Size, Styled, Subscription, Task,
+    WeakEntity, Window, canvas, div, img, point, px, size,
 };
 use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
@@ -12,12 +14,28 @@ use ui::prelude::*;
 use workspace::item::Item;
 use workspace::{Pane, Workspace};
 
-use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
+use crate::{
+    FitToView, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ResetZoom, ZoomIn, ZoomOut,
+    ZoomToActualSize,
+};
+
+const MIN_ZOOM: f32 = 0.1;
+const MAX_ZOOM: f32 = 20.0;
+const ZOOM_STEP: f32 = 1.1;
+const SCROLL_LINE_MULTIPLIER: f32 = 20.0;
+// Rasterizing at the full zoom level would produce huge bitmaps for large
+// SVGs, so the raster scale is capped and the element scales the rest.
+const MAX_RENDER_SCALE: f32 = 4.0;
 
 pub struct SvgPreviewView {
     focus_handle: FocusHandle,
     buffer: Option<Entity<Buffer>>,
     current_svg: Option<Result<Arc<RenderImage>, SharedString>>,
+    rendered_scale: f32,
+    zoom_level: Option<f32>,
+    pan_offset: Point<Pixels>,
+    last_mouse_position: Option<Point<Pixels>>,
+    container_bounds: Option<Bounds<Pixels>>,
     _refresh: Task<()>,
     _buffer_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
@@ -58,6 +76,11 @@ impl SvgPreviewView {
                 focus_handle: cx.focus_handle(),
                 buffer,
                 current_svg: None,
+                rendered_scale: 1.0,
+                zoom_level: None,
+                pan_offset: Point::default(),
+                last_mouse_position: None,
+                container_bounds: None,
                 _buffer_subscription: subscription,
                 _workspace_subscription: workspace_subscription,
                 _refresh: Task::ready(()),
@@ -90,6 +113,8 @@ impl SvgPreviewView {
                             this._buffer_subscription =
                                 Some(Self::create_buffer_subscription(&buffer, window, cx));
                             this.buffer = Some(buffer);
+                            this.zoom_level = None;
+                            this.pan_offset = Point::default();
                             this.render_image(window, cx);
                             cx.notify();
                         }
@@ -105,12 +130,12 @@ impl SvgPreviewView {
         let Some(buffer) = self.buffer.as_ref() else {
             return;
         };
-        const SCALE_FACTOR: f32 = 1.0;
+        let scale = self.render_scale();
 
         let renderer = cx.svg_renderer();
         let content = buffer.read(cx).snapshot();
         let background_task = cx.background_spawn(async move {
-            renderer.render_single_frame(content.text().as_bytes(), SCALE_FACTOR)
+            renderer.render_single_frame(content.text().as_bytes(), scale)
         });
 
         self._refresh = cx.spawn_in(window, async move |this, cx| {
@@ -118,10 +143,182 @@ impl SvgPreviewView {
 
             this.update_in(cx, |view, window, cx| {
                 let current = result.map_err(|e| e.to_string().into());
+                view.rendered_scale = scale;
                 view.set_current(Some(current), window, cx);
             })
             .ok();
         });
+    }
+
+    fn render_scale(&self) -> f32 {
+        self.effective_zoom().clamp(MIN_ZOOM, MAX_RENDER_SCALE)
+    }
+
+    fn is_dragging(&self) -> bool {
+        self.last_mouse_position.is_some()
+    }
+
+    fn natural_size(&self) -> Option<Size<Pixels>> {
+        let image = self.current_svg.as_ref()?.as_ref().ok()?;
+        let frame_size = image.size(0);
+        if self.rendered_scale <= 0.0 {
+            return None;
+        }
+        Some(size(
+            px(frame_size.width.0 as f32 / self.rendered_scale),
+            px(frame_size.height.0 as f32 / self.rendered_scale),
+        ))
+    }
+
+    fn fit_zoom(&self) -> Option<f32> {
+        let bounds = self.container_bounds?;
+        let natural_size = self.natural_size()?;
+        let scale_x = f32::from(bounds.size.width) / f32::from(natural_size.width);
+        let scale_y = f32::from(bounds.size.height) / f32::from(natural_size.height);
+        Some(scale_x.min(scale_y).min(1.0))
+    }
+
+    fn effective_zoom(&self) -> f32 {
+        self.zoom_level
+            .or_else(|| self.fit_zoom())
+            .unwrap_or(1.0)
+            .clamp(MIN_ZOOM, MAX_ZOOM)
+    }
+
+    fn set_zoom(
+        &mut self,
+        new_zoom: f32,
+        zoom_center: Option<Point<Pixels>>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_zoom = self.effective_zoom();
+        let new_zoom = new_zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+
+        if let Some((center, bounds)) = zoom_center.zip(self.container_bounds) {
+            let relative_center = point(
+                center.x - bounds.origin.x - bounds.size.width / 2.0,
+                center.y - bounds.origin.y - bounds.size.height / 2.0,
+            );
+
+            let mouse_offset_from_image = relative_center - self.pan_offset;
+
+            let zoom_ratio = new_zoom / old_zoom;
+
+            self.pan_offset += mouse_offset_from_image * (1.0 - zoom_ratio);
+        }
+
+        self.zoom_level = Some(new_zoom);
+        self.render_image(window, cx);
+        cx.notify();
+    }
+
+    fn zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(self.effective_zoom() * ZOOM_STEP, None, window, cx);
+    }
+
+    fn zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(self.effective_zoom() / ZOOM_STEP, None, window, cx);
+    }
+
+    fn reset_zoom(&mut self, _: &ResetZoom, window: &mut Window, cx: &mut Context<Self>) {
+        self.pan_offset = Point::default();
+        self.set_zoom(1.0, None, window, cx);
+    }
+
+    fn zoom_to_actual_size(
+        &mut self,
+        _: &ZoomToActualSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pan_offset = Point::default();
+        self.set_zoom(1.0, None, window, cx);
+    }
+
+    fn fit_to_view(&mut self, _: &FitToView, window: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_level = None;
+        self.pan_offset = Point::default();
+        self.render_image(window, cx);
+        cx.notify();
+    }
+
+    fn handle_scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.modifiers.control || event.modifiers.platform {
+            let delta: f32 = match event.delta {
+                ScrollDelta::Pixels(pixels) => pixels.y.into(),
+                ScrollDelta::Lines(lines) => lines.y * SCROLL_LINE_MULTIPLIER,
+            };
+            let zoom_factor = if delta > 0.0 {
+                1.0 + delta.abs() * 0.01
+            } else {
+                1.0 / (1.0 + delta.abs() * 0.01)
+            };
+            self.set_zoom(
+                self.effective_zoom() * zoom_factor,
+                Some(event.position),
+                window,
+                cx,
+            );
+        } else {
+            let delta = match event.delta {
+                ScrollDelta::Pixels(pixels) => pixels,
+                ScrollDelta::Lines(lines) => lines.map(|d| px(d * SCROLL_LINE_MULTIPLIER)),
+            };
+            self.pan_offset += delta;
+            cx.notify();
+        }
+    }
+
+    fn handle_pinch(&mut self, event: &PinchEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let zoom_factor = 1.0 + event.delta;
+        self.set_zoom(
+            self.effective_zoom() * zoom_factor,
+            Some(event.position),
+            window,
+            cx,
+        );
+    }
+
+    fn handle_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button == MouseButton::Left || event.button == MouseButton::Middle {
+            self.last_mouse_position = Some(event.position);
+            cx.notify();
+        }
+    }
+
+    fn handle_mouse_up(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.last_mouse_position = None;
+        cx.notify();
+    }
+
+    fn handle_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(last_position) = self.last_mouse_position {
+            let delta = event.position - last_position;
+            self.pan_offset += delta;
+            self.last_mouse_position = Some(event.position);
+            cx.notify();
+        }
     }
 
     fn set_current(
@@ -276,28 +473,111 @@ impl SvgPreviewView {
     }
 }
 
+impl SvgPreviewView {
+    fn render_zoomable_image(&self, image: Arc<RenderImage>, cx: &mut Context<Self>) -> AnyElement {
+        let zoom = self.effective_zoom();
+        let pan_offset = self.pan_offset;
+
+        let content = match self.natural_size().zip(self.container_bounds) {
+            Some((natural_size, bounds)) => {
+                let scaled_width = natural_size.width * zoom;
+                let scaled_height = natural_size.height * zoom;
+                let left = bounds.size.width / 2.0 - scaled_width / 2.0 + pan_offset.x;
+                let top = bounds.size.height / 2.0 - scaled_height / 2.0 + pan_offset.y;
+                div()
+                    .absolute()
+                    .left(left)
+                    .top(top)
+                    .w(scaled_width)
+                    .h(scaled_height)
+                    .child(img(image).size_full().with_fallback(svg_load_fallback))
+                    .into_any_element()
+            }
+            None => div()
+                .size_full()
+                .flex()
+                .justify_center()
+                .items_center()
+                .child(
+                    img(image)
+                        .max_w_full()
+                        .max_h_full()
+                        .with_fallback(svg_load_fallback),
+                )
+                .into_any_element(),
+        };
+
+        let this = cx.entity().downgrade();
+        div()
+            .id("svg-preview-container")
+            .size_full()
+            .relative()
+            .overflow_hidden()
+            .cursor(if self.is_dragging() {
+                gpui::CursorStyle::ClosedHand
+            } else {
+                gpui::CursorStyle::OpenHand
+            })
+            .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+            .on_pinch(cx.listener(Self::handle_pinch))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+            .on_mouse_move(cx.listener(Self::handle_mouse_move))
+            .child(
+                canvas(
+                    move |bounds, _window, cx| {
+                        this.update(cx, |view, cx| {
+                            if view.container_bounds != Some(bounds) {
+                                let first_layout = view.container_bounds.is_none();
+                                view.container_bounds = Some(bounds);
+                                if first_layout {
+                                    cx.notify();
+                                }
+                            }
+                        })
+                        .ok();
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(content)
+            .into_any_element()
+    }
+}
+
+fn svg_load_fallback() -> AnyElement {
+    h_flex()
+        .p_4()
+        .gap_2()
+        .child(Icon::new(IconName::Warning))
+        .child("Failed to load SVG image")
+        .into_any_element()
+}
+
 impl Render for SvgPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("SvgPreview")
             .key_context("SvgPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::zoom_in))
+            .on_action(cx.listener(Self::zoom_out))
+            .on_action(cx.listener(Self::reset_zoom))
+            .on_action(cx.listener(Self::fit_to_view))
+            .on_action(cx.listener(Self::zoom_to_actual_size))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .flex()
             .justify_center()
             .items_center()
             .map(|this| match self.current_svg.clone() {
-                Some(Ok(image)) => {
-                    this.child(img(image).max_w_full().max_h_full().with_fallback(|| {
-                        h_flex()
-                            .p_4()
-                            .gap_2()
-                            .child(Icon::new(IconName::Warning))
-                            .child("Failed to load SVG image")
-                            .into_any_element()
-                    }))
-                }
+                Some(Ok(image)) => this.child(self.render_zoomable_image(image, cx)),
                 Some(Err(e)) => this.child(div().p_4().child(e).into_any_element()),
                 None => this.child(div().p_4().child("No SVG file selected")),
             })
