@@ -28,10 +28,18 @@
     },
   },
   {
+    "context": "!AcpThread > Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": null, // Inline Chat lives on `cmd-i` in VS Code
+    },
+  },
+  {
     "context": "Terminal",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-i": "assistant::InlineAssist", // Terminal Inline Chat
+      "ctrl-enter": null,
     },
   },
   {
