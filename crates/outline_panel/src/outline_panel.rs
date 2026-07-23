@@ -2770,12 +2770,7 @@ impl OutlinePanel {
                             let is_new = new_entries.contains(&buffer_id)
                                 || !outline_panel.buffers.contains_key(&buffer_id);
                             let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
-                            let status = git_store
-                                .read(cx)
-                                .repository_and_path_for_buffer_id(buffer_id, cx)
-                                .and_then(|(repo, path)| {
-                                    Some(repo.read(cx).status_for_path(&path)?.status)
-                                });
+                            let status = git_store.read(cx).git_status_for_buffer_id(buffer_id, cx);
                             buffer_excerpts
                                 .entry(buffer_id)
                                 .or_insert_with(|| {
