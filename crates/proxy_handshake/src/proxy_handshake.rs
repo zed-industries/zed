@@ -96,6 +96,11 @@ pub enum Target {
     /// An unresolved host name and port: DNS resolution is delegated to the
     /// proxy. With SOCKS4 proxies this is encoded using the SOCKS4a
     /// extension, which not every SOCKS4 proxy supports.
+    ///
+    /// The host must be a name, not arbitrary text: strings containing ASCII
+    /// control bytes are rejected by [`Handshake::new`], since they could
+    /// otherwise forge protocol structure in the messages the host is
+    /// embedded in.
     Domain(String, u16),
     /// An already-resolved socket address. Use this when
     /// [`ProxySpec::remote_dns`] is false, resolving the host locally first.
@@ -120,8 +125,12 @@ pub enum ProxyError {
     CredentialsTooLong,
     #[error("SOCKS target domains are limited to 255 bytes")]
     DomainTooLong,
+    #[error("target domain contains ASCII control bytes")]
+    DomainContainsControlBytes,
     #[error("SOCKS4 proxies only support IPv4 targets")]
     Socks4Ipv4Only,
+    #[error("SOCKS4 user ids cannot contain NUL bytes")]
+    Socks4UserIdContainsNul,
     #[error("proxy sent a malformed HTTP response: {0}")]
     MalformedHttpResponse(String),
     #[error("proxy refused CONNECT with HTTP status {0}")]

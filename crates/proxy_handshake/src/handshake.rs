@@ -64,6 +64,19 @@ impl Handshake {
     /// resolve the host locally and pass a [`Target::Address`] when
     /// [`ProxySpec::remote_dns`] is false, to follow the proxy URL's intent.
     pub fn new(spec: &ProxySpec, target: &Target) -> Result<Self, ProxyError> {
+        // The domain is spliced into protocol messages (the CONNECT request
+        // line, NUL-terminated SOCKS4a fields), so control bytes would let a
+        // hostile target string forge protocol structure. No valid host name
+        // contains them; fail closed rather than trusting the caller to have
+        // validated.
+        if let Target::Domain(domain, _) = target
+            && domain
+                .bytes()
+                .any(|byte| byte.is_ascii_control() || byte == 0x7F)
+        {
+            return Err(ProxyError::DomainContainsControlBytes);
+        }
+
         let mut exchanges = VecDeque::new();
         match spec.scheme {
             ProxyScheme::Http { .. } => {
@@ -206,6 +219,12 @@ fn parse_http_response_head(input: &[u8]) -> Result<Option<usize>, ProxyError> {
     let mut response = httparse::Response::new(&mut headers);
     match response.parse(input) {
         Ok(httparse::Status::Complete(consumed)) => {
+            // The cap applies to complete heads too: a driver that reads in
+            // large chunks could otherwise hand a well-formed multi-megabyte
+            // head to a single `advance` and have it accepted.
+            if consumed > MAX_HTTP_RESPONSE_LENGTH {
+                return Err(ProxyError::HttpResponseTooLarge);
+            }
             let code = response.code.ok_or_else(|| {
                 ProxyError::MalformedHttpResponse("missing status code".to_string())
             })?;
@@ -296,6 +315,11 @@ fn socks4_connect_request(
     let user_id = credentials
         .map(|credentials| credentials.username.as_str())
         .unwrap_or("");
+    // The user id field is NUL-terminated on the wire, so an embedded NUL
+    // would truncate it and shift the fields that follow.
+    if user_id.as_bytes().contains(&0x00) {
+        return Err(ProxyError::Socks4UserIdContainsNul);
+    }
     let mut request = vec![SOCKS4_VERSION, SOCKS_COMMAND_CONNECT];
     match target {
         Target::Address(SocketAddr::V4(address)) => {
@@ -385,6 +409,48 @@ mod tests {
         server_bytes.resize(MAX_HTTP_RESPONSE_LENGTH + 1024, b'a');
         let error = run("http://proxy:8080", &domain_target(), &server_bytes, &[64]).unwrap_err();
         assert!(matches!(error, ProxyError::HttpResponseTooLarge));
+    }
+
+    #[test]
+    fn http_connect_rejects_oversized_complete_response_in_one_chunk() {
+        // A *well-formed* head over the cap, delivered whole in a single
+        // `advance`, must be rejected too: the cap can't depend on the
+        // driver's read chunking.
+        let mut server_bytes = b"HTTP/1.1 200 OK\r\nX-Padding: ".to_vec();
+        server_bytes.resize(MAX_HTTP_RESPONSE_LENGTH + 1024, b'a');
+        server_bytes.extend_from_slice(b"\r\n\r\n");
+        let error = run(
+            "http://proxy:8080",
+            &domain_target(),
+            &server_bytes,
+            &[server_bytes.len()],
+        )
+        .unwrap_err();
+        assert!(matches!(error, ProxyError::HttpResponseTooLarge));
+    }
+
+    #[test]
+    fn rejects_domains_containing_control_bytes() {
+        for scheme in ["http", "socks4a", "socks5h"] {
+            for domain in ["evil.com\r\nX-Injected: x", "evil.com\0.example.com"] {
+                let spec = spec(&format!("{scheme}://proxy:1080"));
+                let target = Target::Domain(domain.to_string(), 443);
+                let Err(error) = Handshake::new(&spec, &target) else {
+                    panic!("expected {scheme} handshake construction to fail for {domain:?}");
+                };
+                assert!(matches!(error, ProxyError::DomainContainsControlBytes));
+            }
+        }
+    }
+
+    #[test]
+    fn socks4_rejects_user_id_containing_nul() {
+        let spec = spec("socks4://user%00id@proxy:1080");
+        let target = Target::Address("192.0.2.10:443".parse().unwrap());
+        let Err(error) = Handshake::new(&spec, &target) else {
+            panic!("expected handshake construction to fail");
+        };
+        assert!(matches!(error, ProxyError::Socks4UserIdContainsNul));
     }
 
     #[test]
