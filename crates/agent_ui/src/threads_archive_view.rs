@@ -7,7 +7,7 @@ use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{
     ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
 };
-use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
+use crate::{Agent, ArchiveSelectedThread, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
@@ -299,12 +299,12 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                let title = session
-                    .title
-                    .as_ref()
-                    .map(|t| t.as_ref())
-                    .unwrap_or(DEFAULT_THREAD_TITLE);
-                if let Some(positions) = fuzzy_match_positions(&query, title) {
+                // Match against the same string that gets rendered
+                // (`display_title` prefers `title_override`); positions
+                // computed on a different string can land inside a multi-byte
+                // character and panic in `HighlightedLabel`.
+                let title = session.display_title();
+                if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
                     positions
                 } else {
                     // If title didn't match, also try matching the project name
@@ -1292,11 +1292,7 @@ impl PickerDelegate for ProjectPickerDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         format!(
             "Associate the \"{}\" thread with...",
-            self.thread
-                .title
-                .as_ref()
-                .map(|t| t.as_ref())
-                .unwrap_or(DEFAULT_THREAD_TITLE)
+            self.thread.display_title()
         )
         .into()
     }
