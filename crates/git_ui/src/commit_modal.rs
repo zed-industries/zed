@@ -69,6 +69,7 @@ pub struct CommitModal {
     properties: ModalContainerProperties,
     branch_list_handle: PopoverMenuHandle<BranchList>,
     commit_menu_handle: PopoverMenuHandle<ContextMenu>,
+    _git_panel_subscription: Subscription,
 }
 
 impl Focusable for CommitModal {
@@ -219,6 +220,7 @@ impl CommitModal {
         .detach();
 
         let properties = ModalContainerProperties::new(window, 50);
+        let git_panel_subscription = cx.observe(&git_panel, |_, _, cx| cx.notify());
 
         Self {
             git_panel,
@@ -227,6 +229,7 @@ impl CommitModal {
             properties,
             branch_list_handle: PopoverMenuHandle::default(),
             commit_menu_handle: PopoverMenuHandle::default(),
+            _git_panel_subscription: git_panel_subscription,
         }
     }
 
@@ -287,6 +290,7 @@ impl CommitModal {
                     let git_panel = git_panel_entity.read(cx);
                     let amend_enabled = git_panel.amend_pending();
                     let signoff_enabled = git_panel.signoff_enabled();
+                    let skip_hooks = git_panel.skip_hooks_enabled(cx);
                     let has_previous_commit = git_panel.head_commit(cx).is_some();
 
                     Some(ContextMenu::build(window, cx, |context_menu, _, _| {
@@ -326,6 +330,22 @@ impl CommitModal {
                                     }
                                 },
                             )
+                            .toggleable_entry(
+                                "Skip hooks",
+                                skip_hooks,
+                                IconPosition::Start,
+                                None,
+                                {
+                                    let git_panel = git_panel_entity.downgrade();
+                                    move |_, cx| {
+                                        git_panel
+                                            .update(cx, |git_panel, cx| {
+                                                git_panel.toggle_skip_hooks(cx);
+                                            })
+                                            .log_err();
+                                    }
+                                },
+                            )
                     }))
                 }
             })
@@ -346,6 +366,7 @@ impl CommitModal {
             active_repo,
             is_amend_pending,
             is_signoff_enabled,
+            skip_hooks,
             workspace,
             is_generating,
         ) = self.git_panel.update(cx, |git_panel, cx| {
@@ -356,6 +377,7 @@ impl CommitModal {
             let active_repo = git_panel.active_repository.clone();
             let is_amend_pending = git_panel.amend_pending();
             let is_signoff_enabled = git_panel.signoff_enabled();
+            let skip_hooks = git_panel.skip_hooks_enabled(cx);
             let is_generating = git_panel.is_generating_commit_message();
             (
                 can_commit,
@@ -366,6 +388,7 @@ impl CommitModal {
                 active_repo,
                 is_amend_pending,
                 is_signoff_enabled,
+                skip_hooks,
                 git_panel.workspace.clone(),
                 is_generating,
             )
@@ -455,6 +478,7 @@ impl CommitModal {
                                             amend: is_amend_pending,
                                             signoff: is_signoff_enabled,
                                             allow_empty: false,
+                                            skip_hooks,
                                         },
                                         window,
                                         cx,
@@ -470,9 +494,10 @@ impl CommitModal {
                                             tooltip,
                                             Some(&git::Commit),
                                             format!(
-                                                "git commit{}{}",
+                                                "git commit{}{}{}",
                                                 if is_amend_pending { " --amend" } else { "" },
-                                                if is_signoff_enabled { " --signoff" } else { "" }
+                                                if is_signoff_enabled { " --signoff" } else { "" },
+                                                if skip_hooks { " --no-verify" } else { "" }
                                             ),
                                             &focus_handle.clone(),
                                             cx,

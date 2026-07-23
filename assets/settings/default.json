@@ -1709,6 +1709,8 @@
     "path_style": "file_name_first",
     // Whether to show the stage and restore buttons on diff hunks.
     "show_stage_restore_buttons": true,
+    // Whether to skip running Git hooks.
+    "skip_hooks": false,
     // Directory where git worktrees are created, relative to the repository
     // working directory.
     //
