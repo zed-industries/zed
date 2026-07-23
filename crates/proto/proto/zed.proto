@@ -499,7 +499,9 @@ message Envelope {
     RestoreProjectEntry restore_project_entry = 468;
     RestoreProjectEntryResponse restore_project_entry_response = 469;
     GitAddPathToGitignore git_add_path_to_gitignore = 470;
-    GitAddPathToGitInfoExclude git_add_path_to_git_info_exclude = 471; // current max
+    GitAddPathToGitInfoExclude git_add_path_to_git_info_exclude = 471;
+    LoadCommitTemplate load_commit_template = 472;
+    LoadCommitTemplateResponse load_commit_template_response = 473; // current max
   }
 
   reserved 87 to 88;
