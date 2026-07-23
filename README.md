@@ -1,5 +1,7 @@
 # Citadel
 
+*[日本語](./README.ja.md)*
+
 **Citadel** (aka *Citadel-Duino*) is a fork of [Zed](https://github.com/zed-industries/zed), being reworked into a next-generation IDE dedicated to Arduino (AVR) embedded development.
 
 > This is an independent, non-commercial fork. It is not affiliated with, endorsed by, or sponsored by Zed Industries, Inc. "Zed" is a trademark of Zed Industries, Inc.
