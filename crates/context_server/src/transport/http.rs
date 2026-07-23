@@ -64,6 +64,44 @@ pub struct HttpTransport {
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
 }
 
+/// Build the JSON-RPC error response to resolve a request that received an
+/// HTTP error status, so the pending request fails promptly instead of
+/// timing out.
+///
+/// Returns the error body as-is when it is already a JSON-RPC error response
+/// correlated to a request. When the body is an uncorrelated JSON-RPC error
+/// (`id: null`, as some pre-2026 servers send) its code, message, and data
+/// are re-wrapped for the id of the outgoing request; any other body becomes
+/// an internal error carrying the HTTP status. Returns `None` when the
+/// outgoing message was a notification: with no id there is nothing to
+/// resolve.
+fn json_rpc_error_response_for(outgoing: &str, status: u16, error_body: &str) -> Option<String> {
+    let outgoing: serde_json::Value = serde_json::from_str(outgoing).ok()?;
+    let request_id = outgoing.get("id").filter(|id| !id.is_null())?.clone();
+
+    let error = match serde_json::from_str::<serde_json::Value>(error_body) {
+        Ok(body) if body.get("error").is_some_and(|error| error.is_object()) => {
+            if body.get("id").is_some_and(|id| !id.is_null()) {
+                // Correlated to a request: forward the server's response
+                // wholesale.
+                return Some(error_body.to_string());
+            }
+            body.get("error").cloned()?
+        }
+        _ => serde_json::json!({
+            "code": -32603,
+            "message": format!("HTTP {}: {}", status, error_body),
+        }),
+    };
+
+    serde_json::to_string(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": error,
+    }))
+    .ok()
+}
+
 impl HttpTransport {
     pub fn new(
         http_client: Arc<dyn HttpClient>,
@@ -254,14 +292,31 @@ impl HttpTransport {
                 // Accepted - notification acknowledged, no response needed
                 log::debug!("Notification accepted");
             }
-            _ => {
+            status => {
                 let mut error_body = String::new();
                 futures::AsyncReadExt::read_to_string(response.body_mut(), &mut error_body).await?;
 
-                self.error_tx
-                    .send(format!("HTTP {}: {}", response.status(), error_body))
-                    .await
-                    .map_err(|_| anyhow!("Failed to send error"))?;
+                // Resolve the pending request with a JSON-RPC error instead
+                // of letting it time out. Servers speaking MCP 2026-07-28 or
+                // later reject requests with an HTTP error status whose body
+                // is a JSON-RPC error response (e.g. `400 Bad Request` with
+                // an `UnsupportedProtocolVersionError`); older servers may
+                // send an uncorrelated (`id: null`) error or a non-JSON
+                // body, so fall back to wrapping those in an error response
+                // for the request we just sent.
+                if let Some(error_response) =
+                    json_rpc_error_response_for(&message, status.as_u16(), &error_body)
+                {
+                    self.response_tx
+                        .send(error_response)
+                        .await
+                        .map_err(|_| anyhow!("Failed to send JSON-RPC error response"))?;
+                } else {
+                    self.error_tx
+                        .send(format!("HTTP {}: {}", status, error_body))
+                        .await
+                        .map_err(|_| anyhow!("Failed to send error"))?;
+                }
             }
         }
 
@@ -733,6 +788,141 @@ mod tests {
             }
         }
         assert_eq!(provider.refresh_count(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_json_rpc_error_body_on_http_400_reaches_response_stream(
+        cx: &mut TestAppContext,
+    ) {
+        let error_body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2026-07-28"]}}}"#;
+        let client = make_fake_http_client({
+            let error_body = error_body.to_string();
+            move |_req| {
+                let error_body = error_body.clone();
+                Box::pin(async move {
+                    Ok(Response::builder()
+                        .status(400)
+                        .header("Content-Type", "application/json")
+                        .body(AsyncBody::from(error_body.into_bytes()))
+                        .unwrap())
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#.to_string())
+            .await
+            .expect("400 with JSON-RPC error body is not a transport failure");
+
+        let received = transport.receive().next().await.unwrap();
+        assert_eq!(received, error_body);
+    }
+
+    #[gpui::test]
+    async fn test_uncorrelated_json_rpc_error_is_rewrapped_for_the_request(
+        cx: &mut TestAppContext,
+    ) {
+        // Pre-2026 servers commonly reject pre-initialize requests with a
+        // 400 whose JSON-RPC error has `id: null`.
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(400)
+                    .header("Content-Type", "application/json")
+                    .body(AsyncBody::from(
+                        br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Bad Request: Server not initialized"}}"#.to_vec(),
+                    ))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":7,"method":"server/discover"}"#.to_string())
+            .await
+            .unwrap();
+
+        let received: serde_json::Value =
+            serde_json::from_str(&transport.receive().next().await.unwrap()).unwrap();
+        assert_eq!(received["id"], 7);
+        assert_eq!(received["error"]["code"], -32000);
+    }
+
+    #[gpui::test]
+    async fn test_http_400_without_json_rpc_body_resolves_request_with_internal_error(
+        cx: &mut TestAppContext,
+    ) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(400)
+                    .body(AsyncBody::from(b"Bad Request".to_vec()))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#.to_string())
+            .await
+            .unwrap();
+
+        let received: serde_json::Value =
+            serde_json::from_str(&transport.receive().next().await.unwrap()).unwrap();
+        assert_eq!(received["id"], 1);
+        assert_eq!(received["error"]["code"], -32603);
+        assert!(
+            received["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("HTTP 400")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_error_status_on_notification_goes_to_error_stream(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(500)
+                    .body(AsyncBody::from(b"Internal Server Error".to_vec()))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#.to_string())
+            .await
+            .unwrap();
+
+        let error = transport.receive_err().next().await.unwrap();
+        assert!(error.contains("HTTP 500"), "unexpected error: {error}");
     }
 
     #[gpui::test]
