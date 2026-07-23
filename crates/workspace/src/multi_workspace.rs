@@ -316,7 +316,7 @@ impl MultiWorkspace {
 
     pub fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
         SidebarRenderState {
-            open: self.sidebar_open() && self.multi_workspace_enabled(cx),
+            open: self.sidebar_open() && self.threads_sidebar_enabled(cx),
             side: self.sidebar_side(cx),
         }
     }
@@ -412,8 +412,14 @@ impl MultiWorkspace {
         !DisableAiSettings::get_global(cx).disable_ai && AgentSettings::get_global(cx).enabled
     }
 
+    /// CodeIDE presents thread search inside the Agent panel, so the legacy
+    /// workspace-wide Threads Sidebar must not render as a second surface.
+    pub fn threads_sidebar_enabled(&self, cx: &App) -> bool {
+        cfg!(any(test, feature = "test-support")) && self.multi_workspace_enabled(cx)
+    }
+
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !self.threads_sidebar_enabled(cx) {
             return;
         }
 
@@ -430,7 +436,7 @@ impl MultiWorkspace {
     }
 
     pub fn close_sidebar_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !self.threads_sidebar_enabled(cx) {
             return;
         }
 
@@ -440,7 +446,7 @@ impl MultiWorkspace {
     }
 
     pub fn focus_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
+        if !self.threads_sidebar_enabled(cx) {
             return;
         }
 
@@ -2104,11 +2110,11 @@ impl MultiWorkspace {
 
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let multi_workspace_enabled = self.multi_workspace_enabled(cx);
+        let threads_sidebar_enabled = self.threads_sidebar_enabled(cx);
         let sidebar_side = self.sidebar_side(cx);
         let sidebar_on_right = sidebar_side == SidebarSide::Right;
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
+        let sidebar: Option<AnyElement> = if threads_sidebar_enabled && self.sidebar_open() {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
 
@@ -2188,7 +2194,7 @@ impl Render for MultiWorkspace {
                 .font(ui_font)
                 .text_color(text_color)
                 .on_action(cx.listener(Self::close_window))
-                .when(self.multi_workspace_enabled(cx), |this| {
+                .when(self.threads_sidebar_enabled(cx), |this| {
                     this.on_action(cx.listener(
                         |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
                             this.toggle_sidebar(window, cx);
@@ -2247,7 +2253,7 @@ impl Render for MultiWorkspace {
                     })
                 })
                 .when(
-                    self.sidebar_open() && self.multi_workspace_enabled(cx),
+                    self.sidebar_open() && self.threads_sidebar_enabled(cx),
                     |this| {
                         this.on_drag_move(cx.listener(
                             move |this: &mut Self,
