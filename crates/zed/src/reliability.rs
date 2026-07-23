@@ -280,6 +280,7 @@ async fn upload_minidump(
         log::warn!("No commit sha set, skipping minidump upload");
         return Ok(());
     }
+    let injected_modules = injected_modules_from_minidump(&minidump);
     let mut form = Form::new()
         .part(
             "upload_file_minidump",
@@ -295,6 +296,17 @@ async fn upload_minidump(
         .text("sentry[tags][binary]", metadata.init.binary.clone())
         .text("sentry[release]", metadata.init.commit_sha.clone())
         .text("platform", "rust");
+    if !injected_modules.is_empty() {
+        form = form
+            .text(
+                "sentry[tags][injected_dlls]",
+                injected_dlls_tag(&injected_modules),
+            )
+            .text(
+                "sentry[contexts][injected_modules][paths]",
+                injected_modules.join("\n"),
+            );
+    }
     let mut panic_message = "".to_owned();
     if let Some(panic_info) = metadata.panic.as_ref() {
         panic_message = panic_info.message.clone();
@@ -431,6 +443,115 @@ async fn upload_minidump(
     Ok(())
 }
 
+/// Sentry limits tag values to 200 characters.
+const SENTRY_TAG_MAX_LEN: usize = 200;
+
+/// Returns the modules loaded into the crashed process that are neither
+/// Windows system libraries nor part of Zed's own installation. Software that
+/// hooks Win32 APIs by injecting a DLL into other processes (overlays,
+/// antivirus, IMEs, endpoint monitors) is a common cause of
+/// otherwise-unexplainable memory corruption crashes, so we tag crash events
+/// with these modules to make affected reports easy to identify during
+/// triage. Returns an empty list for non-Windows dumps.
+fn injected_modules_from_minidump(minidump_contents: &[u8]) -> Vec<String> {
+    use minidump::Module as _;
+
+    // Minidumps are stored zstd-compressed on disk; fall back to treating the
+    // input as a raw dump if decompression fails.
+    let dump_bytes =
+        zstd::decode_all(minidump_contents).unwrap_or_else(|_| minidump_contents.to_vec());
+    let Some(dump) = minidump::Minidump::read(dump_bytes)
+        .context("parsing minidump for module list")
+        .log_err()
+    else {
+        return Vec::new();
+    };
+    let Some(modules) = dump
+        .get_stream::<minidump::MinidumpModuleList>()
+        .context("reading minidump module list")
+        .log_err()
+    else {
+        return Vec::new();
+    };
+    let main_module_path = modules
+        .main_module()
+        .map(|module| module.code_file().into_owned());
+    filter_injected_module_paths(
+        main_module_path.as_deref(),
+        modules.iter().map(|module| module.code_file().into_owned()),
+    )
+}
+
+fn filter_injected_module_paths(
+    main_module_path: Option<&str>,
+    module_paths: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    // Only Windows dumps are classified: DLL injection is where this signal
+    // matters, and Windows paths are easy to distinguish reliably.
+    let Some(app_dir) = main_module_path.and_then(windows_parent_dir) else {
+        return Vec::new();
+    };
+    let app_dir = app_dir.to_lowercase();
+    module_paths
+        .into_iter()
+        .filter(|path| {
+            let lower = path.to_lowercase();
+            lower.contains('\\')
+                && !is_windows_system_module(&lower)
+                && !lower.starts_with(&app_dir)
+        })
+        .collect()
+}
+
+/// The containing directory of a Windows path, including the trailing
+/// backslash, or `None` if this doesn't look like a Windows path.
+fn windows_parent_dir(path: &str) -> Option<&str> {
+    let index = path.rfind('\\')?;
+    Some(&path[..=index])
+}
+
+fn is_windows_system_module(lower_path: &str) -> bool {
+    let bytes = lower_path.as_bytes();
+    bytes.len() > 3
+        && bytes[0].is_ascii_lowercase()
+        && bytes[1] == b':'
+        && bytes[2] == b'\\'
+        && lower_path[3..].starts_with("windows\\")
+}
+
+/// Comma-separated module file names, deduplicated, fitting within Sentry's
+/// tag length limit.
+fn injected_dlls_tag(module_paths: &[String]) -> String {
+    let mut tag = String::new();
+    let mut seen = Vec::new();
+    for path in module_paths {
+        let name = path.rsplit('\\').next().unwrap_or(path);
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        let needed = if tag.is_empty() {
+            name.len()
+        } else {
+            name.len() + 1
+        };
+        if tag.len() + needed > SENTRY_TAG_MAX_LEN {
+            break;
+        }
+        if !tag.is_empty() {
+            tag.push(',');
+        }
+        tag.push_str(name);
+    }
+    if tag.is_empty()
+        && let Some(first) = module_paths.first()
+    {
+        let name = first.rsplit('\\').next().unwrap_or(first);
+        tag = name.chars().take(SENTRY_TAG_MAX_LEN).collect();
+    }
+    tag
+}
+
 #[derive(Debug, Deserialize)]
 struct BuildTiming {
     started_at: chrono::DateTime<chrono::Utc>,
@@ -524,5 +645,75 @@ impl FormExt for Form {
             Some(value) => self.text(label.into(), value.into()),
             None => self,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|path| path.to_string()).collect()
+    }
+
+    #[test]
+    fn test_filter_injected_module_paths() {
+        let main_module = r"C:\Users\me\AppData\Local\Programs\Zed Preview\Zed.exe";
+        let injected = filter_injected_module_paths(
+            Some(main_module),
+            strings(&[
+                main_module,
+                r"C:\Users\me\AppData\Local\Programs\Zed Preview\conpty.dll",
+                r"C:\Windows\System32\ntdll.dll",
+                r"C:\WINDOWS\System32\KERNELBASE.dll",
+                r"C:\Windows\System32\DriverStore\FileRepository\u.inf_amd64\amdxx64.dll",
+                r"C:\Program Files (x86)\RivaTuner Statistics Server\RTSSHooks64.dll",
+                r"C:\Program Files\ESET\ESET Security\ebehmoni.dll",
+            ]),
+        );
+        assert_eq!(
+            injected,
+            strings(&[
+                r"C:\Program Files (x86)\RivaTuner Statistics Server\RTSSHooks64.dll",
+                r"C:\Program Files\ESET\ESET Security\ebehmoni.dll",
+            ])
+        );
+    }
+
+    #[test]
+    fn test_filter_injected_module_paths_skips_non_windows_dumps() {
+        assert_eq!(
+            filter_injected_module_paths(
+                Some("/Applications/Zed.app/Contents/MacOS/zed"),
+                strings(&[
+                    "/Applications/Zed.app/Contents/MacOS/zed",
+                    "/usr/lib/libSystem.B.dylib",
+                ]),
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            filter_injected_module_paths(None, strings(&[r"C:\Windows\System32\ntdll.dll"])),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_injected_dlls_tag_dedupes_and_respects_length_limit() {
+        let tag = injected_dlls_tag(&strings(&[
+            r"C:\Program Files (x86)\RivaTuner Statistics Server\RTSSHooks64.dll",
+            r"C:\Program Files\ESET\ESET Security\ebehmoni.dll",
+            r"C:\Program Files\ESET\ESET Security\ebehmoni.dll",
+        ]));
+        assert_eq!(tag, "RTSSHooks64.dll,ebehmoni.dll");
+
+        let long_name = format!(r"C:\hooks\{}.dll", "a".repeat(300));
+        let tag = injected_dlls_tag(&strings(&[&long_name]));
+        assert_eq!(tag.len(), SENTRY_TAG_MAX_LEN);
+
+        let many: Vec<String> = (0..100).map(|i| format!(r"C:\hooks\hook{i}.dll")).collect();
+        let tag = injected_dlls_tag(&many);
+        assert!(tag.len() <= SENTRY_TAG_MAX_LEN);
+        assert!(tag.starts_with("hook0.dll,hook1.dll"));
     }
 }
