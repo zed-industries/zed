@@ -4,6 +4,8 @@ use std::{cmp, ops::Range};
 const REPLACEMENT_COST: u32 = 1;
 const INSERTION_COST: u32 = 3;
 const DELETION_COST: u32 = 10;
+// Two matches are enough to prove ambiguity, so stop scanning early; exact
+// matches are byte-identical and can't be ranked.
 const MAX_EXACT_MATCHES: usize = 2;
 
 /// A streaming fuzzy matcher that can process text chunks incrementally
