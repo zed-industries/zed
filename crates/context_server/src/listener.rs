@@ -163,6 +163,7 @@ impl McpServer {
                                 value: CspResult::Error(Some(crate::client::Error {
                                     message: format!("{e}"),
                                     code: -32700,
+                                    data: None,
                                 })),
                             })
                             .unwrap(),
@@ -184,6 +185,7 @@ impl McpServer {
                             value: CspResult::Error::<R::Response>(Some(crate::client::Error {
                                 message: format!("{e}"),
                                 code: -32603,
+                                data: None,
                             })),
                         })
                         .unwrap(),
@@ -344,6 +346,7 @@ impl McpServer {
                     value: CspResult::Error(Some(crate::client::Error {
                         message: message.into(),
                         code: -32601,
+                        data: None,
                     })),
                 })
                 .unwrap(),

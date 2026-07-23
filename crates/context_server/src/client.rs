@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
 use futures_lite::future::yield_now;
@@ -148,10 +148,23 @@ struct AnyNotification<'a> {
     params: Option<Value>,
 }
 
+/// A JSON-RPC error returned by the server. Request futures fail with this
+/// type (wrapped in `anyhow::Error`), so callers can downcast to inspect the
+/// error code — e.g. to recognize the spec-defined negotiation errors.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Error {
+pub struct Error {
     pub message: String,
     pub code: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+impl std::error::Error for Error {}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} (JSON-RPC error {})", self.message, self.code)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -371,6 +384,11 @@ impl Client {
         )
     }
 
+    /// The timeout applied to requests that don't specify one explicitly.
+    pub(crate) fn default_request_timeout(&self) -> Option<Duration> {
+        self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT))
+    }
+
     /// Sends a JSON-RPC request to the context server and waits for a response.
     /// This function handles serialization, deserialization, timeout, and error handling.
     pub async fn request<T: DeserializeOwned>(
@@ -378,13 +396,8 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
-        self.request_with(
-            method,
-            params,
-            None,
-            self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT)),
-        )
-        .await
+        self.request_with(method, params, None, self.default_request_timeout())
+            .await
     }
 
     pub async fn request_with<T: DeserializeOwned>(
@@ -453,7 +466,7 @@ impl Client {
                     Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
-                            Err(anyhow!(error.message))
+                            Err(anyhow::Error::new(error))
                         } else if let Some(result) = parsed.result {
                             Ok(serde_json::from_str(result.get())?)
                         } else {
@@ -480,7 +493,7 @@ impl Client {
             }
             _ = timeout_fut => {
                 log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
-                anyhow::bail!("Context server request timeout");
+                anyhow::bail!(RequestTimedOut);
             }
         }
     }
@@ -528,6 +541,17 @@ impl std::error::Error for RequestCanceled {}
 impl std::fmt::Display for RequestCanceled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Context server request was canceled")
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestTimedOut;
+
+impl std::error::Error for RequestTimedOut {}
+
+impl std::fmt::Display for RequestTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Context server request timeout")
     }
 }
 
@@ -613,5 +637,80 @@ impl Drop for NotificationSubscription {
             handler_ids.retain(|id| *id != self.id);
             !handler_ids.is_empty()
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::Transport;
+    use async_trait::async_trait;
+    use futures::Stream;
+    use gpui::TestAppContext;
+    use std::pin::Pin;
+
+    /// Replies to every request with the same canned JSON-RPC error.
+    struct ErrorTransport {
+        tx: async_channel::Sender<String>,
+        rx: async_channel::Receiver<String>,
+    }
+
+    impl ErrorTransport {
+        fn new() -> Self {
+            let (tx, rx) = async_channel::unbounded();
+            Self { tx, rx }
+        }
+    }
+
+    #[async_trait]
+    impl Transport for ErrorTransport {
+        async fn send(&self, message: String) -> Result<()> {
+            let message: Value = serde_json::from_str(&message)?;
+            let id = message.get("id").cloned().unwrap_or(Value::Null);
+            let response = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32022,
+                    "message": "Unsupported protocol version",
+                    "data": { "supported": ["2026-07-28"] }
+                }
+            });
+            self.tx.send(response.to_string()).await?;
+            Ok(())
+        }
+
+        fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
+            Box::pin(self.rx.clone())
+        }
+
+        fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    #[gpui::test]
+    async fn test_json_rpc_errors_are_downcastable(cx: &mut TestAppContext) {
+        let client = Client::new(
+            ContextServerId("test-server".into()),
+            "test-server".into(),
+            Arc::new(ErrorTransport::new()),
+            None,
+            cx.to_async(),
+        )
+        .unwrap();
+
+        let err = client
+            .request::<Value>("server/discover", serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        let error = err.downcast_ref::<Error>().expect("should be a typed Error");
+        assert_eq!(error.code, -32022);
+        assert_eq!(error.message, "Unsupported protocol version");
+        assert_eq!(
+            error.data.as_ref().and_then(|data| data.get("supported")),
+            Some(&serde_json::json!(["2026-07-28"]))
+        );
     }
 }
