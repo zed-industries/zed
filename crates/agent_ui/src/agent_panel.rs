@@ -1527,12 +1527,20 @@ impl AgentPanel {
         let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
         let _project_subscription =
             cx.subscribe(&project, |this, _project, event, cx| match event {
+                // Only WorktreePathsChanged updates stored thread metadata:
+                // it carries the previous path set, and worktree
+                // additions/removals emit it too.
                 project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeRemoved(_)
-                | project::Event::WorktreeOrderChanged
-                | project::Event::WorktreePathsChanged { .. } => {
+                | project::Event::WorktreeOrderChanged => {
                     this.ensure_native_agent_connection(cx);
-                    this.update_thread_work_dirs(cx);
+                    this.update_thread_work_dirs(None, cx);
+                    this.persist_all_terminal_metadata(cx);
+                    cx.notify();
+                }
+                project::Event::WorktreePathsChanged { old_worktree_paths } => {
+                    this.ensure_native_agent_connection(cx);
+                    this.update_thread_work_dirs(Some(old_worktree_paths), cx);
                     this.persist_all_terminal_metadata(cx);
                     cx.notify();
                 }
@@ -2376,9 +2384,14 @@ impl AgentPanel {
         let Some(store) = TerminalThreadMetadataStore::try_global(cx) else {
             return;
         };
-        let Some(metadata) = self.terminal_metadata(terminal_id, cx) else {
+        let Some(mut metadata) = self.terminal_metadata(terminal_id, cx) else {
             return;
         };
+        if let Some(existing) = store.read(cx).entry(terminal_id) {
+            metadata.worktree_paths = metadata
+                .worktree_paths
+                .preserving_resolved_main_paths(&existing.worktree_paths);
+        }
         store.update(cx, |store, cx| {
             store.save(metadata, cx);
         });
@@ -4114,7 +4127,11 @@ impl AgentPanel {
         false
     }
 
-    fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
+    fn update_thread_work_dirs(
+        &self,
+        old_worktree_paths: Option<&project::WorktreePaths>,
+        cx: &mut Context<Self>,
+    ) {
         let new_work_dirs = self.project.read(cx).default_path_list(cx);
         let new_worktree_paths = self.project.read(cx).worktree_paths(cx);
 
@@ -4138,13 +4155,21 @@ impl AgentPanel {
         // the project's current worktrees. Without this, threads saved
         // before a worktree was added would have stale paths and not
         // appear under the correct sidebar group.
+        let Some(old_worktree_paths) = old_worktree_paths else {
+            return;
+        };
         let mut thread_ids: Vec<ThreadId> = self.retained_threads.keys().copied().collect();
         if let Some(active_id) = self.active_thread_id(cx) {
             thread_ids.push(active_id);
         }
         if !thread_ids.is_empty() {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.update_worktree_paths(&thread_ids, new_worktree_paths, cx);
+                store.update_worktree_paths(
+                    &thread_ids,
+                    old_worktree_paths.folder_path_list(),
+                    new_worktree_paths,
+                    cx,
+                );
             });
         }
     }

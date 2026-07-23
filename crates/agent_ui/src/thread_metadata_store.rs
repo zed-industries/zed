@@ -812,6 +812,7 @@ impl ThreadMetadataStore {
     pub fn update_worktree_paths(
         &mut self,
         thread_ids: &[ThreadId],
+        old_folder_paths: &PathList,
         worktree_paths: WorktreePaths,
         cx: &mut Context<Self>,
     ) {
@@ -829,8 +830,19 @@ impl ThreadMetadataStore {
             if thread.archived {
                 continue;
             }
+            // A thread whose folder paths weren't tracking the project's
+            // previous path set is associated with a different worktree and
+            // must keep its association.
+            if thread.folder_paths() != old_folder_paths {
+                continue;
+            }
+            let worktree_paths =
+                worktree_paths.preserving_resolved_main_paths(&thread.worktree_paths);
+            if thread.worktree_paths == worktree_paths {
+                continue;
+            }
             self.save_internal(ThreadMetadata {
-                worktree_paths: worktree_paths.clone(),
+                worktree_paths,
                 ..thread.clone()
             });
             changed = true;
@@ -1316,7 +1328,11 @@ impl ThreadMetadataStore {
                 )
             } else {
                 let project = thread_ref.project().read(cx);
-                let worktree_paths = project.worktree_paths(cx);
+                let mut worktree_paths = project.worktree_paths(cx);
+                if let Some(existing) = existing_thread {
+                    worktree_paths =
+                        worktree_paths.preserving_resolved_main_paths(&existing.worktree_paths);
+                }
                 let remote_connection = project.remote_connection_options(cx);
 
                 (worktree_paths, remote_connection)
@@ -3968,6 +3984,82 @@ mod tests {
     }
 
     #[test]
+    fn test_thread_worktree_paths_add_replaces_main_for_same_folder() {
+        // A linked worktree's main path starts out equal to its folder path
+        // and is later resolved to the main repository. Adding the resolved
+        // pair must replace the stale one instead of duplicating the folder.
+        let mut paths = make_worktree_paths(&[(
+            "/projects/zed/.worktrees/feat-a",
+            "/projects/zed/.worktrees/feat-a",
+        )]);
+
+        paths.add_path(
+            Path::new("/projects/zed"),
+            Path::new("/projects/zed/.worktrees/feat-a"),
+        );
+
+        assert_eq!(paths.ordered_pairs().count(), 1);
+        assert_eq!(
+            paths.main_worktree_path_list(),
+            &PathList::new(&[Path::new("/projects/zed")])
+        );
+        assert_eq!(
+            paths.folder_path_list(),
+            &PathList::new(&[Path::new("/projects/zed/.worktrees/feat-a")])
+        );
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_add_keeps_resolved_main_for_same_folder() {
+        // The reverse of the test above: while git state is unavailable, the
+        // computed main path falls back to the folder path. Adding that
+        // unresolved pair must not clobber the resolved association.
+        let mut paths =
+            make_worktree_paths(&[("/projects/zed", "/projects/zed/.worktrees/feat-a")]);
+
+        paths.add_path(
+            Path::new("/projects/zed/.worktrees/feat-a"),
+            Path::new("/projects/zed/.worktrees/feat-a"),
+        );
+
+        assert_eq!(paths.ordered_pairs().count(), 1);
+        assert_eq!(
+            paths.main_worktree_path_list(),
+            &PathList::new(&[Path::new("/projects/zed")])
+        );
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_preserving_resolved_main_paths() {
+        let stored = make_worktree_paths(&[
+            ("/projects/zed", "/projects/zed/.worktrees/feat-a"),
+            ("/projects/cloud", "/projects/cloud"),
+        ]);
+        // Freshly computed while git state is unavailable: main paths fall
+        // back to the folder paths, and a new folder was added.
+        let fresh = make_worktree_paths(&[
+            (
+                "/projects/zed/.worktrees/feat-a",
+                "/projects/zed/.worktrees/feat-a",
+            ),
+            ("/projects/cloud", "/projects/cloud"),
+            ("/projects/new", "/projects/new"),
+        ]);
+
+        let merged = fresh.preserving_resolved_main_paths(&stored);
+
+        assert_eq!(
+            merged.main_worktree_path_list(),
+            &PathList::new(&[
+                Path::new("/projects/zed"),
+                Path::new("/projects/cloud"),
+                Path::new("/projects/new"),
+            ])
+        );
+        assert_eq!(merged.folder_path_list(), fresh.folder_path_list());
+    }
+
+    #[test]
     fn test_thread_worktree_paths_from_path_lists_preserves_association() {
         let folder = PathList::new(&[
             Path::new("/worktrees/selectric/zed"),
@@ -4267,6 +4359,173 @@ mod tests {
                 entry.folder_paths().paths(),
                 &[std::path::PathBuf::from("/project-a")],
                 "retained thread A's stored path must not be updated while the project is via collab"
+            );
+        });
+    }
+
+    // End-to-end setup for #60553: a thread created in a project rooted at a
+    // git worktree nested inside its repository must be stored with the main
+    // repository as its main worktree path once git state is resolved, and
+    // must keep that association across thread updates.
+    #[gpui::test]
+    async fn test_thread_in_nested_git_worktree_resolves_main_repo(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo",
+            serde_json::json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/repo/.git"), Some("main"));
+        fs.insert_branches(Path::new("/repo/.git"), &["main", "feat-a"]);
+        fs.add_linked_worktree_for_repo(
+            Path::new("/repo/.git"),
+            true,
+            git::repository::Worktree {
+                path: PathBuf::from("/repo/.worktrees/feat-a"),
+                ref_name: Some("refs/heads/feat-a".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/repo/.worktrees/feat-a")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+
+        crate::test_support::open_thread_with_connection(
+            &panel,
+            StubAgentConnection::new(),
+            &mut vcx,
+        );
+        let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "hello".into(), cx);
+            thread.set_title("Thread".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        let assert_resolved = |cx: &mut TestAppContext, when: &str| {
+            cx.update(|cx| {
+                let store = ThreadMetadataStore::global(cx);
+                let entry = store.read(cx).entry(thread_id).unwrap().clone();
+                assert_eq!(
+                    entry.folder_paths().paths(),
+                    &[std::path::PathBuf::from("/repo/.worktrees/feat-a")],
+                    "folder path must be the worktree the thread runs in ({when})"
+                );
+                assert_eq!(
+                    entry.main_worktree_paths().paths(),
+                    &[std::path::PathBuf::from("/repo")],
+                    "main worktree path must be the main repository ({when})"
+                );
+            });
+        };
+        assert_resolved(cx, "after creation");
+
+        // Subsequent thread updates re-save the metadata; the association
+        // must remain stable.
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "more".into(), cx);
+        });
+        vcx.run_until_parked();
+        assert_resolved(cx, "after another update");
+    }
+
+    // Regression test for #60553: a thread's resolved main-worktree
+    // association (its folder is a linked git worktree of a main repository)
+    // must not regress to the folder-path fallback when the project's
+    // worktree set changes while git state is unresolved. Folder paths must
+    // still be kept in sync with the project's worktrees.
+    #[gpui::test]
+    async fn test_worktree_change_preserves_resolved_main_worktree_paths(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", serde_json::json!({})).await;
+        fs.insert_tree("/project-b", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new("/project-a")], cx).await;
+
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+
+        crate::test_support::open_thread_with_connection(
+            &panel,
+            StubAgentConnection::new(),
+            &mut vcx,
+        );
+        let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "hello".into(), cx);
+            thread.set_title("Thread".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        // Store the resolved association: /project-a is a linked git
+        // worktree of /main-repo. The project itself reports the unresolved
+        // fallback (main == folder) because FakeFs has no git state here,
+        // mirroring a worktree whose git scan hasn't completed.
+        let resolved_paths = WorktreePaths::from_path_lists(
+            PathList::new(&[Path::new("/main-repo")]),
+            PathList::new(&[Path::new("/project-a")]),
+        )
+        .unwrap();
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                let metadata = store.entry(thread_id).unwrap().clone();
+                store.save(
+                    ThreadMetadata {
+                        worktree_paths: resolved_paths.clone(),
+                        ..metadata
+                    },
+                    cx,
+                );
+            });
+        });
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(Path::new("/project-b"), true, cx)
+            })
+            .await
+            .unwrap();
+        vcx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let entry = store
+                .read(cx)
+                .entry(thread_id)
+                .expect("thread must still exist in the store");
+            assert_eq!(
+                entry.folder_paths().paths(),
+                &[
+                    std::path::PathBuf::from("/project-a"),
+                    std::path::PathBuf::from("/project-b"),
+                ],
+                "folder paths must stay in sync with the project's worktrees"
+            );
+            assert_eq!(
+                entry.main_worktree_paths().paths(),
+                &[
+                    std::path::PathBuf::from("/main-repo"),
+                    std::path::PathBuf::from("/project-b"),
+                ],
+                "the resolved main worktree path for /project-a must not regress \
+                 to the folder-path fallback"
             );
         });
     }
