@@ -10,7 +10,7 @@ path_suffixes = [
     # Ray tracing pipeline shaders
     "rgen", "rint", "rahit", "rchit", "rmiss", "rcall",
     # Other
-    "glsl"
+    "glsl", "gdshader", "swsl"
     ]
 first_line_pattern = '^#version \d+'
 line_comments = ["// "]
