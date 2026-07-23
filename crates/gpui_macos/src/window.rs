@@ -61,9 +61,10 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    ffi::{CStr, c_void},
+    ffi::{CStr, CString, c_void},
     mem,
     ops::Range,
+    os::unix::ffi::OsStrExt,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -1920,38 +1921,34 @@ impl PlatformWindow for MacWindow {
             );
 
             for path in paths.paths() {
-                let path = ns_string(&path.to_string_lossy());
-                let url: id = msg_send![class!(NSURL), fileURLWithPath: path];
+                // Preserve non-UTF-8 paths
+                let Ok(path_bytes) = CString::new(path.as_os_str().as_bytes()) else {
+                    log::warn!("start_file_drag skipped path containing an interior nul byte");
+                    continue;
+                };
+
+                let is_directory: BOOL = if path.is_dir() {YES } else { NO };
+                let url: id = msg_send![
+                    class!(NSURL),
+                    fileURLWithFileSystemRepresentation: path_bytes.as_ptr()
+                    isDirectory: is_directory
+                    relativeToURL: nil
+                ];
+
                 if url.is_null() {
                     log::warn!("start_file_drag skipped path with nil NSURL");
                     continue;
                 }
 
-                let pasteboard_item: id = msg_send![class!(NSPasteboardItem), alloc];
-                let pasteboard_item: id = msg_send![pasteboard_item, init];
-                if pasteboard_item.is_null() {
-                    log::warn!("start_file_drag skipped path with nil NSPasteboardItem");
-                    continue;
-                }
-
-                let file_url_type = ns_string("public.file-url");
-                let absolute_url_string: id = msg_send![url, absoluteString];
-                let wrote_file_url: BOOL = msg_send![pasteboard_item, setString: absolute_url_string forType: file_url_type];
-                if wrote_file_url == NO {
-                    log::warn!("start_file_drag skipped path after failing to write file URL");
-                    let _: () = msg_send![pasteboard_item, release];
-                    continue;
-                }
-
                 let item: id = msg_send![class!(NSDraggingItem), alloc];
-                let item: id = msg_send![item, initWithPasteboardWriter: pasteboard_item];
-                let _: () = msg_send![pasteboard_item, release];
+                let item: id = msg_send![item, initWithPasteboardWriter: url];
                 if item.is_null() {
                     log::warn!("start_file_drag declined: NSDraggingItem allocation failed");
                     continue;
                 }
 
-                let icon: id = msg_send![workspace, iconForFile: path];
+                let url_path: id = msg_send![url, path];
+                let icon: id = msg_send![workspace, iconForFile: url_path];
                 let _: () = msg_send![item, setDraggingFrame: frame contents: icon];
                 let _: () = msg_send![dragging_items, addObject: item];
                 let _: () = msg_send![item, release];
