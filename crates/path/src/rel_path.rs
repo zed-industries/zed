@@ -597,6 +597,7 @@ impl<'a> DoubleEndedIterator for RelPathComponents<'a> {
     }
 }
 
+#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for RelPathBuf {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where

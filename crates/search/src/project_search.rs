@@ -1297,14 +1297,29 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let query = workspace.active_item(cx).and_then(|item| {
+        enum QuerySeed {
+            /// Content of the buffer search bar: already query syntax, with
+            /// escaping already applied if it was seeded in regex mode, so it
+            /// must never be re-escaped. It's carried over verbatim even if
+            /// the buffer search's mode differs from the project search's.
+            Query(String),
+            /// Raw text from the editor's selection or the word under the
+            /// cursor, so it gets escaped when entering a regex query.
+            Text(String),
+        }
+
+        let query_seed = workspace.active_item(cx).and_then(|item| {
             if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
-                return Some(buffer_search_query);
+                return Some(QuerySeed::Query(buffer_search_query));
             }
 
             let editor = item.act_as::<Editor>(cx)?;
             let query = editor.query_suggestion(None, window, cx);
-            if query.is_empty() { None } else { Some(query) }
+            if query.is_empty() {
+                None
+            } else {
+                Some(QuerySeed::Text(query))
+            }
         });
 
         let search = if let Some(existing) = existing {
@@ -1353,13 +1368,19 @@ impl ProjectSearchView {
                     cx,
                 );
             }
-            let query = action
-                .query
-                .as_deref()
-                .filter(|q| !q.is_empty())
-                .or(query.as_deref());
-            if let Some(query) = query {
+            if let Some(query) = action.query.as_deref().filter(|query| !query.is_empty()) {
                 search.set_query(query, window, cx);
+            } else if let Some(query_seed) = query_seed {
+                let query = match query_seed {
+                    QuerySeed::Query(query) => query,
+                    QuerySeed::Text(text)
+                        if search.search_options.contains(SearchOptions::REGEX) =>
+                    {
+                        regex::escape(&text)
+                    }
+                    QuerySeed::Text(text) => text,
+                };
+                search.set_query(&query, window, cx);
             }
             if let Some(included_files) = action.included_files.as_deref() {
                 search
@@ -1981,7 +2002,7 @@ impl ProjectSearchBar {
     fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.query_editor.focus_handle(cx).focus(window, cx);
+                search_view.focus_query_editor(window, cx);
             });
         }
     }
@@ -2789,12 +2810,13 @@ pub mod tests {
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
-    use language::{FakeLspAdapter, rust_lang};
+    use language::{FakeLspAdapter, Point as BufferPoint, rust_lang};
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Fs};
     use serde_json::json;
     use settings::{
-        InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
+        InlayHintSettingsContent, SearchSettingsContent, SeedQuerySetting, SettingsStore,
+        ThemeColorsContent, ThemeStyleContent,
     };
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
@@ -5042,6 +5064,109 @@ pub mod tests {
             .expect("unable to update search view");
     }
 
+    #[gpui::test]
+    async fn test_seeded_project_search_query_is_escaped_in_regex_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.seed_search_query_from_cursor =
+                        Some(SeedQuerySetting::Selection);
+                    settings.editor.search = Some(SearchSettingsContent {
+                        regex: Some(true),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "z.d\nzed\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("window should contain a workspace");
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let editor = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+            })
+            .await
+            .expect("should open test file")
+            .downcast::<Editor>()
+            .expect("opened item should be an editor");
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([BufferPoint::new(0, 0)..BufferPoint::new(0, 3)])
+            });
+        });
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+        });
+        cx.run_until_parked();
+
+        let project_search_view = workspace
+            .read_with(&cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("should open a project search view");
+        project_search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.search_query_text(cx), r"z\.d");
+            search_view.search(cx);
+        });
+        cx.run_until_parked();
+
+        project_search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.entity.read(cx).match_ranges.len(), 1);
+        });
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &DeploySearch {
+                    query: Some("z.d".into()),
+                    regex: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+        project_search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.search_query_text(cx), "z.d");
+            search_view.search(cx);
+        });
+        cx.run_until_parked();
+
+        project_search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.entity.read(cx).match_ranges.len(), 2);
+        });
+    }
+
     #[perf]
     #[gpui::test]
     async fn test_buffer_search_query_reused(cx: &mut TestAppContext) {
@@ -5370,18 +5495,17 @@ pub mod tests {
                 "Newly opened editor should have the correct text with hints",
             );
         });
-        project.update(cx, |_, cx| {
-            cx.emit(project::Event::RefreshInlayHints {
-                server_id: fake_server.server.server_id(),
-                request_id: Some(1),
-            });
-        });
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
             5,
-            "After a simulated server refresh request, we should have sent another request",
+            "After a server refresh request, we should have sent another request",
         );
 
         perform_search(search_view, "let ", cx);
