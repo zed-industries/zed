@@ -1,5 +1,6 @@
 use std::{
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -8,6 +9,7 @@ use futures::StreamExt;
 use gpui::TestAppContext;
 use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
 use lsp::Uri;
+use parking_lot::Mutex;
 use project::{
     Project,
     lsp_store::{log_store::TestRpcRequestTracker, *},
@@ -290,4 +292,99 @@ fn test_trailing_newline_in_completion_documentation() {
         completion_doc,
         CompletionDocumentation::SingleLine(s) if s == "some value"
     ));
+}
+
+#[gpui::test]
+async fn test_user_initialization_options_override_adapter_arrays(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let user_settings = serde_json::json!({
+        "lsp": {
+            "the-fake-language-server": {
+                "initialization_options": {
+                    "preview": {
+                        "background": {
+                            "enabled": true,
+                            "args": ["--data-plane-host=127.0.0.1:23635", "--invert-colors=never"],
+                        },
+                    },
+                    "plugins": ["user-plugin"],
+                    "userOnly": ["user"],
+                },
+            },
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": user_settings.to_string(),
+            },
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let sent_initialization_options = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-fake-language-server",
+            initialization_options: Some(json!({
+                "preview": {
+                    "background": {
+                        "args": ["--data-plane-host=127.0.0.1:23635", "--invert-colors=never"],
+                        "partialRendering": true,
+                    },
+                },
+                "plugins": ["default-plugin", "user-plugin"],
+                "adapterOnly": [1, 2],
+            })),
+            initializer: Some(Box::new({
+                let sent_initialization_options = sent_initialization_options.clone();
+                move |fake_server| {
+                    let sent_initialization_options = sent_initialization_options.clone();
+                    fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                        move |params, _| {
+                            *sent_initialization_options.lock() = params.initialization_options;
+                            async move { Ok(lsp::InitializeResult::default()) }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        sent_initialization_options.lock().take(),
+        Some(json!({
+            "preview": {
+                "background": {
+                    "enabled": true,
+                    "args": ["--data-plane-host=127.0.0.1:23635", "--invert-colors=never"],
+                    "partialRendering": true,
+                },
+            },
+            "plugins": ["user-plugin"],
+            "adapterOnly": [1, 2],
+            "userOnly": ["user"],
+        })),
+    );
 }
