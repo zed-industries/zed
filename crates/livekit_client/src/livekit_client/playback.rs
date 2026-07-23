@@ -658,20 +658,34 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     use image::{Frame, RgbaImage};
     use livekit::webrtc::prelude::VideoFormatType;
     use smallvec::SmallVec;
-    use std::alloc::{Layout, alloc};
 
     let width = buffer.width();
     let height = buffer.height();
     let stride = width * 4;
     let byte_len = (stride * height) as usize;
-    let argb_image = unsafe {
-        // Motivation for this unsafe code is to avoid initializing the frame data, since to_argb
-        // will write all bytes anyway.
-        let start_ptr = alloc(Layout::array::<u8>(byte_len).log_err()?);
-        if start_ptr.is_null() {
-            return None;
-        }
-        let argb_frame_slice = std::slice::from_raw_parts_mut(start_ptr, byte_len);
+
+    // A zero-size frame (for example a 0x0 remote frame) has nothing to render,
+    // and allocating a zero-size buffer below would be undefined behavior.
+    if byte_len == 0 {
+        return None;
+    }
+
+    // Motivation for this unsafe code is to avoid zero-initializing the frame
+    // data, since `to_argb` writes all bytes anyway. We reserve capacity and
+    // form a `&mut [u8]` over the uninitialized spare capacity. This is sound
+    // because a `&mut [u8]` is allowed to cover uninitialized bytes as long as
+    // they are only written (never read) while uninitialized: `u8` has no
+    // invalid bit patterns, so writing into uninitialized `u8`s has no validity
+    // concern. `to_argb` (libyuv) fully overwrites all `byte_len` bytes without
+    // reading them, and we only call `set_len(byte_len)` after that complete
+    // write. (`to_argb`'s FFI signature takes `&mut [u8]`, so `MaybeUninit` is
+    // not an option here.)
+    let mut argb_image = Vec::<u8>::with_capacity(byte_len);
+    unsafe {
+        let argb_frame_slice = std::slice::from_raw_parts_mut(
+            argb_image.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+            byte_len,
+        );
         buffer.to_argb(
             VideoFormatType::ARGB,
             argb_frame_slice,
@@ -679,8 +693,10 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
             width as i32,
             height as i32,
         );
-        Vec::from_raw_parts(start_ptr, byte_len, byte_len)
-    };
+        // SAFETY: `to_argb` initialized the first `byte_len` bytes above, and
+        // `byte_len` does not exceed the reserved capacity.
+        argb_image.set_len(byte_len);
+    }
 
     // TODO: Unclear why providing argb_image to RgbaImage works properly.
     let image = RgbaImage::from_raw(width, height, argb_image)
@@ -829,15 +845,28 @@ mod macos {
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
         rx: UnboundedReceiver<()>,
-        callback: Box<PropertyListenerCallbackWrapper>,
+        // Raw pointer to a heap-allocated `PropertyListenerCallbackWrapper` that
+        // is registered with CoreAudio as the context for its property
+        // listeners. It is intentionally leaked rather than freed on `Drop` (see
+        // below), so that a HAL callback already dispatching on the CoreAudio
+        // notification thread can never observe a freed closure.
+        callback: *mut PropertyListenerCallbackWrapper,
         input: bool,
         device_id: AudioObjectID, // Store the device ID to properly remove listeners
     }
 
     trait _AssertSend: Send {}
+    // SAFETY: the only field that is not `Send` is `callback`, a raw pointer to
+    // a heap-allocated `PropertyListenerCallbackWrapper` whose closure is
+    // `Send + Sync`.
+    unsafe impl Send for CoreAudioDefaultDeviceChangeListener {}
     impl _AssertSend for CoreAudioDefaultDeviceChangeListener {}
 
-    struct PropertyListenerCallbackWrapper(Box<dyn FnMut() + Send>);
+    // The closure is stored as `Fn` (not `FnMut`) so that the shim can invoke it
+    // through a shared reference. The same wrapper pointer is registered on more
+    // than one `AudioObject`, so callbacks may dispatch concurrently and must
+    // never be turned into aliasing `&mut` references.
+    struct PropertyListenerCallbackWrapper(Box<dyn Fn() + Send + Sync>);
 
     unsafe extern "C" fn property_listener_handler_shim(
         _: AudioObjectID,
@@ -846,6 +875,7 @@ mod macos {
         callback: *mut ::std::os::raw::c_void,
     ) -> OSStatus {
         let wrapper = callback as *mut PropertyListenerCallbackWrapper;
+        // Invoke through a shared reference (`Fn`), never `&mut`.
         unsafe { (*wrapper).0() };
         0
     }
@@ -858,9 +888,10 @@ mod macos {
                 tx.unbounded_send(()).ok();
             })));
 
-            // Get the current default device ID
-            let device_id = unsafe {
-                // Listen for default device changes
+            // Listen for default device changes. If this registration fails
+            // nothing has been registered yet, so dropping the callback here is
+            // harmless.
+            unsafe {
                 coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
                     kAudioObjectSystemObject,
                     &AudioObjectPropertyAddress {
@@ -875,8 +906,30 @@ mod macos {
                     Some(property_listener_handler_shim),
                     &*callback as *const _ as *mut _,
                 ))?;
+            }
 
-                // Also listen for changes to the device configuration
+            // Leak the wrapper: from here on it is only referenced through a raw
+            // pointer held by CoreAudio, and `Drop` deliberately never frees it.
+            let callback = Box::into_raw(callback);
+
+            // Construct `Self` now that the system-level listener is registered,
+            // so that `Drop` always unregisters it. Registering the
+            // device-specific listener below can fail (for example if the device
+            // is unplugged mid-setup); if we returned `Err` at that point `Self`
+            // would never be built, `Drop` would never run, and the freed
+            // callback would remain registered as the system listener, causing a
+            // use-after-free on the next default-device change.
+            let mut this = Self {
+                rx,
+                callback,
+                input,
+                device_id: 0,
+            };
+
+            // Also listen for changes to the device configuration. Failure here
+            // is non-fatal: we simply won't receive stream-format notifications,
+            // and `device_id` stays 0 so `Drop` skips this listener.
+            unsafe {
                 let device_id = if input {
                     let mut input_device: AudioObjectID = 0;
                     let mut prop_size = std::mem::size_of::<AudioObjectID>() as u32;
@@ -922,8 +975,8 @@ mod macos {
                 };
 
                 if device_id != 0 {
-                    // Listen for format changes on the device
-                    coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
+                    // Listen for format changes on the device.
+                    match coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
                         device_id,
                         &AudioObjectPropertyAddress {
                             mSelector: coreaudio::sys::kAudioDevicePropertyStreamFormat,
@@ -935,19 +988,17 @@ mod macos {
                             mElement: kAudioObjectPropertyElementMaster,
                         },
                         Some(property_listener_handler_shim),
-                        &*callback as *const _ as *mut _,
-                    ))?;
+                        this.callback as *mut _,
+                    )) {
+                        Ok(()) => this.device_id = device_id,
+                        Err(error) => log::warn!(
+                            "Failed to register audio device stream format listener: {error}"
+                        ),
+                    }
                 }
+            }
 
-                device_id
-            };
-
-            Ok(Self {
-                rx,
-                callback,
-                input,
-                device_id,
-            })
+            Ok(this)
         }
     }
 
@@ -967,7 +1018,7 @@ mod macos {
                         mElement: kAudioObjectPropertyElementMaster,
                     },
                     Some(property_listener_handler_shim),
-                    &*self.callback as *const _ as *mut _,
+                    self.callback as *mut _,
                 );
 
                 // Remove the device-specific property listener if we have a valid device ID
@@ -984,9 +1035,22 @@ mod macos {
                             mElement: kAudioObjectPropertyElementMaster,
                         },
                         Some(property_listener_handler_shim),
-                        &*self.callback as *const _ as *mut _,
+                        self.callback as *mut _,
                     );
                 }
+
+                // Intentionally leak the wrapper: `AudioObjectRemovePropertyListener`
+                // does not synchronize with a callback that is already executing
+                // on the CoreAudio notification thread, so freeing the closure
+                // here could let that in-flight callback run against freed memory.
+                // Leaking a single small allocation is a cheap price to avoid the
+                // use-after-free.
+                //
+                // Note this is not strictly a one-time leak: `DeviceChangeListener::new`
+                // is recreated in a loop on each device-change event (see the
+                // `.next().await` loop that drives it), so one wrapper leaks per
+                // device-change event. The accumulation is bounded by the number
+                // of such events over a session, which is negligible in practice.
             }
         }
     }
