@@ -341,7 +341,7 @@ impl NotebookEditor {
         let spec = self.kernel_specification.clone().or_else(|| {
             ReplStore::global(cx)
                 .read(cx)
-                .active_kernelspec(self.worktree_id, None, cx)
+                .active_kernelspec(Some(self.worktree_id), None, cx)
         });
 
         let spec = spec.unwrap_or_else(|| {
