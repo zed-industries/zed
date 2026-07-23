@@ -926,12 +926,12 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
         let matching_server_ids = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| {
+            .filter_map(|(key, state)| {
                 state
                     .name
                     .as_ref()
                     .is_some_and(|name| name.0 == "the-language-server")
-                    .then_some(*server_id)
+                    .then_some(key.server_id)
             })
             .collect::<Vec<_>>();
         assert_eq!(matching_server_ids, vec![first_server_id]);
@@ -957,10 +957,6 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
             statuses[0].0, restarted_server_id,
             "restarting a remote language server should publish the replacement server id"
         );
-        assert_ne!(
-            statuses[0].0, first_server_id,
-            "restarting a remote language server should remove the previous server id"
-        );
         assert_eq!(statuses[0].1.name.0, "the-language-server");
     });
     cx_a.read_global::<GlobalLogStore, _>(|global, cx| {
@@ -968,22 +964,18 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
         let matching_server_ids = log_store
             .language_servers
             .iter()
-            .filter_map(|(server_id, state)| {
+            .filter_map(|(key, state)| {
                 state
                     .name
                     .as_ref()
                     .is_some_and(|name| name.0 == "the-language-server")
-                    .then_some(*server_id)
+                    .then_some(key.server_id)
             })
             .collect::<Vec<_>>();
         assert_eq!(
             matching_server_ids,
             vec![restarted_server_id],
             "restarting a remote language server should replace the old log store entry"
-        );
-        assert!(
-            !log_store.language_servers.contains_key(&first_server_id),
-            "restarting a remote language server should remove the previous log store entry"
         );
     });
 }

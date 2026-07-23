@@ -35,6 +35,10 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
         self.0.worktree_root_path().to_string_lossy().into_owned()
     }
 
+    fn language_server_status_source(&self) -> Option<gpui::EntityId> {
+        Some(self.0.status_source_id())
+    }
+
     async fn read_text_file(&self, path: &RelPath) -> Result<String> {
         self.0.read_text_file(path).await
     }
@@ -122,6 +126,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
 
     fn update_language_server_status(
         &self,
+        source: Option<gpui::EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
@@ -130,8 +135,16 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
-        self.language_registry
-            .update_lsp_binary_status(language_server_id, status);
+        if let Some(source) = source {
+            self.language_registry.update_lsp_binary_status_for_entity(
+                source,
+                language_server_id,
+                status,
+            );
+        } else {
+            self.language_registry
+                .update_lsp_binary_status(language_server_id, status);
+        }
     }
 }
 

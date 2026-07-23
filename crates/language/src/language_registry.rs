@@ -16,7 +16,7 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -124,9 +124,17 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
+type ServerStatus = (Option<EntityId>, LanguageServerName, BinaryStatus);
+
 #[derive(Clone, Default)]
 struct ServerStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, BinaryStatus)>>>>,
+    state: Arc<Mutex<ServerStatusSenderState>>,
+}
+
+#[derive(Default)]
+struct ServerStatusSenderState {
+    next_subscription_id: usize,
+    txs: HashMap<usize, mpsc::UnboundedSender<ServerStatus>>,
 }
 
 pub struct LoadedLanguage {
@@ -1062,7 +1070,17 @@ impl LanguageRegistry {
     }
 
     pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(server_name, status);
+        self.lsp_binary_status_tx.send(None, server_name, status);
+    }
+
+    pub fn update_lsp_binary_status_for_entity(
+        &self,
+        source: EntityId,
+        server_name: LanguageServerName,
+        status: BinaryStatus,
+    ) {
+        self.lsp_binary_status_tx
+            .send(Some(source), server_name, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -1108,7 +1126,10 @@ impl LanguageRegistry {
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    ) -> (
+        mpsc::UnboundedReceiver<(Option<EntityId>, LanguageServerName, BinaryStatus)>,
+        Subscription,
+    ) {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -1210,14 +1231,41 @@ impl LanguageRegistryState {
 }
 
 impl ServerStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    fn subscribe(&self) -> (mpsc::UnboundedReceiver<ServerStatus>, Subscription) {
         let (tx, rx) = mpsc::unbounded();
-        self.txs.lock().push(tx);
-        rx
+        let subscription_id = {
+            let mut state = self.state.lock();
+            let subscription_id = post_inc(&mut state.next_subscription_id);
+            state.txs.insert(subscription_id, tx);
+            subscription_id
+        };
+        let state = self.state.clone();
+        let subscription = Subscription::new(move || {
+            state.lock().txs.remove(&subscription_id);
+        });
+        (rx, subscription)
     }
 
-    fn send(&self, name: LanguageServerName, status: BinaryStatus) {
-        let mut txs = self.txs.lock();
-        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
+    fn send(&self, source: Option<EntityId>, name: LanguageServerName, status: BinaryStatus) {
+        let mut state = self.state.lock();
+        state.txs.retain(|_, tx| {
+            tx.unbounded_send((source, name.clone(), status.clone()))
+                .is_ok()
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_server_status_subscription_unregisters_sender() {
+        let sender = ServerStatusSender::default();
+        let (_receiver, subscription) = sender.subscribe();
+        assert_eq!(sender.state.lock().txs.len(), 1);
+
+        drop(subscription);
+        assert!(sender.state.lock().txs.is_empty());
     }
 }
