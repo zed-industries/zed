@@ -508,8 +508,24 @@ struct IndentSuggestion {
     within_error: bool,
 }
 
+/// Wrapper that asserts `Send` for the tree-sitter captures iterator, which is
+/// the only part of [`BufferChunkHighlights`] (and thus [`BufferChunks`]) that
+/// isn't automatically `Send`.
+///
+/// `SyntaxMapCaptures` isn't auto-`Send` because it transitively holds a
+/// `tree_sitter::QueryCaptures`, which retains a raw `*mut TSQueryCursor`.
+struct SendableCaptures<'a>(SyntaxMapCaptures<'a>);
+
+// SAFETY: The raw `*mut TSQueryCursor` inside the captures iterator points at a
+// pooled `QueryCursor` that lives inside the same `SyntaxMapCaptures` value (in
+// its `_query_cursor` handle). Because the cursor travels together with the
+// iterator that borrows it, exclusive access to the cursor is preserved across
+// a move to another thread. tree-sitter itself asserts `unsafe impl Send for
+// QueryCursor` for exactly this pointer, so sending the pair is sound.
+unsafe impl Send for SendableCaptures<'_> {}
+
 struct BufferChunkHighlights<'a> {
-    captures: SyntaxMapCaptures<'a>,
+    captures: SendableCaptures<'a>,
     next_capture: Option<SyntaxMapCapture<'a>>,
     stack: Vec<(usize, HighlightId)>,
     highlight_maps: Vec<HighlightMap>,
@@ -5659,8 +5675,6 @@ impl Deref for BufferSnapshot {
     }
 }
 
-unsafe impl Send for BufferChunks<'_> {}
-
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
         text: &'a Rope,
@@ -5672,7 +5686,7 @@ impl<'a> BufferChunks<'a> {
         let mut highlights = None;
         if let Some((captures, highlight_maps)) = syntax {
             highlights = Some(BufferChunkHighlights {
-                captures,
+                captures: SendableCaptures(captures),
                 next_capture: None,
                 stack: Default::default(),
                 highlight_maps,
@@ -5724,7 +5738,7 @@ impl<'a> BufferChunks<'a> {
             } else if let Some(snapshot) = self.buffer_snapshot {
                 let (captures, highlight_maps) = snapshot.get_highlights(self.range.clone());
                 *highlights = BufferChunkHighlights {
-                    captures,
+                    captures: SendableCaptures(captures),
                     next_capture: None,
                     stack: Default::default(),
                     highlight_maps,
@@ -5738,7 +5752,7 @@ impl<'a> BufferChunks<'a> {
                 );
             }
 
-            highlights.captures.set_byte_range(self.range.clone());
+            highlights.captures.0.set_byte_range(self.range.clone());
             self.initialize_diagnostic_endpoints();
         }
     }
@@ -5842,7 +5856,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             }
 
             if highlights.next_capture.is_none() {
-                highlights.next_capture = highlights.captures.next();
+                highlights.next_capture = highlights.captures.0.next();
             }
 
             while let Some(capture) = highlights.next_capture.as_ref() {
@@ -5857,7 +5871,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                             .stack
                             .push((capture.node.end_byte(), highlight_id));
                     }
-                    highlights.next_capture = highlights.captures.next();
+                    highlights.next_capture = highlights.captures.0.next();
                 }
             }
         }
