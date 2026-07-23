@@ -1890,7 +1890,19 @@ impl GitPanel {
             .and_then(|i| self.entries.get(i))
             .cloned()
         {
-            self.toggle_directory(&dir_entry.key, window, cx);
+            let first_entry = self
+                .view_mode
+                .tree_state()
+                .and_then(|s| s.directory_descendants.get(&dir_entry.key))
+                .and_then(|entries| entries.first().cloned());
+            if let Some(entry) = first_entry {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        ProjectDiff::deploy_at(workspace, Some(entry), window, cx);
+                    })
+                    .ok();
+                self.focus_handle.focus(window, cx);
+            }
             return;
         }
         maybe!({
@@ -1941,11 +1953,19 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let entry = self
-                .entries
-                .get(self.selected_entry?)?
-                .status_entry()?
-                .clone();
+            let entry = if let Some(GitListEntry::Directory(dir_entry)) =
+                self.entries.get(self.selected_entry?)
+            {
+                self.view_mode
+                    .tree_state()
+                    .and_then(|s| s.directory_descendants.get(&dir_entry.key))
+                    .and_then(|entries| entries.iter().find(|e| !e.status.is_created()).cloned())?
+            } else {
+                self.entries
+                    .get(self.selected_entry?)?
+                    .status_entry()?
+                    .clone()
+            };
             let repository = self.active_repository.clone()?;
 
             SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
@@ -2012,9 +2032,20 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(selected_ix) = self.selected_entry else {
+            return;
+        };
+        let Some(list_entry) = self.entries.get(selected_ix).cloned() else {
+            return;
+        };
+
+        if let Some(dir_entry) = list_entry.directory_entry() {
+            self.revert_directory(dir_entry.key.clone(), window, cx);
+            return;
+        }
+
         let path_style = self.project.read(cx).path_style(cx);
         maybe!({
-            let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
             let skip_prompt = action.skip_prompt || entry.status.is_created();
 
@@ -2063,35 +2094,43 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        maybe!({
-            let list_entry = self.entries.get(self.selected_entry?)?.clone();
-            let entry = list_entry.status_entry()?.to_owned();
+        let Some(selected_ix) = self.selected_entry else {
+            return;
+        };
+        let Some(list_entry) = self.entries.get(selected_ix).cloned() else {
+            return;
+        };
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
 
+        let (repo_path, is_dir) = if let Some(dir_entry) = list_entry.directory_entry() {
+            (dir_entry.key.path.clone(), true)
+        } else {
+            let Some(entry) = list_entry.status_entry() else {
+                return;
+            };
             if !entry.status.is_created() {
-                return Some(());
+                return;
             }
+            (entry.repo_path.clone(), false)
+        };
 
-            let active_repository = self.active_repository.clone()?;
-            let workspace = self.workspace.clone();
-            let repo_path = entry.repo_path;
+        let receiver =
+            active_repository.update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, is_dir));
 
-            let receiver = active_repository
-                .update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, false));
-
-            cx.spawn(async move |_, cx| {
-                if let Err(e) = receiver.await? {
-                    if let Some(workspace) = workspace.upgrade() {
-                        cx.update(|cx| {
-                            show_error_toast(workspace, "add to .gitignore", e, cx);
-                        });
-                    }
+        cx.spawn(async move |_, cx| {
+            if let Err(e) = receiver.await? {
+                if let Some(workspace) = workspace.upgrade() {
+                    cx.update(|cx| {
+                        show_error_toast(workspace, "add to .gitignore", e, cx);
+                    });
                 }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-
-            Some(())
-        });
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn add_to_git_info_exclude(
@@ -2100,36 +2139,152 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        maybe!({
-            let list_entry = self.entries.get(self.selected_entry?)?.clone();
-            let entry = list_entry.status_entry()?.to_owned();
+        let Some(selected_ix) = self.selected_entry else {
+            return;
+        };
+        let Some(list_entry) = self.entries.get(selected_ix).cloned() else {
+            return;
+        };
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
 
+        let (repo_path, is_dir) = if let Some(dir_entry) = list_entry.directory_entry() {
+            (dir_entry.key.path.clone(), true)
+        } else {
+            let Some(entry) = list_entry.status_entry() else {
+                return;
+            };
             if !entry.status.is_created() {
-                return Some(());
+                return;
             }
+            (entry.repo_path.clone(), false)
+        };
 
-            let active_repository = self.active_repository.clone()?;
-            let workspace = self.workspace.clone();
-            let repo_path = entry.repo_path;
-
-            let receiver = active_repository.update(cx, |repo, _| {
-                repo.add_path_to_git_info_exclude(&repo_path, false)
-            });
-
-            cx.spawn(async move |_, cx| {
-                if let Err(e) = receiver.await? {
-                    if let Some(workspace) = workspace.upgrade() {
-                        cx.update(|cx| {
-                            show_error_toast(workspace, "add to .git/info/exclude", e, cx);
-                        });
-                    }
-                }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-
-            Some(())
+        let receiver = active_repository.update(cx, |repo, _| {
+            repo.add_path_to_git_info_exclude(&repo_path, is_dir)
         });
+
+        cx.spawn(async move |_, cx| {
+            if let Err(e) = receiver.await? {
+                if let Some(workspace) = workspace.upgrade() {
+                    cx.update(|cx| {
+                        show_error_toast(workspace, "add to .git/info/exclude", e, cx);
+                    });
+                }
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn revert_directory(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let Some(active_repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        let entries = self
+            .view_mode
+            .tree_state()
+            .and_then(|state| state.directory_descendants.get(&key))
+            .cloned()
+            .unwrap_or_default();
+
+        if entries.is_empty() {
+            return;
+        }
+
+        if entries.len() == 1 {
+            self.revert_entry(&entries[0].clone(), window, cx);
+            return;
+        }
+
+        let tracked: Vec<GitStatusEntry> = entries
+            .iter()
+            .filter(|e| !e.status.is_created())
+            .cloned()
+            .collect();
+        let new_files: Vec<GitStatusEntry> = entries
+            .iter()
+            .filter(|e| e.status.is_created())
+            .cloned()
+            .collect();
+
+        let mut details = entries
+            .iter()
+            .filter_map(|e| e.repo_path.as_ref().file_name())
+            .map(|f| f.to_string())
+            .take(5)
+            .join(" ");
+
+        if entries.len() > 5 {
+            details.push_str(&format!("\nand {} more\u{2026}", entries.len() - 5));
+        }
+
+        let msg = if new_files.is_empty() {
+            "Discard changes to these files?"
+        } else {
+            "Trash these files?"
+        };
+        let confirm_label = if tracked.is_empty() {
+            "Trash"
+        } else {
+            "Discard"
+        };
+        let confirm_rx = window.prompt(
+            PromptLevel::Info,
+            msg,
+            Some(&details),
+            &[confirm_label, "Cancel"],
+            cx,
+        );
+        let confirm = cx.background_spawn(confirm_rx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            if confirm.await? != 0 {
+                return Ok(());
+            }
+            if !tracked.is_empty() {
+                this.update_in(cx, |this, window, cx| {
+                    this.perform_checkout(tracked, window, cx);
+                })
+                .ok();
+            }
+            if !new_files.is_empty() {
+                let tasks = workspace.update(cx, |workspace, cx| {
+                    new_files
+                        .iter()
+                        .filter_map(|entry| {
+                            workspace.project().update(cx, |project, cx| {
+                                let project_path = active_repo
+                                    .read(cx)
+                                    .repo_path_to_project_path(&entry.repo_path, cx)?;
+                                project.delete_file(project_path, true, cx)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })?;
+                let to_unstage = new_files
+                    .into_iter()
+                    .filter(|e| !e.status.staging().is_fully_unstaged())
+                    .collect();
+                this.update(cx, |this, cx| {
+                    this.change_file_stage(false, to_unstage, cx);
+                })?;
+                for task in tasks {
+                    task.await?;
+                }
+            }
+            Ok(())
+        })
+        .detach_and_prompt_err(
+            "Failed to discard folder changes",
+            window,
+            cx,
+            |e, _, _| Some(format!("{e}")),
+        );
     }
 
     fn revert_entry(
@@ -7285,6 +7440,70 @@ impl GitPanel {
         self.set_context_menu(context_menu, position, None, window, cx);
     }
 
+    fn deploy_directory_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .entries
+            .get(ix)
+            .and_then(|e| e.directory_entry())
+            .cloned()
+        else {
+            return;
+        };
+        let entries = self
+            .view_mode
+            .tree_state()
+            .and_then(|state| state.directory_descendants.get(&entry.key))
+            .cloned()
+            .unwrap_or_default();
+
+        let stage_status = if let Some(repo) = &self.active_repository {
+            self.stage_status_for_directory(&entry, repo.read(cx))
+        } else {
+            StageStatus::Unstaged
+        };
+
+        let all_staged = stage_status.is_fully_staged();
+        let all_created = entries.iter().all(|e| e.status.is_created());
+
+        let stage_title = if all_staged {
+            "Unstage Folder"
+        } else {
+            "Stage Folder"
+        };
+        let restore_title = if all_created {
+            "Trash Folder"
+        } else {
+            "Discard Changes"
+        };
+        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .context(self.focus_handle.clone())
+                .action(stage_title, ToggleStaged.boxed_clone())
+                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .separator()
+                .action_disabled_when(
+                    !all_created,
+                    "Add to .gitignore",
+                    git::AddToGitignore.boxed_clone(),
+                )
+                .action_disabled_when(
+                    !all_created,
+                    "Add to .git/info/exclude",
+                    git::AddToGitInfoExclude.boxed_clone(),
+                )
+                .separator()
+                .action("Open Diff", menu::Confirm.boxed_clone())
+        });
+        self.selected_entry = Some(ix);
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     fn set_context_menu(
         &mut self,
         context_menu: Entity<ContextMenu>,
@@ -7590,7 +7809,6 @@ impl GitPanel {
         // TODO: Have not yet plugged in self.marked_entries. Not sure when and why we need that
         let selected = self.selected_entry == Some(ix);
         let label_color = Color::Muted;
-
         let id: ElementId = ElementId::Name(format!("dir_{}_{}", entry.name, ix).into());
         let checkbox_id: ElementId =
             ElementId::Name(format!("dir_checkbox_{}_{}", entry.name, ix).into());
@@ -7672,7 +7890,7 @@ impl GitPanel {
                     }),
             )
             .child(self.entry_label(entry.name.clone(), label_color).truncate());
-
+        let handle = cx.weak_entity();
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -7738,6 +7956,18 @@ impl GitPanel {
                     this.toggle_directory(&key, window, cx);
                 })
             })
+            .on_mouse_down(
+                MouseButton::Right,
+                move |event: &MouseDownEvent, window, cx| {
+                    let Some(this) = handle.upgrade() else {
+                        return;
+                    };
+                    this.update(cx, |this, cx| {
+                        this.deploy_directory_context_menu(event.position, ix, window, cx);
+                    });
+                    cx.stop_propagation();
+                },
+            )
             .into_any_element()
     }
 
