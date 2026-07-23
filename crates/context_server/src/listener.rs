@@ -252,6 +252,8 @@ impl McpServer {
         let response = ListToolsResponse {
             tools: tools.borrow().values().map(|t| t.tool.clone()).collect(),
             next_cursor: None,
+            ttl_ms: None,
+            cache_scope: None,
             meta: None,
         };
 

@@ -4848,6 +4848,8 @@ fn setup_context_server(
                 context_server::types::ListToolsResponse {
                     tools,
                     next_cursor: None,
+                    ttl_ms: None,
+                    cache_scope: None,
                     meta: None,
                 }
             }
