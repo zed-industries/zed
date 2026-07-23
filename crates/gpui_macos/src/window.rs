@@ -1861,18 +1861,6 @@ impl PlatformWindow for MacWindow {
             let current_event: id = msg_send![app, currentEvent];
             let pressed_mouse_buttons = NSEvent::pressedMouseButtons(nil);
             let current_event_type = (!current_event.is_null()).then(|| current_event.eventType());
-            if current_event_type == Some(NSEventType::NSEventTypePressure) {
-                log::info!(
-                    "[DEBUG-file-drag-event] start_file_drag: current_event_type={current_event_type:?}, pressed_mouse_buttons={pressed_mouse_buttons:#x}, pressure={}, stage={}",
-                    current_event.pressure(),
-                    current_event.stage(),
-                );
-            } else {
-                log::info!(
-                    "[DEBUG-file-drag-event] start_file_drag: current_event_type={current_event_type:?}, pressed_mouse_buttons={pressed_mouse_buttons:#x}"
-                );
-            }
-
             let event = if matches!(
                 current_event_type,
                 Some(
@@ -1885,9 +1873,6 @@ impl PlatformWindow for MacWindow {
             } else if pressed_mouse_buttons & NS_LEFT_MOUSE_BUTTON_MASK != 0
                 && let Some(last_left_mouse_dragged_event) = &last_left_mouse_dragged_event
             {
-                log::info!(
-                    "[DEBUG-file-drag-event] start_file_drag: using cached left-mouse-dragged event for current_event_type={current_event_type:?}"
-                );
                 Retained::as_ptr(last_left_mouse_dragged_event).cast()
             } else {
                 log::warn!(
@@ -1957,6 +1942,9 @@ impl PlatformWindow for MacWindow {
             ];
 
             let started = !session.is_null();
+            if started {
+                self.0.lock().synthetic_drag_counter += 1;
+            }
             log::debug!(
                 "start_file_drag completed: started={}, item_count={}",
                 started,
@@ -2397,23 +2385,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
-        if matches!(
-            &event,
-            PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
-                ..
-            }) | PlatformInput::MouseMove(MouseMoveEvent {
-                pressed_button: Some(MouseButton::Left),
-                ..
-            }) | PlatformInput::MousePressure(_)
-                | PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    ..
-                })
-        ) {
-            log::info!("[DEBUG-file-drag-event] handle_view_event: translated={event:?}");
-        }
-
         // AppKit unhides the cursor on the next mouse movement; mirror that here.
         if matches!(
             event,
@@ -3074,7 +3045,17 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     point(px(window_x as f32), px(window_y as f32))
 }
 
+/// AppKit delivers a drag back to the window it started from, where accepting it would drop the
+/// files onto themselves. `draggingSource` is nil only for drags from another application.
+fn is_self_originated_drag(dragging_info: id) -> bool {
+    let source: id = unsafe { msg_send![dragging_info, draggingSource] };
+    !source.is_null()
+}
+
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    if is_self_originated_drag(dragging_info) {
+        return NSDragOperationNone;
+    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
@@ -3087,6 +3068,9 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    if is_self_originated_drag(dragging_info) {
+        return NSDragOperationNone;
+    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
@@ -3096,12 +3080,18 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
     }
 }
 
-extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
+extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
+    if is_self_originated_drag(dragging_info) {
+        return;
+    }
     let window_state = unsafe { get_window_state(this) };
     send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
+    if is_self_originated_drag(dragging_info) {
+        return NO;
+    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
@@ -3159,25 +3149,9 @@ extern "C" fn dragging_session_ended(
     // SAFETY: AppKit invokes this selector on the GPUIWindow instance registered in build_classes,
     // which always has WINDOW_STATE_IVAR initialized to the owning MacWindowState.
     let window_state = unsafe { get_window_state(this) };
-    send_drag_session_ended_event(window_state);
-}
-
-fn send_drag_session_ended_event(window_state: Arc<Mutex<MacWindowState>>) -> bool {
     let mut lock = window_state.lock();
     lock.synthetic_drag_counter += 1;
     lock.last_left_mouse_dragged_event = None;
-    log::info!(
-        "[DEBUG-file-drag-event] drag session ended: cancelled_synthetic_drag_id={}",
-        lock.synthetic_drag_counter
-    );
-    if let Some(mut callback) = lock.event_callback.take() {
-        drop(lock);
-        callback(PlatformInput::DragSessionEnded);
-        window_state.lock().event_callback = Some(callback);
-        true
-    } else {
-        false
-    }
 }
 
 async fn synthetic_drag(
