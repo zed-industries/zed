@@ -136,6 +136,9 @@ mod server {
     pub struct OAuthCallbackParams {
         pub code: String,
         pub state: String,
+        /// The issuer identifier of the authorization server, when it
+        /// supports RFC 9207 authorization server issuer identification.
+        pub iss: Option<String>,
     }
 
     /// Configuration for the loopback OAuth callback server.
@@ -175,6 +178,7 @@ mod server {
             let mut state: Option<String> = None;
             let mut error: Option<String> = None;
             let mut error_description: Option<String> = None;
+            let mut iss: Option<String> = None;
 
             for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
                 match key.as_ref() {
@@ -198,6 +202,11 @@ mod server {
                             error_description = Some(value.into_owned());
                         }
                     }
+                    "iss" => {
+                        if !value.is_empty() {
+                            iss = Some(value.into_owned());
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -214,7 +223,7 @@ mod server {
             let state =
                 state.ok_or_else(|| anyhow!("missing 'state' parameter in OAuth callback"))?;
 
-            Ok(Self { code, state })
+            Ok(Self { code, state, iss })
         }
     }
 

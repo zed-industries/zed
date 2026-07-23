@@ -728,8 +728,31 @@ pub fn dcr_registration_body(
         "redirect_uris": [redirect_uri],
         "grant_types": grant_types,
         "response_types": ["code"],
-        "token_endpoint_auth_method": "none"
+        "token_endpoint_auth_method": "none",
+        // Zed is a native app using a loopback redirect. MCP 2026-07-28
+        // requires clients to declare this to avoid OpenID Connect redirect
+        // URI conflicts (SEP-837).
+        "application_type": "native"
     })
+}
+
+/// Validate the `iss` authorization-response parameter against the recorded
+/// issuer, per RFC 9207 (required by MCP 2026-07-28 to mitigate authorization
+/// server mix-up attacks). A missing `iss` is accepted — the parameter is
+/// optional for authorization servers — but a present one must match the
+/// issuer whose authorization endpoint the flow started at.
+pub fn validate_issuer(callback_iss: Option<&str>, issuer: &Url) -> Result<()> {
+    let Some(callback_iss) = callback_iss else {
+        return Ok(());
+    };
+    let callback_iss =
+        Url::parse(callback_iss).context("invalid 'iss' parameter in OAuth callback")?;
+    anyhow::ensure!(
+        callback_iss == *issuer,
+        "OAuth callback 'iss' parameter ({callback_iss}) does not match the authorization \
+         server ({issuer}); refusing to redeem the authorization code"
+    );
+    Ok(())
 }
 
 // -- Discovery (async, hits real endpoints) ----------------------------------
@@ -1054,6 +1077,8 @@ async fn post_token_request(
 pub struct OAuthCallback {
     pub code: String,
     pub state: String,
+    /// The `iss` authorization-response parameter (RFC 9207), when present.
+    pub iss: Option<String>,
 }
 
 impl std::fmt::Debug for OAuthCallback {
@@ -1073,6 +1098,7 @@ impl OAuthCallback {
         Ok(Self {
             code: params.code,
             state: params.state,
+            iss: params.iss,
         })
     }
 }
@@ -1098,6 +1124,7 @@ pub fn start_callback_server() -> Result<(String, BoxFuture<'static, Result<OAut
             Ok(Ok(params)) => Ok(OAuthCallback {
                 code: params.code,
                 state: params.state,
+                iss: params.iss,
             }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow!(
@@ -1903,6 +1930,34 @@ mod tests {
         assert_eq!(body["grant_types"][1], "refresh_token");
         assert_eq!(body["response_types"][0], "code");
         assert_eq!(body["token_endpoint_auth_method"], "none");
+        assert_eq!(body["application_type"], "native");
+    }
+
+    #[test]
+    fn test_validate_issuer() {
+        let issuer = Url::parse("https://auth.example.com").unwrap();
+        // A missing iss parameter is accepted (RFC 9207 support is optional
+        // for authorization servers).
+        validate_issuer(None, &issuer).unwrap();
+        validate_issuer(Some("https://auth.example.com"), &issuer).unwrap();
+        // URL normalization differences don't cause false mismatches.
+        validate_issuer(Some("https://auth.example.com/"), &issuer).unwrap();
+        // A different issuer (mix-up attack) is rejected.
+        validate_issuer(Some("https://attacker.example.com"), &issuer).unwrap_err();
+        validate_issuer(Some("not a url"), &issuer).unwrap_err();
+    }
+
+    #[test]
+    fn test_oauth_callback_parses_iss() {
+        let callback =
+            OAuthCallback::parse_query("code=abc&state=xyz&iss=https%3A%2F%2Fauth.example.com")
+                .unwrap();
+        assert_eq!(callback.code, "abc");
+        assert_eq!(callback.state, "xyz");
+        assert_eq!(callback.iss.as_deref(), Some("https://auth.example.com"));
+
+        let callback = OAuthCallback::parse_query("code=abc&state=xyz").unwrap();
+        assert!(callback.iss.is_none());
     }
 
     #[test]
