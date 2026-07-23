@@ -2636,6 +2636,8 @@
     "use_regex_search": true,
     "gdefault": false,
     "highlight_on_yank_duration": 200,
+    // When enabled, non-label text is dimmed while Helix-style jump-to-word labels are visible.
+    "helix_jump_dim_non_label_text": false,
     "custom_digraphs": {},
     // When enabled, edit predictions are shown in Vim normal mode.
     // By default, edit predictions are only shown in insert and replace modes.

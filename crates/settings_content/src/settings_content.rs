@@ -958,6 +958,8 @@ pub struct VimSettingsContent {
     pub gdefault: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    /// When enabled, non-label text is dimmed while Helix-style jump-to-word labels are visible.
+    pub helix_jump_dim_non_label_text: Option<bool>,
     pub cursor_shape: Option<CursorShapeSettings>,
     /// When enabled, edit predictions are shown in Vim normal mode.
     /// By default, edit predictions are only shown in insert and replace modes.

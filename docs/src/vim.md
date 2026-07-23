@@ -551,6 +551,8 @@ The Helix-style jump-to-word action shows jump labels at visible word starts. It
 }
 ```
 
+To dim non-label text while the jump labels are visible, enable `"helix_jump_dim_non_label_text": true` under the `"vim"` settings.
+
 The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not have a default binding for visual mode, as the `shift-x` binding conflicts with the default `shift-x` binding for visual mode (`vim::VisualDeleteLine`). To assign the default vim-exchange binding, add the following keybinding to your keymap:
 
 ```json [keymap]
@@ -599,6 +601,7 @@ You can change the following settings to modify vim mode's behavior:
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
 | highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
+| helix_jump_dim_non_label_text| If `true`, non-label text is dimmed while Helix-style jump-to-word labels are visible.                                                                                                                        | false         |
 
 Here's an example of adding a digraph for the zombie emoji. This allows you to type `ctrl-k f z` to insert a zombie emoji. You can add as many digraphs as you like.
 
@@ -624,6 +627,7 @@ Here's an example of these settings changed:
     "gdefault": true,
     "toggle_relative_line_numbers": true,
     "highlight_on_yank_duration": 50,
+    "helix_jump_dim_non_label_text": true,
     "custom_digraphs": {
       "fz": "🧟‍♀️"
     }
