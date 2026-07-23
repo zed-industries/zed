@@ -277,6 +277,7 @@ impl Render for WorktreeFetchFailedToast {
                                 RemoteBranchFetchMode::UseLocal,
                                 // User-initiated retry of a foreground create.
                                 true,
+                                false,
                                 cx,
                             );
                             task.detach_and_log_err(cx);
@@ -682,6 +683,29 @@ pub fn handle_create_worktree(
     fallback_focused_dock: Option<DockPosition>,
     cx: &mut gpui::Context<Workspace>,
 ) {
+    handle_create_worktree_internal(workspace, action, window, fallback_focused_dock, false, cx)
+}
+
+/// Like [`handle_create_worktree`], but opens the new worktree in its own
+/// window instead of adding it to the current window.
+pub fn handle_create_worktree_in_new_window(
+    workspace: &mut Workspace,
+    action: &zed_actions::CreateWorktree,
+    window: &mut gpui::Window,
+    fallback_focused_dock: Option<DockPosition>,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    handle_create_worktree_internal(workspace, action, window, fallback_focused_dock, true, cx)
+}
+
+fn handle_create_worktree_internal(
+    workspace: &mut Workspace,
+    action: &zed_actions::CreateWorktree,
+    window: &mut gpui::Window,
+    fallback_focused_dock: Option<DockPosition>,
+    open_in_new_window: bool,
+    cx: &mut gpui::Context<Workspace>,
+) {
     let task = create_worktree_workspace_inner(
         workspace,
         action,
@@ -690,6 +714,7 @@ pub fn handle_create_worktree(
         RemoteBranchFetchMode::Fetch,
         // The user explicitly asked to create a worktree, so foreground it.
         true,
+        open_in_new_window,
         cx,
     );
     task.detach_and_log_err(cx);
@@ -738,6 +763,7 @@ pub fn create_worktree_workspace(
         RemoteBranchFetchMode::Fetch,
         // Agent-created worktree workspaces open in the background.
         false,
+        false,
         cx,
     )
 }
@@ -749,6 +775,7 @@ fn create_worktree_workspace_inner(
     fallback_focused_dock: Option<DockPosition>,
     remote_branch_fetch_mode: RemoteBranchFetchMode,
     activate: bool,
+    open_in_new_window: bool,
     cx: &mut gpui::Context<Workspace>,
 ) -> Task<anyhow::Result<CreatedWorktreeWorkspace>> {
     let project = workspace.project().clone();
@@ -852,6 +879,7 @@ fn create_worktree_workspace_inner(
             window_handle,
             remote_connection_options,
             activate,
+            open_in_new_window,
             &mut cx,
         )
         .await;
@@ -966,6 +994,7 @@ async fn do_create_worktree(
     window_handle: Option<gpui::WindowHandle<MultiWorkspace>>,
     remote_connection_options: Option<RemoteConnectionOptions>,
     activate: bool,
+    open_in_new_window: bool,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<CreatedWorktreeWorkspace> {
     // List existing worktrees from all repos to detect name collisions
@@ -1088,6 +1117,7 @@ async fn do_create_worktree(
         remote_connection_options,
         WorktreeOperation::Create,
         activate,
+        open_in_new_window,
         cx,
     )
     .await?;
@@ -1129,6 +1159,7 @@ async fn do_switch_worktree(
         WorktreeOperation::Switch,
         // Switching is always an explicit, foreground user action.
         true,
+        false,
         cx,
     )
     .await
@@ -1148,6 +1179,7 @@ async fn open_worktree_workspace(
     remote_connection_options: Option<RemoteConnectionOptions>,
     operation: WorktreeOperation,
     activate: bool,
+    open_in_new_window: bool,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<Entity<Workspace>> {
     let window_handle = window_handle
@@ -1162,7 +1194,9 @@ async fn open_worktree_workspace(
     // checkout rather than inheriting the source workspace's open files and
     // dock layout. The state transfer only applies when we're foregrounding
     // a freshly-created worktree for the user.
-    let transfer_state = is_creating_new_worktree && activate;
+    // When `open_in_new_window` is true, the new workspace goes into its own
+    // window so there's no source workspace state to transfer.
+    let transfer_state = is_creating_new_worktree && activate && !open_in_new_window;
 
     let source_for_transfer = if transfer_state {
         Some(workspace.clone())
@@ -1208,7 +1242,11 @@ async fn open_worktree_workspace(
                 },
                 &[],
                 init,
-                OpenMode::Add,
+                if open_in_new_window {
+                    OpenMode::NewWindow
+                } else {
+                    OpenMode::Add
+                },
                 source_for_transfer.clone(),
                 window,
                 cx,
@@ -1350,9 +1388,9 @@ async fn open_worktree_workspace(
         .ok();
 
     window_handle.update(cx, |multi_workspace, window, cx| {
-        if activate {
+        if activate && !open_in_new_window {
             multi_workspace.activate(new_workspace.clone(), source_for_transfer, window, cx);
-        } else {
+        } else if !open_in_new_window {
             // Background open: register the new workspace as a retained tab
             // but leave the user where they are.
             multi_workspace.add_background_workspace(new_workspace.clone(), window, cx);
@@ -1364,7 +1402,10 @@ async fn open_worktree_workspace(
                 // background — the worktree was created either way.
                 workspace.run_create_worktree_tasks(window, cx);
 
-                if activate && let Some(dock_position) = focused_dock {
+                if activate
+                    && !open_in_new_window
+                    && let Some(dock_position) = focused_dock
+                {
                     let dock = workspace.dock_at_position(dock_position);
                     if let Some(panel) = dock.read(cx).active_panel() {
                         panel.panel_focus_handle(cx).focus(window, cx);
@@ -1586,6 +1627,64 @@ mod tests {
                 .as_slice(),
             ["setup worktree"],
             "switching back to the main worktree should not rerun create_worktree hooks"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_in_new_window_does_not_switch_source_window(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let main_project_root = PathBuf::from(path!("/root/project"));
+        let project = Project::test(fs.clone(), [main_project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.retain_active_workspace(cx);
+        });
+
+        let source_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        source_workspace.update_in(cx, |workspace, window, cx| {
+            handle_create_worktree_in_new_window(
+                workspace,
+                &zed_actions::CreateWorktree {
+                    worktree_name: Some("feature".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let active_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        assert_eq!(
+            active_workspace, source_workspace,
+            "creating a worktree in a new window should leave the source window active workspace unchanged"
         );
     }
 
