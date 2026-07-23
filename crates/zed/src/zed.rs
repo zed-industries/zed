@@ -5599,6 +5599,7 @@ mod tests {
                 "remote_debug",
                 "repl",
                 "search",
+                "search_everywhere",
                 "settings_editor",
                 "settings_profile_selector",
                 "skill_creator",

@@ -179,6 +179,7 @@ members = [
     "crates/scheduler",
     "crates/schema_generator",
     "crates/search",
+    "crates/search_everywhere",
     "crates/session",
     "crates/settings",
     "crates/settings_content",
@@ -442,6 +443,7 @@ rpc = { path = "crates/rpc" }
 scheduler = { path = "crates/scheduler" }
 sandbox = { path = "crates/sandbox" }
 search = { path = "crates/search" }
+search_everywhere = { path = "crates/search_everywhere" }
 session = { path = "crates/session" }
 sidebar = { path = "crates/sidebar" }
 settings = { path = "crates/settings" }
