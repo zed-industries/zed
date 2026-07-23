@@ -11,7 +11,7 @@ mod window;
 
 pub use dispatcher::WebDispatcher;
 pub use display::WebDisplay;
-pub use http_client::FetchHttpClient;
+pub use http_client::{FetchCredentials, FetchHttpClient};
 pub use keyboard::WebKeyboardLayout;
 pub use logging::init_logging;
 pub use platform::WebPlatform;

@@ -9706,6 +9706,7 @@ dependencies = [
  "fuzzy_nucleo",
  "globset",
  "gpui",
+ "grammars",
  "http_client",
  "imara-diff",
  "indoc",
@@ -23157,7 +23158,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.13.0"
+version = "1.14.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

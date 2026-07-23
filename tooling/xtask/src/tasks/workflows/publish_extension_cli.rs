@@ -86,7 +86,14 @@ fn publish_job() -> NamedJob {
 
 fn update_sha_in_zed(publish_job: &NamedJob, message: &WorkflowInput) -> NamedJob {
     let (generate_token, generated_token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into();
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(RepositoryTarget::current())
+            .with_permissions([
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
+                (TokenPermissions::Workflows, Level::Write),
+            ])
+            .into();
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
@@ -150,6 +157,11 @@ fn update_sha_in_extensions(publish_job: &NamedJob, message: &WorkflowInput) -> 
     let (generate_token, generated_token) =
         generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
             .for_repository(extensions_repo)
+            .with_permissions([
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
+                (TokenPermissions::Workflows, Level::Write),
+            ])
             .into();
 
     fn checkout_extensions_repo(token: &StepOutput) -> Step<Use> {

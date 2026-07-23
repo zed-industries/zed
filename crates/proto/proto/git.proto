@@ -574,6 +574,15 @@ message GetBlobContentResponse {
   string content = 1;
 }
 
+message LoadCommitTemplate {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message LoadCommitTemplateResponse {
+  optional string template = 1;
+}
+
 message GitGetWorktrees {
   uint64 project_id = 1;
   uint64 repository_id = 2;
