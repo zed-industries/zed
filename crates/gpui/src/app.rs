@@ -1237,7 +1237,7 @@ impl App {
         }
 
         let window = self.windows.get(window_id)?.as_ref()?;
-        Some((window.display_id(), window.window_bounds()))
+        Some((window.display_id(), window.last_window_bounds()))
     }
 
     /// Opens a new window with the given option and the root view returned by the given function.
@@ -1255,7 +1255,7 @@ impl App {
                 Ok(mut window) => {
                     cx.window_update_stack.push(WindowUpdateEntry {
                         window_id: id,
-                        bounds: window.window_bounds(),
+                        bounds: window.last_window_bounds(),
                         display_id: window.display_id(),
                     });
                     let root_view = build_root_view(&mut window, cx);
@@ -1813,7 +1813,7 @@ impl App {
 
             cx.window_update_stack.push(WindowUpdateEntry {
                 window_id: window.handle.id,
-                bounds: window.window_bounds(),
+                bounds: window.last_window_bounds(),
                 display_id: window.display_id(),
             });
             let result = update(root_view, &mut window, cx);
