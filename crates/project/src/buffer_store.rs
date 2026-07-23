@@ -12,7 +12,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
+    Anchor, Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
     language_settings::{AllLanguageSettings, LineEndingSetting},
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
@@ -25,7 +25,7 @@ use rpc::{
 };
 
 use settings::Settings;
-use std::{io, sync::Arc, time::Instant};
+use std::{io, ops::Range, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
@@ -47,11 +47,19 @@ pub struct BufferStore {
 #[derive(Default)]
 struct RemoteProjectSearchState {
     // List of ongoing project search chunks from our remote host. Used by the side issuing a search RPC request.
-    chunks: HashMap<u64, async_channel::Sender<BufferId>>,
+    chunks: HashMap<u64, async_channel::Sender<ProjectSearchCandidate>>,
     // Monotonously-increasing handle to hand out to remote host in order to identify the project search result chunk.
     next_id: u64,
     // Used by the side running the actual search for match candidates to potentially cancel the search prematurely.
     searches_in_progress: HashMap<(PeerId, u64), Task<Result<()>>>,
+}
+
+pub(crate) enum ProjectSearchCandidate {
+    Buffer {
+        buffer_id: BufferId,
+        ranges: Vec<Range<Anchor>>,
+    },
+    LimitReached,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -1722,7 +1730,7 @@ impl BufferStore {
 
     pub(crate) fn register_project_search_result_handle(
         &mut self,
-    ) -> (u64, async_channel::Receiver<BufferId>) {
+    ) -> (u64, async_channel::Receiver<ProjectSearchCandidate>) {
         let (tx, rx) = async_channel::unbounded();
         let handle = util::post_inc(&mut self.project_search.next_id);
         let _old_entry = self.project_search.chunks.insert(handle, tx);
@@ -1762,17 +1770,47 @@ impl BufferStore {
         use proto::find_search_candidates_chunk::Variant;
         let handle = envelope.payload.handle;
 
-        let buffer_ids = match envelope
+        let candidates = match envelope
             .payload
             .variant
             .context("Expected non-null variant")?
         {
-            Variant::Matches(find_search_candidates_matches) => find_search_candidates_matches
-                .buffer_ids
-                .into_iter()
-                .filter_map(|buffer_id| BufferId::new(buffer_id).ok())
-                .collect::<Vec<_>>(),
-            Variant::Done(_) => {
+            Variant::Matches(find_search_candidates_matches) => {
+                let buffer_ids = find_search_candidates_matches.buffer_ids;
+                let ranges_for_buffer = find_search_candidates_matches.ranges_for_buffer;
+                if buffer_ids.len() != ranges_for_buffer.len() {
+                    log::error!(
+                        "remote project search returned {} buffer ids and {} range batches",
+                        buffer_ids.len(),
+                        ranges_for_buffer.len()
+                    );
+                }
+                buffer_ids
+                    .into_iter()
+                    .zip(ranges_for_buffer)
+                    .filter_map(|(buffer_id, ranges)| {
+                        let buffer_id = BufferId::new(buffer_id).log_err()?;
+                        let ranges = deserialize_project_search_candidate_ranges(ranges)?;
+                        Some(ProjectSearchCandidate::Buffer { buffer_id, ranges })
+                    })
+                    .collect::<Vec<_>>()
+            }
+            Variant::Done(done) => {
+                let sender = this.read_with(&mut cx, |this, _| {
+                    this.project_search.chunks.get(&handle).cloned()
+                });
+                if done.limit_reached
+                    && let Some(sender) = sender
+                    && sender
+                        .send(ProjectSearchCandidate::LimitReached)
+                        .await
+                        .is_err()
+                {
+                    this.update(&mut cx, |this, _| {
+                        this.project_search.chunks.remove(&handle)
+                    });
+                    return Ok(proto::Ack {});
+                }
                 this.update(&mut cx, |this, _| {
                     this.project_search.chunks.remove(&handle)
                 });
@@ -1785,8 +1823,8 @@ impl BufferStore {
             return Ok(proto::Ack {});
         };
 
-        for buffer_id in buffer_ids {
-            let Ok(_) = sender.send(buffer_id).await else {
+        for candidate in candidates {
+            let Ok(_) = sender.send(candidate).await else {
                 this.update(&mut cx, |this, _| {
                     this.project_search.chunks.remove(&handle)
                 });
@@ -1795,6 +1833,17 @@ impl BufferStore {
         }
         Ok(proto::Ack {})
     }
+}
+
+fn deserialize_project_search_candidate_ranges(
+    ranges: proto::FindSearchCandidateRanges,
+) -> Option<Vec<Range<Anchor>>> {
+    ranges
+        .ranges
+        .into_iter()
+        .map(language::proto::deserialize_anchor_range)
+        .collect::<Result<Vec<_>>>()
+        .log_err()
 }
 
 impl OpenBuffer {

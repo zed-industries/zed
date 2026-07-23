@@ -24,7 +24,7 @@ use project::{
     image_store::ImageId,
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
     project_settings::SettingsObserver,
-    search::SearchQuery,
+    search::{SearchQuery, SearchResult},
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::{WorktreeIdCounter, WorktreeStore},
@@ -1080,17 +1080,30 @@ impl HeadlessProject {
                     cx,
                 )
                 .into_handle(query, cx)
-                .matching_buffers(cx)
+                .results(cx)
             });
-            let (batcher, batches) =
-                project::project_search::AdaptiveBatcher::new(cx.background_executor());
+            let (batcher, batches) = project::project_search::AdaptiveBatcher::<(
+                u64,
+                Vec<std::ops::Range<language::Anchor>>,
+            )>::new(cx.background_executor());
             let mut new_matches = Box::pin(results.rx);
 
             let sender_task = cx.background_executor().spawn({
                 let client = client.clone();
                 async move {
                     let mut batches = std::pin::pin!(batches);
-                    while let Some(buffer_ids) = batches.next().await {
+                    while let Some(matches) = batches.next().await {
+                        let mut buffer_ids = Vec::with_capacity(matches.len());
+                        let mut ranges_for_buffer = Vec::with_capacity(matches.len());
+                        for (buffer_id, ranges) in matches {
+                            buffer_ids.push(buffer_id);
+                            ranges_for_buffer.push(proto::FindSearchCandidateRanges {
+                                ranges: ranges
+                                    .into_iter()
+                                    .map(language::proto::serialize_anchor_range)
+                                    .collect(),
+                            });
+                        }
                         client
                             .request(proto::FindSearchCandidatesChunk {
                                 handle,
@@ -1098,7 +1111,10 @@ impl HeadlessProject {
                                 project_id,
                                 variant: Some(
                                     proto::find_search_candidates_chunk::Variant::Matches(
-                                        proto::FindSearchCandidatesMatches { buffer_ids },
+                                        proto::FindSearchCandidatesMatches {
+                                            buffer_ids,
+                                            ranges_for_buffer,
+                                        },
                                     ),
                                 ),
                             })
@@ -1108,14 +1124,23 @@ impl HeadlessProject {
                 }
             });
 
-            while let Some((buffer, _)) = new_matches.next().await {
-                let _ = buffer_store
-                    .update(cx, |this, cx| {
-                        this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                    })
-                    .await;
-                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
-                batcher.push(buffer_id).await;
+            let mut limit_reached = false;
+            while let Some(result) = new_matches.next().await {
+                match result {
+                    SearchResult::Buffer { buffer, ranges } => {
+                        buffer_store
+                            .update(cx, |this, cx| {
+                                this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+                            })
+                            .await?;
+                        let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
+                        batcher.push((buffer_id, ranges)).await;
+                    }
+                    SearchResult::LimitReached => {
+                        limit_reached = true;
+                    }
+                    SearchResult::WaitingForScan | SearchResult::Searching => {}
+                }
             }
             batcher.flush().await;
 
@@ -1127,7 +1152,7 @@ impl HeadlessProject {
                     peer_id: Some(peer_id),
                     project_id,
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
-                        proto::FindSearchCandidatesDone {},
+                        proto::FindSearchCandidatesDone { limit_reached },
                     )),
                 })
                 .await?;

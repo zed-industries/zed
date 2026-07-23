@@ -1,6 +1,6 @@
 use std::{
     cell::LazyCell,
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     io::{BufRead, BufReader},
     ops::Range,
     path::{Path, PathBuf},
@@ -16,17 +16,18 @@ use fs::Fs;
 use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
-use language::{Buffer, BufferSnapshot, Point};
+use language::{Anchor, Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
+use text::BufferId;
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
-    buffer_store::BufferStore,
+    buffer_store::{BufferStore, ProjectSearchCandidate},
     search::{LineHint, SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
 };
@@ -182,6 +183,7 @@ impl Search {
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
             unbounded::<(Entity<Buffer>, LineHint)>();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
+        let remote_search_ranges = Arc::new(Mutex::new(HashMap::new()));
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
@@ -193,6 +195,7 @@ impl Search {
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
                 let query = Arc::new(query);
+                let search_results_tx = tx.clone();
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
                         let open_buffers = cx.update(|cx| self.all_loaded_buffers(&query, cx));
@@ -259,6 +262,8 @@ impl Search {
                         remote_id,
                         models,
                     } => {
+                        let remote_search_ranges = remote_search_ranges.clone();
+                        let search_results_tx = search_results_tx.clone();
                         let (handle, rx) = self
                             .buffer_store
                             .update(cx, |this, _| this.register_project_search_result_handle());
@@ -297,7 +302,20 @@ impl Search {
                                     let (buffer_tx, buffer_rx) = bounded(24);
 
                                     let wait_for_remote_buffers = cx.spawn(async move |cx| {
-                                        while let Ok(buffer_id) = rx.recv().await {
+                                        while let Ok(candidate) = rx.recv().await {
+                                            let (buffer_id, ranges) = match candidate {
+                                                ProjectSearchCandidate::Buffer {
+                                                    buffer_id,
+                                                    ranges,
+                                                } => (buffer_id, ranges),
+                                                ProjectSearchCandidate::LimitReached => {
+                                                    search_results_tx
+                                                        .send(SearchResult::LimitReached)
+                                                        .await?;
+                                                    continue;
+                                                }
+                                            };
+                                            remote_search_ranges.lock().insert(buffer_id, ranges);
                                             let buffer =
                                                 buffer_store.update(cx, |buffer_store, cx| {
                                                     buffer_store
@@ -354,6 +372,7 @@ impl Search {
                                     query: query.clone(),
                                     open_buffers: open_buffers.clone(),
                                     candidates: candidate_searcher.clone(),
+                                    remote_search_ranges: remote_search_ranges.clone(),
                                     find_all_matches_rx: find_all_matches_rx.clone(),
                                 };
                                 scope.spawn(worker.run());
@@ -660,6 +679,7 @@ struct Worker {
     query: Arc<SearchQuery>,
     open_buffers: Arc<HashSet<ProjectEntryId>>,
     candidates: FindSearchCandidates,
+    remote_search_ranges: Arc<Mutex<HashMap<BufferId, Vec<Range<Anchor>>>>>,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
     /// Then, when you're done, share them via the channel you were given.
     find_all_matches_rx: Receiver<FindAllMatchesRequest>,
@@ -699,6 +719,7 @@ impl Worker {
                 query: &self.query,
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
+                remote_search_ranges: &self.remote_search_ranges,
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
             };
             // Whenever we notice that some step of a pipeline is closed, we don't want to close subsequent
@@ -739,6 +760,7 @@ struct RequestHandler<'worker> {
     query: &'worker SearchQuery,
     fs: Option<&'worker dyn Fs>,
     open_entries: &'worker HashSet<ProjectEntryId>,
+    remote_search_ranges: &'worker Mutex<HashMap<BufferId, Vec<Range<Anchor>>>>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
 }
 
@@ -750,22 +772,29 @@ impl RequestHandler<'_> {
             line_hint,
             mut report_matches,
         } = request;
-        let range_offset = if line_hint > 0 {
-            snapshot.point_to_offset(Point::new(line_hint, 0))
+        let ranges = if let Some(ranges) = self
+            .remote_search_ranges
+            .lock()
+            .remove(&snapshot.text.remote_id())
+        {
+            ranges
         } else {
-            0
+            let range_offset = if line_hint > 0 {
+                snapshot.point_to_offset(Point::new(line_hint, 0))
+            } else {
+                0
+            };
+            let subrange = (range_offset > 0).then(|| range_offset..snapshot.len());
+            self.query
+                .search(&snapshot, subrange)
+                .await
+                .iter()
+                .map(|range| {
+                    snapshot.anchor_before(range.start + range_offset)
+                        ..snapshot.anchor_after(range.end + range_offset)
+                })
+                .collect::<Vec<_>>()
         };
-        let subrange = (range_offset > 0).then(|| range_offset..snapshot.len());
-        let ranges = self
-            .query
-            .search(&snapshot, subrange)
-            .await
-            .iter()
-            .map(|range| {
-                snapshot.anchor_before(range.start + range_offset)
-                    ..snapshot.anchor_after(range.end + range_offset)
-            })
-            .collect::<Vec<_>>();
 
         _ = report_matches.send((buffer, ranges)).await;
     }
