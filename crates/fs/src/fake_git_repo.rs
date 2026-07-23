@@ -523,6 +523,19 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn tags(&self) -> BoxFuture<'_, Result<Vec<SharedString>>> {
+        self.with_state_async(false, move |state| {
+            let mut tags = state
+                .refs
+                .keys()
+                .filter_map(|ref_name| ref_name.strip_prefix("refs/tags/"))
+                .map(|tag_name| SharedString::from(tag_name.to_string()))
+                .collect::<Vec<_>>();
+            tags.sort();
+            Ok(tags)
+        })
+    }
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let fs = self.fs.clone();
         let common_dir_path = self.common_dir_path.clone();

@@ -1656,7 +1656,9 @@ impl GitGraph {
                     }
                 }
             }
-            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
+            RepositoryEvent::HeadChanged
+            | RepositoryEvent::BranchListChanged
+            | RepositoryEvent::TagsChanged => {
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
                 // NOTE: this fixes an loading performance regression
@@ -6352,6 +6354,111 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(reloaded_shas, vec![updated_head, updated_stash]);
+    }
+
+    #[gpui::test]
+    async fn test_graph_data_reloaded_after_tag_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let head = Oid::from_bytes(&[1; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let initial_tags = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .flat_map(|commit| commit.data.tag_names())
+                .map(|tag| tag.to_string())
+                .collect::<Vec<String>>()
+        });
+        assert_eq!(initial_tags, Vec::<String>::new());
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head,
+                parents: smallvec![],
+                ref_names: vec![
+                    "HEAD".into(),
+                    "refs/heads/main".into(),
+                    "tag: my-tag".into(),
+                ],
+            })],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state
+                .refs
+                .insert("refs/tags/my-tag".into(), head.to_string());
+        })
+        .unwrap();
+
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let reloaded_tags = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .flat_map(|commit| commit.data.tag_names())
+                .map(|tag| tag.to_string())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(reloaded_tags, vec!["my-tag".to_string()]);
     }
 
     #[gpui::test]

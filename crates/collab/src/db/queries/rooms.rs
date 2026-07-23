@@ -808,6 +808,11 @@ impl Database {
                                 .as_deref()
                                 .and_then(|s| serde_json::from_str(s).ok())
                                 .unwrap_or_default(),
+                            tags: db_repository
+                                .tags
+                                .as_deref()
+                                .and_then(|s| serde_json::from_str(s).ok())
+                                .unwrap_or_default(),
                         });
                     }
                 }

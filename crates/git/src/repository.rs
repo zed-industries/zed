@@ -917,6 +917,10 @@ pub trait GitRepository: Send + Sync {
 
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
 
+    /// Returns the names of all tags in the repository (the short names under
+    /// `refs/tags/`), sorted lexicographically.
+    fn tags(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
     -> BoxFuture<'_, Result<()>>;
@@ -2023,6 +2027,30 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(BranchesScanResult { branches, error })
+            })
+            .boxed()
+    }
+
+    fn tags(&self) -> BoxFuture<'_, Result<Vec<SharedString>>> {
+        let git = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let output = git
+                    .build_command(&["for-each-ref", "--format=%(refname:short)", "refs/tags/"])
+                    .output()
+                    .await?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git for-each-ref for tags failed: {stderr}");
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut tags = stdout
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .map(|line| SharedString::from(line.to_string()))
+                    .collect::<Vec<_>>();
+                tags.sort();
+                Ok(tags)
             })
             .boxed()
     }

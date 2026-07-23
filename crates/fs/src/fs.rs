@@ -2087,6 +2087,28 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// Inserts tags (as `refs/tags/<name>` refs) pointing at `HEAD`, emitting a
+    /// git event so any in-progress status scan picks them up.
+    pub fn insert_tags(&self, dot_git: &Path, tags: &[&str]) {
+        self.with_git_state(dot_git, true, |state| {
+            let head = state.refs.get("HEAD").cloned().unwrap_or_default();
+            for tag in tags {
+                state.refs.insert(format!("refs/tags/{tag}"), head.clone());
+            }
+        })
+        .unwrap();
+    }
+
+    /// Removes tags previously inserted via [`insert_tags`].
+    pub fn remove_tags(&self, dot_git: &Path, tags: &[&str]) {
+        self.with_git_state(dot_git, true, |state| {
+            for tag in tags {
+                state.refs.remove(&format!("refs/tags/{tag}"));
+            }
+        })
+        .unwrap();
+    }
+
     pub async fn add_linked_worktree_for_repo(
         &self,
         dot_git: &Path,

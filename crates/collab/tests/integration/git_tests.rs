@@ -164,6 +164,20 @@ fn branch_list_snapshot(
     })
 }
 
+fn tags_snapshot(project: &gpui::Entity<project::Project>, cx: &mut TestAppContext) -> Vec<String> {
+    project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .unwrap()
+            .read(cx)
+            .snapshot()
+            .tags
+            .iter()
+            .map(|tag| tag.to_string())
+            .collect()
+    })
+}
+
 fn build_git_graph(
     project: &Entity<project::Project>,
     workspace: &Entity<Workspace>,
@@ -934,6 +948,89 @@ async fn test_branch_list_sync(
 
     let guest_snapshot_after_update = branch_list_snapshot(&project_b, cx_b);
     assert_eq!(guest_snapshot_after_update, host_snapshot_after_update);
+}
+
+#[gpui::test]
+async fn test_tags_sync(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+    let dot_git = Path::new(path!("/project/.git"));
+    client_a.fs().insert_tags(dot_git, &["v1.0.0", "v1.1.0"]);
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    assert_eq!(
+        tags_snapshot(&project_a, cx_a),
+        vec!["v1.0.0".to_string(), "v1.1.0".to_string()],
+    );
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    assert_eq!(
+        tags_snapshot(&project_b, cx_b),
+        vec!["v1.0.0".to_string(), "v1.1.0".to_string()],
+    );
+
+    client_a.fs().insert_tags(dot_git, &["my-tag"]);
+    project_a
+        .update(cx_a, |project, cx| project.git_scans_complete(cx))
+        .await;
+    executor.run_until_parked();
+
+    let host_tags = tags_snapshot(&project_a, cx_a);
+    assert_eq!(
+        host_tags,
+        vec![
+            "my-tag".to_string(),
+            "v1.0.0".to_string(),
+            "v1.1.0".to_string(),
+        ],
+    );
+    assert_eq!(tags_snapshot(&project_b, cx_b), host_tags);
+
+    client_a.fs().remove_tags(dot_git, &["my-tag"]);
+    project_a
+        .update(cx_a, |project, cx| project.git_scans_complete(cx))
+        .await;
+    executor.run_until_parked();
+
+    let host_tags = tags_snapshot(&project_a, cx_a);
+    assert_eq!(host_tags, vec!["v1.0.0".to_string(), "v1.1.0".to_string()],);
+    assert_eq!(tags_snapshot(&project_b, cx_b), host_tags);
+
+    let project_c = client_c.join_remote_project(project_id, cx_c).await;
+    executor.run_until_parked();
+
+    assert_eq!(
+        tags_snapshot(&project_c, cx_c),
+        host_tags,
+        "late-joining client's tags should match host's (DB roundtrip)"
+    );
 }
 
 #[gpui::test]
