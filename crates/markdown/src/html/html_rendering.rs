@@ -575,7 +575,7 @@ mod tests {
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (layout, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -588,6 +588,7 @@ mod tests {
                 )
             },
         );
+        let rendered = crate::eager_rendered(layout);
         rendered.text
     }
 
@@ -636,7 +637,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (layout, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -649,6 +650,7 @@ mod tests {
                 )
             },
         );
+        let rendered = crate::eager_rendered(layout);
 
         let rendered_lines = rendered
             .text

@@ -3394,6 +3394,10 @@ fn render_agent_markdown(
     let worktree_roots = code_span_resolver.worktree_roots(cx);
     let resolver = code_span_resolver.clone();
     MarkdownElement::new(markdown, style)
+        // Long, fill-width streaming messages: render only the on-screen blocks
+        // so a tall message doesn't re-lay-out the whole document every frame
+        // (#57349).
+        .virtualized()
         .code_block_renderer(markdown::CodeBlockRenderer::Default {
             copy_button_visibility: markdown::CopyButtonVisibility::VisibleOnHover,
             wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
