@@ -398,13 +398,25 @@ pub enum Event {
     Rejoined,
     RefreshInlayHints {
         server_id: LanguageServerId,
-        request_id: Option<usize>,
     },
     RefreshSemanticTokens {
         server_id: LanguageServerId,
-        request_id: Option<usize>,
     },
-    RefreshCodeLens,
+    RefreshCodeLens {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentColors {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentLinks {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshFoldingRanges {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentSymbols {
+        server_id: Option<LanguageServerId>,
+    },
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
@@ -2664,35 +2676,52 @@ impl Project {
     }
 
     #[inline]
+    pub fn trash_file(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<TrashId>>> {
+        let entry = self.entry_for_path(&path, cx)?;
+        self.trash_entry(entry.id, cx)
+    }
+
+    #[inline]
     pub fn delete_file(
         &mut self,
         path: ProjectPath,
-        trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_path(&path, cx)?;
-        self.delete_entry(entry.id, trash, cx)
+        self.delete_entry(entry.id, cx)
+    }
+
+    #[inline]
+    pub fn trash_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<TrashId>>> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
+        worktree.update(cx, |worktree, cx| worktree.trash_entry(entry_id, cx))
     }
 
     #[inline]
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
-        worktree.update(cx, |worktree, cx| {
-            worktree.delete_entry(entry_id, trash, cx)
-        })
+        worktree.update(cx, |worktree, cx| worktree.delete_entry(entry_id, cx))
     }
 
     #[inline]
     pub fn restore_entry(
         &self,
         worktree_id: WorktreeId,
-        trash_entry: TrashedEntry,
+        trash_id: TrashId,
         cx: &mut Context<'_, Self>,
     ) -> Task<Result<ProjectPath>> {
         let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
@@ -2700,12 +2729,14 @@ impl Project {
         };
 
         cx.spawn(async move |_, cx| {
-            Worktree::restore_entry(trash_entry, worktree, cx)
-                .await
-                .map(|rel_path_buf| ProjectPath {
-                    worktree_id: worktree_id,
-                    path: Arc::from(rel_path_buf.as_rel_path()),
-                })
+            let entry = worktree
+                .update(cx, |worktree, cx| worktree.restore_entry(trash_id, cx))
+                .await?;
+
+            Ok(ProjectPath {
+                worktree_id: worktree_id,
+                path: entry.path,
+            })
         })
     }
 
@@ -3647,21 +3678,37 @@ impl Project {
                     return;
                 };
             }
-            LspStoreEvent::RefreshInlayHints {
-                server_id,
-                request_id,
-            } => cx.emit(Event::RefreshInlayHints {
+            LspStoreEvent::RefreshInlayHints { server_id } => cx.emit(Event::RefreshInlayHints {
                 server_id: *server_id,
-                request_id: *request_id,
             }),
-            LspStoreEvent::RefreshSemanticTokens {
-                server_id,
-                request_id,
-            } => cx.emit(Event::RefreshSemanticTokens {
+            LspStoreEvent::RefreshSemanticTokens { server_id } => {
+                cx.emit(Event::RefreshSemanticTokens {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshCodeLens { server_id } => cx.emit(Event::RefreshCodeLens {
                 server_id: *server_id,
-                request_id: *request_id,
             }),
-            LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            LspStoreEvent::RefreshDocumentColors { server_id } => {
+                cx.emit(Event::RefreshDocumentColors {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshDocumentLinks { server_id } => {
+                cx.emit(Event::RefreshDocumentLinks {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshFoldingRanges { server_id } => {
+                cx.emit(Event::RefreshFoldingRanges {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshDocumentSymbols { server_id } => {
+                cx.emit(Event::RefreshDocumentSymbols {
+                    server_id: *server_id,
+                })
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }

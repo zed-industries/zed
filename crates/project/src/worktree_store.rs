@@ -182,6 +182,28 @@ impl WorktreeIdCounter {
 
 impl Global for WorktreeIdCounter {}
 
+/// Summarizes worktree ownership and current snapshot sizes.
+#[derive(Debug, Default)]
+pub struct WorktreeStoreDiagnostics {
+    pub worktree_slots: usize,
+    pub live_worktrees: usize,
+    pub visible_worktrees: usize,
+    pub strong_handles: usize,
+    pub dead_weak_handles: usize,
+    pub loading_worktrees: usize,
+    pub total_entries: usize,
+    pub visible_entries: usize,
+    pub largest_worktree: Option<LargestWorktreeDiagnostics>,
+}
+
+/// Identifies the worktree with the largest current snapshot.
+#[derive(Debug)]
+pub struct LargestWorktreeDiagnostics {
+    pub path: PathBuf,
+    pub entries: usize,
+    pub visible_entries: usize,
+}
+
 pub struct WorktreeStore {
     next_entry_id: Arc<AtomicUsize>,
     next_worktree_id: WorktreeIdCounter,
@@ -216,6 +238,8 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_create_project_entry);
         client.add_entity_request_handler(Self::handle_copy_project_entry);
         client.add_entity_request_handler(Self::handle_delete_project_entry);
+        client.add_entity_request_handler(Self::handle_trash_project_entry);
+        client.add_entity_request_handler(Self::handle_restore_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
     }
@@ -344,6 +368,57 @@ impl WorktreeStore {
             anyhow::Ok(())
         })
         .detach();
+    }
+
+    /// Returns worktree ownership and current snapshot size diagnostics.
+    pub fn diagnostics(&self, cx: &App) -> WorktreeStoreDiagnostics {
+        let mut diagnostics = WorktreeStoreDiagnostics {
+            worktree_slots: self.worktrees.len(),
+            loading_worktrees: self.loading_worktrees.len(),
+            ..WorktreeStoreDiagnostics::default()
+        };
+
+        for handle in &self.worktrees {
+            let worktree = match handle {
+                WorktreeHandle::Strong(worktree) => {
+                    diagnostics.strong_handles += 1;
+                    Some(worktree.clone())
+                }
+                WorktreeHandle::Weak(worktree) => {
+                    let worktree = worktree.upgrade();
+                    if worktree.is_none() {
+                        diagnostics.dead_weak_handles += 1;
+                    }
+                    worktree
+                }
+            };
+            let Some(worktree) = worktree else {
+                continue;
+            };
+
+            diagnostics.live_worktrees += 1;
+            let worktree = worktree.read(cx);
+            diagnostics.visible_worktrees += usize::from(worktree.is_visible());
+            let snapshot = worktree.snapshot();
+            let entries = snapshot.entry_count();
+            let visible_entries = snapshot.visible_entry_count();
+            diagnostics.total_entries += entries;
+            diagnostics.visible_entries += visible_entries;
+
+            let is_largest = diagnostics
+                .largest_worktree
+                .as_ref()
+                .is_none_or(|largest| entries > largest.entries);
+            if is_largest {
+                diagnostics.largest_worktree = Some(LargestWorktreeDiagnostics {
+                    path: worktree.abs_path().to_path_buf(),
+                    entries,
+                    visible_entries,
+                });
+            }
+        }
+
+        diagnostics
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
@@ -1260,6 +1335,28 @@ impl WorktreeStore {
         })
     }
 
+    pub async fn handle_trash_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TrashProjectEntry>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::TrashProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this.update(&mut cx, |this, cx| {
+            let Some((_, project_id)) = this.downstream_client else {
+                bail!("no downstream client")
+            };
+            let Some(entry) = this.entry_for_id(entry_id, cx) else {
+                bail!("no entry")
+            };
+            if entry.is_private && project_id != REMOTE_SERVER_PROJECT_ID {
+                bail!("entry is private")
+            }
+            this.worktree_for_entry(entry_id, cx)
+                .context("worktree not found")
+        })?;
+        Worktree::handle_trash_entry(worktree, envelope.payload, cx).await
+    }
+
     pub async fn handle_delete_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
@@ -1280,6 +1377,21 @@ impl WorktreeStore {
                 .context("worktree not found")
         })?;
         Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_restore_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RestoreProjectEntry>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::RestoreProjectEntryResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+
+        let worktree = this.update(&mut cx, |this, cx| {
+            this.worktree_for_id(worktree_id, cx)
+                .context("worktree not found")
+        })?;
+
+        Worktree::handle_restore_entry(worktree, envelope.payload, cx).await
     }
 
     pub async fn handle_rename_project_entry(

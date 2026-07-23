@@ -22,6 +22,7 @@ use theme_settings::ThemeSettings;
 use util::maybe;
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::mem;
 use std::ops::Range;
@@ -37,7 +38,7 @@ use gpui::{
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad,
+    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -57,6 +58,7 @@ use crate::parser::CodeBlockKind;
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
+type UrlHoverCallback = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
 
@@ -1246,6 +1248,7 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_hover: Option<UrlHoverCallback>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1265,6 +1268,7 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            on_url_hover: None,
             code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
@@ -1305,6 +1309,14 @@ impl MarkdownElement {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_url_hover(
+        mut self,
+        handler: impl Fn(Option<SharedString>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_url_hover = Some(Rc::new(handler));
         self
     }
 
@@ -1416,8 +1428,21 @@ impl MarkdownElement {
                 let click_url = url.clone();
                 let markdown = self.markdown.clone();
                 let url_click = self.on_url_click.clone();
+                let bounds = Rc::new(Cell::new(None));
+                builder.push_image_link(url.clone(), bounds.clone());
                 wrapper
+                    .relative()
                     .cursor_pointer()
+                    .child(
+                        canvas(
+                            move |image_bounds, _window, _cx| bounds.set(Some(image_bounds)),
+                            |_, _, _, _| {},
+                        )
+                        .size_full()
+                        .absolute()
+                        .top_0()
+                        .left_0(),
+                    )
                     .on_click(move |_, window, cx| {
                         if let Some(ref on_url_click) = url_click {
                             on_url_click(click_url.clone(), window, cx);
@@ -1791,15 +1816,18 @@ impl MarkdownElement {
 
         let is_hovering_clickable = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
-            && rendered_text
-                .source_index_for_position(window.mouse_position())
-                .ok()
-                .is_some_and(|source_index| {
-                    rendered_text.link_for_source_index(source_index).is_some()
-                        || rendered_text
-                            .footnote_ref_for_source_index(source_index)
-                            .is_some()
-                });
+            && (rendered_text
+                .image_link_for_position(window.mouse_position())
+                .is_some()
+                || rendered_text
+                    .source_index_for_position(window.mouse_position())
+                    .ok()
+                    .is_some_and(|source_index| {
+                        rendered_text.link_for_source_index(source_index).is_some()
+                            || rendered_text
+                                .footnote_ref_for_source_index(source_index)
+                                .is_some()
+                    }));
 
         if is_hovering_clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
@@ -1808,6 +1836,7 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
+        let on_url_hover = self.on_url_hover.take();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -1936,16 +1965,30 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_clickable = hitbox.is_hovered(window)
-                        && rendered_text
-                            .source_index_for_position(event.position)
-                            .ok()
-                            .is_some_and(|source_index| {
-                                rendered_text.link_for_source_index(source_index).is_some()
-                                    || rendered_text
-                                        .footnote_ref_for_source_index(source_index)
-                                        .is_some()
-                            });
+                    let is_hitbox_hovered = hitbox.is_hovered(window);
+                    let source_index = is_hitbox_hovered
+                        .then(|| rendered_text.source_index_for_position(event.position).ok())
+                        .flatten();
+                    let hovered_url = is_hitbox_hovered
+                        .then(|| rendered_text.image_link_for_position(event.position))
+                        .flatten()
+                        .map(|image| image.destination_url.clone())
+                        .or_else(|| {
+                            source_index
+                                .and_then(|source_index| {
+                                    rendered_text.link_for_source_index(source_index)
+                                })
+                                .map(|link| link.destination_url.clone())
+                        });
+                    let is_hovering_clickable = hovered_url.is_some()
+                        || source_index.is_some_and(|source_index| {
+                            rendered_text
+                                .footnote_ref_for_source_index(source_index)
+                                .is_some()
+                        });
+                    if let Some(on_url_hover) = on_url_hover.as_ref() {
+                        on_url_hover(hovered_url, window, cx);
+                    }
                     if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
@@ -3124,6 +3167,7 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
+    rendered_image_links: Vec<RenderedImageLink>,
     rendered_footnote_refs: Vec<RenderedFootnoteRef>,
     current_source_index: usize,
     html_comment: bool,
@@ -3183,6 +3227,7 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
+            rendered_image_links: Vec::new(),
             rendered_footnote_refs: Vec::new(),
             current_source_index: 0,
             html_comment: false,
@@ -3373,6 +3418,17 @@ impl MarkdownElementBuilder {
         });
     }
 
+    fn push_image_link(
+        &mut self,
+        destination_url: SharedString,
+        bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    ) {
+        self.rendered_image_links.push(RenderedImageLink {
+            bounds,
+            destination_url,
+        });
+    }
+
     fn push_footnote_ref(&mut self, label: SharedString, source_range: Range<usize>) {
         self.rendered_footnote_refs.push(RenderedFootnoteRef {
             source_range,
@@ -3538,6 +3594,7 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
+                image_links: self.rendered_image_links.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
             },
         }
@@ -3737,6 +3794,7 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
+    image_links: Rc<[RenderedImageLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
 }
 
@@ -3750,6 +3808,14 @@ struct WrappedLineSegment {
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
+    destination_url: SharedString,
+}
+
+#[derive(Clone)]
+struct RenderedImageLink {
+    // Populated once the image's `canvas` overlay is painted; images aren't part of the
+    // text layout, so their hit-test region can't be derived from a source range.
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     destination_url: SharedString,
 }
 
@@ -4066,6 +4132,15 @@ impl RenderedText {
             .find(|link| link.source_range.contains(&source_index))
     }
 
+    fn image_link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedImageLink> {
+        self.image_links.iter().find(|image| {
+            image
+                .bounds
+                .get()
+                .is_some_and(|bounds| bounds.contains(&position))
+        })
+    }
+
     fn footnote_ref_for_source_index(&self, source_index: usize) -> Option<&RenderedFootnoteRef> {
         self.footnote_refs
             .iter()
@@ -4078,6 +4153,7 @@ mod tests {
     use super::*;
     use gpui::{RenderImage, TestAppContext, UpdateGlobal, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use std::cell::RefCell;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -4915,10 +4991,11 @@ mod tests {
         let javascript_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["js".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 word_characters: ['$', '#'].into_iter().collect(),
                 ..Default::default()
             },
@@ -5287,6 +5364,101 @@ mod tests {
         cx.update(|_window, cx| {
             assert!(markdown.read(cx).context_menu_link().is_none());
         });
+    }
+
+    #[gpui::test]
+    fn test_url_hover_callback(cx: &mut TestAppContext) {
+        struct HoverTestView {
+            markdown: Entity<Markdown>,
+            hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        }
+
+        impl Render for HoverTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let hovered_urls = self.hovered_urls.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .on_url_hover(move |url, _, _| {
+                            hovered_urls.borrow_mut().push(url);
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let hovered_urls = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let hovered_urls = hovered_urls.clone();
+            move |_, cx| HoverTestView {
+                markdown: cx
+                    .new(|cx| Markdown::new("[link](https://example.com)".into(), None, None, cx)),
+                hovered_urls,
+            }
+        });
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(point(px(8.), px(8.)), None, gpui::Modifiers::default());
+        assert_eq!(
+            hovered_urls.borrow().last().cloned().flatten().as_deref(),
+            Some("https://example.com")
+        );
+
+        cx.simulate_mouse_move(point(px(500.), px(500.)), None, gpui::Modifiers::default());
+        assert_eq!(hovered_urls.borrow().last(), Some(&None));
+    }
+
+    #[gpui::test]
+    fn test_url_hover_callback_for_linked_image(cx: &mut TestAppContext) {
+        struct HoverTestView {
+            markdown: Entity<Markdown>,
+            hovered_urls: Rc<RefCell<Vec<Option<SharedString>>>>,
+        }
+
+        impl Render for HoverTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let hovered_urls = self.hovered_urls.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .image_resolver(|_| Some(loaded_image_source()))
+                        .on_url_hover(move |url, _, _| {
+                            hovered_urls.borrow_mut().push(url);
+                        }),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let hovered_urls = Rc::new(RefCell::new(Vec::new()));
+        let (_, cx) = cx.add_window_view({
+            let hovered_urls = hovered_urls.clone();
+            move |_, cx| HoverTestView {
+                markdown: cx.new(|cx| {
+                    Markdown::new(
+                        "[![badge](https://example.com/badge.png)](https://example.com)".into(),
+                        None,
+                        None,
+                        cx,
+                    )
+                }),
+                hovered_urls,
+            }
+        });
+        cx.run_until_parked();
+
+        cx.simulate_mouse_move(point(px(4.), px(4.)), None, gpui::Modifiers::default());
+        assert_eq!(
+            hovered_urls.borrow().last().cloned().flatten().as_deref(),
+            Some("https://example.com")
+        );
+
+        cx.simulate_mouse_move(point(px(8.), px(8.)), None, gpui::Modifiers::default());
+        assert_eq!(
+            hovered_urls.borrow().last().cloned().flatten().as_deref(),
+            Some("https://example.com")
+        );
+
+        cx.simulate_mouse_move(point(px(500.), px(500.)), None, gpui::Modifiers::default());
+        assert_eq!(hovered_urls.borrow().last(), Some(&None));
     }
 
     #[gpui::test]

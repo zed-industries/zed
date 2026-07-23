@@ -400,7 +400,9 @@ impl AgentServerStore {
                                         http_client: http_client.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
-                                        registry_id: Arc::from(name.as_str()),
+                                        installation_dir: paths::external_agents_dir()
+                                            .join("registry")
+                                            .join(sanitize_path_component(name)),
                                         version: agent.metadata.version.clone(),
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
@@ -1022,6 +1024,7 @@ fn versioned_archive_cache_dir(
     base_dir: &Path,
     version: Option<&str>,
     archive_url: &str,
+    sha256: Option<&str>,
 ) -> PathBuf {
     let version = version.unwrap_or_default();
     let sanitized_version = sanitize_path_component(version);
@@ -1030,14 +1033,18 @@ fn versioned_archive_cache_dir(
     version_hasher.update(version.as_bytes());
     let version_hash = format!("{:x}", version_hasher.finalize());
 
-    let mut url_hasher = Sha256::new();
-    url_hasher.update(archive_url.as_bytes());
-    let url_hash = format!("{:x}", url_hasher.finalize());
+    let mut archive_hasher = Sha256::new();
+    archive_hasher.update(archive_url.as_bytes());
+    if let Some(sha256) = sha256 {
+        archive_hasher.update(b"\0sha256:");
+        archive_hasher.update(sha256.to_ascii_lowercase().as_bytes());
+    }
+    let archive_hash = format!("{:x}", archive_hasher.finalize());
 
     base_dir.join(format!(
         "v_{sanitized_version}_{}_{}",
         &version_hash[..16],
-        &url_hash[..16],
+        &archive_hash[..16],
     ))
 }
 
@@ -1112,7 +1119,7 @@ struct LocalRegistryArchiveAgent {
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
-    registry_id: Arc<str>,
+    installation_dir: PathBuf,
     version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
@@ -1151,7 +1158,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
-        let registry_id = self.registry_id.clone();
+        let installation_dir = self.installation_dir.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
         let version = self.version.clone();
@@ -1165,9 +1172,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 .await
                 .unwrap_or_default();
 
-            let dir = paths::external_agents_dir()
-                .join("registry")
-                .join(sanitize_path_component(&registry_id));
+            let dir = installation_dir;
             fs.create_dir(&dir).await?;
 
             let os = if cfg!(target_os = "macos") {
@@ -1206,8 +1211,12 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             env.extend(settings_env);
 
             let archive_url = &target_config.archive;
-            let version_dir =
-                versioned_archive_cache_dir(&dir, Some(version.as_ref()), archive_url);
+            let version_dir = versioned_archive_cache_dir(
+                &dir,
+                Some(version.as_ref()),
+                archive_url,
+                target_config.sha256.as_deref(),
+            );
 
             if !fs.is_dir(&version_dir).await {
                 let mut loading_status_tx = loading_status_tx;
@@ -1669,8 +1678,74 @@ mod tests {
     };
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
     use gpui::TestAppContext;
+    #[cfg(feature = "test-support")]
+    use http_client::{AsyncBody, FakeHttpClient, Response};
     use node_runtime::NodeRuntime;
     use settings::Settings as _;
+
+    #[cfg(feature = "test-support")]
+    const TEST_ARCHIVE_URL: &str = "https://example.test/agent";
+
+    #[cfg(feature = "test-support")]
+    fn static_http_client(body: Vec<u8>) -> Arc<dyn HttpClient> {
+        FakeHttpClient::create(move |_| {
+            let body = body.clone();
+            async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(body))?)
+            }
+        })
+    }
+
+    #[cfg(feature = "test-support")]
+    fn make_registry_archive_agent(
+        cx: &mut TestAppContext,
+        installation_dir: PathBuf,
+        http_client: Arc<dyn HttpClient>,
+        sha256: Option<String>,
+    ) -> LocalRegistryArchiveAgent {
+        let fs: Arc<dyn Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        let target = RegistryTargetConfig {
+            archive: TEST_ARCHIVE_URL.to_string(),
+            cmd: "./agent".to_string(),
+            args: Vec::new(),
+            sha256,
+            env: HashMap::default(),
+        };
+        let targets = [
+            "darwin-aarch64",
+            "darwin-x86_64",
+            "linux-aarch64",
+            "linux-x86_64",
+            "windows-aarch64",
+            "windows-x86_64",
+        ]
+        .into_iter()
+        .map(|platform| (platform.to_string(), target.clone()))
+        .collect();
+
+        cx.update(|cx| {
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+            let project_environment = cx.new(|cx| {
+                crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+            });
+
+            LocalRegistryArchiveAgent {
+                fs,
+                http_client,
+                node_runtime: NodeRuntime::unavailable(),
+                project_environment,
+                installation_dir,
+                version: "1.0.0".into(),
+                targets,
+                env: HashMap::default(),
+                new_version_available_tx: None,
+                loading_status_tx: None,
+            }
+        })
+    }
 
     fn make_npx_agent(id: &str, version: &str) -> RegistryAgent {
         let id = SharedString::from(id.to_string());
@@ -1896,16 +1971,18 @@ mod tests {
     }
 
     #[test]
-    fn versioned_archive_cache_dir_includes_version_before_url_hash() {
+    fn versioned_archive_cache_dir_includes_artifact_identity() {
         let slash_version_dir = versioned_archive_cache_dir(
             Path::new("/tmp/agents"),
             Some("release/2.3.5"),
             "https://example.com/agent.zip",
+            None,
         );
         let colon_version_dir = versioned_archive_cache_dir(
             Path::new("/tmp/agents"),
             Some("release:2.3.5"),
             "https://example.com/agent.zip",
+            None,
         );
         let file_name = slash_version_dir
             .file_name()
@@ -1914,6 +1991,129 @@ mod tests {
 
         assert!(file_name.starts_with("v_release-2.3.5_"));
         assert_ne!(slash_version_dir, colon_version_dir);
+
+        let lowercase_checksum_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        );
+        let uppercase_checksum_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+            Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        );
+        let changed_checksum_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        );
+
+        assert_ne!(slash_version_dir, lowercase_checksum_dir);
+        assert_eq!(lowercase_checksum_dir, uppercase_checksum_dir);
+        assert_ne!(lowercase_checksum_dir, changed_checksum_dir);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_checksum_invalidates_unverified_cache_and_blocks_mismatch(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let old_version_dir =
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None);
+        std::fs::create_dir_all(&old_version_dir).unwrap();
+        std::fs::write(old_version_dir.join("agent"), b"unverified agent").unwrap();
+
+        let expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+        let http_client = static_http_client(b"unexpected agent".to_vec());
+        let mut agent = make_registry_archive_agent(
+            cx,
+            installation_dir.clone(),
+            http_client,
+            Some(expected_sha256.to_string()),
+        );
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let error = get_command.await.unwrap_err();
+        assert!(
+            error.to_string().contains("SHA-256 mismatch"),
+            "unexpected error: {error:#}"
+        );
+        assert!(old_version_dir.exists());
+        assert!(
+            !versioned_archive_cache_dir(
+                &installation_dir,
+                Some("1.0.0"),
+                TEST_ARCHIVE_URL,
+                Some(expected_sha256),
+            )
+            .exists()
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_with_checksum_installs(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let contents = b"verified agent";
+        let expected_sha256 = format!("{:X}", Sha256::digest(contents));
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent = make_registry_archive_agent(
+            cx,
+            installation_dir.clone(),
+            http_client,
+            Some(expected_sha256.clone()),
+        );
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let command = get_command.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            command.path,
+            versioned_archive_cache_dir(
+                &installation_dir,
+                Some("1.0.0"),
+                TEST_ARCHIVE_URL,
+                Some(&expected_sha256),
+            )
+            .join("agent")
+        );
+        assert_eq!(std::fs::read(command.path).unwrap(), contents);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_without_checksum_installs(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let contents = b"unchecked agent";
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let command = get_command.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            command.path,
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None,)
+                .join("agent")
+        );
+        assert_eq!(std::fs::read(command.path).unwrap(), contents);
     }
 
     #[gpui::test]

@@ -5,7 +5,6 @@ use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
-use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -17,10 +16,7 @@ use project::ProjectPath;
 use settings::SeedQuerySetting;
 use text::Anchor;
 use ui::Window;
-use workspace::{
-    DismissDecision, ModalView, Workspace, WorkspaceDb, WorkspaceId,
-    searchable::SearchableItemHandle,
-};
+use workspace::{DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, WorkspaceId};
 
 mod delegate;
 mod render;
@@ -331,19 +327,45 @@ impl TextFinder {
         Some(SearchSeed { query, options })
     }
 
-    /// The query to seed from the active item, if any.
+    /// The query to seed from the focused or active item, if any.
     ///
-    /// Only an explicit selection seeds from the editor; the bare word under the cursor is
-    /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
-    /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
-    /// selection (e.g. a double-click) is a clear signal to search for that text.
+    /// The focused pane's item is consulted before the active center pane's, so invoking the
+    /// finder from a dock (e.g. with a selection in the terminal) seeds from that item even when
+    /// an editor with its own selection is active in the center — the selection the user made
+    /// last is the one next to the focus. When the focused item has nothing to offer (say, a
+    /// focused terminal without a selection), the center item is tried so an editor selection
+    /// still seeds.
     fn active_item_query(
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<String> {
-        let item = workspace.active_item(cx)?;
+        let focused_item = workspace.focused_pane(window, cx).read(cx).active_item();
+        let active_item = workspace
+            .active_item(cx)
+            .filter(|active| match &focused_item {
+                Some(focused) => focused.item_id() != active.item_id(),
+                None => true,
+            });
 
+        focused_item
+            .into_iter()
+            .chain(active_item)
+            .find_map(|item| Self::item_query(workspace, item.as_ref(), window, cx))
+    }
+
+    /// The query to seed from one item, if any.
+    ///
+    /// Only an explicit selection seeds from the item; the bare word under the cursor is
+    /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
+    /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
+    /// selection (e.g. a double-click) is a clear signal to search for that text.
+    fn item_query(
+        workspace: &mut Workspace,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<String> {
         if let Some(project_search) = item.downcast::<ProjectSearchView>() {
             let query = project_search.read(cx).search_query_text(cx);
             if !query.is_empty() {
@@ -351,14 +373,13 @@ impl TextFinder {
             }
         }
 
-        if let Some(query) =
-            crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
-        {
+        if let Some(query) = crate::project_search::buffer_search_query(workspace, item, cx) {
             return Some(query);
         }
 
-        if let Some(editor) = item.act_as::<Editor>(cx) {
-            let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
+        if let Some(searchable_item) = item.to_searchable_item_handle(cx) {
+            let query =
+                searchable_item.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
             if !query.is_empty() {
                 return Some(query);
             }

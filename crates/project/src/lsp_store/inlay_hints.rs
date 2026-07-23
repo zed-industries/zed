@@ -1,7 +1,7 @@
 use std::{collections::hash_map, ops::Range, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::future::Shared;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task};
 use language::{
@@ -12,6 +12,7 @@ use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
 use text::{BufferId, Point};
+use util::ResultExt as _;
 
 use crate::{
     InlayHint, InlayId, LspStore, LspStoreEvent, ResolveState, lsp_command::InlayHints,
@@ -28,10 +29,7 @@ pub enum InvalidationStrategy {
     /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
     ///
     /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
-    RefreshRequested {
-        server_id: LanguageServerId,
-        request_id: Option<usize>,
-    },
+    RefreshRequested { server_id: LanguageServerId },
     /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
     /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
     BufferEdited,
@@ -58,7 +56,8 @@ pub struct BufferInlayHints {
     hints_by_chunks: Vec<Option<CacheInlayHints>>,
     fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
     hints_by_id: HashMap<InlayId, HintForId>,
-    latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
+    pending_refreshes: HashSet<LanguageServerId>,
+    work_end_refreshes: HashSet<LanguageServerId>,
     pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
 }
 
@@ -89,7 +88,8 @@ impl BufferInlayHints {
         Self {
             hints_by_chunks: vec![None; chunks.len()],
             fetches_by_chunks: vec![None; chunks.len()],
-            latest_invalidation_requests: HashMap::default(),
+            pending_refreshes: HashSet::default(),
+            work_end_refreshes: HashSet::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
             chunks,
@@ -135,6 +135,27 @@ impl BufferInlayHints {
                 }
             }
         }
+        self.pending_refreshes.remove(&for_server);
+        self.work_end_refreshes.remove(&for_server);
+    }
+
+    fn mark_refresh_pending(&mut self, server_id: LanguageServerId) {
+        self.pending_refreshes.insert(server_id);
+        self.work_end_refreshes.insert(server_id);
+    }
+
+    /// A server finishing a long-running operation may have produced new hints without
+    /// requesting an explicit refresh, but servers like rust-analyzer report work (e.g.
+    /// flycheck) after every save: refresh at most once per server until the buffer
+    /// changes. Explicit refresh requests also count against this limit, as they make a
+    /// subsequent work-end refresh redundant.
+    fn mark_refresh_pending_on_work_end(&mut self, server_id: LanguageServerId) -> bool {
+        if self.work_end_refreshes.insert(server_id) {
+            self.pending_refreshes.insert(server_id);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn clear(&mut self) {
@@ -142,7 +163,8 @@ impl BufferInlayHints {
         self.fetches_by_chunks = vec![None; self.chunks.len()];
         self.hints_by_id.clear();
         self.hint_resolves.clear();
-        self.latest_invalidation_requests.clear();
+        self.pending_refreshes.clear();
+        self.work_end_refreshes.clear();
     }
 
     pub fn insert_new_hints(
@@ -186,22 +208,12 @@ impl BufferInlayHints {
         Some(hint)
     }
 
-    pub(crate) fn invalidate_for_server_refresh(
-        &mut self,
-        for_server: LanguageServerId,
-        request_id: Option<usize>,
-    ) -> bool {
-        match self.latest_invalidation_requests.entry(for_server) {
-            hash_map::Entry::Occupied(mut o) => {
-                if request_id > *o.get() {
-                    o.insert(request_id);
-                } else {
-                    return false;
-                }
-            }
-            hash_map::Entry::Vacant(v) => {
-                v.insert(request_id);
-            }
+    /// Consumes a pending refresh for the given server, if any, invalidating its cached
+    /// hints: only the first query after [`LspStore::refresh_inlay_hints`] invalidates,
+    /// while concurrent queriers share the re-fetch it has started.
+    pub(crate) fn invalidate_for_server_refresh(&mut self, for_server: LanguageServerId) -> bool {
+        if !self.pending_refreshes.remove(&for_server) {
+            return false;
         }
 
         for (chunk_id, chunk_data) in self.hints_by_chunks.iter_mut().enumerate() {
@@ -299,16 +311,63 @@ impl LspStore {
         }
     }
 
+    /// Marks the server's inlay hints as refresh-pending in every buffer, to be
+    /// invalidated by the next query, and notifies the observers.
+    pub(super) fn refresh_inlay_hints(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        self.mark_inlay_hints_refresh_pending(server_id, cx);
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshInlayHints {
+                    project_id: *project_id,
+                    server_id: server_id.to_proto(),
+                    request_id: Some(super::next_wire_refresh_request_id()),
+                })
+                .context("sending refresh inlay hints downstream")
+                .log_err();
+        }
+    }
+
+    pub(super) fn mark_inlay_hints_refresh_pending(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        for lsp_data in self.lsp_data.values_mut() {
+            lsp_data.inlay_hints.mark_refresh_pending(server_id);
+        }
+        cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
+    }
+
+    /// Same as [`Self::mark_inlay_hints_refresh_pending`], but rate-limited per server
+    /// via [`BufferInlayHints::mark_refresh_pending_on_work_end`].
+    pub(super) fn refresh_inlay_hints_on_work_end(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let mut marked = false;
+        for lsp_data in self.lsp_data.values_mut() {
+            marked |= lsp_data
+                .inlay_hints
+                .mark_refresh_pending_on_work_end(server_id);
+        }
+        if marked {
+            cx.emit(LspStoreEvent::RefreshInlayHints { server_id });
+        }
+    }
+
     pub(super) async fn handle_refresh_inlay_hints(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::RefreshInlayHints>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        lsp_store.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshInlayHints {
-                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
-                request_id: envelope.payload.request_id.map(|id| id as usize),
-            });
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store
+                .refresh_inlay_hints(LanguageServerId::from_proto(envelope.payload.server_id), cx);
         });
         Ok(proto::Ack {})
     }
