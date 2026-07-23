@@ -3345,7 +3345,8 @@ Examples:
     "enable_preview_from_multibuffer": true,
     "enable_preview_multibuffer_from_code_navigation": false,
     "enable_preview_file_from_code_navigation": true,
-    "enable_keep_preview_on_code_navigation": false
+    "enable_keep_preview_on_code_navigation": false,
+    "enable_preview_from_git": false
   }
 }
 ```
@@ -3404,6 +3405,16 @@ Examples:
 
 - Description: Determines whether to keep tabs in preview mode when code navigation is used to navigate away from them. If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
 - Setting: `enable_keep_preview_on_code_navigation`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Enable preview from git
+
+- Description: Determines whether to open commit views in preview mode when opened from any Git surface (commit panel, git graph, blame, stash picker, etc.).
+- Setting: `enable_preview_from_git`
 - Default: `false`
 
 **Options**

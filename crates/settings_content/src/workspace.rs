@@ -204,6 +204,11 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: false
     pub enable_keep_preview_on_code_navigation: Option<bool>,
+    /// Whether to open commit views in preview mode when opened from any Git
+    /// surface (commit panel, git graph, blame, stash picker, etc.).
+    ///
+    /// Default: false
+    pub enable_preview_from_git: Option<bool>,
 }
 
 #[derive(

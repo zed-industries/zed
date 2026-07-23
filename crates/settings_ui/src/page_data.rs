@@ -4523,7 +4523,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn preview_tabs_section() -> [SettingsPageItem; 8] {
+    fn preview_tabs_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Preview Tabs"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4678,6 +4678,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .preview_tabs
                             .get_or_insert_default()
                             .enable_keep_preview_on_code_navigation = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enable Preview From Git",
+                description: "Whether to open commit views in preview mode when opened from any Git surface (commit panel, git graph, blame, stash picker, etc.).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("preview_tabs.enable_preview_from_git"),
+                    pick: |settings_content| {
+                        settings_content
+                            .preview_tabs
+                            .as_ref()?
+                            .enable_preview_from_git
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .preview_tabs
+                            .get_or_insert_default()
+                            .enable_preview_from_git = value;
                     },
                 }),
                 metadata: None,

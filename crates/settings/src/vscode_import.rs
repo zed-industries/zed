@@ -776,6 +776,7 @@ impl VsCodeSettings {
             enable_preview_file_from_code_navigation: None,
             enable_keep_preview_on_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
+            enable_preview_from_git: None,
         })
     }
 
