@@ -35,8 +35,14 @@ impl std::error::Error for TransportError {}
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
 const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const HEADER_MCP_METHOD: &str = "Mcp-Method";
+const HEADER_MCP_NAME: &str = "Mcp-Name";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
+
+/// The methods whose operation name (`params.name` or `params.uri`) must be
+/// mirrored into the `Mcp-Name` header from MCP 2026-07-28 onward.
+const NAMED_METHODS: &[&str] = &["tools/call", "resources/read", "prompts/get"];
 
 /// HTTP Transport with session management and SSE support
 pub struct HttpTransport {
@@ -62,6 +68,70 @@ pub struct HttpTransport {
     /// the start of each send so it always describes the most recent attempt.
     /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
+}
+
+/// The fields of an outgoing JSON-RPC message that the streamable HTTP
+/// transport mirrors into headers (MCP 2026-07-28).
+#[derive(Default)]
+struct OutgoingMessage {
+    method: Option<String>,
+    /// `params.name` or `params.uri` for the methods that require the
+    /// `Mcp-Name` header.
+    name: Option<String>,
+    /// The protocol version stamped in the message's own `params._meta`.
+    /// Present exactly when the protocol layer built a modern request.
+    protocol_version: Option<String>,
+}
+
+fn parse_outgoing_message(message: &str) -> OutgoingMessage {
+    let Ok(message) = serde_json::from_str::<serde_json::Value>(message) else {
+        return OutgoingMessage::default();
+    };
+    let method = message
+        .get("method")
+        .and_then(|method| method.as_str())
+        .map(str::to_string);
+    let params = message.get("params");
+    let name = method
+        .as_deref()
+        .filter(|method| NAMED_METHODS.contains(method))
+        .and_then(|_| {
+            let params = params?;
+            params
+                .get("name")
+                .or_else(|| params.get("uri"))?
+                .as_str()
+                .map(str::to_string)
+        });
+    let protocol_version = params
+        .and_then(|params| params.get("_meta")?.get(types::meta_keys::PROTOCOL_VERSION))
+        .and_then(|version| version.as_str())
+        .map(str::to_string);
+    OutgoingMessage {
+        method,
+        name,
+        protocol_version,
+    }
+}
+
+/// Encode a value for use in an `Mcp-Name` (or `Mcp-Param-*`) header. Values
+/// that cannot be represented as a plain ASCII header value — or that would
+/// be mistaken for the encoded form — use the spec's Base64 sentinel format.
+fn encode_header_value(value: &str) -> String {
+    let plain_ascii = value
+        .bytes()
+        .all(|byte| (0x20..=0x7e).contains(&byte) || byte == b'\t');
+    let has_outer_whitespace = value != value.trim_matches([' ', '\t']);
+    let matches_sentinel = value.starts_with("=?base64?") && value.ends_with("?=");
+    if plain_ascii && !has_outer_whitespace && !matches_sentinel {
+        value.to_string()
+    } else {
+        use base64::Engine as _;
+        format!(
+            "=?base64?{}?=",
+            base64::engine::general_purpose::STANDARD.encode(value)
+        )
+    }
 }
 
 /// Build the JSON-RPC error response to resolve a request that received an
@@ -138,10 +208,27 @@ impl HttpTransport {
         }
     }
 
+    /// The protocol version to speak for an outgoing message when the
+    /// modern (2026-07-28) header rules apply to it: the version stamped in
+    /// the message's own `_meta`, or the negotiated version if it is modern
+    /// (which covers notifications, whose params carry no `_meta`).
+    fn modern_version_for(&self, outgoing: &OutgoingMessage) -> Option<String> {
+        outgoing.protocol_version.clone().or_else(|| {
+            self.protocol_version
+                .lock()
+                .clone()
+                .filter(|version| types::is_modern_protocol_version(version))
+        })
+    }
+
     /// Build a POST request for the given message body, attaching all standard
-    /// headers (content-type, accept, session ID, static headers, and bearer
-    /// token if available).
-    fn build_request(&self, message: &[u8]) -> Result<http_client::Request<AsyncBody>> {
+    /// headers (content-type, accept, session ID or the modern request
+    /// metadata headers, static headers, and bearer token if available).
+    fn build_request(
+        &self,
+        message: &[u8],
+        outgoing: &OutgoingMessage,
+    ) -> Result<http_client::Request<AsyncBody>> {
         let mut request_builder = Request::builder()
             .method(Method::POST)
             .uri(&self.endpoint)
@@ -160,17 +247,31 @@ impl HttpTransport {
             request_builder = request_builder.header("Authorization", format!("Bearer {}", token));
         }
 
-        // Add session ID if we have one (except for initialize).
-        if let Some(ref session_id) = *self.session_id.lock() {
-            request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
-        }
+        if let Some(version) = self.modern_version_for(outgoing) {
+            // MCP 2026-07-28: mirror the method (and operation name, where
+            // required) into headers so intermediaries can route without
+            // parsing the body. There are no sessions in this era.
+            request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version);
+            if let Some(method) = &outgoing.method {
+                request_builder = request_builder.header(HEADER_MCP_METHOD, method.as_str());
+            }
+            if let Some(name) = &outgoing.name {
+                request_builder =
+                    request_builder.header(HEADER_MCP_NAME, encode_header_value(name));
+            }
+        } else {
+            // Add session ID if we have one (except for initialize).
+            if let Some(ref session_id) = *self.session_id.lock() {
+                request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
+            }
 
-        // Echo the negotiated protocol version once initialization has
-        // completed. Required by servers speaking MCP 2025-06-18 or later.
-        if let Some(ref version) = *self.protocol_version.lock()
-            && types::requires_protocol_version_header(version)
-        {
-            request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
+            // Echo the negotiated protocol version once initialization has
+            // completed. Required by servers speaking MCP 2025-06-18 or later.
+            if let Some(ref version) = *self.protocol_version.lock()
+                && types::requires_protocol_version_header(version)
+            {
+                request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
+            }
         }
 
         Ok(request_builder.body(AsyncBody::from(message.to_vec()))?)
@@ -193,6 +294,8 @@ impl HttpTransport {
 
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
+        let outgoing = parse_outgoing_message(&message);
+        let is_modern = self.modern_version_for(&outgoing).is_some();
 
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
@@ -203,7 +306,7 @@ impl HttpTransport {
             }
         }
 
-        let request = self.build_request(message.as_bytes())?;
+        let request = self.build_request(message.as_bytes(), &outgoing)?;
         let mut response = self.http_client.send(request).await?;
 
         // On 401, try refreshing the token and retry once.
@@ -225,7 +328,7 @@ impl HttpTransport {
             if let Some(ref provider) = self.token_provider {
                 if provider.try_refresh().await.unwrap_or(false) {
                     // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes())?;
+                    let retry_request = self.build_request(message.as_bytes(), &outgoing)?;
                     response = self.http_client.send(retry_request).await?;
 
                     // If still 401 after refresh, give up.
@@ -249,11 +352,14 @@ impl HttpTransport {
                     .get("content-type")
                     .and_then(|v| v.to_str().ok());
 
-                // Extract session ID from response headers if present
-                if let Some(session_id) = response
-                    .headers()
-                    .get(HEADER_SESSION_ID)
-                    .and_then(|v| v.to_str().ok())
+                // Extract session ID from response headers if present. There
+                // are no sessions from MCP 2026-07-28 onward, so ignore any
+                // session ID a dual-era server might still mint.
+                if !is_modern
+                    && let Some(session_id) = response
+                        .headers()
+                        .get(HEADER_SESSION_ID)
+                        .and_then(|v| v.to_str().ok())
                 {
                     *self.session_id.lock() = Some(session_id.to_string());
                     log::debug!("Session ID set: {}", session_id);
@@ -788,6 +894,196 @@ mod tests {
             }
         }
         assert_eq!(provider.refresh_count(), 1);
+    }
+
+    #[test]
+    fn test_encode_header_value() {
+        assert_eq!(encode_header_value("us-west1"), "us-west1");
+        assert_eq!(encode_header_value("file:///a/b.json"), "file:///a/b.json");
+        // Non-ASCII, outer whitespace, control characters, and values
+        // matching the sentinel pattern must be Base64-encoded (examples
+        // from the spec).
+        assert_eq!(
+            encode_header_value("Hello, 世界"),
+            "=?base64?SGVsbG8sIOS4lueVjA==?="
+        );
+        assert_eq!(encode_header_value(" padded "), "=?base64?IHBhZGRlZCA=?=");
+        assert_eq!(
+            encode_header_value("line1\nline2"),
+            "=?base64?bGluZTEKbGluZTI=?="
+        );
+        assert_eq!(
+            encode_header_value("=?base64?literal?="),
+            "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="
+        );
+    }
+
+    #[gpui::test]
+    async fn test_modern_request_headers(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_headers = captured_headers.clone();
+            move |req| {
+                let get = |name: &str| {
+                    req.headers()
+                        .get(name)
+                        .map(|value| value.to_str().unwrap().to_string())
+                };
+                captured_headers.lock().push((
+                    get("MCP-Protocol-Version"),
+                    get("Mcp-Method"),
+                    get("Mcp-Name"),
+                    get("Mcp-Session-Id"),
+                ));
+                Box::pin(async {
+                    json_response(
+                        200,
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[]}}"#,
+                    )
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        // A modern request: `_meta` carries the protocol version.
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "get_weather",
+                        "arguments": {},
+                        "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        let headers = captured_headers.lock().clone();
+        assert_eq!(
+            headers[0],
+            (
+                Some("2026-07-28".into()),
+                Some("tools/call".into()),
+                Some("get_weather".into()),
+                None,
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_modern_requests_ignore_session_ids(cx: &mut TestAppContext) {
+        // A dual-era server minting a session ID on a modern request must
+        // not cause subsequent requests to carry Mcp-Session-Id.
+        let captured_session = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_session = captured_session.clone();
+            move |req| {
+                captured_session.lock().push(
+                    req.headers()
+                        .get("Mcp-Session-Id")
+                        .map(|value| value.to_str().unwrap().to_string()),
+                );
+                Box::pin(async {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header("Mcp-Session-Id", "session-123")
+                        .body(AsyncBody::from(
+                            br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
+                        ))
+                        .unwrap())
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        let modern_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {
+                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+            }
+        })
+        .to_string();
+
+        transport.send(modern_request.clone()).await.unwrap();
+        transport.send(modern_request).await.unwrap();
+
+        assert_eq!(captured_session.lock().clone(), vec![None, None]);
+    }
+
+    #[gpui::test]
+    async fn test_legacy_requests_keep_session_and_version_headers(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_headers = captured_headers.clone();
+            move |req| {
+                let get = |name: &str| {
+                    req.headers()
+                        .get(name)
+                        .map(|value| value.to_str().unwrap().to_string())
+                };
+                captured_headers.lock().push((
+                    get("Mcp-Session-Id"),
+                    get("MCP-Protocol-Version"),
+                    get("Mcp-Method"),
+                ));
+                Box::pin(async {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header("Mcp-Session-Id", "session-123")
+                        .body(AsyncBody::from(
+                            br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
+                        ))
+                        .unwrap())
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+        transport.set_protocol_version("2025-11-25");
+
+        let legacy_request =
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string();
+        transport.send(legacy_request.clone()).await.unwrap();
+        transport.send(legacy_request).await.unwrap();
+
+        let headers = captured_headers.lock().clone();
+        // First request has no session yet; the second echoes the minted one.
+        // Legacy requests never carry Mcp-Method.
+        assert_eq!(headers[0], (None, Some("2025-11-25".into()), None));
+        assert_eq!(
+            headers[1],
+            (
+                Some("session-123".into()),
+                Some("2025-11-25".into()),
+                None,
+            )
+        );
     }
 
     #[gpui::test]
