@@ -28,6 +28,19 @@ use crate::client::{self, Client, NotificationSubscription, RequestTimedOut};
 use crate::oauth::WwwAuthenticate;
 use crate::types::{self, Notification, Request};
 
+/// The client requests that may receive interim `input_required` results
+/// under the multi round-trip request pattern (MCP 2026-07-28).
+const MRTR_METHODS: &[&str] = &[
+    types::requests::CallTool::METHOD,
+    types::requests::ResourcesRead::METHOD,
+    types::requests::PromptsGet::METHOD,
+];
+
+/// Bounds retries of a request whose server keeps answering
+/// `input_required`; the spec allows servers to re-prompt indefinitely, but
+/// without input requests to fulfill there is no point retrying forever.
+const MAX_INPUT_REQUIRED_RETRIES: usize = 8;
+
 pub struct ModelContextProtocol {
     inner: Client,
 }
@@ -282,8 +295,7 @@ impl InitializedContextServerProtocol {
     }
 
     pub async fn request<T: Request>(&self, params: T::Params) -> Result<T::Response> {
-        self.inner
-            .request(T::METHOD, self.prepare_params(params)?)
+        self.request_with::<T>(params, None, self.inner.default_request_timeout())
             .await
     }
 
@@ -293,9 +305,63 @@ impl InitializedContextServerProtocol {
         cancel_rx: Option<oneshot::Receiver<()>>,
         timeout: Option<Duration>,
     ) -> Result<T::Response> {
-        self.inner
-            .request_with(T::METHOD, self.prepare_params(params)?, cancel_rx, timeout)
-            .await
+        let mut params = self.prepare_params(params)?;
+        let mut cancel_rx = cancel_rx;
+        let mut attempts_left = MAX_INPUT_REQUIRED_RETRIES;
+
+        loop {
+            let result: Value = self
+                .inner
+                .request_with(T::METHOD, &params, cancel_rx.take(), timeout)
+                .await?;
+
+            // Multi round-trip requests (MCP 2026-07-28): a modern server
+            // may answer with an interim `input_required` result instead of
+            // a final one. Legacy results have no `resultType` and are final
+            // by definition.
+            let input_required = self.is_modern()
+                && MRTR_METHODS.contains(&T::METHOD)
+                && result.get("resultType").and_then(|value| value.as_str())
+                    == Some("input_required");
+            if !input_required {
+                return Ok(serde_json::from_value(result)?);
+            }
+
+            let interim: types::InputRequiredResult = serde_json::from_value(result)?;
+            if let Some(input_requests) = &interim.input_requests
+                && !input_requests.is_empty()
+            {
+                // Servers must not request input capabilities the client did
+                // not declare, and Zed declares none.
+                let methods = input_requests
+                    .values()
+                    .map(|request| request.method.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                anyhow::bail!(
+                    "Server requested additional input ({methods}) that Zed does not support"
+                );
+            }
+
+            anyhow::ensure!(
+                attempts_left > 0,
+                "Server kept responding with input_required results"
+            );
+            attempts_left -= 1;
+
+            // Retry the original request (with a fresh request id), echoing
+            // the opaque request state, if any.
+            if let Value::Object(object) = &mut params {
+                match interim.request_state {
+                    Some(state) => {
+                        object.insert("requestState".to_string(), Value::String(state));
+                    }
+                    None => {
+                        object.remove("requestState");
+                    }
+                }
+            }
+        }
     }
 
     pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {
@@ -607,6 +673,144 @@ mod tests {
             protocol.server_info.as_ref().map(|info| info.name.as_str()),
             Some("silent-legacy-server")
         );
+    }
+
+    #[gpui::test]
+    async fn test_input_required_result_retries_with_request_state(cx: &mut TestAppContext) {
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let transport = create_modern_fake_transport("modern-server", cx.executor())
+            .on_raw_request(requests::CallTool::METHOD, {
+                let call_count = call_count.clone();
+                move |params| {
+                    let call_count = call_count.clone();
+                    async move {
+                        if call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                            assert!(params.get("requestState").is_none());
+                            Ok(Some(serde_json::json!({
+                                "resultType": "input_required",
+                                "requestState": "opaque-state"
+                            })))
+                        } else {
+                            assert_eq!(params["requestState"], "opaque-state");
+                            assert_eq!(params["name"], "my-tool");
+                            Ok(Some(serde_json::json!({
+                                "resultType": "complete",
+                                "content": [{ "type": "text", "text": "done" }]
+                            })))
+                        }
+                    }
+                }
+            });
+
+        let (protocol, received_messages) = connect(transport, cx).await;
+        let protocol = protocol.unwrap();
+
+        let response = protocol
+            .request::<requests::CallTool>(types::CallToolParams {
+                name: "my-tool".to_string(),
+                arguments: None,
+                meta: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.text_contents(), "done");
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        // The retry is an independent request with a fresh id.
+        let messages = received_messages.lock().clone();
+        let calls = messages_with_method(&messages, "tools/call");
+        assert_eq!(calls.len(), 2);
+        assert_ne!(calls[0]["id"], calls[1]["id"]);
+    }
+
+    #[gpui::test]
+    async fn test_input_required_result_with_input_requests_fails(cx: &mut TestAppContext) {
+        let transport = create_modern_fake_transport("modern-server", cx.executor())
+            .on_raw_request(requests::CallTool::METHOD, |_params| async {
+                Ok(Some(serde_json::json!({
+                    "resultType": "input_required",
+                    "inputRequests": {
+                        "login": {
+                            "method": "elicitation/create",
+                            "params": { "message": "Log in please" }
+                        }
+                    },
+                    "requestState": "state"
+                })))
+            });
+
+        let (protocol, _) = connect(transport, cx).await;
+        let protocol = protocol.unwrap();
+
+        let error = protocol
+            .request::<requests::CallTool>(types::CallToolParams {
+                name: "my-tool".to_string(),
+                arguments: None,
+                meta: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("elicitation/create"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_input_required_retries_are_bounded(cx: &mut TestAppContext) {
+        let transport = create_modern_fake_transport("modern-server", cx.executor())
+            .on_raw_request(requests::CallTool::METHOD, |_params| async {
+                Ok(Some(serde_json::json!({
+                    "resultType": "input_required",
+                    "requestState": "state"
+                })))
+            });
+
+        let (protocol, _) = connect(transport, cx).await;
+        let protocol = protocol.unwrap();
+
+        let error = protocol
+            .request::<requests::CallTool>(types::CallToolParams {
+                name: "my-tool".to_string(),
+                arguments: None,
+                meta: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("kept responding with input_required"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_legacy_results_without_result_type_are_final(cx: &mut TestAppContext) {
+        let transport = create_fake_transport("legacy-server", cx.executor())
+            .on_request::<requests::CallTool, _>(|_params| async {
+                types::CallToolResponse {
+                    content: vec![types::ToolResponseContent::Text {
+                        text: "done".to_string(),
+                    }],
+                    is_error: None,
+                    meta: None,
+                    structured_content: None,
+                }
+            });
+
+        let (protocol, _) = connect(transport, cx).await;
+        let protocol = protocol.unwrap();
+
+        let response = protocol
+            .request::<requests::CallTool>(types::CallToolParams {
+                name: "my-tool".to_string(),
+                arguments: None,
+                meta: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(response.text_contents(), "done");
     }
 
     #[gpui::test]
