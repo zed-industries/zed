@@ -1390,7 +1390,11 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join(sanitize_path_component(&registry_id));
             fs.create_dir(&prefix_dir).await?;
 
-            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
+            let bin_name = node_runtime
+                .npm_install_package_for_exec(&prefix_dir, &package)
+                .await?;
+
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), bin_name];
             exec_args.extend(args);
 
             let npm_command = node_runtime
