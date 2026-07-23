@@ -441,6 +441,17 @@ impl Client {
         handle_response?;
         send?;
 
+        // Cancel the request server-side whenever this future exits without
+        // having received a response: explicit cancellation, timeout, or the
+        // caller dropping the future (e.g. a tool call raced against user
+        // cancellation). The notification is the cancellation wire signal on
+        // stdio; the HTTP transport translates it into closing the request's
+        // response stream on modern servers.
+        let mut cancel_guard = CancelOnDrop {
+            client: Some((self.outbound_tx.clone(), self.response_handlers.clone())),
+            request_id: RequestId::Int(id),
+        };
+
         let mut timeout_fut = pin!(
             match timeout {
                 Some(timeout) => future::Either::Left(executor.timer(timeout)),
@@ -462,6 +473,7 @@ impl Client {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
+                cancel_guard.disarm();
                 match response {
                     Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
@@ -482,17 +494,12 @@ impl Client {
                 }
             }
             _ = cancel_fut => {
-                self.notify(
-                    Cancelled::METHOD,
-                    ClientNotification::Cancelled(CancelledParams {
-                        request_id: RequestId::Int(id),
-                        reason: None
-                    })
-                ).log_err();
+                drop(cancel_guard);
                 anyhow::bail!(RequestCanceled)
             }
             _ = timeout_fut => {
                 log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
+                drop(cancel_guard);
                 anyhow::bail!(RequestTimedOut);
             }
         }
@@ -530,6 +537,47 @@ impl Client {
             id: notification_subscriptions.add_handler(method, f),
             set: self.subscription_set.clone(),
         }
+    }
+}
+
+/// Cancels an in-flight request when its future is abandoned before a
+/// response arrived: sends `notifications/cancelled` for the request and
+/// removes its response handler. Disarmed once a response is received.
+struct CancelOnDrop {
+    #[allow(clippy::type_complexity)]
+    client: Option<(
+        async_channel::Sender<String>,
+        Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+    )>,
+    request_id: RequestId,
+}
+
+impl CancelOnDrop {
+    fn disarm(&mut self) {
+        self.client.take();
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        let Some((outbound_tx, response_handlers)) = self.client.take() else {
+            return;
+        };
+        if let Some(handlers) = response_handlers.lock().as_mut() {
+            handlers.remove(&self.request_id);
+        }
+        let notification = serde_json::to_string(&Notification {
+            jsonrpc: JSON_RPC_VERSION,
+            method: Cancelled::METHOD,
+            params: ClientNotification::Cancelled(CancelledParams {
+                request_id: self.request_id.clone(),
+                reason: None,
+            }),
+        })
+        .unwrap();
+        // A closed channel means the transport already shut down; there is
+        // nothing left to cancel.
+        outbound_tx.try_send(notification).ok();
     }
 }
 

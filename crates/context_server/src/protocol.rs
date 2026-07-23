@@ -1070,6 +1070,66 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_dropping_a_request_cancels_it(cx: &mut TestAppContext) {
+        let transport = Arc::new(create_modern_fake_transport("modern-server", cx.executor())
+            .on_raw_request(requests::CallTool::METHOD, |_params| async {
+                // Never answers.
+                Ok(None)
+            }));
+        let received_messages = transport.received_messages();
+
+        let client = Client::new(
+            ContextServerId("test-server".into()),
+            "test-server".into(),
+            transport.clone(),
+            None,
+            cx.to_async(),
+        )
+        .unwrap();
+        let protocol = Arc::new(
+            ModelContextProtocol::new(client)
+                .initialize(client_info())
+                .await
+                .unwrap(),
+        );
+
+        let call_task = cx.foreground_executor().spawn({
+            let protocol = protocol.clone();
+            async move {
+                protocol
+                    .request::<requests::CallTool>(types::CallToolParams {
+                        name: "my-tool".to_string(),
+                        arguments: None,
+                        meta: None,
+                    })
+                    .await
+            }
+        });
+        cx.run_until_parked();
+
+        let call_id = {
+            let messages = received_messages.lock();
+            let calls = messages_with_method(&messages, "tools/call");
+            assert_eq!(calls.len(), 1);
+            calls[0]["id"].clone()
+        };
+
+        // Abandoning the request (e.g. a tool call raced against user
+        // cancellation) must cancel it server-side.
+        drop(call_task);
+        cx.run_until_parked();
+
+        let messages = received_messages.lock().clone();
+        let cancellations = messages_with_method(&messages, "notifications/cancelled");
+        assert_eq!(cancellations.len(), 1);
+        assert_eq!(cancellations[0]["params"]["requestId"], call_id);
+
+        // The connection itself must survive the abandoned request: the
+        // outer handle keeps the client alive while the cancellation flows.
+        assert!(protocol.is_modern());
+    }
+
+    #[gpui::test]
     async fn test_modern_fake_transport_helper(cx: &mut TestAppContext) {
         let (protocol, _) = connect(
             create_modern_fake_transport("modern-server", cx.executor()),
