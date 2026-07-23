@@ -6057,7 +6057,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
+async fn test_lsp_tools_are_always_available(cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -6108,10 +6108,8 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         );
     });
 
-    // Without the `lsp-tool` flag, sending a message should produce a
-    // completion request whose tool list excludes the LSP tools.
-    // The rename tool is on its own `rename-tool` flag with
-    // `enabled_for_staff`, so it is already visible in debug builds.
+    // CodeIDE exposes semantic tools without requiring a server-delivered
+    // feature flag or a Zed account.
     thread
         .update(cx, |thread, cx| {
             thread.send(ClientUserMessageId::new(), ["hello"], cx)
@@ -6123,14 +6121,14 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
     let tool_names = tool_names_for_completion(&completion);
     for name in &lsp_tool_names {
         assert!(
-            !tool_names.iter().any(|t| t == name),
-            "expected LSP tool {name} to be hidden without the lsp-tool flag, \
+            tool_names.iter().any(|t| t == name),
+            "expected LSP tool {name} to be available without a server flag, \
              but completion tools were: {tool_names:?}"
         );
     }
     assert!(
         tool_names.iter().any(|t| t == RenameTool::NAME),
-        "expected rename tool to be visible (enabled_for_staff in debug builds), \
+        "expected rename tool to be available without a server flag, \
          but completion tools were: {tool_names:?}"
     );
     // Sanity check: a non-LSP default tool should still be exposed.
@@ -6171,15 +6169,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_sibling_thread_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
+async fn test_sibling_thread_tools_are_always_available(cx: &mut TestAppContext) {
     init_test(cx);
 
-    // `CreateThreadToolFeatureFlag::enabled_for_staff()` returns true, which
-    // means tests in debug builds resolve it to ON unless we explicitly
-    // override it via `FeatureFlagsSettings`. Register the settings type and
-    // install an (empty) `FeatureFlagStore` global so the `cx.has_flag` path
-    // actually consults overrides instead of falling back to the
-    // staff-debug-build default.
+    // Install the settings-backed flag store so this also verifies that an
+    // old explicit `off` override cannot disable a CodeIDE baseline feature.
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, _| {
             store.register_setting::<feature_flags::FeatureFlagsSettings>();
@@ -6239,7 +6233,7 @@ async fn test_sibling_thread_tools_gated_by_feature_flag(cx: &mut TestAppContext
         }
     });
 
-    // Flag explicitly off: a completion request must omit the tools.
+    // CodeIDE's enabled-for-all policy wins over an old explicit off override.
     set_flag_override("off", cx);
     thread
         .update(cx, |thread, cx| {
@@ -6252,8 +6246,8 @@ async fn test_sibling_thread_tools_gated_by_feature_flag(cx: &mut TestAppContext
     let tool_names = tool_names_for_completion(&completion);
     for name in &sibling_tool_names {
         assert!(
-            !tool_names.iter().any(|t| t == name),
-            "expected {name} to be hidden when create-thread-tool flag is off, \
+            tool_names.iter().any(|t| t == name),
+            "expected {name} to remain available with an old off override, \
              but completion tools were: {tool_names:?}"
         );
     }

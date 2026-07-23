@@ -33,8 +33,8 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     const NAME: &'static str = "diff-review";
     type Value = PresenceFlag;
 
-    fn enabled_for_staff() -> bool {
-        false
+    fn enabled_for_all() -> bool {
+        true
     }
 }
 register_feature_flag!(DiffReviewFeatureFlag);
@@ -48,7 +48,7 @@ impl FeatureFlag for CreateThreadToolFeatureFlag {
     const NAME: &'static str = "create-thread-tool";
     type Value = PresenceFlag;
 
-    fn enabled_for_staff() -> bool {
+    fn enabled_for_all() -> bool {
         true
     }
 }
@@ -60,8 +60,8 @@ impl FeatureFlag for LspToolFeatureFlag {
     const NAME: &'static str = "lsp-tool";
     type Value = PresenceFlag;
 
-    fn enabled_for_staff() -> bool {
-        false
+    fn enabled_for_all() -> bool {
+        true
     }
 }
 register_feature_flag!(LspToolFeatureFlag);
@@ -72,7 +72,7 @@ impl FeatureFlag for RenameToolFeatureFlag {
     const NAME: &'static str = "rename-tool";
     type Value = PresenceFlag;
 
-    fn enabled_for_staff() -> bool {
+    fn enabled_for_all() -> bool {
         true
     }
 }
@@ -84,7 +84,7 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     const NAME: &'static str = "project-panel-undo-redo";
     type Value = PresenceFlag;
 
-    fn enabled_for_staff() -> bool {
+    fn enabled_for_all() -> bool {
         true
     }
 }
@@ -130,8 +130,8 @@ impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
 
-    fn enabled_for_staff() -> bool {
-        false
+    fn enabled_for_all() -> bool {
+        true
     }
 }
 register_feature_flag!(SandboxingFeatureFlag);
