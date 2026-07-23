@@ -26,10 +26,10 @@ use cocoa::{
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
     px, size,
 };
@@ -514,7 +514,7 @@ struct MacWindowState {
     traffic_light_frames: Option<TrafficLightFrames>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
-    keystroke_for_do_command: Option<Keystroke>,
+    ime_key_event: Option<ImeKeyEventTransaction>,
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
@@ -535,6 +535,25 @@ struct MacWindowState {
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
+}
+
+struct ImeKeyEventTransaction {
+    key_down_event: KeyDownEvent,
+    dispatch_do_command: bool,
+    operations: Vec<BufferedImeOperation>,
+}
+
+enum BufferedImeOperation {
+    InsertText {
+        text: String,
+        replacement_range: Option<Range<usize>>,
+    },
+    SetMarkedText {
+        text: String,
+        selected_range: Option<Range<usize>>,
+        replacement_range: Option<Range<usize>>,
+    },
+    UnmarkText,
 }
 
 impl MacWindowState {
@@ -919,7 +938,7 @@ impl MacWindow {
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
                 previous_modifiers_changed_event: None,
-                keystroke_for_do_command: None,
+                ime_key_event: None,
                 do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
@@ -2159,21 +2178,21 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     .flatten()
                     .is_some();
 
-            // If we're composing, send the key to the input handler first;
-            // otherwise we only send to the input handler if we don't have a matching binding.
-            // The input handler may call `do_command_by_selector` if it doesn't know how to handle
-            // a key. If it does so, it will return YES so we won't send the key twice.
-            // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
-            // may need them even if there is no marked text;
-            // however we skip keys with control or the input handler adds control-characters to the buffer.
-            // and keys with function, as the input handler swallows them.
-            // and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`) are not
-            // consumed by the IME on non-QWERTY / dead-key layouts.
-            // We also send printable keys to the IME first when an IME input source (e.g. Japanese,
-            // Korean, Chinese) is active and the input handler accepts text input. This prevents
-            // multi-stroke keybindings like `jj` from intercepting keys that the IME should compose
-            // (e.g. typing 'ji' should produce 'じ', not 'jい'). If the IME doesn't handle the key,
-            // it calls `doCommandBySelector:` which routes it back to keybinding matching.
+            // If we're composing, send the key to the input handler first.
+            //
+            // For printable keys while a non-ASCII IME is active, first give GPUI
+            // keybindings a chance to handle exact bindings or continue an existing
+            // pending key sequence. Then still pass the native event through TSM inside
+            // a buffered transaction so IMEs see a complete key stream. If GPUI handled
+            // the key, buffered text changes are discarded; otherwise they are replayed
+            // only for input handlers that opt into IME-first printable keys.
+            //
+            // We also send non-printing keys (like arrow keys and escape) to the IME
+            // first as the IME menu may need them even if there is no marked text;
+            // however we skip keys with control or the input handler adds control-
+            // characters to the buffer, keys with function as the input handler swallows
+            // them, and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`)
+            // are not consumed by the IME on non-QWERTY / dead-key layouts.
             let is_ime_printable_key = !is_composing
                 && key_down_event
                     .keystroke
@@ -2183,35 +2202,81 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 && !key_down_event.keystroke.modifiers.control
                 && !key_down_event.keystroke.modifiers.function
                 && !key_down_event.keystroke.modifiers.platform
-                && unsafe { is_ime_input_source_active() }
+                && unsafe { is_ime_input_source_active() };
+
+            let prefers_ime_for_printable_key = is_ime_printable_key
                 && with_input_handler(this, |input_handler| {
                     input_handler.query_prefers_ime_for_printable_keys()
                 })
                 .unwrap_or(false);
+            let should_send_printable_key_to_ime = is_ime_printable_key && !key_equivalent;
+
+            if is_ime_printable_key {
+                let mut key_down_event_for_keymap = key_down_event.clone();
+                key_down_event_for_keymap.prefer_character_input = prefers_ime_for_printable_key;
+                key_down_event_for_keymap.allow_keybinding_override = true;
+                let handled = run_callback(PlatformInput::KeyDown(key_down_event_for_keymap));
+                if handled == YES {
+                    if should_send_printable_key_to_ime {
+                        let _ = handle_event_with_ime_transaction(
+                            this,
+                            native_event,
+                            key_down_event.clone(),
+                            false,
+                        );
+                    }
+                    return YES;
+                }
+
+                if key_equivalent {
+                    return NO;
+                }
+
+                if !prefers_ime_for_printable_key {
+                    let _ = handle_event_with_ime_transaction(
+                        this,
+                        native_event,
+                        key_down_event.clone(),
+                        false,
+                    );
+                    return NO;
+                }
+            }
 
             if is_composing
-                || is_ime_printable_key
+                || (should_send_printable_key_to_ime && prefers_ime_for_printable_key)
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
                     && !key_down_event.keystroke.modifiers.function
                     && !key_down_event.keystroke.modifiers.platform)
             {
-                {
-                    let mut lock = window_state.as_ref().lock();
-                    lock.keystroke_for_do_command = Some(key_down_event.keystroke.clone());
-                    lock.do_command_handled.take();
-                    drop(lock);
+                let mut key_down_event_for_do_command = key_down_event.clone();
+                if should_send_printable_key_to_ime && prefers_ime_for_printable_key {
+                    key_down_event_for_do_command.prefer_character_input = true;
+                    key_down_event_for_do_command.allow_keybinding_override = true;
                 }
 
-                let handled: BOOL = unsafe {
-                    let input_context: id = msg_send![this, inputContext];
-                    msg_send![input_context, handleEvent: native_event]
-                };
-                window_state.as_ref().lock().keystroke_for_do_command.take();
-                if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+                let (handled, do_command_handled, operations) = handle_event_with_ime_transaction(
+                    this,
+                    native_event,
+                    key_down_event_for_do_command,
+                    true,
+                );
+                if let Some(handled) = do_command_handled {
+                    if handled {
+                        return YES;
+                    } else if !operations.is_empty() {
+                        replay_ime_operations(this, operations);
+                        return YES;
+                    }
                     return handled as BOOL;
                 } else if handled == YES {
+                    replay_ime_operations(this, operations);
                     return YES;
+                }
+
+                if should_send_printable_key_to_ime {
+                    return NO;
                 }
 
                 let handled = run_callback(PlatformInput::KeyDown(key_down_event));
@@ -2781,6 +2846,16 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
+        if buffer_ime_operation(
+            this,
+            BufferedImeOperation::InsertText {
+                text: text.to_string(),
+                replacement_range: replacement_range.clone(),
+            },
+        ) {
+            return;
+        }
+
         with_input_handler(this, |input_handler| {
             input_handler.replace_text_in_range(replacement_range, text)
         });
@@ -2805,12 +2880,27 @@ extern "C" fn set_marked_text(
         let selected_range = selected_range.to_range();
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
+        if buffer_ime_operation(
+            this,
+            BufferedImeOperation::SetMarkedText {
+                text: text.to_string(),
+                selected_range: selected_range.clone(),
+                replacement_range: replacement_range.clone(),
+            },
+        ) {
+            return;
+        }
+
         with_input_handler(this, |input_handler| {
             input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range)
         });
     }
 }
 extern "C" fn unmark_text(this: &Object, _: Sel) {
+    if buffer_ime_operation(this, BufferedImeOperation::UnmarkText) {
+        return;
+    }
+
     with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
 
@@ -2848,16 +2938,20 @@ extern "C" fn attributed_substring_for_proposed_range(
 extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     let state = unsafe { get_window_state(this) };
     let mut lock = state.as_ref().lock();
-    let keystroke = lock.keystroke_for_do_command.take();
+    let Some(transaction) = lock.ime_key_event.as_ref() else {
+        return;
+    };
+    if !transaction.dispatch_do_command {
+        lock.do_command_handled = Some(true);
+        return;
+    }
+
+    let key_down_event = transaction.key_down_event.clone();
     let mut event_callback = lock.event_callback.take();
     drop(lock);
 
-    if let Some((keystroke, callback)) = keystroke.zip(event_callback.as_mut()) {
-        let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
-            keystroke,
-            is_held: false,
-            prefer_character_input: false,
-        }));
+    if let Some(callback) = event_callback.as_mut() {
+        let handled = (callback)(PlatformInput::KeyDown(key_down_event));
         state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }
 
@@ -3052,6 +3146,90 @@ where
     } else {
         None
     }
+}
+
+fn begin_ime_key_event_transaction(
+    window: &Object,
+    key_down_event: KeyDownEvent,
+    dispatch_do_command: bool,
+) {
+    let window_state = unsafe { get_window_state(window) };
+    let mut lock = window_state.lock();
+    lock.ime_key_event = Some(ImeKeyEventTransaction {
+        key_down_event,
+        dispatch_do_command,
+        operations: Vec::new(),
+    });
+    lock.do_command_handled.take();
+}
+
+fn finish_ime_key_event_transaction(window: &Object) -> (Option<bool>, Vec<BufferedImeOperation>) {
+    let window_state = unsafe { get_window_state(window) };
+    let mut lock = window_state.lock();
+    let operations = lock
+        .ime_key_event
+        .take()
+        .map(|transaction| transaction.operations)
+        .unwrap_or_default();
+    let do_command_handled = lock.do_command_handled.take();
+    (do_command_handled, operations)
+}
+
+fn buffer_ime_operation(window: &Object, operation: BufferedImeOperation) -> bool {
+    let window_state = unsafe { get_window_state(window) };
+    let mut lock = window_state.lock();
+    if let Some(transaction) = lock.ime_key_event.as_mut() {
+        transaction.operations.push(operation);
+        true
+    } else {
+        false
+    }
+}
+
+fn replay_ime_operations(window: &Object, operations: Vec<BufferedImeOperation>) {
+    for operation in operations {
+        match operation {
+            BufferedImeOperation::InsertText {
+                text,
+                replacement_range,
+            } => {
+                with_input_handler(window, |input_handler| {
+                    input_handler.replace_text_in_range(replacement_range, &text)
+                });
+            }
+            BufferedImeOperation::SetMarkedText {
+                text,
+                selected_range,
+                replacement_range,
+            } => {
+                with_input_handler(window, |input_handler| {
+                    input_handler.replace_and_mark_text_in_range(
+                        replacement_range,
+                        &text,
+                        selected_range,
+                    )
+                });
+            }
+            BufferedImeOperation::UnmarkText => {
+                with_input_handler(window, |input_handler| input_handler.unmark_text());
+            }
+        }
+    }
+}
+
+fn handle_event_with_ime_transaction(
+    window: &Object,
+    native_event: id,
+    key_down_event: KeyDownEvent,
+    dispatch_do_command: bool,
+) -> (BOOL, Option<bool>, Vec<BufferedImeOperation>) {
+    begin_ime_key_event_transaction(window, key_down_event, dispatch_do_command);
+    let handled = unsafe {
+        let input_context: id = msg_send![window, inputContext];
+        msg_send![input_context, handleEvent: native_event]
+    };
+    let (do_command_handled, operations) = finish_ime_key_event_transaction(window);
+    (handled, do_command_handled, operations)
 }
 
 fn display_id_for_screen(screen: id) -> Option<CGDirectDisplayID> {

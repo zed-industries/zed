@@ -1785,6 +1785,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             keystroke: keystroke.clone(),
                             is_held: false,
                             prefer_character_input: false,
+                            allow_keybinding_override: false,
                         });
 
                         state.repeat.current_id += 1;
@@ -1800,6 +1801,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     keystroke,
                                     is_held: true,
                                     prefer_character_input: false,
+                                    allow_keybinding_override: false,
                                 });
                                 move |event_timestamp, _metadata, this| {
                                     let client = this.get_client();
@@ -1886,6 +1888,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                             },
                             is_held: false,
                             prefer_character_input: false,
+                            allow_keybinding_override: false,
                         }));
                     } else {
                         window.handle_ime(ImeInput::InsertText(commit_text));

@@ -365,6 +365,7 @@ impl WebWindowInner {
                 keystroke,
                 is_held,
                 prefer_character_input: false,
+                allow_keybinding_override: false,
             }));
 
             if let Some(result) = result {

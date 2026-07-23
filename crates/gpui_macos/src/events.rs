@@ -132,6 +132,7 @@ pub(crate) unsafe fn platform_input_from_native(
                 keystroke: parse_keystroke(native_event),
                 is_held: native_event.isARepeat() == YES,
                 prefer_character_input: false,
+                allow_keybinding_override: false,
             })),
             NSEventType::NSKeyUp => Some(PlatformInput::KeyUp(KeyUpEvent {
                 keystroke: parse_keystroke(native_event),

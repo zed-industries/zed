@@ -4769,6 +4769,7 @@ impl Window {
                 keystroke: keystroke.clone(),
                 is_held: false,
                 prefer_character_input: false,
+                allow_keybinding_override: false,
             }),
             cx,
         );
@@ -4993,6 +4994,16 @@ impl Window {
         }
     }
 
+    fn input_handler_accepts_text_input(&mut self, cx: &mut App) -> bool {
+        self.platform_window
+            .take_input_handler()
+            .map_or(false, |mut input_handler| {
+                let accepts = input_handler.accepts_text_input(self, cx);
+                self.platform_window.set_input_handler(input_handler);
+                accepts
+            })
+    }
+
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
@@ -5048,6 +5059,13 @@ impl Window {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
         };
+        let key_down_event = event.downcast_ref::<KeyDownEvent>();
+        let key_down_has_char =
+            key_down_event.is_some_and(|key_down| key_down.keystroke.key_char.is_some());
+        let prefer_character_input =
+            key_down_event.is_some_and(|key_down| key_down.prefer_character_input);
+        let allow_keybinding_override =
+            key_down_event.is_some_and(|key_down| key_down.allow_keybinding_override);
 
         cx.propagate_event = true;
         self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
@@ -5060,6 +5078,7 @@ impl Window {
         if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
             currently_pending = PendingInput::default();
         }
+        let had_pending_input = !currently_pending.keystrokes.is_empty();
 
         let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
             currently_pending.keystrokes,
@@ -5073,72 +5092,63 @@ impl Window {
         }
 
         if !match_result.pending.is_empty() {
-            currently_pending.timer.take();
-            currently_pending.keystrokes = match_result.pending;
-            currently_pending.focus = self.focus;
+            let text_input_accepts = key_down_has_char && self.input_handler_accepts_text_input(cx);
+            let prefer_text_over_new_pending =
+                prefer_character_input && !had_pending_input && text_input_accepts;
 
-            let text_input_requires_timeout = event
-                .downcast_ref::<KeyDownEvent>()
-                .filter(|key_down| key_down.keystroke.key_char.is_some())
-                .and_then(|_| self.platform_window.take_input_handler())
-                .map_or(false, |mut input_handler| {
-                    let accepts = input_handler.accepts_text_input(self, cx);
-                    self.platform_window.set_input_handler(input_handler);
-                    accepts
-                });
+            if !prefer_text_over_new_pending {
+                currently_pending.timer.take();
+                currently_pending.keystrokes = match_result.pending;
+                currently_pending.focus = self.focus;
 
-            currently_pending.needs_timeout |=
-                match_result.pending_has_binding || text_input_requires_timeout;
+                currently_pending.needs_timeout |=
+                    match_result.pending_has_binding || text_input_accepts;
 
-            if currently_pending.needs_timeout {
-                currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
-                    cx.update(move |window, cx| {
-                        let Some(currently_pending) = window
-                            .pending_input
-                            .take()
-                            .filter(|pending| pending.focus == window.focus)
-                        else {
-                            return;
-                        };
+                if currently_pending.needs_timeout {
+                    currently_pending.timer = Some(self.spawn(cx, async move |cx| {
+                        cx.background_executor.timer(Duration::from_secs(1)).await;
+                        cx.update(move |window, cx| {
+                            let Some(currently_pending) = window
+                                .pending_input
+                                .take()
+                                .filter(|pending| pending.focus == window.focus)
+                            else {
+                                return;
+                            };
 
-                        let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                        let dispatch_path =
-                            window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+                            let node_id = window.focus_node_id_in_rendered_frame(window.focus);
+                            let dispatch_path =
+                                window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-                        let to_replay = window
-                            .rendered_frame
-                            .dispatch_tree
-                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                            let to_replay = window
+                                .rendered_frame
+                                .dispatch_tree
+                                .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
-                        window.pending_input_changed(cx);
-                        window.replay_pending_input(to_replay, cx)
-                    })
-                    .log_err();
-                }));
-            } else {
-                currently_pending.timer = None;
+                            window.pending_input_changed(cx);
+                            window.replay_pending_input(to_replay, cx)
+                        })
+                        .log_err();
+                    }));
+                } else {
+                    currently_pending.timer = None;
+                }
+                self.pending_input = Some(currently_pending);
+                self.pending_input_changed(cx);
+                cx.propagate_event = false;
+                return;
             }
-            self.pending_input = Some(currently_pending);
+
+            cx.propagate_event = true;
             self.pending_input_changed(cx);
-            cx.propagate_event = false;
             return;
         }
 
-        let skip_bindings = event
-            .downcast_ref::<KeyDownEvent>()
-            .filter(|key_down_event| key_down_event.prefer_character_input)
-            .map(|_| {
-                self.platform_window
-                    .take_input_handler()
-                    .map_or(false, |mut input_handler| {
-                        let accepts = input_handler.accepts_text_input(self, cx);
-                        self.platform_window.set_input_handler(input_handler);
-                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
-                        // we prefer the text input over bindings.
-                        accepts
-                    })
+        let skip_bindings = key_down_event
+            .filter(|key_down_event| {
+                key_down_event.prefer_character_input && !key_down_event.allow_keybinding_override
             })
+            .map(|_| self.input_handler_accepts_text_input(cx))
             .unwrap_or(false);
 
         if !skip_bindings {
@@ -5155,6 +5165,15 @@ impl Window {
                     return;
                 }
             }
+        }
+
+        if prefer_character_input
+            && allow_keybinding_override
+            && key_down_has_char
+            && self.input_handler_accepts_text_input(cx)
+        {
+            self.pending_input_changed(cx);
+            return;
         }
 
         self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
@@ -5263,6 +5282,7 @@ impl Window {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
                 prefer_character_input: true,
+                allow_keybinding_override: false,
             };
 
             cx.propagate_event = true;

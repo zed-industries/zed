@@ -417,6 +417,7 @@ impl WindowsWindowInner {
                     keystroke,
                     is_held: lparam.0 & (0x1 << 30) > 0,
                     prefer_character_input,
+                    allow_keybinding_override: false,
                 })
             },
         ) else {
