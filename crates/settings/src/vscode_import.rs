@@ -272,6 +272,7 @@ impl VsCodeSettings {
             sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
             go_to_definition_scroll_strategy: None,
+            lsp_results_location: None,
             gutter: self.gutter_content(),
             horizontal_scroll_margin: None,
             hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
@@ -641,7 +642,7 @@ impl VsCodeSettings {
         }
     }
 
-    fn file_types(&self) -> Option<HashMap<Arc<str>, ExtendingVec<String>>> {
+    fn file_types(&self) -> Option<FileTypeMap> {
         // vscodes file association map is inverted from ours, so we flip the mapping before merging
         let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
         let map = self.read_value("files.associations")?.as_object()?;
@@ -649,7 +650,7 @@ impl VsCodeSettings {
             let Some(v) = v.as_str() else { continue };
             associations.entry(v.into()).or_default().0.push(k.clone());
         }
-        skip_default(associations)
+        skip_default(FileTypeMap(associations))
     }
 
     fn edit_predictions_settings_content(&self) -> Option<EditPredictionSettingsContent> {

@@ -59,6 +59,10 @@ message Envelope {
 
     GetDefinition get_definition = 32;
     GetDefinitionResponse get_definition_response = 33;
+    GetEditPredictionDefinition get_edit_prediction_definition = 462;
+    GetEditPredictionDefinitionResponse get_edit_prediction_definition_response = 463;
+    GetEditPredictionTypeDefinition get_edit_prediction_type_definition = 464;
+    GetEditPredictionTypeDefinitionResponse get_edit_prediction_type_definition_response = 465;
     GetDeclaration get_declaration = 237;
     GetDeclarationResponse get_declaration_response = 238;
     GetTypeDefinition get_type_definition = 34;
@@ -489,7 +493,19 @@ message Envelope {
     GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
     TelemetryEvent telemetry_event = 459;
     ResolveCodeAction resolve_code_action = 460;
-    ResolveCodeActionResponse resolve_code_action_response = 461; // current max
+    ResolveCodeActionResponse resolve_code_action_response = 461;
+    TrashProjectEntry trash_project_entry = 466;
+    TrashProjectEntryResponse trash_project_entry_response = 467;
+    RestoreProjectEntry restore_project_entry = 468;
+    RestoreProjectEntryResponse restore_project_entry_response = 469;
+    GitAddPathToGitignore git_add_path_to_gitignore = 470;
+    GitAddPathToGitInfoExclude git_add_path_to_git_info_exclude = 471;
+    LoadCommitTemplate load_commit_template = 472;
+    LoadCommitTemplateResponse load_commit_template_response = 473;
+    RefreshDocumentColors refresh_document_colors = 474;
+    RefreshDocumentLinks refresh_document_links = 475;
+    RefreshFoldingRanges refresh_folding_ranges = 476;
+    RefreshDocumentSymbols refresh_document_symbols = 477; // current max
   }
 
   reserved 87 to 88;
