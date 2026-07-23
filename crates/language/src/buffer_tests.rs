@@ -20,7 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
-use syntax_map::TreeSitterOptions;
+use syntax_map::{MAX_BYTES_TO_QUERY, TreeSitterOptions};
 use text::network::Network;
 use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
@@ -768,9 +768,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
         "(source_file (expression_statement (block)))"
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(json_lang())), cx)
-    });
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(json_lang()), cx));
     cx.executor().run_until_parked();
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
@@ -1417,6 +1415,51 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
         Vec::new(),
         cx,
     );
+}
+
+#[gpui::test]
+fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut App) {
+    let mut text = String::from("{\n  \"theme\": {\n");
+    let mut property_object_open_offsets = Vec::new();
+    for index in 0..500 {
+        text.push_str(&format!("    \"scope_{index:03}\": "));
+        property_object_open_offsets.push(text.len());
+        text.push_str("{\n      \"color\": \"#ffffff\"\n    },\n");
+    }
+    text.push_str("    \"last\": {}\n  }\n}\n");
+    assert!(
+        text.len() > MAX_BYTES_TO_QUERY,
+        "fixture should exceed the bounded tree-sitter query window"
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(json_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let late_open_offset = property_object_open_offsets[400];
+    let late_matches = snapshot.fetch_bracket_ranges(late_open_offset..late_open_offset + 1, None);
+    let late_color_index = color_index_for_open(&late_matches, late_open_offset);
+
+    assert_eq!(
+        late_color_index,
+        Some(2),
+        "Jumping directly into a later row chunk should preserve enclosing JSON object depth"
+    );
+
+    let first_open_offset = property_object_open_offsets[0];
+    let all_matches = snapshot.fetch_bracket_ranges(0..snapshot.len(), None);
+    assert_eq!(
+        color_index_for_open(&all_matches, first_open_offset),
+        late_color_index,
+        "Sibling object braces should keep the same color across row chunks"
+    );
+
+    for open_offset in property_object_open_offsets {
+        assert_eq!(
+            color_index_for_open(&all_matches, open_offset),
+            late_color_index,
+            "All generated sibling object braces should share the same depth color"
+        );
+    }
 }
 
 #[gpui::test]
@@ -4393,18 +4436,15 @@ fn erb_lang() -> Language {
     .unwrap()
 }
 
-fn json_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Json".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_json::LANGUAGE.into()),
-    )
+fn color_index_for_open(
+    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>>,
+    open_offset: usize,
+) -> Option<usize> {
+    matches
+        .values()
+        .flatten()
+        .find(|bracket_match| bracket_match.open_range.start == open_offset)
+        .and_then(|bracket_match| bracket_match.color_index)
 }
 
 fn javascript_lang() -> Language {
