@@ -4500,6 +4500,10 @@ impl GitStore {
         self.diff_base.repos.get(&id)?.tree_diff.clone()
     }
 
+    pub fn merge_base_ref_for_repo(&self, id: RepositoryId) -> Option<SharedString> {
+        self.diff_base.repos.get(&id)?.resolved_ref.clone()
+    }
+
     fn refresh_diff_base_for_repo(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
         if self.diff_base.setting == GitDiffBaseSetting::Head {
             return;
