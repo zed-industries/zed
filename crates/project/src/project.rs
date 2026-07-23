@@ -25,7 +25,7 @@ pub mod trusted_worktrees;
 pub mod worktree_store;
 
 mod environment;
-use buffer_diff::BufferDiff;
+use buffer_diff::{BufferDiff, ResolvedLineSelection};
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
@@ -3323,6 +3323,26 @@ impl Project {
         }
         self.git_store.update(cx, |git_store, cx| {
             git_store.stage_hunks(buffer, unstaged_diff, worktree_ranges, cx)
+        })
+    }
+
+    /// Stages or unstages the selected lines (in the worktree buffer's
+    /// coordinates for added lines, and the uncommitted diff's base text
+    /// coordinates for deleted lines), acting on the given uncommitted diff.
+    /// Used by the uncommitted (gutter) controls.
+    pub fn stage_or_unstage_lines(
+        &mut self,
+        stage: bool,
+        buffer: Entity<Buffer>,
+        uncommitted_diff: Entity<BufferDiff>,
+        selections: Vec<ResolvedLineSelection>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if self.is_disconnected(cx) {
+            return Err(anyhow!(ErrorCode::Disconnected));
+        }
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.stage_or_unstage_lines(stage, buffer, uncommitted_diff, selections, cx)
         })
     }
 

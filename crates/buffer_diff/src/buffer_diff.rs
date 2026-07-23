@@ -2,7 +2,7 @@ use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use imara_diff::{Algorithm, Diff, InternedInput, sources::lines};
 use language::{
     Capability, DiffOptions, Language, LanguageName, LanguageRegistry,
-    language_settings::LanguageSettings, word_diff_ranges,
+    language_settings::LanguageSettings, line_diff, word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -91,7 +91,7 @@ pub enum DiffHunkSecondaryStatus {
     NoSecondaryHunk,
     /// We are unstaging
     SecondaryHunkAdditionPending,
-    /// We are stagind
+    /// We are staging
     SecondaryHunkRemovalPending,
 }
 
@@ -109,6 +109,19 @@ pub struct DiffHunk {
     pub buffer_word_diffs: Vec<Range<Anchor>>,
     // Offsets relative to the start of the deleted diff that represent word diff locations
     pub base_word_diffs: Vec<Range<usize>>,
+    pub staged_added: Vec<Range<u32>>,
+    pub staged_deleted: Vec<Range<u32>>,
+}
+
+/// A selected span of lines in a diff, resolved to rows in a single buffer.
+///
+/// When `is_deleted` is false, `rows` are absolute rows in the buffer. When
+/// `is_deleted` is true, `rows` are absolute rows in the diff's base text,
+/// selecting lines of a deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedLineSelection {
+    pub rows: Range<u32>,
+    pub is_deleted: bool,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -127,6 +140,8 @@ pub struct PendingHunk {
     diff_base_byte_range: Range<usize>,
     buffer_version: clock::Global,
     sense: PendingSense,
+    staged_added: Vec<Range<Anchor>>,
+    staged_deleted: Vec<Range<u32>>,
 }
 
 impl PendingHunk {
@@ -135,12 +150,16 @@ impl PendingHunk {
         diff_base_byte_range: Range<usize>,
         buffer_version: clock::Global,
         sense: PendingSense,
+        staged_added: Vec<Range<Anchor>>,
+        staged_deleted: Vec<Range<u32>>,
     ) -> Self {
         Self {
             buffer_range,
             diff_base_byte_range,
             buffer_version,
             sense,
+            staged_added,
+            staged_deleted,
         }
     }
 }
@@ -149,7 +168,9 @@ impl PendingHunk {
 pub enum PendingSense {
     /// Override the secondary status of the matched hunk (used by the
     /// uncommitted diff to show a hunk as staging/unstaging in place).
-    SetSecondaryStatus { stage: bool },
+    Stage,
+    Unstage,
+    PartiallyStage,
     /// Suppress the matched hunk entirely (used by the unstaged/staged diffs so
     /// that a hunk disappears the moment it is staged/unstaged).
     Suppress,
@@ -337,13 +358,22 @@ impl BufferDiffSnapshot {
             .filter::<_, DiffHunkSummary>(buffer, filter)
             .map(move |hunk| {
                 let buffer_range = hunk.buffer_range.clone();
+                let range = buffer_range.to_point(buffer);
+                let base_span = base_row_span(
+                    &self.base_text,
+                    &hunk.diff_base_byte_range,
+                    &hunk.diff_base_point_range,
+                );
+
                 DiffHunk {
-                    range: buffer_range.to_point(buffer),
+                    range: range.clone(),
                     diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                     buffer_range,
                     secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                     base_word_diffs: hunk.base_word_diffs.clone(),
                     buffer_word_diffs: hunk.buffer_word_diffs.clone(),
+                    staged_added: vec![buffer_row_span(&range)],
+                    staged_deleted: vec![0..(base_span.end - base_span.start)],
                 }
             })
     }
@@ -797,7 +827,11 @@ impl BufferDiffSnapshot {
         let index_text = unstaged_diff
             .base_text_exists
             .then(|| unstaged_diff.base_text.as_rope().clone());
-        let sense = PendingSense::SetSecondaryStatus { stage };
+        let sense = if stage {
+            PendingSense::Stage
+        } else {
+            PendingSense::Unstage
+        };
         let version = buffer.version().clone();
 
         // If the file doesn't exist in either HEAD or the index, then the
@@ -819,6 +853,20 @@ impl BufferDiffSnapshot {
                     0..index_len,
                     version,
                     sense,
+                    if stage && file_exists {
+                        vec![Anchor::min_max_range_for_buffer(buffer.remote_id())]
+                    } else {
+                        vec![]
+                    },
+                    if stage && self.base_text_exists {
+                        vec![base_row_span(
+                            &self.base_text,
+                            &(0..self.base_text.len()),
+                            &(Point::new(0, 0)..self.base_text.max_point()),
+                        )]
+                    } else {
+                        vec![]
+                    },
                 )];
                 let edits =
                     new_index_text.map(|rope| vec![(0..index_len, Arc::from(rope.to_string()))]);
@@ -853,6 +901,14 @@ impl BufferDiffSnapshot {
                 diff_base_byte_range.clone(),
                 version.clone(),
                 sense,
+                hunk.staged_added
+                    .iter()
+                    .map(|range| {
+                        buffer.anchor_before(Point::new(range.start, 0))
+                            ..buffer.anchor_before(Point::new(range.end, 0))
+                    })
+                    .collect(),
+                hunk.staged_deleted.clone(),
             ));
 
             // Advance unstaged_hunk_cursor to skip unstaged hunks before current hunk
@@ -901,6 +957,15 @@ impl BufferDiffSnapshot {
                             merged_hunk.diff_base_byte_range.clone(),
                             version.clone(),
                             sense,
+                            merged_hunk
+                                .staged_added
+                                .iter()
+                                .map(|range| {
+                                    buffer.anchor_before(Point::new(range.start, 0))
+                                        ..buffer.anchor_before(Point::new(range.end, 0))
+                                })
+                                .collect(),
+                            merged_hunk.staged_deleted.clone(),
                         ));
                         continue;
                     }
@@ -1018,6 +1083,8 @@ impl BufferDiffSnapshot {
             secondary_cursor = Some(cursor);
         }
 
+        let mut head_to_index_edits: Option<Vec<(Range<u32>, Range<u32>)>> = None;
+
         let max_point = buffer.max_point();
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || {
@@ -1032,6 +1099,13 @@ impl BufferDiffSnapshot {
                     continue;
                 }
 
+                let buffer_span = buffer_row_span(&(start_point..end_point));
+                let base_span = base_row_span(
+                    &self.base_text,
+                    &hunk.diff_base_byte_range,
+                    &hunk.diff_base_point_range,
+                );
+
                 if end_point.column > 0 && end_point < max_point {
                     end_point.row += 1;
                     end_point.column = 0;
@@ -1039,6 +1113,8 @@ impl BufferDiffSnapshot {
                 }
 
                 let mut secondary_status = DiffHunkSecondaryStatus::NoSecondaryHunk;
+                let mut staged_added = vec![buffer_span.clone()];
+                let mut staged_deleted = vec![0..(base_span.end - base_span.start)];
 
                 let mut has_pending = false;
                 if start_anchor
@@ -1049,29 +1125,34 @@ impl BufferDiffSnapshot {
                 }
 
                 if let Some(pending_hunk) = pending_hunks_cursor.item() {
-                    let mut pending_range = pending_hunk.buffer_range.to_point(buffer);
-                    if pending_range.end.column > 0 {
-                        pending_range.end.row += 1;
-                        pending_range.end.column = 0;
-                    }
+                    let pending_span = buffer_row_span(&pending_hunk.buffer_range.to_point(buffer));
 
-                    if pending_range == (start_point..end_point)
+                    if pending_span == buffer_span
                         && !buffer.has_edits_since_in_range(
                             &pending_hunk.buffer_version,
                             start_anchor..end_anchor,
                         )
                     {
-                        match pending_hunk.sense {
-                            PendingSense::SetSecondaryStatus { stage } => {
-                                has_pending = true;
-                                secondary_status = if stage {
-                                    DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
-                                } else {
-                                    DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                                };
+                        let pending_secondary_status = match pending_hunk.sense {
+                            PendingSense::Stage => {
+                                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                            }
+                            PendingSense::Unstage => {
+                                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                            }
+                            PendingSense::PartiallyStage => {
+                                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
                             }
                             PendingSense::Suppress => continue,
-                        }
+                        };
+                        staged_added = pending_hunk
+                            .staged_added
+                            .iter()
+                            .map(|anchor_range| buffer_row_span(&anchor_range.to_point(buffer)))
+                            .collect();
+                        staged_deleted = pending_hunk.staged_deleted.clone();
+                        has_pending = true;
+                        secondary_status = pending_secondary_status;
                     }
                 }
 
@@ -1084,19 +1165,88 @@ impl BufferDiffSnapshot {
                     }
 
                     if let Some(secondary_hunk) = secondary_cursor.item() {
-                        let mut secondary_range = secondary_hunk.buffer_range.to_point(buffer);
-                        if secondary_range.end.column > 0 {
-                            secondary_range.end.row += 1;
-                            secondary_range.end.column = 0;
-                        }
+                        let secondary_range =
+                            buffer_row_span(&secondary_hunk.buffer_range.to_point(buffer));
                         if secondary_range.is_empty()
                             && secondary_hunk.diff_base_byte_range.is_empty()
                         {
                             // ignore
-                        } else if secondary_range == (start_point..end_point) {
+                        } else if secondary_range == buffer_span
+                            && secondary_hunk.diff_base_byte_range.len() == end_base - start_base
+                        {
                             secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
-                        } else if secondary_range.start <= end_point {
+                            staged_added = vec![];
+                            staged_deleted = vec![];
+                        } else if secondary_range.start <= buffer_span.end {
                             secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
+                            staged_added = vec![];
+                            staged_deleted = vec![];
+
+                            let mut new_unstaged_added = vec![];
+                            while let Some(secondary_hunk) = secondary_cursor.item() {
+                                let secondary_addition_range =
+                                    buffer_row_span(&secondary_hunk.buffer_range.to_point(buffer));
+                                if secondary_addition_range.start >= buffer_span.end {
+                                    break;
+                                }
+                                let overlap_start =
+                                    secondary_addition_range.start.max(start_point.row);
+                                let overlap_end = secondary_addition_range.end.min(buffer_span.end);
+                                if overlap_start < overlap_end {
+                                    new_unstaged_added.push(overlap_start..overlap_end);
+                                }
+                                if secondary_addition_range.end > buffer_span.end {
+                                    break;
+                                }
+                                secondary_cursor.next();
+                            }
+                            let mut row = buffer_span.start;
+                            for unstaged_range in &new_unstaged_added {
+                                if row < unstaged_range.start {
+                                    staged_added.push(row..unstaged_range.start);
+                                }
+                                row = unstaged_range.end;
+                            }
+                            if row < buffer_span.end {
+                                staged_added.push(row..buffer_span.end);
+                            }
+
+                            if let Some(secondary) = secondary {
+                                let edits = head_to_index_edits.get_or_insert_with(|| {
+                                    let mut head_text = if self.base_text_exists {
+                                        self.base_text.text()
+                                    } else {
+                                        String::new()
+                                    };
+                                    let mut index_text = if secondary.base_text_exists {
+                                        secondary.base_text.text()
+                                    } else {
+                                        String::new()
+                                    };
+                                    // Normalize trailing newlines so a final line without
+                                    // one isn't reported as a modification of itself.
+                                    if !head_text.is_empty() && !head_text.ends_with('\n') {
+                                        head_text.push('\n');
+                                    }
+                                    if !index_text.is_empty() && !index_text.ends_with('\n') {
+                                        index_text.push('\n');
+                                    }
+                                    line_diff(&head_text, &index_text)
+                                });
+                                for (head_rows, _) in edits.iter() {
+                                    let overlap_start = head_rows
+                                        .start
+                                        .max(base_span.start)
+                                        .saturating_sub(base_span.start);
+                                    let overlap_end = head_rows
+                                        .end
+                                        .min(base_span.end)
+                                        .saturating_sub(base_span.start);
+                                    if overlap_start < overlap_end {
+                                        staged_deleted.push(overlap_start..overlap_end);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1108,6 +1258,8 @@ impl BufferDiffSnapshot {
                     base_word_diffs,
                     buffer_word_diffs,
                     secondary_status,
+                    staged_added,
+                    staged_deleted,
                 });
             }
         })
@@ -1125,6 +1277,13 @@ impl BufferDiffSnapshot {
 
             let hunk = cursor.item()?;
             let range = hunk.buffer_range.to_point(buffer);
+            let staged_added = vec![buffer_row_span(&range)];
+            let base_span = base_row_span(
+                &self.base_text,
+                &hunk.diff_base_byte_range,
+                &hunk.diff_base_point_range,
+            );
+            let staged_deleted = vec![0..(base_span.end - base_span.start)];
 
             Some(DiffHunk {
                 range,
@@ -1134,6 +1293,8 @@ impl BufferDiffSnapshot {
                 secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
                 base_word_diffs: hunk.base_word_diffs.clone(),
                 buffer_word_diffs: hunk.buffer_word_diffs.clone(),
+                staged_added,
+                staged_deleted,
             })
         })
     }
@@ -1772,7 +1933,11 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        let sense = PendingSense::SetSecondaryStatus { stage };
+        let sense = if stage {
+            PendingSense::Stage
+        } else {
+            PendingSense::Unstage
+        };
         let version = buffer.version().clone();
         let hunks = self
             .snapshot(cx)
@@ -1788,6 +1953,14 @@ impl BufferDiff {
                     hunk.diff_base_byte_range,
                     version.clone(),
                     sense,
+                    hunk.staged_added
+                        .iter()
+                        .map(|range| {
+                            buffer.anchor_before(Point::new(range.start, 0))
+                                ..buffer.anchor_before(Point::new(range.end, 0))
+                        })
+                        .collect(),
+                    hunk.staged_deleted,
                 )
             })
             .collect::<Vec<_>>();
@@ -1812,6 +1985,14 @@ impl BufferDiff {
                     hunk.diff_base_byte_range,
                     version.clone(),
                     PendingSense::Suppress,
+                    hunk.staged_added
+                        .iter()
+                        .map(|range| {
+                            buffer.anchor_before(Point::new(range.start, 0))
+                                ..buffer.anchor_before(Point::new(range.end, 0))
+                        })
+                        .collect(),
+                    hunk.staged_deleted.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -2252,6 +2433,35 @@ impl BufferDiff {
     pub fn base_text_buffer(&self) -> &Entity<language::Buffer> {
         &self.base_text_buffer
     }
+}
+
+/// Absolute buffer row span of a hunk's point range. A point range that ends
+/// mid-line (`column > 0`, e.g. a final line with no trailing newline) still
+/// covers that last row, so the end row is bumped by one in that case.
+pub fn buffer_row_span(range: &Range<Point>) -> Range<u32> {
+    let end_row = if range.end.column > 0 {
+        range.end.row + 1
+    } else {
+        range.end.row
+    };
+    range.start.row..end_row
+}
+
+/// Absolute base-text row span of a hunk's deleted range. The base text is
+/// offset-addressed, so "does this end on a line boundary" is a trailing-newline
+/// test rather than the buffer side's column check.
+pub fn base_row_span(
+    base_text: &text::BufferSnapshot,
+    bytes: &Range<usize>,
+    points: &Range<Point>,
+) -> Range<u32> {
+    let end_row =
+        if bytes.end > bytes.start && base_text.reversed_chars_at(bytes.end).next() != Some('\n') {
+            points.end.row + 1
+        } else {
+            points.end.row
+        };
+    points.start.row..end_row
 }
 
 impl DiffHunk {
@@ -3075,12 +3285,19 @@ mod tests {
         // Install a whole-file pending hunk, as the no-HEAD staging paths do.
         let version = buffer.version();
         diff.update(cx, |diff, cx| {
+            let base = diff.base_text(cx);
             diff.set_pending_hunks(
                 &[PendingHunk::new(
                     Anchor::min_max_range_for_buffer(buffer.remote_id()),
                     0..base_text.len(),
                     version.clone(),
-                    PendingSense::SetSecondaryStatus { stage: true },
+                    PendingSense::Stage,
+                    vec![Anchor::min_max_range_for_buffer(buffer.remote_id())],
+                    vec![base_row_span(
+                        &base,
+                        &(0..base.len()),
+                        &(Point::new(0, 0)..base.max_point()),
+                    )],
                 )],
                 &buffer,
                 cx,
@@ -3094,12 +3311,24 @@ mod tests {
         // Replace it with a narrower hunk; the emitted change must still cover
         // the whole extent of the replaced hunk.
         diff.update(cx, |diff, cx| {
+            let base = diff.base_text(cx);
+            let added_range =
+                buffer.anchor_before(Point::new(3, 0))..buffer.anchor_before(Point::new(4, 0));
+            let deleted_range = base_text.find("three").unwrap()..base_text.find("four").unwrap();
+            let deleted_span = base_row_span(
+                &base.text,
+                &deleted_range,
+                &(base.offset_to_point(deleted_range.start)
+                    ..base.offset_to_point(deleted_range.end)),
+            );
             diff.set_pending_hunks(
                 &[PendingHunk::new(
-                    buffer.anchor_before(Point::new(3, 0))..buffer.anchor_before(Point::new(4, 0)),
-                    base_text.find("three").unwrap()..base_text.find("four").unwrap(),
+                    added_range.clone(),
+                    deleted_range,
                     version,
                     PendingSense::Suppress,
+                    vec![added_range],
+                    vec![deleted_span],
                 )],
                 &buffer,
                 cx,

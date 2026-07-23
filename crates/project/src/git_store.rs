@@ -15,7 +15,10 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense};
+use buffer_diff::{
+    BufferDiff, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense,
+    ResolvedLineSelection, base_row_span, buffer_row_span,
+};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
@@ -83,7 +86,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
-use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
+use text::{Bias, BufferId, OffsetRangeExt, Point, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
     paths::{PathStyle, SanitizedPath},
@@ -167,6 +170,7 @@ fn pending_hunks(
     hunks: &[DiffHunk],
     version: &clock::Global,
     sense: PendingSense,
+    buffer: &text::BufferSnapshot,
 ) -> Vec<PendingHunk> {
     hunks
         .iter()
@@ -176,9 +180,37 @@ fn pending_hunks(
                 hunk.diff_base_byte_range.clone(),
                 version.clone(),
                 sense,
+                hunk.staged_added
+                    .iter()
+                    .map(|range| {
+                        buffer.anchor_before(rope::Point::new(range.start, 0))
+                            ..buffer.anchor_before(rope::Point::new(range.end, 0))
+                    })
+                    .collect(),
+                hunk.staged_deleted.clone(),
             )
         })
         .collect()
+}
+
+fn selected_rows_in_span(selections: &[ResolvedLineSelection], span: &Range<u32>) -> BTreeSet<u32> {
+    selections
+        .iter()
+        .flat_map(|selection| {
+            selection.rows.start.max(span.start)..selection.rows.end.min(span.end)
+        })
+        .collect()
+}
+
+fn row_set_to_ranges(rows: &BTreeSet<u32>) -> Vec<Range<u32>> {
+    let mut ranges: Vec<Range<u32>> = Vec::new();
+    for &row in rows {
+        match ranges.last_mut() {
+            Some(last) if last.end == row => last.end = row + 1,
+            _ => ranges.push(row..row + 1),
+        }
+    }
+    ranges
 }
 
 #[derive(Clone, Debug)]
@@ -1227,11 +1259,17 @@ impl GitStore {
         };
 
         let version = buffer_snapshot.version().clone();
-        let unstaged_pending = pending_hunks(&unstaged_hunks, &version, PendingSense::Suppress);
+        let unstaged_pending = pending_hunks(
+            &unstaged_hunks,
+            &version,
+            PendingSense::Suppress,
+            &buffer_snapshot,
+        );
         let uncommitted_pending = pending_hunks(
             &uncommitted_hunks,
             &version,
-            PendingSense::SetSecondaryStatus { stage: true },
+            PendingSense::Stage,
+            &buffer_snapshot,
         );
         drop(unstaged_snapshot);
 
@@ -1253,6 +1291,219 @@ impl GitStore {
         unstaged_diff.update(cx, |diff, cx| {
             diff.set_pending_hunks(&unstaged_pending, &buffer_snapshot, cx);
         });
+
+        self.write_optimistic_index(buffer_id, cx);
+        Ok(())
+    }
+
+    /// Stages (or unstages) the selected lines of the uncommitted hunks they
+    /// cover, invoked from the uncommitted (gutter) controls. Added selections
+    /// are in worktree buffer rows; deleted selections are in rows of the
+    /// uncommitted diff's base (HEAD) text.
+    pub fn stage_or_unstage_lines(
+        &mut self,
+        stage: bool,
+        buffer: Entity<Buffer>,
+        uncommitted_diff: Entity<BufferDiff>,
+        selections: Vec<ResolvedLineSelection>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if selections.is_empty() {
+            return Ok(());
+        }
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
+
+        let uncommitted_diff = self
+            .get_uncommitted_diff(buffer_id, cx)
+            .unwrap_or(uncommitted_diff);
+        let unstaged_diff = uncommitted_diff.read(cx).secondary_diff();
+        let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+        let unstaged_snapshot = uncommitted_snapshot
+            .secondary_diff()
+            .context("diff has no unstaged secondary")?;
+        let head_base_text = uncommitted_snapshot.base_text();
+
+        let (selected_added_rows, selected_deleted_rows): (Vec<_>, Vec<_>) = selections
+            .into_iter()
+            .partition(|selection| !selection.is_deleted);
+
+        // Collect the uncommitted hunks the selections cover: added selections
+        // are located in worktree coordinates, deleted selections in base text
+        // coordinates. Hunks are read with pending overrides applied so that
+        // consecutive line operations compose before the index write settles.
+        let mut hunks = Vec::new();
+        for selection in &selected_added_rows {
+            let start = buffer_snapshot.clip_point(Point::new(selection.rows.start, 0), Bias::Left);
+            let end = buffer_snapshot.clip_point(Point::new(selection.rows.end, 0), Bias::Left);
+            let range = buffer_snapshot.anchor_before(start)..buffer_snapshot.anchor_before(end);
+            hunks.extend(uncommitted_snapshot.hunks_intersecting_range(range, &buffer_snapshot));
+        }
+        for selection in &selected_deleted_rows {
+            let start = head_base_text.clip_point(Point::new(selection.rows.start, 0), Bias::Left);
+            let end = head_base_text.clip_point(Point::new(selection.rows.end, 0), Bias::Left);
+            let range = head_base_text.point_to_offset(start)..head_base_text.point_to_offset(end);
+            hunks.extend(
+                uncommitted_snapshot.hunks_intersecting_base_text_range(range, &buffer_snapshot),
+            );
+        }
+        hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        let version = buffer_snapshot.version().clone();
+        let mut index_edits = Vec::new();
+        let mut index_footprints = Vec::new();
+        let mut uncommitted_pending = Vec::new();
+        let mut suppressed_unstaged_hunks = Vec::new();
+
+        for hunk in &hunks {
+            let buffer_span = buffer_row_span(&hunk.range);
+            let base_point_range = head_base_text.offset_to_point(hunk.diff_base_byte_range.start)
+                ..head_base_text.offset_to_point(hunk.diff_base_byte_range.end);
+            let base_span = base_row_span(
+                head_base_text,
+                &hunk.diff_base_byte_range,
+                &base_point_range,
+            );
+            let base_row_count = base_span.end - base_span.start;
+
+            let selected_added = selected_rows_in_span(&selected_added_rows, &buffer_span);
+            // Deleted rows are tracked relative to the hunk's base region, the
+            // same convention as `DiffHunk::staged_deleted`.
+            let selected_deleted = selected_rows_in_span(&selected_deleted_rows, &base_span)
+                .into_iter()
+                .map(|row| row - base_span.start)
+                .collect::<BTreeSet<u32>>();
+            if selected_added.is_empty() && selected_deleted.is_empty() {
+                continue;
+            }
+
+            let mut desired_added = hunk
+                .staged_added
+                .iter()
+                .flat_map(|rows| rows.clone())
+                .collect::<BTreeSet<u32>>();
+            let mut desired_deleted = hunk
+                .staged_deleted
+                .iter()
+                .flat_map(|rows| rows.clone())
+                .collect::<BTreeSet<u32>>();
+            if stage {
+                desired_added.extend(selected_added);
+                desired_deleted.extend(selected_deleted);
+            } else {
+                desired_added.retain(|row| !selected_added.contains(row));
+                desired_deleted.retain(|row| !selected_deleted.contains(row));
+            }
+
+            if file_exists {
+                // Rebuild the hunk's index region from scratch: the deletion
+                // lines that remain unstaged (from HEAD), followed by the added
+                // lines that are staged (from the worktree buffer).
+                let index_range = unstaged_snapshot
+                    .base_text_range_for_buffer_range(hunk.buffer_range.clone(), &buffer_snapshot);
+                let base_region_text = head_base_text
+                    .text_for_range(hunk.diff_base_byte_range.clone())
+                    .collect::<String>();
+                let mut replacement = String::new();
+                for (row, line) in base_region_text.split_inclusive('\n').enumerate() {
+                    if !desired_deleted.contains(&(row as u32)) {
+                        replacement.push_str(line);
+                    }
+                }
+                // A retained final base line without a trailing newline would
+                // otherwise fuse with the first staged addition.
+                if !replacement.is_empty()
+                    && !replacement.ends_with('\n')
+                    && !desired_added.is_empty()
+                {
+                    replacement.push('\n');
+                }
+                let hunk_offset_range = hunk.buffer_range.to_offset(&buffer_snapshot);
+                let hunk_start_row = buffer_snapshot.offset_to_point(hunk_offset_range.start).row;
+                let buffer_region_text = buffer_snapshot
+                    .text_for_range(hunk_offset_range)
+                    .collect::<String>();
+                for (row, line) in buffer_region_text.split_inclusive('\n').enumerate() {
+                    if desired_added.contains(&(hunk_start_row + row as u32)) {
+                        replacement.push_str(line);
+                    }
+                }
+                index_edits.push((index_range.clone(), Arc::<str>::from(replacement)));
+                index_footprints.push(index_range);
+            }
+
+            let fully_staged = buffer_span.clone().all(|row| desired_added.contains(&row))
+                && (0..base_row_count).all(|row| desired_deleted.contains(&row));
+            let fully_unstaged = desired_added.is_empty() && desired_deleted.is_empty();
+            let sense = if fully_staged {
+                PendingSense::Stage
+            } else if fully_unstaged {
+                PendingSense::Unstage
+            } else {
+                PendingSense::PartiallyStage
+            };
+
+            if fully_staged {
+                // Like whole-hunk staging, the corresponding unstaged hunks
+                // disappear the moment they are staged.
+                suppressed_unstaged_hunks.extend(
+                    unstaged_snapshot
+                        .raw_hunks_intersecting_range(hunk.buffer_range.clone(), &buffer_snapshot),
+                );
+            }
+
+            uncommitted_pending.push(PendingHunk::new(
+                hunk.buffer_range.clone(),
+                hunk.diff_base_byte_range.clone(),
+                version.clone(),
+                sense,
+                row_set_to_ranges(&desired_added)
+                    .into_iter()
+                    .map(|rows| {
+                        let start =
+                            buffer_snapshot.clip_point(Point::new(rows.start, 0), Bias::Left);
+                        let end = buffer_snapshot.clip_point(Point::new(rows.end, 0), Bias::Left);
+                        buffer_snapshot.anchor_before(start)..buffer_snapshot.anchor_before(end)
+                    })
+                    .collect(),
+                row_set_to_ranges(&desired_deleted),
+            ));
+        }
+
+        suppressed_unstaged_hunks
+            .sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        suppressed_unstaged_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+        let unstaged_pending = pending_hunks(
+            &suppressed_unstaged_hunks,
+            &version,
+            PendingSense::Suppress,
+            &buffer_snapshot,
+        );
+        drop(uncommitted_snapshot);
+
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.remove_overlapping_pending_index_edits(&index_footprints);
+            // The worktree file is gone: staging removes it from the index.
+            diff_state.insert_pending_index_edits(file_exists.then_some(index_edits));
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&uncommitted_pending, &buffer_snapshot, cx);
+        });
+        if let Some(unstaged_diff) = unstaged_diff {
+            unstaged_diff.update(cx, |diff, cx| {
+                diff.set_pending_hunks(&unstaged_pending, &buffer_snapshot, cx);
+            });
+        }
 
         self.write_optimistic_index(buffer_id, cx);
         Ok(())
@@ -1360,7 +1611,7 @@ impl GitStore {
             .read(cx)
             .unstage_staged_hunks(&hunks, &index_snapshot);
         let version = index_snapshot.version().clone();
-        let pending = pending_hunks(&hunks, &version, PendingSense::Suppress);
+        let pending = pending_hunks(&hunks, &version, PendingSense::Suppress, &index_snapshot);
         drop(staged_snapshot);
 
         diff_state.update(cx, |diff_state, _| {

@@ -512,6 +512,7 @@ impl EditorElement {
         register_action(editor, window, Editor::open_git_blame_commit);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
+        register_action(editor, window, Editor::toggle_staged_selected_lines);
         register_action(editor, window, Editor::stage_and_next);
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
@@ -5234,11 +5235,16 @@ impl EditorElement {
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
                             DiffHunkStatus::modified_none(),
+                            None,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
+                        staged_added,
+                        staged_deleted,
+                        deleted_lines,
+                        is_expanded,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| {
                         let color = match split_side {
@@ -5268,13 +5274,28 @@ impl EditorElement {
                                 color,
                                 Corners::all(1. * line_height),
                                 *status,
+                                None,
                             ),
-                            _ => (hunk_hitbox.bounds, color, Corners::all(px(0.)), *status),
+                            _ => (
+                                hunk_hitbox.bounds,
+                                color,
+                                Corners::all(px(0.)),
+                                *status,
+                                Some((
+                                    display_row_range,
+                                    staged_added,
+                                    staged_deleted,
+                                    deleted_lines,
+                                    is_expanded,
+                                )),
+                            ),
                         }
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii, status)) = hunk_to_paint {
+                if let Some((hunk_bounds, background_color, corner_radii, status, staged_ranges)) =
+                    hunk_to_paint
+                {
                     // Flatten the background color with the editor color to prevent
                     // elements below transparent hunks from showing through
                     let flattened_background_color = cx
@@ -5282,31 +5303,123 @@ impl EditorElement {
                         .colors()
                         .editor_background
                         .blend(background_color);
+                    let flattened_unstaged_background_color = cx
+                        .theme()
+                        .colors()
+                        .editor_background
+                        .blend(background_color.opacity(0.3));
+                    let paint = |hunk_bounds, hollow, window: &mut Window| {
+                        if hollow {
+                            window.paint_quad(quad(
+                                hunk_bounds,
+                                corner_radii,
+                                flattened_unstaged_background_color,
+                                Edges::all(px(1.0)),
+                                flattened_background_color,
+                                BorderStyle::Solid,
+                            ));
+                        } else {
+                            window.paint_quad(quad(
+                                hunk_bounds,
+                                corner_radii,
+                                flattened_background_color,
+                                Edges::default(),
+                                transparent_black(),
+                                BorderStyle::default(),
+                            ));
+                        }
+                    };
 
-                    if !self.diff_hunk_hollow(status, cx) {
-                        window.paint_quad(quad(
-                            hunk_bounds,
-                            corner_radii,
-                            flattened_background_color,
-                            Edges::default(),
-                            transparent_black(),
-                            BorderStyle::default(),
-                        ));
+                    if status.secondary
+                        == buffer_diff::DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                        && let Some((
+                            display_row_range,
+                            staged_added,
+                            staged_deleted,
+                            deleted_lines,
+                            is_expanded,
+                        )) = staged_ranges
+                    {
+                        let relative_rows: Vec<Range<u32>> = match split_side {
+                            Some(SplitSide::Left) => staged_deleted.clone(),
+                            Some(SplitSide::Right) | None => {
+                                let relative_added = staged_added.iter().map(|range| {
+                                    (range.start.0 - display_row_range.start.0)
+                                        ..(range.end.0 - display_row_range.start.0)
+                                });
+                                if *is_expanded && split_side == None && *deleted_lines > 0 {
+                                    staged_deleted
+                                        .iter()
+                                        .cloned()
+                                        .chain(relative_added)
+                                        .collect()
+                                } else {
+                                    relative_added.collect()
+                                }
+                            }
+                        };
+
+                        let relative_rows = relative_rows.into_iter().fold(
+                            Vec::<Range<u32>>::new(),
+                            |mut merged, range| {
+                                match merged.last_mut() {
+                                    Some(last) if range.start <= last.end => {
+                                        last.end = last.end.max(range.end);
+                                    }
+                                    _ => merged.push(range),
+                                }
+                                merged
+                            },
+                        );
+
+                        let total_lines = display_row_range.len() as u32;
+                        let (mut acc, total, cursor) = relative_rows.iter().fold(
+                            (vec![], 0, 0),
+                            |(mut acc, mut total, cursor), range| {
+                                if cursor < range.start {
+                                    let unstaged_lines = range.start - cursor;
+                                    acc.push((unstaged_lines, total, false));
+                                    total += unstaged_lines;
+                                    let staged_lines = range.end - range.start;
+                                    acc.push((staged_lines, total, true));
+                                    total += staged_lines;
+                                    (acc, total, range.end)
+                                } else if cursor < range.end {
+                                    let staged_lines = range.end - cursor;
+                                    acc.push((staged_lines, total, true));
+                                    total += staged_lines;
+                                    (acc, total, range.end)
+                                } else {
+                                    (acc, total, cursor)
+                                }
+                            },
+                        );
+                        if cursor < total_lines {
+                            acc.push((total_lines - cursor, total, false));
+                        }
+                        let acc = acc.iter().map(|(lines, total, staged)| {
+                            (
+                                *lines as f32 / total_lines as f32,
+                                *total as f32 / total_lines as f32,
+                                staged,
+                            )
+                        });
+
+                        acc.into_iter()
+                            .for_each(|(height_scale, origin_offset, staged)| {
+                                let new_y = (1.0 - origin_offset) * hunk_bounds.origin.y
+                                    + origin_offset * hunk_bounds.bottom_left().y;
+                                let bounds = Bounds {
+                                    origin: point(hunk_bounds.origin.x, new_y),
+                                    size: Size {
+                                        width: hunk_bounds.size.width,
+                                        height: hunk_bounds.size.height * height_scale,
+                                    },
+                                };
+                                paint(bounds, *staged, window);
+                            });
                     } else {
-                        let flattened_unstaged_background_color = cx
-                            .theme()
-                            .colors()
-                            .editor_background
-                            .blend(background_color.opacity(0.3));
-
-                        window.paint_quad(quad(
-                            hunk_bounds,
-                            corner_radii,
-                            flattened_unstaged_background_color,
-                            Edges::all(px(1.0)),
-                            flattened_background_color,
-                            BorderStyle::Solid,
-                        ));
+                        paint(hunk_bounds, self.diff_hunk_hollow(status, cx), window);
                     }
                 }
             }
@@ -6590,6 +6703,10 @@ impl EditorElement {
             .read(cx)
             .diff_hunk_delegate()
             .render_hunk_as_staged(&status, cx);
+        Self::should_hollow(unstaged, cx)
+    }
+
+    fn should_hollow(unstaged: bool, cx: &mut App) -> bool {
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow

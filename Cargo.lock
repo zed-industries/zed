@@ -14148,6 +14148,7 @@ dependencies = [
  "regex",
  "release_channel",
  "remote",
+ "rope",
  "rpc",
  "schemars 1.0.4",
  "semver",
