@@ -2435,8 +2435,13 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
             wl_data_device::Event::DataOffer { id: data_offer } => {
                 state.data_offers.push(DataOffer::new(data_offer));
                 if state.data_offers.len() > 2 {
-                    // At most we store a clipboard offer and a drag and drop offer.
-                    state.data_offers.remove(0).inner.destroy();
+                    let active_offer_id = state.clipboard.current_offer().map(|o| o.inner.id());
+                    let remove_index = state
+                        .data_offers
+                        .iter()
+                        .position(|o| Some(o.inner.id()) != active_offer_id)
+                        .unwrap_or(0);
+                    state.data_offers.remove(remove_index).inner.destroy();
                 }
             }
             wl_data_device::Event::Selection { id: data_offer } => {
