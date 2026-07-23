@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy this file to zed-sim.config.json (which is gitignored) and fill it in. The token can also be supplied via the ZED_SIM_IMPERSONATE_TOKEN env var, which takes precedence and keeps the secret out of any file. server_url should point at a PREVIEW backend, never production.",
+  "server_url": "http://localhost:3000",
+  "token": "",
+  "accounts": [
+    { "username": "zed-test-pro", "label": "Pro test account" },
+    { "username": "zed-test-business", "label": "Business test account" }
+  ]
+}

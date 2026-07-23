@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zed Sim</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1115;
+        --card: #181b22;
+        --border: #272b34;
+        --text: #e6e8ec;
+        --muted: #9aa0aa;
+        --accent: #6e8bff;
+        --accent-text: #ffffff;
+        --ok: #3fb950;
+        --err: #f85149;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.45;
+      }
+      .wrap { max-width: 640px; margin: 0 auto; padding: 40px 24px 64px; }
+      header { margin-bottom: 8px; }
+      h1 { font-size: 22px; margin: 0; }
+      .sub { color: var(--muted); font-size: 14px; margin: 4px 0 28px; }
+      .group-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 24px 0 10px;
+      }
+      .card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+      }
+      .card.disabled { opacity: 0.5; }
+      .card .name { font-weight: 600; font-size: 15px; }
+      .card .desc { color: var(--muted); font-size: 13px; margin-top: 2px; }
+      button {
+        font: inherit;
+        font-weight: 600;
+        border: none;
+        border-radius: 8px;
+        padding: 9px 16px;
+        cursor: pointer;
+        background: var(--accent);
+        color: var(--accent-text);
+        white-space: nowrap;
+      }
+      button:disabled { cursor: default; background: var(--border); color: var(--muted); }
+      button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+      .soon { font-size: 12px; color: var(--muted); }
+      .footer { margin-top: 28px; display: flex; align-items: center; justify-content: space-between; }
+      #status {
+        margin-top: 18px;
+        min-height: 20px;
+        font-size: 13px;
+        color: var(--muted);
+        word-break: break-all;
+      }
+      #status.ok { color: var(--ok); }
+      #status.err { color: var(--err); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Zed Sim</h1>
+        <div class="sub">Launch a real, disposable Zed in a chosen state. Nothing here touches your primary Zed install.</div>
+      </header>
+
+      <div class="group-label">Available now</div>
+
+      <div class="card">
+        <div>
+          <div class="name">Brand-new user</div>
+          <div class="desc">A pristine first-run: signed out, fresh onboarding, nothing configured.</div>
+        </div>
+        <button onclick="launch('new_user', this)">Launch</button>
+      </div>
+
+      <div class="card">
+        <div>
+          <div class="name">Signed in</div>
+          <div class="desc">A fresh profile that goes through the real sign-in flow.</div>
+        </div>
+        <button onclick="launch('signed_in', this)">Launch</button>
+      </div>
+
+      <div class="group-label">Impersonate (real accounts)</div>
+      <div id="impersonate">
+        <div class="soon">Loading…</div>
+      </div>
+
+      <div class="group-label">Coming soon (Phase 2)</div>
+
+      <div class="card disabled">
+        <div>
+          <div class="name">Pro</div>
+          <div class="desc">The Pro experience.</div>
+        </div>
+        <span class="soon">Soon</span>
+      </div>
+
+      <div class="card disabled">
+        <div>
+          <div class="name">Pro Trial — active / expired</div>
+          <div class="desc">Mid-trial UX and the end-of-trial upsell flow.</div>
+        </div>
+        <span class="soon">Soon</span>
+      </div>
+
+      <div class="card disabled">
+        <div>
+          <div class="name">Business — member / admin</div>
+          <div class="desc">Business as a team member and with admin controls.</div>
+        </div>
+        <span class="soon">Soon</span>
+      </div>
+
+      <div class="footer">
+        <button class="secondary" onclick="wipe(this)">Wipe scratch profiles</button>
+      </div>
+
+      <div id="status"></div>
+    </div>
+
+    <script>
+      const status = document.getElementById("status");
+
+      function setStatus(text, kind) {
+        status.textContent = text;
+        status.className = kind || "";
+      }
+
+      async function post(path, body) {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        return data;
+      }
+
+      async function launch(state, btn) {
+        btn.disabled = true;
+        setStatus("Launching…");
+        try {
+          const data = await post("/launch", { state });
+          setStatus("Launched. Profile: " + data.profile, "ok");
+        } catch (err) {
+          setStatus("Failed: " + err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      async function impersonate(username, btn) {
+        btn.disabled = true;
+        setStatus("Launching as " + username + "…");
+        try {
+          const data = await post("/launch", { impersonate: username });
+          setStatus("Launched as " + username + ". Profile: " + data.profile, "ok");
+        } catch (err) {
+          setStatus("Failed: " + err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      function escapeHtml(value) {
+        return value.replace(/[&<>"']/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+      }
+
+      async function loadAccounts() {
+        const container = document.getElementById("impersonate");
+        try {
+          const res = await fetch("/accounts");
+          const data = await res.json();
+          if (!data.enabled || !data.accounts.length) {
+            container.innerHTML =
+              '<div class="soon">Not configured. Add a token, server URL, and accounts ' +
+              "(see README) to enable impersonation.</div>";
+            return;
+          }
+          container.innerHTML = data.accounts
+            .map(function (a) {
+              const user = escapeHtml(a.username);
+              const label = escapeHtml(a.label || a.username);
+              return (
+                '<div class="card"><div><div class="name">' +
+                label +
+                '</div><div class="desc">@' +
+                user +
+                '</div></div><button onclick="impersonate(\'' +
+                user +
+                "', this)\">Launch</button></div>"
+              );
+            })
+            .join("");
+        } catch (err) {
+          container.innerHTML =
+            '<div class="soon">Could not load accounts: ' + escapeHtml(err.message) + "</div>";
+        }
+      }
+
+      loadAccounts();
+
+      async function wipe(btn) {
+        btn.disabled = true;
+        setStatus("Wiping…");
+        try {
+          const data = await post("/cleanup", {});
+          setStatus("Wiped " + data.removed + " scratch profile(s).", "ok");
+        } catch (err) {
+          setStatus("Failed: " + err.message, "err");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+    </script>
+  </body>
+</html>

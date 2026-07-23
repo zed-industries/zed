@@ -23426,6 +23426,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed-sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "open",
+ "serde",
+ "serde_json",
+ "smol",
+ "tiny_http",
+ "uuid",
+]
+
+[[package]]
 name = "zed-xim"
 version = "0.4.0-zed"
 source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"

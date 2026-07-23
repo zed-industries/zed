@@ -1,0 +1,2 @@
+# Local impersonation config — may contain a secret token. Never commit.
+zed-sim.config.json
