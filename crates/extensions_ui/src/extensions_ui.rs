@@ -309,7 +309,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum ExtensionStatus {
     NotInstalled,
     Installing,
@@ -404,7 +404,7 @@ struct ExtensionCardButtons {
     configure: Option<Button>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum ExtensionEntry {
     Installed {
         manifest: Arc<ExtensionManifest>,
@@ -420,8 +420,8 @@ enum ExtensionEntry {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ExtensionSortGroup {
-    Dev,
     Local,
+    Dev,
     Published,
 }
 
@@ -617,6 +617,243 @@ impl ExtensionEntry {
                     .cmp(&right.name().to_ascii_lowercase())
             })
             .then_with(|| left.id().cmp(right.id()))
+    }
+
+    fn buttons(
+        &self,
+        status: &ExtensionStatus,
+        cx: &mut Context<ExtensionsPage>,
+    ) -> ExtensionCardButtons {
+        match self {
+            Self::Installed {
+                manifest,
+                metadata: None,
+            }
+            | Self::Unpublished(manifest)
+            | Self::Dev(manifest) => {
+                let operation_in_progress = status == &ExtensionStatus::Installing
+                    || status == &ExtensionStatus::Upgrading
+                    || status == &ExtensionStatus::Removing;
+
+                ExtensionCardButtons {
+                    install_or_uninstall: Self::uninstall_button(
+                        &manifest.id,
+                        status == &ExtensionStatus::Removing,
+                    ),
+                    configure: (!manifest.context_servers.is_empty())
+                        .then(|| Self::configure_button(&manifest.id, operation_in_progress, true)),
+                    upgrade: matches!(self, Self::Dev(_))
+                        .then(|| Self::rebuild_button(&manifest.id, operation_in_progress)),
+                }
+            }
+            Self::Installed {
+                metadata: Some(metadata),
+                ..
+            }
+            | Self::NotInstalled {
+                metadata,
+                overridden_by_dev: false,
+            } => {
+                let is_configurable = metadata
+                    .manifest
+                    .provides
+                    .contains(&ExtensionProvides::ContextServers);
+
+                match status {
+                    ExtensionStatus::NotInstalled | ExtensionStatus::Installing => {
+                        ExtensionCardButtons {
+                            install_or_uninstall: Self::install_button(
+                                &metadata.id,
+                                status == &ExtensionStatus::Installing,
+                            ),
+                            configure: None,
+                            upgrade: None,
+                        }
+                    }
+                    ExtensionStatus::Upgrading => ExtensionCardButtons {
+                        install_or_uninstall: Self::uninstall_button(&metadata.id, true),
+                        configure: is_configurable
+                            .then(|| Self::configure_button(&metadata.id, true, false)),
+                        upgrade: Some(Self::disabled_upgrade_button(&metadata.id)),
+                    },
+                    ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
+                        install_or_uninstall: Self::uninstall_button(&metadata.id, false),
+                        configure: is_configurable
+                            .then(|| Self::configure_button(&metadata.id, false, true)),
+                        upgrade: (installed_version != &metadata.manifest.version).then(|| {
+                            Self::upgrade_button(
+                                metadata,
+                                extension_host::is_version_compatible(
+                                    ReleaseChannel::global(cx),
+                                    metadata,
+                                ),
+                            )
+                        }),
+                    },
+                    ExtensionStatus::Removing => ExtensionCardButtons {
+                        install_or_uninstall: Self::uninstall_button(&metadata.id, true),
+                        configure: is_configurable
+                            .then(|| Self::configure_button(&metadata.id, true, false)),
+                        upgrade: None,
+                    },
+                }
+            }
+            Self::NotInstalled {
+                metadata,
+                overridden_by_dev: true,
+            } => ExtensionCardButtons {
+                install_or_uninstall: Button::new(
+                    extension_button_id(&metadata.id, ExtensionOperation::Install),
+                    "Install",
+                ),
+                configure: None,
+                upgrade: None,
+            },
+        }
+    }
+
+    fn install_button(extension_id: &Arc<str>, disabled: bool) -> Button {
+        let button = Button::new(
+            extension_button_id(extension_id, ExtensionOperation::Install),
+            "Install",
+        )
+        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+        .start_icon(
+            Icon::new(IconName::Download)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
+        .disabled(disabled);
+
+        if disabled {
+            button
+        } else {
+            button.on_click({
+                let extension_id = extension_id.clone();
+                move |_, _, cx| {
+                    telemetry::event!("Extension Installed");
+                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                        store.install_latest_extension(extension_id.clone(), cx)
+                    });
+                }
+            })
+        }
+    }
+
+    fn uninstall_button(extension_id: &Arc<str>, disabled: bool) -> Button {
+        let button = Button::new(
+            extension_button_id(extension_id, ExtensionOperation::Remove),
+            "Uninstall",
+        )
+        .style(ButtonStyle::OutlinedGhost)
+        .disabled(disabled);
+
+        if disabled {
+            button
+        } else {
+            button.on_click({
+                let extension_id = extension_id.clone();
+                move |_, _, cx| {
+                    telemetry::event!("Extension Uninstalled", extension_id);
+                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                        store
+                            .uninstall_extension(extension_id.clone(), cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
+            })
+        }
+    }
+
+    fn configure_button(extension_id: &Arc<str>, disabled: bool, outlined: bool) -> Button {
+        let button = Button::new(
+            SharedString::from(format!("configure-{extension_id}")),
+            "Configure",
+        )
+        .when(outlined, |button| button.style(ButtonStyle::OutlinedGhost))
+        .disabled(disabled);
+
+        if disabled {
+            button
+        } else {
+            button.on_click({
+                let extension_id = extension_id.clone();
+                move |_, _, cx| {
+                    if let Some(manifest) = ExtensionStore::global(cx)
+                        .read(cx)
+                        .extension_manifest_for_id(&extension_id)
+                        .cloned()
+                        && let Some(events) = extension::ExtensionEvents::try_global(cx)
+                    {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ConfigureExtensionRequested(manifest), cx)
+                        });
+                    }
+                }
+            })
+        }
+    }
+
+    fn rebuild_button(extension_id: &Arc<str>, disabled: bool) -> Button {
+        let button = Button::new(
+            SharedString::from(format!("rebuild-{extension_id}")),
+            "Rebuild",
+        )
+        .color(Color::Accent)
+        .disabled(disabled);
+
+        if disabled {
+            button
+        } else {
+            button.on_click({
+                let extension_id = extension_id.clone();
+                move |_, _, cx| {
+                    ExtensionStore::global(cx).update(cx, |store, cx| {
+                        store.rebuild_dev_extension(extension_id.clone(), cx)
+                    });
+                }
+            })
+        }
+    }
+
+    fn disabled_upgrade_button(extension_id: &Arc<str>) -> Button {
+        Button::new(
+            extension_button_id(extension_id, ExtensionOperation::Upgrade),
+            "Upgrade",
+        )
+        .disabled(true)
+    }
+
+    fn upgrade_button(metadata: &ExtensionMetadata, is_compatible: bool) -> Button {
+        let version = metadata.manifest.version.clone();
+        Button::new(
+            extension_button_id(&metadata.id, ExtensionOperation::Upgrade),
+            "Upgrade",
+        )
+        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+        .when(!is_compatible, |button| {
+            button.tooltip({
+                let version = version.clone();
+                move |_, cx| {
+                    Tooltip::simple(
+                        format!("v{version} is not compatible with this version of Zed."),
+                        cx,
+                    )
+                }
+            })
+        })
+        .disabled(!is_compatible)
+        .on_click({
+            let extension_id = metadata.id.clone();
+            move |_, _, cx| {
+                telemetry::event!("Extension Installed", extension_id, version);
+                ExtensionStore::global(cx).update(cx, |store, cx| {
+                    store
+                        .upgrade_extension(extension_id.clone(), version.clone(), cx)
+                        .detach_and_log_err(cx)
+                });
+            }
+        })
     }
 }
 
@@ -1042,7 +1279,7 @@ impl ExtensionsPage {
     ) -> ExtensionCard {
         let weak_self = cx.weak_entity();
         let status = Self::extension_status(extension.id(), cx);
-        let buttons = self.buttons_for_entry(extension, &status, cx);
+        let buttons = extension.buttons(&status, cx);
         let extension_id = extension.id().clone();
         let version = extension.version().clone();
         let repository_url = extension.repository().map(str::to_owned);
@@ -1270,296 +1507,6 @@ impl ExtensionsPage {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-    }
-
-    fn buttons_for_entry(
-        &self,
-        extension: &ExtensionEntry,
-        status: &ExtensionStatus,
-        cx: &mut Context<Self>,
-    ) -> ExtensionCardButtons {
-        match extension {
-            ExtensionEntry::Installed {
-                metadata: Some(metadata),
-                ..
-            }
-            | ExtensionEntry::NotInstalled {
-                metadata,
-                overridden_by_dev: false,
-            } => self.buttons_for_published_entry(metadata, status, cx),
-            ExtensionEntry::Installed {
-                manifest,
-                metadata: None,
-            }
-            | ExtensionEntry::Unpublished(manifest) => {
-                self.buttons_for_installed_manifest(manifest, false, status)
-            }
-            ExtensionEntry::Dev(manifest) => {
-                self.buttons_for_installed_manifest(manifest, true, status)
-            }
-            ExtensionEntry::NotInstalled {
-                metadata,
-                overridden_by_dev: true,
-            } => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
-                    extension_button_id(&metadata.id, ExtensionOperation::Install),
-                    "Install",
-                ),
-                configure: None,
-                upgrade: None,
-            },
-        }
-    }
-
-    fn buttons_for_installed_manifest(
-        &self,
-        manifest: &Arc<ExtensionManifest>,
-        is_dev: bool,
-        status: &ExtensionStatus,
-    ) -> ExtensionCardButtons {
-        let configure = (!manifest.context_servers.is_empty()).then(|| {
-            Button::new(
-                SharedString::from(format!("configure-{}", manifest.id)),
-                "Configure",
-            )
-            .style(ButtonStyle::OutlinedGhost)
-            .disabled(matches!(
-                status,
-                ExtensionStatus::Installing
-                    | ExtensionStatus::Upgrading
-                    | ExtensionStatus::Removing
-            ))
-            .on_click({
-                let manifest = manifest.clone();
-                move |_, _, cx| {
-                    if let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                        events.update(cx, |this, cx| {
-                            this.emit(
-                                extension::Event::ConfigureExtensionRequested(manifest.clone()),
-                                cx,
-                            )
-                        });
-                    }
-                }
-            })
-        });
-
-        let upgrade = is_dev.then(|| {
-            Button::new(
-                SharedString::from(format!("rebuild-{}", manifest.id)),
-                "Rebuild",
-            )
-            .color(Color::Accent)
-            .disabled(matches!(
-                status,
-                ExtensionStatus::Upgrading | ExtensionStatus::Removing
-            ))
-            .on_click({
-                let extension_id = manifest.id.clone();
-                move |_, _, cx| {
-                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                        store.rebuild_dev_extension(extension_id.clone(), cx)
-                    });
-                }
-            })
-        });
-
-        ExtensionCardButtons {
-            install_or_uninstall: Button::new(
-                extension_button_id(&manifest.id, ExtensionOperation::Remove),
-                "Uninstall",
-            )
-            .style(ButtonStyle::OutlinedGhost)
-            .disabled(matches!(status, ExtensionStatus::Removing))
-            .on_click({
-                let extension_id = manifest.id.clone();
-                move |_, _, cx| {
-                    telemetry::event!("Extension Uninstalled", extension_id);
-                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                        store
-                            .uninstall_extension(extension_id.clone(), cx)
-                            .detach_and_log_err(cx);
-                    });
-                }
-            }),
-            configure,
-            upgrade,
-        }
-    }
-
-    fn buttons_for_published_entry(
-        &self,
-        extension: &ExtensionMetadata,
-        status: &ExtensionStatus,
-        cx: &mut Context<Self>,
-    ) -> ExtensionCardButtons {
-        let is_compatible =
-            extension_host::is_version_compatible(ReleaseChannel::global(cx), extension);
-
-        let is_configurable = extension
-            .manifest
-            .provides
-            .contains(&ExtensionProvides::ContextServers);
-
-        match status.clone() {
-            ExtensionStatus::NotInstalled => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
-                    extension_button_id(&extension.id, ExtensionOperation::Install),
-                    "Install",
-                )
-                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                .start_icon(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .on_click({
-                    let extension_id = extension.id.clone();
-                    move |_, _, cx| {
-                        telemetry::event!("Extension Installed");
-                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.install_latest_extension(extension_id.clone(), cx)
-                        });
-                    }
-                }),
-                configure: None,
-                upgrade: None,
-            },
-            ExtensionStatus::Installing => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
-                    extension_button_id(&extension.id, ExtensionOperation::Install),
-                    "Install",
-                )
-                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                .start_icon(
-                    Icon::new(IconName::Download)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
-                .disabled(true),
-                configure: None,
-                upgrade: None,
-            },
-            ExtensionStatus::Upgrading => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
-                    extension_button_id(&extension.id, ExtensionOperation::Remove),
-                    "Uninstall",
-                )
-                .style(ButtonStyle::OutlinedGhost)
-                .disabled(true),
-                configure: is_configurable.then(|| {
-                    Button::new(
-                        SharedString::from(format!("configure-{}", extension.id)),
-                        "Configure",
-                    )
-                    .disabled(true)
-                }),
-                upgrade: Some(
-                    Button::new(
-                        extension_button_id(&extension.id, ExtensionOperation::Upgrade),
-                        "Upgrade",
-                    )
-                    .disabled(true),
-                ),
-            },
-            ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
-                    extension_button_id(&extension.id, ExtensionOperation::Remove),
-                    "Uninstall",
-                )
-                .style(ButtonStyle::OutlinedGhost)
-                .on_click({
-                    let extension_id = extension.id.clone();
-                    move |_, _, cx| {
-                        telemetry::event!("Extension Uninstalled", extension_id);
-                        ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store
-                                .uninstall_extension(extension_id.clone(), cx)
-                                .detach_and_log_err(cx);
-                        });
-                    }
-                }),
-                configure: is_configurable.then(|| {
-                    Button::new(
-                        SharedString::from(format!("configure-{}", extension.id)),
-                        "Configure",
-                    )
-                    .style(ButtonStyle::OutlinedGhost)
-                    .on_click({
-                        let extension_id = extension.id.clone();
-                        move |_, _, cx| {
-                            if let Some(manifest) = ExtensionStore::global(cx)
-                                .read(cx)
-                                .extension_manifest_for_id(&extension_id)
-                                .cloned()
-                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
-                            {
-                                events.update(cx, |this, cx| {
-                                    this.emit(
-                                        extension::Event::ConfigureExtensionRequested(manifest),
-                                        cx,
-                                    )
-                                });
-                            }
-                        }
-                    })
-                }),
-                upgrade: if installed_version == extension.manifest.version {
-                    None
-                } else {
-                    Some(
-                        Button::new(extension_button_id(&extension.id, ExtensionOperation::Upgrade), "Upgrade")
-                          .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .when(!is_compatible, |upgrade_button| {
-                                upgrade_button.disabled(true).tooltip({
-                                    let version = extension.manifest.version.clone();
-                                    move |_, cx| {
-                                        Tooltip::simple(
-                                            format!(
-                                                "v{version} is not compatible with this version of Zed.",
-                                            ),
-                                             cx,
-                                        )
-                                    }
-                                })
-                            })
-                            .disabled(!is_compatible)
-                            .on_click({
-                                let extension_id = extension.id.clone();
-                                let version = extension.manifest.version.clone();
-                                move |_, _, cx| {
-                                    telemetry::event!("Extension Installed", extension_id, version);
-                                    ExtensionStore::global(cx).update(cx, |store, cx| {
-                                        store
-                                            .upgrade_extension(
-                                                extension_id.clone(),
-                                                version.clone(),
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx)
-                                    });
-                                }
-                            }),
-                    )
-                },
-            },
-            ExtensionStatus::Removing => ExtensionCardButtons {
-                install_or_uninstall: Button::new(
-                    extension_button_id(&extension.id, ExtensionOperation::Remove),
-                    "Uninstall",
-                )
-                .style(ButtonStyle::OutlinedGhost)
-                .disabled(true),
-                configure: is_configurable.then(|| {
-                    Button::new(
-                        SharedString::from(format!("configure-{}", extension.id)),
-                        "Configure",
-                    )
-                    .disabled(true)
-                }),
-                upgrade: None,
-            },
-        }
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> Div {
