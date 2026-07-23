@@ -1,5 +1,5 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
+    A11yCallbacks, AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
@@ -34,6 +34,7 @@ pub(crate) struct TestWindowState {
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
+    a11y_callbacks: Option<A11yCallbacks>,
     is_fullscreen: bool,
 }
 
@@ -86,8 +87,15 @@ impl TestWindow {
             resize_callback: None,
             moved_callback: None,
             input_handler: None,
+            a11y_callbacks: None,
             is_fullscreen: false,
         })))
+    }
+
+    pub fn simulate_a11y_activation(&self) {
+        if let Some(callbacks) = self.0.lock().a11y_callbacks.as_ref() {
+            drop((callbacks.activation)());
+        }
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -291,6 +299,10 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn a11y_init(&self, callbacks: A11yCallbacks) {
+        self.0.lock().a11y_callbacks = Some(callbacks);
+    }
 
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
