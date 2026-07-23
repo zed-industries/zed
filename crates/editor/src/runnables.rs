@@ -4,7 +4,7 @@ use clock::Global;
 use collections::{HashMap, HashSet};
 use gpui::{
     App, AppContext as _, AsyncWindowContext, ClickEvent, Context, Entity, Focusable as _,
-    MouseButton, Task, Window,
+    MouseButton, Subscription, Task, Window,
 };
 use language::{Buffer, BufferRow, Runnable};
 use lsp::LanguageServerName;
@@ -13,19 +13,25 @@ use project::{Location, Project, TaskSourceKind, project_settings::ProjectSettin
 use settings::Settings as _;
 use smallvec::SmallVec;
 use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables, VariableName};
-use text::{BufferId, OffsetRangeExt as _, ToOffset as _, ToPoint as _};
-use ui::{Clickable as _, Color, IconButton, IconSize, Toggleable as _};
+use text::{Bias, BufferId, OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _};
+use ui::{
+    ButtonCommon as _, Clickable as _, Color, ContextMenu, IconButton, IconSize, Toggleable as _,
+    Tooltip,
+};
+use util::ResultExt as _;
 
 use crate::{
     CodeActionSource, Editor, EditorSettings, EditorStyle, RangeToAnchorExt, SpawnNearestTask,
     ToggleCodeActions, UPDATE_DEBOUNCE,
-    display_map::{DisplayPoint, DisplayRow},
+    display_map::{DisplayPoint, DisplayRow, ToDisplayPoint},
+    mouse_context_menu::MouseContextMenu,
 };
 
 #[derive(Debug)]
 pub(super) struct RunnableData {
     runnables: HashMap<BufferId, (Global, BTreeMap<BufferRow, RunnableTasks>)>,
     task_statuses: HashMap<(BufferId, BufferRow), RunnableTaskStatus>,
+    file_test_task_statuses: HashMap<BufferId, RunnableTaskStatus>,
     invalidate_buffer_data: HashSet<BufferId>,
     runnables_update_task: Task<()>,
 }
@@ -35,6 +41,7 @@ impl RunnableData {
         Self {
             runnables: HashMap::default(),
             task_statuses: HashMap::default(),
+            file_test_task_statuses: HashMap::default(),
             invalidate_buffer_data: HashSet::default(),
             runnables_update_task: Task::ready(()),
         }
@@ -70,6 +77,66 @@ impl RunnableData {
 
     pub fn clear_task_status(&mut self, (buffer_id, buffer_row): (BufferId, BufferRow)) {
         self.task_statuses.remove(&(buffer_id, buffer_row));
+    }
+
+    pub fn file_test_task_status(&self, buffer_id: BufferId) -> Option<RunnableTaskStatus> {
+        self.file_test_task_statuses.get(&buffer_id).copied()
+    }
+
+    pub fn set_file_test_task_status(&mut self, buffer_id: BufferId, status: RunnableTaskStatus) {
+        self.file_test_task_statuses.insert(buffer_id, status);
+    }
+
+    pub fn has_test_task_statuses_for_buffer(&self, buffer_id: BufferId) -> bool {
+        self.file_test_task_statuses.contains_key(&buffer_id)
+            || self
+                .task_statuses
+                .iter()
+                .any(|((status_buffer_id, row), _)| {
+                    *status_buffer_id == buffer_id
+                        && self
+                            .runnables
+                            .get(&buffer_id)
+                            .and_then(|(_, tasks_by_row)| tasks_by_row.get(row))
+                            .is_some_and(runnable_tasks_are_tests)
+                })
+    }
+
+    pub fn clear_test_task_statuses_for_buffer(&mut self, buffer_id: BufferId) {
+        self.file_test_task_statuses.remove(&buffer_id);
+        let rows = self
+            .runnables
+            .get(&buffer_id)
+            .into_iter()
+            .flat_map(|(_, tasks_by_row)| {
+                tasks_by_row
+                    .iter()
+                    .filter_map(|(row, tasks)| runnable_tasks_are_tests(tasks).then_some(*row))
+            })
+            .collect::<Vec<_>>();
+        for row in rows {
+            self.task_statuses.remove(&(buffer_id, row));
+        }
+    }
+
+    pub fn set_test_task_statuses_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        status: RunnableTaskStatus,
+    ) {
+        let rows = self
+            .runnables
+            .get(&buffer_id)
+            .into_iter()
+            .flat_map(|(_, tasks_by_row)| {
+                tasks_by_row
+                    .iter()
+                    .filter_map(|(row, tasks)| runnable_tasks_are_tests(tasks).then_some(*row))
+            })
+            .collect::<Vec<_>>();
+        for row in rows {
+            self.task_statuses.insert((buffer_id, row), status);
+        }
     }
 
     pub fn task_key_for_offset(
@@ -418,9 +485,11 @@ impl Editor {
             self.runnables
                 .task_statuses
                 .retain(|(status_buffer_id, _), _| *status_buffer_id != buffer_id);
+            self.runnables.file_test_task_statuses.remove(&buffer_id);
         } else {
             self.runnables.runnables.clear();
             self.runnables.task_statuses.clear();
+            self.runnables.file_test_task_statuses.clear();
         }
         self.runnables.invalidate_buffer_data.clear();
         self.runnables.runnables_update_task = Task::ready(());
@@ -456,6 +525,45 @@ impl Editor {
         cx.notify();
     }
 
+    pub(crate) fn file_test_task_status(&self, buffer_id: BufferId) -> Option<RunnableTaskStatus> {
+        self.runnables.file_test_task_status(buffer_id)
+    }
+
+    pub(crate) fn set_file_test_task_status(
+        &mut self,
+        buffer_id: BufferId,
+        status: RunnableTaskStatus,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables.set_file_test_task_status(buffer_id, status);
+        cx.notify();
+    }
+
+    pub(crate) fn has_test_task_statuses_for_buffer(&self, buffer_id: BufferId) -> bool {
+        self.runnables.has_test_task_statuses_for_buffer(buffer_id)
+    }
+
+    pub(crate) fn clear_test_task_statuses_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables
+            .clear_test_task_statuses_for_buffer(buffer_id);
+        cx.notify();
+    }
+
+    pub(crate) fn set_test_task_statuses_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        status: RunnableTaskStatus,
+        cx: &mut Context<Self>,
+    ) {
+        self.runnables
+            .set_test_task_statuses_for_buffer(buffer_id, status);
+        cx.notify();
+    }
+
     pub(crate) fn runnable_task_key_for_display_row(
         &self,
         display_row: DisplayRow,
@@ -477,6 +585,214 @@ impl Editor {
         offset: BufferOffset,
     ) -> Option<(BufferId, BufferRow)> {
         self.runnables.task_key_for_offset(buffer_id, offset)
+    }
+
+    pub(crate) fn active_file_test_indicators(
+        &mut self,
+        range: Range<DisplayRow>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> HashMap<DisplayRow, BufferId> {
+        let snapshot = self.snapshot(window, cx);
+        let offset_range_start =
+            snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left);
+        let offset_range_end =
+            snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
+
+        self.runnables
+            .runnables
+            .iter()
+            .filter_map(|(buffer_id, (_, tasks_by_row))| {
+                if !tasks_by_row
+                    .values()
+                    .any(|tasks| runnable_tasks_support_file_tests(tasks))
+                {
+                    return None;
+                }
+
+                let tasks = tasks_by_row
+                    .values()
+                    .find(|tasks| runnable_tasks_are_tests(tasks))?;
+                let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());
+                if multibuffer_point < offset_range_start || multibuffer_point > offset_range_end {
+                    return None;
+                }
+
+                let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                let buffer_folded = snapshot
+                    .buffer_snapshot()
+                    .buffer_line_for_row(multibuffer_row)
+                    .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
+                    .map(|buffer_id| self.is_buffer_folded(buffer_id, cx))
+                    .unwrap_or(false);
+                if buffer_folded || snapshot.is_line_folded(multibuffer_row) {
+                    return None;
+                }
+
+                Some((
+                    multibuffer_point.to_display_point(&snapshot).row(),
+                    *buffer_id,
+                ))
+            })
+            .collect()
+    }
+
+    pub(crate) fn spawn_file_test_task(
+        &mut self,
+        buffer_id: BufferId,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_test_task_status(buffer_id) == Some(RunnableTaskStatus::Running) {
+            return;
+        }
+
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+
+        let snapshot = self.snapshot(window, cx);
+        let multibuffer_point = DisplayPoint::new(row, 0).to_point(&snapshot);
+        let Some(buffer_row) = snapshot
+            .buffer_snapshot()
+            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+            .map(|(_, range)| range.start.row)
+        else {
+            return;
+        };
+        let tasks = Arc::new(RunnableTasks {
+            templates: Vec::new(),
+            offset: snapshot
+                .buffer_snapshot()
+                .anchor_before(Point::new(multibuffer_point.row, 0)),
+            column: 0,
+            extra_variables: HashMap::default(),
+            context_range: BufferOffset(0)..BufferOffset(0),
+        });
+        let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
+        let file_test_templates = Self::file_test_templates(&project, &buffer, cx);
+        let editor = cx.weak_entity();
+        cx.spawn_in(window, async move |_, cx| {
+            let context = task_context.await.ok().flatten()?;
+            let (task_source_kind, mut resolved_task) = file_test_templates
+                .await
+                .into_iter()
+                .filter_map(|(kind, template)| {
+                    template
+                        .resolve_task(&kind.to_id_base(), &context)
+                        .map(|task| (kind, task))
+                })
+                .next()?;
+
+            resolved_task.resolved.reveal = task::RevealStrategy::Always;
+            editor
+                .update(cx, |editor, cx| {
+                    editor.set_file_test_task_status(buffer_id, RunnableTaskStatus::Running, cx);
+                })
+                .ok();
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.schedule_resolved_task_with_completion(
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        move |result, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    let status = RunnableTaskStatus::from(result);
+                                    editor.set_file_test_task_status(buffer_id, status, cx);
+                                    if result == workspace::tasks::ScheduledTaskResult::Success {
+                                        editor.set_test_task_statuses_for_buffer(
+                                            buffer_id,
+                                            RunnableTaskStatus::Passed,
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .ok();
+                        },
+                        window,
+                        cx,
+                    );
+                })
+                .ok()
+        })
+        .detach();
+    }
+
+    pub(crate) fn set_file_test_context_menu(
+        &mut self,
+        buffer_id: BufferId,
+        display_row: DisplayRow,
+        clicked_point: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_test_task_statuses_for_buffer(buffer_id) {
+            return;
+        }
+
+        let weak_editor = cx.weak_entity();
+        let focus_handle = self.focus_handle(cx);
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _cx| {
+            menu.on_blur_subscription(Subscription::new(|| {}))
+                .context(focus_handle)
+                .entry("Clear Run Status", None, move |_window, cx| {
+                    weak_editor
+                        .update(cx, |editor, cx| {
+                            editor.clear_test_task_statuses_for_buffer(buffer_id, cx);
+                        })
+                        .log_err();
+                })
+        });
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let source = snapshot.anchor_before(Point::new(display_row.0, 0u32));
+        self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
+            self,
+            source,
+            clicked_point,
+            context_menu,
+            window,
+            cx,
+        );
+    }
+
+    fn file_test_templates(
+        project: &Entity<Project>,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
+        let (inventory, worktree_id, language) = project.read_with(cx, |project, cx| {
+            let buffer = buffer.read(cx);
+            (
+                project.task_store().read(cx).task_inventory().cloned(),
+                buffer.file().map(|file| file.worktree_id(cx)),
+                buffer.language().cloned(),
+            )
+        });
+
+        let buffer = Some(buffer.clone());
+        cx.spawn(async move |cx| {
+            let Some(inventory) = inventory else {
+                return Vec::new();
+            };
+            let tasks = inventory.update(cx, |inventory, cx| {
+                inventory.list_tasks(buffer, language, worktree_id, cx)
+            });
+            tasks
+                .await
+                .into_iter()
+                .filter(|(_, template)| file_test_template(template))
+                .collect()
+        })
     }
 
     pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
@@ -702,6 +1018,36 @@ impl Editor {
             }))
     }
 
+    pub(crate) fn render_file_test_indicator(
+        &self,
+        task_status: Option<RunnableTaskStatus>,
+        buffer_id: BufferId,
+        row: DisplayRow,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        let color = match task_status {
+            Some(RunnableTaskStatus::Running) => Color::Accent,
+            Some(RunnableTaskStatus::Failed) => Color::Error,
+            Some(RunnableTaskStatus::Passed) | None => Color::Muted,
+        };
+
+        IconButton::new(
+            ("file_test_indicator", u64::from(buffer_id)),
+            ui::IconName::FastForward,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(color)
+        .tooltip(Tooltip::text("Run File Tests"))
+        .on_click(cx.listener(move |editor, _event: &ClickEvent, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+            editor.spawn_file_test_task(buffer_id, row, window, cx);
+        }))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            editor.set_file_test_context_menu(buffer_id, row, event.position(), window, cx);
+        }))
+    }
+
     fn insert_runnables(
         &mut self,
         buffer: BufferId,
@@ -851,6 +1197,51 @@ impl Editor {
     }
 }
 
+fn runnable_tasks_are_tests(tasks: &RunnableTasks) -> bool {
+    tasks
+        .templates
+        .iter()
+        .any(|(_, template)| template_task_is_test(template))
+}
+
+fn runnable_tasks_support_file_tests(tasks: &RunnableTasks) -> bool {
+    tasks.templates.iter().any(|(_, template)| {
+        template
+            .tags
+            .iter()
+            .any(|tag| tag.starts_with("python-") || tag.starts_with("go-"))
+            || {
+                let label = template.label.to_lowercase();
+                label.starts_with("pytest ")
+                    || label.starts_with("unittest ")
+                    || label.starts_with("go test ")
+            }
+    })
+}
+
+fn template_task_is_test(template: &TaskTemplate) -> bool {
+    template.tags.iter().any(|tag| tag.contains("test"))
+        || template.label.to_lowercase().contains("test")
+}
+
+fn file_test_template(template: &TaskTemplate) -> bool {
+    if !template.tags.is_empty() {
+        return false;
+    }
+
+    let label = template.label.to_lowercase();
+    if (label.starts_with("pytest ") || label.starts_with("unittest "))
+        && template
+            .args
+            .iter()
+            .any(|arg| arg.contains(&VariableName::File.template_value()))
+    {
+        return true;
+    }
+
+    template.command == "go" && template.args == ["test"]
+}
+
 #[cfg(test)]
 mod tests {
     use std::{sync::Arc, time::Duration};
@@ -869,7 +1260,7 @@ mod tests {
         },
     };
     use serde_json::json;
-    use task::{TaskTemplate, TaskTemplates};
+    use task::{TaskTemplate, TaskTemplates, VariableName};
     use text::Point;
     use util::path;
     use util::rel_path::rel_path;
@@ -879,7 +1270,66 @@ mod tests {
         test::build_editor_with_project,
     };
 
+    use super::{file_test_template, template_task_is_test};
+
     const FAKE_LSP_NAME: &str = "the-fake-language-server";
+
+    #[test]
+    fn test_file_test_template_selection() {
+        assert!(file_test_template(&TaskTemplate {
+            label: format!("pytest '{}'", VariableName::File.template_value()),
+            command: "python".into(),
+            args: vec![
+                "-m".into(),
+                "pytest".into(),
+                VariableName::File.template_value_with_whitespace(),
+            ],
+            ..TaskTemplate::default()
+        }));
+        assert!(file_test_template(&TaskTemplate {
+            label: "go test $ZED_GO_PACKAGE".into(),
+            command: "go".into(),
+            args: vec!["test".into()],
+            ..TaskTemplate::default()
+        }));
+        assert!(!file_test_template(&TaskTemplate {
+            label: "go test ./...".into(),
+            command: "go".into(),
+            args: vec!["test".into(), "./...".into()],
+            ..TaskTemplate::default()
+        }));
+        assert!(!file_test_template(&TaskTemplate {
+            label: "go test $ZED_GO_PACKAGE -run $ZED_SYMBOL".into(),
+            command: "go".into(),
+            args: vec!["test".into(), "-run".into(), "$ZED_SYMBOL".into()],
+            tags: vec!["go-test".into()],
+            ..TaskTemplate::default()
+        }));
+        assert!(!file_test_template(&TaskTemplate {
+            label: "go test TestExample".into(),
+            command: "go".into(),
+            args: vec![
+                "test".into(),
+                "-test.fullpath=true".into(),
+                "-timeout".into(),
+                "30s".into(),
+                "-run".into(),
+                "^TestExample$".into(),
+                ".".into(),
+            ],
+            ..TaskTemplate::default()
+        }));
+    }
+
+    #[test]
+    fn test_file_test_indicator_uses_generic_test_runnable() {
+        assert!(template_task_is_test(&TaskTemplate {
+            label: "Run test".into(),
+            command: "go".into(),
+            args: vec!["test".into(), "-run".into(), "TestExample".into()],
+            ..TaskTemplate::default()
+        }));
+    }
 
     struct TestRustContextProvider;
 

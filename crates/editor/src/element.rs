@@ -2641,6 +2641,43 @@ impl EditorElement {
         })
     }
 
+    fn layout_file_test_indicators(
+        &self,
+        gutter: &Gutter,
+        file_test_indicators: &HashMap<DisplayRow, BufferId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        if self.split_side == Some(SplitSide::Left) {
+            return Vec::new();
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            file_test_indicators
+                .iter()
+                .filter_map(|(display_row, buffer_id)| {
+                    let task_status = editor.file_test_task_status(*buffer_id);
+                    gutter.layout_item_with_x_offset(
+                        *display_row,
+                        px(14.),
+                        |cx, _| {
+                            editor
+                                .render_file_test_indicator(
+                                    task_status,
+                                    *buffer_id,
+                                    *display_row,
+                                    cx,
+                                )
+                                .into_any_element()
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .collect_vec()
+        })
+    }
+
     fn layout_expand_toggles(
         &self,
         gutter_hitbox: &Hitbox,
@@ -6687,6 +6724,17 @@ impl Gutter<'_> {
         window: &mut Window,
         cx: &mut Context<'_, Editor>,
     ) -> Option<AnyElement> {
+        self.layout_item_with_x_offset(display_row, px(0.), render_item, window, cx)
+    }
+
+    fn layout_item_with_x_offset(
+        &self,
+        display_row: DisplayRow,
+        x_offset: Pixels,
+        render_item: impl Fn(&mut Context<'_, Editor>, &mut Window) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) -> Option<AnyElement> {
         if !self.range.contains(&display_row) {
             return None;
         }
@@ -6704,7 +6752,8 @@ impl Gutter<'_> {
             return None;
         }
 
-        let button = self.prepaint_button(render_item(cx, window), display_row, window, cx);
+        let button =
+            self.prepaint_button(render_item(cx, window), display_row, x_offset, window, cx);
         Some(button)
     }
 
@@ -6712,6 +6761,7 @@ impl Gutter<'_> {
         &self,
         mut button: AnyElement,
         row: DisplayRow,
+        x_offset: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -6723,7 +6773,7 @@ impl Gutter<'_> {
         let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
             + self.dimensions.git_blame_entries_width.unwrap_or_default();
 
-        let x = git_gutter_width + px(2.);
+        let x = git_gutter_width + px(2.) + x_offset;
 
         let mut y = Pixels::from(
             (row.as_f64() - self.scroll_position.y) * ScrollPixelOffset::from(self.line_height),
@@ -8459,6 +8509,9 @@ impl Element for EditorElement {
                     let run_indicator_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_run_indicators(start_row..end_row, window, cx)
                     });
+                    let file_test_indicator_rows = self.editor.update(cx, |editor, cx| {
+                        editor.active_file_test_indicators(start_row..end_row, window, cx)
+                    });
 
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
@@ -9088,7 +9141,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let test_indicators = if gutter_settings.runnables {
+                    let mut test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(
                             &gutter,
                             &run_indicator_rows,
@@ -9099,6 +9152,14 @@ impl Element for EditorElement {
                     } else {
                         Vec::new()
                     };
+                    if gutter_settings.runnables {
+                        test_indicators.extend(self.layout_file_test_indicators(
+                            &gutter,
+                            &file_test_indicator_rows,
+                            window,
+                            cx,
+                        ));
+                    }
 
                     let show_bookmarks =
                         snapshot.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
@@ -9138,6 +9199,7 @@ impl Element for EditorElement {
                     if let Some(row) = gutter_hover_button
                         && !breakpoint_rows.contains_key(&row)
                         && !run_indicator_rows.contains(&row)
+                        && !file_test_indicator_rows.contains_key(&row)
                         && !bookmark_rows.contains(&row)
                         && (show_bookmarks || show_breakpoints)
                     {
@@ -9191,7 +9253,7 @@ impl Element for EditorElement {
                                     .render_diff_review_button(display_row, button_width, cx)
                                     .into_any_element()
                             });
-                            gutter.prepaint_button(button, display_row, window, cx)
+                            gutter.prepaint_button(button, display_row, px(0.), window, cx)
                         });
 
                     self.layout_signature_help(
