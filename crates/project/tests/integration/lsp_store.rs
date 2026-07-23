@@ -105,8 +105,11 @@ async fn test_open_buffer_via_lsp_case_variant_no_duplicate(cx: &mut TestAppCont
 
     let fs = FakeFs::new(cx.executor());
     fs.set_case_sensitive(false);
-    fs.insert_tree(path!("/root"), json!({ "src": { "main.rs": "fn main() {}" } }))
-        .await;
+    fs.insert_tree(
+        path!("/root"),
+        json!({ "src": { "main.rs": "fn main() {}" } }),
+    )
+    .await;
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());

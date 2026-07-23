@@ -1530,9 +1530,7 @@ impl FakeFsState {
                                     if !self.case_sensitive {
                                         entries
                                             .iter()
-                                            .find(|(key, _)| {
-                                                key.eq_ignore_ascii_case(name_str)
-                                            })
+                                            .find(|(key, _)| key.eq_ignore_ascii_case(name_str))
                                             .map(|(key, entry)| (key.as_str(), entry))?
                                     } else {
                                         return None;

@@ -9334,10 +9334,9 @@ impl LspStore {
                 .to_file_path_ext(path_style)
                 .map_err(|()| anyhow!("can't convert URI to path"))?;
 
-            let fs = lsp_store
-                .update(cx, |lsp_store, _cx| {
-                    lsp_store.as_local().map(|local| local.fs.clone())
-                })?;
+            let fs = lsp_store.update(cx, |lsp_store, _cx| {
+                lsp_store.as_local().map(|local| local.fs.clone())
+            })?;
             let abs_path = if let Some(fs) = fs {
                 fs.canonicalize(&abs_path).await.unwrap_or(abs_path)
             } else {
