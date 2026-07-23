@@ -2108,9 +2108,7 @@ impl CollabPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut finder = ContactFinder::new(self.user_store.clone(), window, cx);
-                    finder.set_query(self.filter_editor.read(cx).text(cx), window, cx);
-                    finder
+                    ContactFinder::new(self.user_store.clone(), window, cx)
                 });
             });
         }
