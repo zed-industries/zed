@@ -1658,6 +1658,14 @@
     "enable_status": true,
     // Whether to enable git diff display.
     "enable_diff": true,
+    // Controls how passphrase prompts are handled when signing Git commits with GPG.
+    // This setting controls Zed's GPG wrapper, which is not available on Windows.
+    // May take 2 values:
+    // 1. Show passphrase prompts in Zed:
+    //      "gpg_signing_prompt": "zed"
+    // 2. Let GPG use its configured pinentry program:
+    //      "gpg_signing_prompt": "system"
+    "gpg_signing_prompt": "zed",
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"

@@ -398,6 +398,11 @@ message StashDrop {
   optional uint64 stash_index = 3;
 }
 
+enum GpgSigningPrompt {
+  ZED = 0;
+  SYSTEM = 1;
+}
+
 message Commit {
   uint64 project_id = 1;
   reserved 2;
@@ -408,6 +413,7 @@ message Commit {
   optional CommitOptions options = 7;
   reserved 8;
   uint64 askpass_id = 9;
+  GpgSigningPrompt gpg_signing_prompt = 10;
 
   message CommitOptions {
     bool amend = 1;
@@ -431,6 +437,7 @@ message Push {
   optional PushOptions options = 6;
   uint64 askpass_id = 7;
   string remote_branch_name = 8;
+  GpgSigningPrompt gpg_signing_prompt = 9;
 
   enum PushOptions {
     SET_UPSTREAM = 0;
@@ -444,6 +451,7 @@ message Fetch {
   uint64 repository_id = 3;
   uint64 askpass_id = 4;
   optional string remote = 5;
+  GpgSigningPrompt gpg_signing_prompt = 6;
 }
 
 message GetRemotes {
@@ -471,6 +479,7 @@ message Pull {
   optional string branch_name = 5;
   uint64 askpass_id = 6;
   bool rebase = 7;
+  GpgSigningPrompt gpg_signing_prompt = 8;
 }
 
 message RemoteMessageResponse {
