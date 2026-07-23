@@ -9,6 +9,7 @@
 {
   "project_panel": {
     "dock": "left",
+    "starts_open": true,
   },
   "agent": {
     "dock": "right",

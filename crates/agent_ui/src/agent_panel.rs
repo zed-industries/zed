@@ -34,8 +34,8 @@ use crate::terminal_thread_metadata_store::{
 };
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
-    Agent, AgentInitialContent, AgentThreadSource, ExternalSourcePrompt, NewExternalAgentThread,
-    NewNativeAgentThreadFromSummary,
+    Agent, AgentInitialContent, AgentThreadSource, ExternalSourcePrompt,
+    ImportThreadsFromOtherChannels, NewExternalAgentThread, NewNativeAgentThreadFromSummary,
 };
 use crate::{
     AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow, LoadThreadFromClipboard,
@@ -44,6 +44,7 @@ use crate::{
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
+    threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent},
     ui::{AgentNotification, AgentNotificationEvent},
 };
 use agent_settings::AgentSettings;
@@ -84,7 +85,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::{ItemEvent, ItemHandle},
 };
@@ -1124,6 +1125,13 @@ impl BaseView {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum AgentPanelSection {
+    #[default]
+    Chat,
+    Threads,
+}
+
 pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     /// Workspace id is used as a database key
@@ -1133,6 +1141,8 @@ pub struct AgentPanel {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     connection_store: Entity<AgentConnectionStore>,
+    threads_view: Entity<ThreadsArchiveView>,
+    active_section: AgentPanelSection,
     context_server_registry: Entity<ContextServerRegistry>,
     focus_handle: FocusHandle,
     base_view: BaseView,
@@ -1154,6 +1164,7 @@ pub struct AgentPanel {
     _draft_editor_observation: Option<Subscription>,
     _active_draft_reclaim_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
+    _threads_view_subscription: Subscription,
     last_context_source: Option<AgentContextSource>,
 
     is_active: bool,
@@ -1478,6 +1489,48 @@ impl AgentPanel {
         });
 
         let connection_store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
+        let threads_view = cx.new(|cx| {
+            ThreadsArchiveView::new(
+                workspace.clone(),
+                connection_store.downgrade(),
+                project.read(cx).agent_server_store().downgrade(),
+                _window,
+                cx,
+            )
+        });
+        let _threads_view_subscription = cx.subscribe_in(
+            &threads_view,
+            _window,
+            |this, _, event: &ThreadsArchiveViewEvent, window, cx| match event {
+                ThreadsArchiveViewEvent::Close => {
+                    this.active_section = AgentPanelSection::Chat;
+                    cx.notify();
+                }
+                ThreadsArchiveViewEvent::Activate { thread } => {
+                    this.active_section = AgentPanelSection::Chat;
+                    this.load_agent_thread(
+                        Agent::from(thread.agent_id.clone()),
+                        thread.thread_id,
+                        Some(thread.folder_paths().clone()),
+                        thread.title(),
+                        true,
+                        AgentThreadSource::AgentPanel,
+                        window,
+                        cx,
+                    );
+                    cx.notify();
+                }
+                ThreadsArchiveViewEvent::CancelRestore { .. } => {}
+                ThreadsArchiveViewEvent::Import => {
+                    window.dispatch_action(ImportThreadsFromOtherChannels.boxed_clone(), cx);
+                }
+                ThreadsArchiveViewEvent::NewThread => {
+                    this.active_section = AgentPanelSection::Chat;
+                    this.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+                    cx.notify();
+                }
+            },
+        );
         let _project_subscription =
             cx.subscribe(&project, |this, _project, event, cx| match event {
                 project::Event::WorktreeAdded(_)
@@ -1516,6 +1569,8 @@ impl AgentPanel {
             fs: fs.clone(),
             language_registry,
             connection_store,
+            threads_view,
+            active_section: AgentPanelSection::Chat,
             focus_handle: cx.focus_handle(),
             context_server_registry,
             draft_thread: None,
@@ -1537,6 +1592,7 @@ impl AgentPanel {
             _draft_editor_observation: None,
             _active_draft_reclaim_observation: None,
             _thread_metadata_store_subscription,
+            _threads_view_subscription,
             last_context_source: None,
             is_active: false,
         };
@@ -4878,6 +4934,10 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
 
 impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.active_section == AgentPanelSection::Threads {
+            return self.threads_view.focus_handle(cx);
+        }
+
         match self.visible_surface() {
             VisibleSurface::Uninitialized => self.focus_handle.clone(),
             VisibleSurface::AgentThread(conversation_view) => conversation_view.focus_handle(cx),
@@ -4912,6 +4972,10 @@ impl Panel for AgentPanel {
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         agent_panel_dock_position(cx)
+    }
+
+    fn starts_open(&self, _window: &Window, _cx: &App) -> bool {
+        true
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -5678,10 +5742,7 @@ impl AgentPanel {
                                 .action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
-                        menu = menu
-                            .action("Settings", Box::new(OpenSettings))
-                            .separator()
-                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
+                        menu = menu.action("Settings", Box::new(OpenSettings));
 
                         if has_auth_methods || supports_logout {
                             menu = menu.separator()
@@ -6099,6 +6160,39 @@ impl AgentPanel {
             .child(toolbar_content)
     }
 
+    fn render_section_switcher(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .flex_none()
+            .gap_1()
+            .p_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Button::new("agent-section-chat", "Chat")
+                    .full_width()
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.active_section == AgentPanelSection::Chat)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.active_section = AgentPanelSection::Chat;
+                        this.focus_handle.focus(window, cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("agent-section-threads", "Threads")
+                    .full_width()
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.active_section == AgentPanelSection::Threads)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.active_section = AgentPanelSection::Threads;
+                        this.threads_view.update(cx, |view, cx| {
+                            view.focus_filter_editor(window, cx);
+                        });
+                        cx.notify();
+                    })),
+            )
+    }
+
     fn render_drag_target(&self, cx: &Context<Self>) -> Div {
         let is_local = self.project.read(cx).is_local();
         div()
@@ -6302,41 +6396,48 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
-            .map(|parent| match self.visible_surface() {
-                VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
-                    parent.child(self.render_no_project_state(cx))
+            .child(self.render_section_switcher(cx))
+            .map(|parent| {
+                if self.active_section == AgentPanelSection::Threads {
+                    return parent.child(self.threads_view.clone());
                 }
-                VisibleSurface::Uninitialized => parent,
-                VisibleSurface::AgentThread(conversation_view) => parent
-                    .child(conversation_view.clone())
-                    .child(self.render_drag_target(cx)),
-                VisibleSurface::Terminal(terminal_view) => {
-                    let search_bar = self
-                        .active_terminal_id()
-                        .and_then(|terminal_id| self.terminals.get(&terminal_id))
-                        .and_then(|terminal| terminal.search_bar.clone());
-                    let terminal_content = v_flex()
-                        .size_full()
-                        .when_some(search_bar, |this, search_bar| {
-                            this.when(!search_bar.read(cx).is_dismissed(), |this| {
-                                this.child(
-                                    v_flex()
-                                        .group("toolbar")
-                                        .relative()
-                                        .py(DynamicSpacing::Base06.rems(cx))
-                                        .px(DynamicSpacing::Base08.rems(cx))
-                                        .border_b_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .bg(cx.theme().colors().toolbar_background)
-                                        .child(search_bar),
-                                )
-                            })
-                        })
-                        .child(terminal_view.clone());
 
-                    parent
-                        .child(terminal_content)
-                        .child(self.render_drag_target(cx))
+                match self.visible_surface() {
+                    VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
+                        parent.child(self.render_no_project_state(cx))
+                    }
+                    VisibleSurface::Uninitialized => parent,
+                    VisibleSurface::AgentThread(conversation_view) => parent
+                        .child(conversation_view.clone())
+                        .child(self.render_drag_target(cx)),
+                    VisibleSurface::Terminal(terminal_view) => {
+                        let search_bar = self
+                            .active_terminal_id()
+                            .and_then(|terminal_id| self.terminals.get(&terminal_id))
+                            .and_then(|terminal| terminal.search_bar.clone());
+                        let terminal_content = v_flex()
+                            .size_full()
+                            .when_some(search_bar, |this, search_bar| {
+                                this.when(!search_bar.read(cx).is_dismissed(), |this| {
+                                    this.child(
+                                        v_flex()
+                                            .group("toolbar")
+                                            .relative()
+                                            .py(DynamicSpacing::Base06.rems(cx))
+                                            .px(DynamicSpacing::Base08.rems(cx))
+                                            .border_b_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .bg(cx.theme().colors().toolbar_background)
+                                            .child(search_bar),
+                                    )
+                                })
+                            })
+                            .child(terminal_view.clone());
+
+                        parent
+                            .child(terminal_content)
+                            .child(self.render_drag_target(cx))
+                    }
                 }
             });
 
