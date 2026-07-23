@@ -33753,6 +33753,68 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_linked_edits_on_typing_dash_in_custom_element_name(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TSX".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            // Mirrors crates/grammars/src/{tsx,javascript}/config.toml: a dash is a valid
+            // JSXIdentifier character, so custom element names like `<custom-el>` must keep
+            // the closing tag linked past the dash. Regression test for #43060 / #58553.
+            linked_edit_characters: HashSet::from_iter(['.', '-']),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Typing the dash while renaming a tag must extend the linked pair rather than
+    // dropping it (the bug produced `<custom-el></custom>`).
+    cx.set_state("<customˇ></custom>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 7)),
+            (Point::new(0, 10), Point::new(0, 16)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state("<custom-ˇ></custom->");
+
+    // Characters typed after the dash continue to mirror into the closing tag.
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 8)),
+            (Point::new(0, 11), Point::new(0, 18)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("el", window, cx);
+    });
+    cx.assert_editor_state("<custom-elˇ></custom-el>");
+}
+
+#[gpui::test]
 async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
