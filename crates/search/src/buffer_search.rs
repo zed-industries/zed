@@ -976,20 +976,10 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        if let Some(item) = &self.active_searchable_item {
-            let buffer_kind = item.buffer_kind(cx);
-
-            if buffer_kind == ItemBufferKind::Singleton {
-                return false;
-            }
-
-            let workspace::searchable::SearchOptions {
-                find_in_results, ..
-            } = item.supported_options(cx);
-            !find_in_results
-        } else {
-            false
-        }
+        self.active_searchable_item.as_ref().is_some_and(|item| {
+            item.buffer_kind(cx) == ItemBufferKind::Multibuffer
+                && !item.supported_options(cx).find_in_results
+        })
     }
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
@@ -1883,7 +1873,7 @@ mod tests {
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use futures::stream::StreamExt as _;
-    use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{FocusHandle, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     #[cfg(target_os = "macos")]
     use project::Project;
@@ -1892,6 +1882,7 @@ mod tests {
     use util_macros::perf;
     #[cfg(target_os = "macos")]
     use workspace::{AppState, MultiWorkspace, Workspace};
+    use workspace::{item::Item, searchable::SearchableItem};
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3609,6 +3600,144 @@ mod tests {
             events.try_recv().unwrap(),
             (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::PrimaryLeft))
         );
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_no_expand_collapse_option_when_item_is_not_buffer_backed(
+        cx: &mut TestAppContext,
+    ) {
+        // Items that are backed by neither a singleton buffer nor a
+        // multibuffer, for example, the LSP log view, report
+        // `ItemBufferKind::None` and must not show the expand/collapse all
+        // files button.
+
+        // A searchable item that reports `ItemBufferKind::None`, like the LSP
+        // log view.
+        struct NonBufferSearchableItem {
+            focus_handle: FocusHandle,
+        }
+
+        impl EventEmitter<()> for NonBufferSearchableItem {}
+        impl EventEmitter<SearchEvent> for NonBufferSearchableItem {}
+
+        impl Focusable for NonBufferSearchableItem {
+            fn focus_handle(&self, _: &App) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for NonBufferSearchableItem {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        impl Item for NonBufferSearchableItem {
+            type Event = ();
+
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "Non-buffer item".into()
+            }
+
+            fn as_searchable(
+                &self,
+                handle: &Entity<Self>,
+                _: &App,
+            ) -> Option<Box<dyn SearchableItemHandle>> {
+                Some(Box::new(handle.clone()))
+            }
+
+            fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+                ItemBufferKind::None
+            }
+        }
+
+        impl SearchableItem for NonBufferSearchableItem {
+            type Match = ();
+
+            fn clear_matches(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+            fn update_matches(
+                &mut self,
+                _: &[Self::Match],
+                _: Option<usize>,
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn query_suggestion(
+                &mut self,
+                _: Option<SeedQuerySetting>,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> String {
+                String::new()
+            }
+            fn activate_match(
+                &mut self,
+                _: usize,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn select_matches(
+                &mut self,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn replace(
+                &mut self,
+                _: &Self::Match,
+                _: &SearchQuery,
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn find_matches(
+                &mut self,
+                _: Arc<SearchQuery>,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Task<Vec<Self::Match>> {
+                Task::ready(Vec::new())
+            }
+            fn active_match_index(
+                &mut self,
+                _: Direction,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Option<usize> {
+                None
+            }
+        }
+
+        init_globals(cx);
+        let window = cx.add_window(|window, cx| {
+            let item = cx.new(|cx| NonBufferSearchableItem {
+                focus_handle: cx.focus_handle(),
+            });
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&item), window, cx);
+            search_bar
+        });
+        let search_bar = window.root(cx).unwrap();
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert!(
+                !search_bar.needs_expand_collapse_option(cx),
+                "Items reporting ItemBufferKind::None must not get the expand/collapse button"
+            );
+        });
     }
 
     #[perf]
