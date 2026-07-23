@@ -699,10 +699,11 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -932,10 +933,11 @@ async fn test_remote_code_action_resolve(cx: &mut TestAppContext, server_cx: &mu
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -1090,10 +1092,11 @@ async fn test_remote_code_lens_fetch_after_lsp_starts(
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -1225,10 +1228,10 @@ async fn test_remote_code_lens_refetch_after_refresh(
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: Arc::new(LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..LanguageMatcher::default()
-            },
+            }),
             ..LanguageConfig::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -1371,10 +1374,10 @@ async fn test_remote_lsp_data_cache_converges_with_multiple_servers(
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: Arc::new(LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..LanguageMatcher::default()
-            },
+            }),
             ..LanguageConfig::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -1536,10 +1539,10 @@ async fn test_remote_per_server_refresh_queries_only_the_refreshed_server(
     // detects the buffer's language and starts the servers.
     let fake_language_config = || LanguageConfig {
         name: "Fake".into(),
-        matcher: LanguageMatcher {
+        matcher: Arc::new(LanguageMatcher {
             path_suffixes: vec!["fake".into()],
             ..LanguageMatcher::default()
-        },
+        }),
         ..LanguageConfig::default()
     };
     let fake_adapter =
@@ -1691,10 +1694,11 @@ async fn test_remote_code_lens_resolve(cx: &mut TestAppContext, server_cx: &mut 
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -1851,10 +1855,11 @@ async fn test_remote_cancel_language_server_work(
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         project.languages().register_fake_lsp_adapter(
@@ -3867,10 +3872,11 @@ async fn test_remote_apply_code_action_skips_unadvertised_command(
     cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         });
         project.languages().register_fake_lsp_adapter(

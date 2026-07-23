@@ -31,6 +31,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
         cache: pnpm
         cache-dependency-path: script/danger/pnpm-lock.yaml
     - name: danger::danger_job::install_deps

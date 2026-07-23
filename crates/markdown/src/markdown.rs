@@ -4991,10 +4991,11 @@ mod tests {
         let javascript_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "JavaScript".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["js".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 word_characters: ['$', '#'].into_iter().collect(),
                 ..Default::default()
             },

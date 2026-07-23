@@ -1402,10 +1402,11 @@ pub mod tests {
             language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
                     name: name.into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![path_suffix.to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4636,10 +4637,11 @@ let c = 3;"#
             language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
                     name: name.into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![path_suffix.to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),

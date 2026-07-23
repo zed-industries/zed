@@ -48,7 +48,7 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         &self,
         language: LanguageName,
         grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
+        matcher: Arc<LanguageMatcher>,
         hidden: bool,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
