@@ -6351,6 +6351,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "gpui_platform",
+ "http_client",
  "language",
  "log",
  "reqwest_client",
