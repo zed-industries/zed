@@ -16,6 +16,7 @@ use crate::{
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::HashMap;
+use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
@@ -17601,6 +17602,75 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
         editor.undo(&Default::default(), window, cx);
         assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
     });
+}
+
+#[gpui::test]
+async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+        settings.languages.0.insert(
+            "Markdown".into(),
+            LanguageSettingsContent {
+                remove_trailing_whitespace_on_save: Some(false),
+                ..Default::default()
+            },
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(
+        path!("/.editorconfig"),
+        "root = true\n[*]\ntrim_trailing_whitespace = true\n".into(),
+    )
+    .await;
+    fs.insert_file(path!("/README.md"), "".into()).await;
+
+    let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(markdown_lang());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/README.md"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("line with spaces  \n", window, cx)
+    });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "line with spaces  \n"
+    );
+    assert_eq!(
+        fs.load(path!("/README.md").as_ref())
+            .await
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "line with spaces  \n"
+    );
 }
 
 #[gpui::test]
@@ -35681,6 +35751,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS),
+                    max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
                     semantic_token_rules: None,
@@ -35791,6 +35862,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             store.update_user_settings(cx, |settings| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
                     semantic_token_rules: None,
@@ -39170,7 +39242,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
                 cx
             )
             .language_servers,
-            ["...".to_string()],
+            [language::language_settings::ConfiguredLanguageServer::new(
+                "..."
+            )],
             "local .zed/settings.json must not apply before trust approval"
         )
     });
@@ -39203,7 +39277,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
                 cx
             )
             .language_servers,
-            ["override-rust-analyzer".to_string()],
+            [language::language_settings::ConfiguredLanguageServer::new(
+                "override-rust-analyzer"
+            )],
             "local .zed/settings.json should apply after trust approval"
         )
     });

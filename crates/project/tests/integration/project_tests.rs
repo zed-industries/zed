@@ -26,7 +26,7 @@ use buffer_diff::{
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind, RealFs};
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
@@ -66,7 +66,7 @@ use project::{
 };
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{GlobalLspSettingsContent, SettingsStore};
 #[cfg(target_os = "linux")]
 use settings::{LocalSettingsKind, LocalSettingsPath};
 #[cfg(not(windows))]
@@ -254,7 +254,10 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             max_line_length = 120
         [*.js]
             tab_width = 10
+            trim_trailing_whitespace = false
             max_line_length = off
+        [*.json]
+            trim_trailing_whitespace = true
         "#,
         ".zed": {
             "settings.json": r#"{
@@ -264,6 +267,17 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "remove_trailing_whitespace_on_save": false,
                 "preferred_line_length": 64,
                 "soft_wrap": "editor_width",
+                "languages": {
+                    "JavaScript": {
+                        "remove_trailing_whitespace_on_save": true,
+                    },
+                    "JSON": {
+                        "remove_trailing_whitespace_on_save": true,
+                    },
+                    "Markdown": {
+                        "remove_trailing_whitespace_on_save": true,
+                    },
+                },
             }"#,
         },
         "a.rs": "fn a() {\n    A\n}",
@@ -293,6 +307,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "e.rs": "fn e() {\n    E\n}",
         },
         "README.json": "tabs are better\n",
+        "README.md": "spaces are meaningful  \n",
     }));
 
     let path = dir.path();
@@ -303,6 +318,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(js_lang());
     language_registry.add(json_lang());
+    language_registry.add(markdown_lang());
     language_registry.add(rust_lang());
 
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
@@ -325,11 +341,14 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let settings_d = settings_for("d/d.rs", cx).await;
     let settings_e = settings_for("e/e.rs", cx).await;
     let settings_readme = settings_for("README.json", cx).await;
+    let settings_markdown = settings_for("README.md", cx).await;
     // .editorconfig overrides .zed/settings
     assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
-    assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    // .editorconfig can disable trailing whitespace removal, but should not
+    // re-enable it when Zed settings have disabled it.
+    assert_eq!(settings_a.remove_trailing_whitespace_on_save, false);
     assert_eq!(settings_a.line_ending, LineEndingSetting::EnforceLf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
@@ -348,6 +367,9 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+    assert_eq!(settings_c.remove_trailing_whitespace_on_save, false);
+    assert_eq!(settings_readme.remove_trailing_whitespace_on_save, true);
+    assert_eq!(settings_markdown.remove_trailing_whitespace_on_save, true);
 
     // When max_line_length is "off", default to .zed/settings.json
     assert_eq!(settings_b.preferred_line_length, 64);
@@ -3552,6 +3574,116 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         cancel_notification.token,
         NumberOrString::String(progress_token.into())
+    );
+}
+
+#[gpui::test]
+async fn test_long_lines_disable_language_servers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "minified.js": "x".repeat(20_001),
+            "normal.js": "const answer = 42;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut fake_js_servers = language_registry.register_fake_lsp(
+        "JavaScript",
+        FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        },
+    );
+    language_registry.add(js_lang());
+
+    let _minified_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/minified.js"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(fake_js_servers.next().now_or_never().is_none());
+
+    let _normal_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/normal.js"), cx)
+        })
+        .await
+        .unwrap();
+    let mut fake_js_server = fake_js_servers.next().await.unwrap();
+    assert_eq!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        uri!("file:///dir/normal.js")
+    );
+    cx.executor().run_until_parked();
+    assert!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .now_or_never()
+            .is_none()
+    );
+}
+
+#[gpui::test]
+async fn test_max_buffer_line_length_can_be_overridden(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "minified.js": "x".repeat(20_001) }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut fake_js_servers = language_registry.register_fake_lsp(
+        "JavaScript",
+        FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        },
+    );
+    language_registry.add(js_lang());
+
+    let _minified_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/minified.js"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(fake_js_servers.next().now_or_never().is_none());
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                    max_buffer_line_length: Some(20_001),
+                    ..Default::default()
+                });
+            });
+        })
+    });
+
+    let mut fake_js_server = fake_js_servers.next().await.unwrap();
+    assert_eq!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        uri!("file:///dir/minified.js")
     );
 }
 
