@@ -7,7 +7,7 @@ use db::{
 };
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Subscription, Task, WeakEntity, actions,
+    Modifiers, Subscription, Task, TaskExt as _, WeakEntity, actions,
 };
 use language::Buffer;
 use picker::Picker;
@@ -20,7 +20,7 @@ use workspace::{DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, 
 
 mod delegate;
 mod render;
-use delegate::{Delegate, matches_to_multibuffer};
+use delegate::{Delegate, adjust_query_regex_language, matches_to_multibuffer};
 use util::ResultExt as _;
 
 use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
@@ -420,6 +420,7 @@ impl TextFinder {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = delegate.project(cx).clone();
+        let languages = project.read(cx).languages().clone();
         let preview = picker_preview::editor_preview(project, window, cx);
         let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
         let picker_weak = picker.downgrade();
@@ -436,6 +437,26 @@ impl TextFinder {
                 picker.select_query(window, cx);
             }
         });
+        cx.spawn({
+            let picker = picker.downgrade();
+            async move |_, cx| {
+                use anyhow::Context as _;
+
+                let regex_language = languages
+                    .language_for_name("regex")
+                    .await
+                    .context("loading regex language")?;
+                picker
+                    .update(cx, |picker, cx| {
+                        picker.delegate.regex_language = Some(regex_language);
+                        adjust_query_regex_language(picker, cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+
         let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
         });
@@ -502,6 +523,8 @@ pub struct SearchMatch {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -567,6 +590,82 @@ mod tests {
 
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_modal::<TextFinder>(cx).is_none());
+        });
+    }
+
+    /// The name of the language the query editor is currently highlighted with.
+    fn query_language_name(finder: &TextFinder, cx: &App) -> Option<String> {
+        let query_editor = finder
+            .picker
+            .read(cx)
+            .query_editor()?
+            .as_any()
+            .downcast_ref::<Entity<Editor>>()?
+            .clone();
+        let query_buffer = query_editor.read(cx).buffer().read(cx).as_singleton()?;
+        let language = query_buffer.read(cx).language()?;
+        Some(language.name().to_string())
+    }
+
+    #[gpui::test]
+    async fn test_query_highlighted_as_regex_while_regex_filter_is_on(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "regex".into(),
+                ..Default::default()
+            },
+            None,
+        )));
+
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        let seed_query = SearchSeed {
+            query: "O.E".to_string(),
+            options: Some(SearchOptions::REGEX),
+        };
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(Some(seed_query), window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+
+        let finder = workspace
+            .read_with(cx, |workspace, cx| workspace.active_modal::<TextFinder>(cx))
+            .expect("text finder should be open");
+
+        finder.read_with(cx, |finder, cx| {
+            assert_eq!(
+                query_language_name(finder, cx).as_deref(),
+                Some("regex"),
+                "query should be highlighted as a regex while the regex filter is on"
+            );
+        });
+
+        finder.update(cx, |finder, cx| {
+            finder.picker.update(cx, |picker, cx| {
+                picker.delegate.search_options.toggle(SearchOptions::REGEX);
+                adjust_query_regex_language(picker, cx);
+            });
+        });
+
+        finder.read_with(cx, |finder, cx| {
+            assert_eq!(
+                query_language_name(finder, cx),
+                None,
+                "highlighting should be dropped once the regex filter is off"
+            );
         });
     }
 }
