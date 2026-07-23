@@ -5006,6 +5006,106 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     chunks
 }
 
+#[gpui::test]
+async fn test_edits_from_lsp_with_crlf_line_endings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = "
+        fn a() {}
+        fn b() {}
+        fn c() {}
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a whole-document edit that uses
+    // CRLF line endings. FsAutoComplete does this when formatting via Fantomas
+    // on Windows. The buffer's text is always LF-normalized, so the differing
+    // line endings must not be treated as changes; otherwise the entire buffer
+    // is replaced and cursor positions are lost.
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: "fn a() {}\r\nfn b() {}\r\nfn c() {}\r\n".into(),
+                }],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert!(edits.is_empty(), "expected no edits, got {edits:?}");
+
+    // The same whole-document CRLF edit, but with an actual change on one
+    // line, must produce an edit for just that change.
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: "fn a() {}\r\nfn b(x: u32) {}\r\nfn c() {}\r\n".into(),
+                }],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [(Point::new(1, 5)..Point::new(1, 5), "x: u32".into())]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a() {}
+                fn b(x: u32) {}
+                fn c() {}
+            "
+            .unindent()
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_definition(cx: &mut gpui::TestAppContext) {
     init_test(cx);
