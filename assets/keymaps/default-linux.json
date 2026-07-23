@@ -1513,6 +1513,8 @@
       "enter": "notebook::EnterEditMode",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
+      "d d": "notebook::DeleteCell",
+      "delete": "notebook::DeleteCell",
     },
   },
   {

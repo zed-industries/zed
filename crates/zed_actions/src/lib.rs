@@ -948,6 +948,8 @@ pub mod notebook {
             EnterEditMode,
             /// Exits the cell editor and returns to cell command mode.
             EnterCommandMode,
+            /// Deletes the currently selected cell.
+            DeleteCell,
         ]
     );
 }

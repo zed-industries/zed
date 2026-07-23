@@ -43,9 +43,9 @@ use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
-    AddCodeBlock, AddMarkdownBlock, ClearOutputs, EnterCommandMode, EnterEditMode, InterruptKernel,
-    MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook, RestartKernel, Run,
-    RunAll, RunAndAdvance,
+    AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, EnterCommandMode, EnterEditMode,
+    InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook,
+    RestartKernel, Run, RunAll, RunAndAdvance,
 };
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
@@ -148,6 +148,9 @@ impl NotebookEditor {
                             CellEvent::FocusedIn(_) => {
                                 this.select_cell_by_id(&cell_id_for_focus, cx)
                             }
+                            CellEvent::Clicked(_) => {
+                                this.select_cell_in_command_mode(&cell_id_for_focus, cx)
+                            }
                         }
                     })
                     .detach();
@@ -162,9 +165,10 @@ impl NotebookEditor {
                     .detach();
                 }
                 Cell::Markdown(markdown_cell) => {
+                    let cell_id_for_click = cell_id.clone();
                     cx.subscribe(
                         markdown_cell,
-                        move |_this, cell, event: &MarkdownCellEvent, cx| {
+                        move |this, cell, event: &MarkdownCellEvent, cx| {
                             match event {
                                 MarkdownCellEvent::FinishedEditing => {
                                     cell.update(cx, |cell, cx| {
@@ -177,6 +181,9 @@ impl NotebookEditor {
                                     cell.update(cx, |cell, cx| {
                                         cell.reparse_markdown(cx);
                                     });
+                                }
+                                MarkdownCellEvent::Clicked(_) => {
+                                    this.select_cell_in_command_mode(&cell_id_for_click, cx);
                                 }
                             }
                         },
@@ -762,6 +769,18 @@ impl NotebookEditor {
         }
     }
 
+    fn delete_cell(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let index = self.selected_cell_index;
+        let Some(cell_id) = self.cell_order.get(index).cloned() else {
+            return;
+        };
+        self.cell_order.remove(index);
+        self.cell_map.remove(&cell_id);
+        self.cell_list.splice(index..index + 1, 0);
+        self.selected_cell_index = index.min(self.cell_order.len().saturating_sub(1));
+        cx.notify();
+    }
+
     fn insert_cell_at_current_position(&mut self, cell_id: CellId, cell: Cell) {
         let insert_index = if self.cell_order.is_empty() {
             0
@@ -792,13 +811,17 @@ impl NotebookEditor {
             )
         });
 
+        let cell_id_for_click = new_cell_id.clone();
         cx.subscribe(
             &markdown_cell,
-            move |_this, cell, event: &MarkdownCellEvent, cx| match event {
+            move |this, cell, event: &MarkdownCellEvent, cx| match event {
                 MarkdownCellEvent::FinishedEditing | MarkdownCellEvent::Run(_) => {
                     cell.update(cx, |cell, cx| {
                         cell.reparse_markdown(cx);
                     });
+                }
+                MarkdownCellEvent::Clicked(_) => {
+                    this.select_cell_in_command_mode(&cell_id_for_click, cx);
                 }
             },
         )
@@ -849,6 +872,7 @@ impl NotebookEditor {
             move |this, _cell, event, window, cx| match event {
                 CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), window, cx),
                 CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
+                CellEvent::Clicked(_) => this.select_cell_in_command_mode(&cell_id_for_run, cx),
             },
         )
         .detach();
@@ -881,6 +905,15 @@ impl NotebookEditor {
         if let Some(index) = self.cell_order.iter().position(|id| id == cell_id) {
             self.selected_cell_index = index;
             self.notebook_mode = NotebookMode::Edit;
+            cx.notify();
+        }
+    }
+
+    fn select_cell_in_command_mode(&mut self, cell_id: &CellId, cx: &mut Context<Self>) {
+        if let Some(index) = self.cell_order.iter().position(|id| id == cell_id) {
+            self.selected_cell_index = index;
+            self.notebook_mode = NotebookMode::Command;
+            self.cell_list.scroll_to_reveal_item(index);
             cx.notify();
         }
     }
@@ -1086,6 +1119,22 @@ impl NotebookEditor {
                                     window.dispatch_action(Box::new(MoveCellDown), cx);
                                 }),
                             ),
+                    )
+                    .child(
+                        Self::button_group(window, cx).child(
+                            Self::render_notebook_control(
+                                "delete-cell",
+                                IconName::Trash,
+                                window,
+                                cx,
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("Delete cell", &DeleteCell, cx)
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(DeleteCell), cx);
+                            }),
+                        ),
                     )
                     .child(
                         Self::button_group(window, cx)
@@ -1313,11 +1362,19 @@ impl NotebookEditor {
                 cell.clone().into_any_element()
             }
             Cell::Raw(cell) => {
+                let cell_id = cell.read(cx).id().clone();
                 cell.update(cx, |cell, _cx| {
                     cell.set_selected(is_selected)
                         .set_cell_position(cell_position);
                 });
-                cell.clone().into_any_element()
+                let wrapper_id = ElementId::from(format!("{}-raw-wrapper", cell_id));
+                div()
+                    .id(wrapper_id)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_cell_in_command_mode(&cell_id, cx);
+                    }))
+                    .child(cell.clone())
+                    .into_any_element()
             }
         }
     }
@@ -1357,6 +1414,9 @@ impl Render for NotebookEditor {
             )
             .on_action(
                 cx.listener(|this, _: &MoveCellDown, window, cx| this.move_cell_down(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &DeleteCell, window, cx| this.delete_cell(window, cx)),
             )
             .on_action(cx.listener(|this, _: &AddMarkdownBlock, window, cx| {
                 this.add_markdown_block(window, cx)
