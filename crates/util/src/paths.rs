@@ -1510,6 +1510,54 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_normalize_windows_path_regardless_of_host_platform() {
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\user\dev\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\.\worktrees"),
+            r"C:\Users\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\user\dev\sub\..\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize("C:/Users/user/dev/../worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:/Users\user/dev\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users/user\.\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"\\server\share\dev\..\worktrees"),
+            r"\\server\share\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"//server\share/dev\..\worktrees"),
+            r"\\server\share\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"\dev\..\worktrees"),
+            r"\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"dev\..\worktrees"),
+            r"worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\..\worktrees"),
+            r"C:\worktrees"
+        );
+    }
+
     fn rel_path_entry(path: &'static str, is_file: bool) -> (&'static RelPath, bool) {
         (RelPath::from_unix_str(path).unwrap(), is_file)
     }
