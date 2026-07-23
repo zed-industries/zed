@@ -412,6 +412,10 @@ actions!(
         Redo,
         /// Opens a markdown preview for the selected file.
         OpenMarkdownPreview,
+        /// Copies the content of selected files for LLM prompt.
+        CopyFileContent,
+        /// Copies the folder structure for LLM prompt.
+        CopyFolderStructure,
     ]
 );
 
@@ -1183,6 +1187,20 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
+                            .action(
+                                if is_dir {
+                                    "Copy Folder Files for LLM"
+                                } else {
+                                    "Copy File Content for LLM"
+                                },
+                                Box::new(CopyFileContent),
+                            )
+                            .when(is_dir, |menu| {
+                                menu.action(
+                                    "Copy Folder Structure for LLM",
+                                    Box::new(CopyFolderStructure),
+                                )
+                            })
                             .when(has_git_repo, |menu| {
                                 menu.separator()
                                     .when(!is_dir && self.has_git_changes(entry_id), |menu| {
@@ -3746,6 +3764,160 @@ impl ProjectPanel {
         };
         if !file_paths.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(file_paths.join("\n")));
+        }
+    }
+
+    fn copy_file_content(
+        &mut self,
+        _: &CopyFileContent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut result = String::new();
+        let mut file_count = 0;
+        let mut folder_count = 0;
+        let project = self.project.read(cx);
+
+        for entry in self.effective_entries() {
+            let Some(worktree) = project.worktree_for_id(entry.worktree_id, cx) else {
+                continue;
+            };
+            let worktree = worktree.read(cx);
+
+            let Some(e) = worktree.entry_for_id(entry.entry_id) else {
+                continue;
+            };
+
+            if e.is_dir() {
+                folder_count += 1;
+                let dir_path = e.path.clone();
+
+                let files_in_dir: Vec<_> = worktree
+                    .entries(false, 0)
+                    .filter(|e| {
+                        e.is_file()
+                            && e.path.starts_with(&dir_path)
+                            && e.path != dir_path
+                    })
+                    .collect();
+
+                for file in files_in_dir {
+                    let abs_path = worktree.absolutize(&file.path);
+                    let Ok(content) = std::fs::read_to_string(&abs_path) else {
+                        continue;
+                    };
+                    let rel_path = file.path.to_string();
+                    let ext = abs_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("txt");
+
+                    if !result.is_empty() {
+                        result.push_str("\n\n");
+                    }
+                    result.push_str(&format!(
+                        "{rel_path}:\n```{ext}\n{content}\n```"
+                    ));
+                    file_count += 1;
+                }
+            } else {
+                let abs_path = worktree.absolutize(&e.path);
+                let Ok(content) = std::fs::read_to_string(&abs_path) else {
+                    continue;
+                };
+                let rel_path = e.path.to_string();
+                let ext = abs_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("txt");
+
+                if !result.is_empty() {
+                    result.push_str("\n\n");
+                }
+                result.push_str(&format!(
+                    "{rel_path}:\n```{ext}\n{content}\n```"
+                ));
+                file_count += 1;
+            }
+        }
+
+        if !result.is_empty() {
+            let header = match (file_count, folder_count) {
+                (f, 0) => format!("# files: {f}\n\n"),
+                (0, d) => format!("# folders: {d}\n\n"),
+                (f, d) => format!("# folders: {d}, files: {f}\n\n"),
+            };
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                format!("{header}{result}")
+            ));
+        }
+    }
+
+    fn copy_folder_structure(
+        &mut self,
+        _: &CopyFolderStructure,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut result = String::new();
+        let project = self.project.read(cx);
+
+        for entry in self.effective_entries() {
+            let Some(worktree) = project.worktree_for_id(entry.worktree_id, cx) else {
+                continue;
+            };
+            let worktree = worktree.read(cx);
+
+            let Some(root_entry) = worktree.entry_for_id(entry.entry_id) else {
+                continue;
+            };
+
+            if !root_entry.is_dir() {
+                continue;
+            }
+
+            let root_path = root_entry.path.clone();
+            let root_name = root_path
+                .file_name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| worktree.root_name().to_string());
+
+            if !result.is_empty() {
+                result.push('\n');
+            }
+
+            let children: Vec<_> = worktree
+                .entries(false, 0)
+                .filter(|e| e.path.starts_with(&root_path) && e.path != root_path)
+                .collect();
+
+            let total_count = children.len();
+
+            result.push_str(&format!("{root_name}/ ({total_count} items)\n"));
+
+            for child in children.iter() {
+                let Ok(rel) = child.path.strip_prefix(&root_path) else {
+                    continue;
+                };
+
+                let depth = rel.components().count();
+                let indent = "  ".repeat(depth);
+                let name = child
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+
+                if child.is_dir() {
+                    result.push_str(&format!("{indent}{name}/\n"));
+                } else {
+                    result.push_str(&format!("{indent}{name}\n"));
+                }
+            }
+        }
+
+        if !result.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(result));
         }
     }
 
@@ -7019,6 +7191,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::copy_file_content))
+                .on_action(cx.listener(Self::copy_folder_structure))
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
