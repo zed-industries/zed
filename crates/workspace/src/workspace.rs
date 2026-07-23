@@ -8914,6 +8914,9 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                         |cx| {
                             cx.new(|cx| {
                                 MessageNotification::new("Failed to load the database file.", cx)
+                                    .more_info_message(
+                                        "Session state won't persist this run. Check Zed.log for details.",
+                                    )
                                     .primary_message("File an Issue")
                                     .primary_icon(IconName::Plus)
                                     .primary_on_click(|window, cx| {
@@ -8922,6 +8925,39 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                             })
                         },
                     );
+                } else {
+                    let backups = db::recovered_db_backups();
+                    if !backups.is_empty() {
+                        struct DatabaseRecoveredNotification;
+
+                        let backup_list = backups
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+
+                        workspace.show_notification(
+                            NotificationId::unique::<DatabaseRecoveredNotification>(),
+                            cx,
+                            move |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new(
+                                        "Workspace database was corrupted and rebuilt.",
+                                        cx,
+                                    )
+                                    .more_info_message(format!(
+                                        "Recent projects, window layout, and chat threads were reset. \
+                                         The previous database is preserved at: {backup_list}."
+                                    ))
+                                    .primary_message("File an Issue")
+                                    .primary_icon(IconName::Plus)
+                                    .primary_on_click(|window, cx| {
+                                        window.dispatch_action(Box::new(FileBugReport), cx)
+                                    })
+                                })
+                            },
+                        );
+                    }
                 }
             });
         })
