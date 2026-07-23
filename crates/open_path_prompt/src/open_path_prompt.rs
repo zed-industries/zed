@@ -7,7 +7,9 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
+use gpui::Action;
 use gpui::{HighlightStyle, StyledText, Task};
+use menu;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use project_panel::project_panel_settings::ProjectPanelSettings;
@@ -19,18 +21,19 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use ui::{Context, LabelLike, ListItem, Window};
+use ui::{Context, KeyBinding, LabelLike, ListItem, Window};
 use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{
     maybe,
     paths::{PathStyle, compare_paths},
 };
-use workspace::Workspace;
+use workspace::{OpenFilesMode, Workspace};
 
 pub struct OpenPathPrompt;
 
 pub struct OpenPathDelegate {
     tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
+    files_tx: Option<oneshot::Sender<Option<(Vec<PathBuf>, OpenFilesMode)>>>,
     lister: DirectoryLister,
     selected_index: usize,
     directory_state: DirectoryState,
@@ -59,6 +62,7 @@ impl OpenPathDelegate {
             .unwrap_or_default();
         Self {
             tx: Some(tx),
+            files_tx: None,
             lister,
             selected_index: 0,
             directory_state: DirectoryState::None {
@@ -93,6 +97,15 @@ impl OpenPathDelegate {
         self.hidden_entries = true;
         self
     }
+
+    pub fn with_files_tx(
+        mut self,
+        tx: oneshot::Sender<Option<(Vec<PathBuf>, OpenFilesMode)>>,
+    ) -> Self {
+        self.files_tx = Some(tx);
+        self
+    }
+
     fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
             DirectoryState::List { entries, .. } => {
@@ -207,6 +220,72 @@ impl OpenPathPrompt {
         }));
     }
 
+    pub fn register_for_open_files(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut Context<Workspace>,
+    ) {
+        workspace.set_prompt_for_open_files(Box::new(|workspace, lister, window, cx| {
+            let (tx, rx) = futures::channel::oneshot::channel();
+            let (dummy_tx, _dummy_rx) = futures::channel::oneshot::channel();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                let delegate = OpenPathDelegate::new(dummy_tx, lister.clone(), false, cx)
+                    .show_hidden()
+                    .with_files_tx(tx)
+                    .with_footer(Arc::new(|window, cx| {
+                        let secondary = window.modifiers().secondary();
+                        Some(
+                            h_flex()
+                                .flex_1()
+                                .p_1p5()
+                                .gap_1()
+                                .justify_end()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
+                                .map(|this| {
+                                    if secondary {
+                                        this.child(
+                                            Button::new("open-in-new-window", "Open In New Window")
+                                                .key_binding(KeyBinding::for_action(
+                                                    &menu::SecondaryConfirm,
+                                                    cx,
+                                                ))
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        menu::SecondaryConfirm.boxed_clone(),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                    } else {
+                                        this.child(
+                                            Button::new("open", "Open")
+                                                .key_binding(KeyBinding::for_action(
+                                                    &menu::Confirm,
+                                                    cx,
+                                                ))
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        menu::Confirm.boxed_clone(),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                    }
+                                })
+                                .into_any_element(),
+                        )
+                    }));
+                let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
+                let query = lister.default_query(cx);
+                picker.set_query(&query, window, cx);
+                picker
+            });
+            rx
+        }));
+    }
+
     pub fn register_new_path(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
@@ -252,6 +331,16 @@ impl OpenPathPrompt {
         cx: &mut Context<Workspace>,
     ) {
         Self::prompt_for_open_path(workspace, lister, true, suggested_name, tx, window, cx);
+    }
+}
+
+impl OpenPathDelegate {
+    fn send_paths(&mut self, paths: Vec<PathBuf>, mode: OpenFilesMode) {
+        if let Some(tx) = self.files_tx.take() {
+            tx.send(Some((paths, mode))).ok();
+        } else if let Some(tx) = self.tx.take() {
+            tx.send(Some(paths)).ok();
+        }
     }
 }
 
@@ -658,9 +747,15 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(candidate) = self.get_entry(self.selected_index) else {
             return;
+        };
+
+        let mode = if secondary {
+            OpenFilesMode::OpenInNewWindow
+        } else {
+            OpenFilesMode::OpenInCurrentWindow
         };
 
         match &self.directory_state {
@@ -673,9 +768,7 @@ impl PickerDelegate for OpenPathDelegate {
                         Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
                             .join(&candidate.path.string)
                     };
-                if let Some(tx) = self.tx.take() {
-                    tx.send(Some(vec![confirmed_path])).ok();
-                }
+                self.send_paths(vec![confirmed_path], mode);
             }
             DirectoryState::Create {
                 parent_path,
@@ -713,16 +806,14 @@ impl PickerDelegate for OpenPathDelegate {
                                     if answer != Some(0) {
                                         return;
                                     }
-                                    if let Some(tx) = picker.delegate.tx.take() {
-                                        tx.send(Some(vec![prompted_path])).ok();
-                                    }
+                                    picker.delegate.send_paths(vec![prompted_path], mode);
                                     cx.emit(gpui::DismissEvent);
                                 })
                                 .ok();
                         });
                         return;
-                    } else if let Some(tx) = self.tx.take() {
-                        tx.send(Some(vec![prompted_path])).ok();
+                    } else {
+                        self.send_paths(vec![prompted_path], mode);
                     }
                 }
             },
@@ -737,7 +828,9 @@ impl PickerDelegate for OpenPathDelegate {
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.cancel_flag.store(true, atomic::Ordering::Release);
-        if let Some(tx) = self.tx.take() {
+        if let Some(tx) = self.files_tx.take() {
+            tx.send(None).ok();
+        } else if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
         cx.emit(gpui::DismissEvent)

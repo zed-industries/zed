@@ -781,6 +781,97 @@ pub fn prompt_for_open_path_and_open(
     .detach();
 }
 
+pub fn prompt_for_open_files_and_open(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    options: PathPromptOptions,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let result = workspace.prompt_for_open_files(
+        options,
+        DirectoryLister::Local(workspace.project().clone(), app_state.fs.clone()),
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |this, cx| {
+        let Some((paths, mode)) = result.await.log_err().flatten() else {
+            return;
+        };
+        match mode {
+            OpenFilesMode::OpenInCurrentWindow => {
+                if let Some(task) = this
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_paths(
+                            paths,
+                            OpenOptions {
+                                visible: Some(OpenVisible::None),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                    .log_err()
+                {
+                    task.await;
+                }
+            }
+            OpenFilesMode::OpenInNewWindow => {
+                if let Some(task) = this
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+            }
+        }
+    })
+    .detach();
+}
+
+fn prompt_and_open_files(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
+    if let Some(workspace_window) =
+        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+            .into_iter()
+            .next()
+    {
+        workspace_window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    prompt_for_open_files_and_open(workspace, app_state, options, window, cx);
+                });
+            })
+            .ok();
+    } else {
+        let task = Workspace::new_local(
+            Vec::new(),
+            app_state.clone(),
+            None,
+            None,
+            None,
+            OpenMode::Activate,
+            cx,
+        );
+        cx.spawn(async move |cx| {
+            let OpenResult { window, .. } = task.await?;
+            window.update(cx, |multi_workspace, window, cx| {
+                window.activate_window();
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    prompt_for_open_files_and_open(workspace, app_state, options, window, cx);
+                });
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+}
+
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
@@ -811,7 +902,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         .on_action(|_: &OpenFiles, cx: &mut App| {
             let directories = cx.can_select_mixed_files_and_dirs();
             let app_state = AppState::global(cx);
-            prompt_and_open_paths(
+            prompt_and_open_files(
                 app_state,
                 PathPromptOptions {
                     files: true,
@@ -819,7 +910,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                true,
                 cx,
             );
         });
@@ -1356,6 +1446,21 @@ type PromptForOpenPath = Box<
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OpenFilesMode {
+    OpenInCurrentWindow,
+    OpenInNewWindow,
+}
+
+type PromptForOpenFiles = Box<
+    dyn Fn(
+        &mut Workspace,
+        DirectoryLister,
+        &mut Window,
+        &mut Context<Workspace>,
+    ) -> oneshot::Receiver<Option<(Vec<PathBuf>, OpenFilesMode)>>,
+>;
+
 #[derive(Default)]
 struct DispatchingKeystrokes {
     dispatched: HashSet<Vec<Keystroke>>,
@@ -1417,6 +1522,7 @@ pub struct Workspace {
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
+    on_prompt_for_open_files: Option<PromptForOpenFiles>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
@@ -1876,6 +1982,7 @@ impl Workspace {
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
             on_prompt_for_open_path: None,
+            on_prompt_for_open_files: None,
             terminal_provider: None,
             debugger_provider: None,
             serializable_items_tx,
@@ -2984,6 +3091,34 @@ impl Workspace {
 
     pub fn set_prompt_for_open_path(&mut self, prompt: PromptForOpenPath) {
         self.on_prompt_for_open_path = Some(prompt)
+    }
+
+    pub fn set_prompt_for_open_files(&mut self, prompt: PromptForOpenFiles) {
+        self.on_prompt_for_open_files = Some(prompt)
+    }
+
+    pub fn prompt_for_open_files(
+        &mut self,
+        path_prompt_options: PathPromptOptions,
+        lister: DirectoryLister,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Option<(Vec<PathBuf>, OpenFilesMode)>> {
+        if let Some(prompt) = self.on_prompt_for_open_files.take() {
+            let rx = prompt(self, lister, window, cx);
+            self.on_prompt_for_open_files = Some(prompt);
+            return rx;
+        }
+        // Fall back to simple path prompt, always opening in the current window.
+        let simple_rx = self.prompt_for_open_path(path_prompt_options, lister, window, cx);
+        let (tx, rx) = oneshot::channel();
+        cx.spawn_in(window, async move |_, _| {
+            let paths = simple_rx.await.ok().flatten();
+            tx.send(paths.map(|p| (p, OpenFilesMode::OpenInCurrentWindow)))
+                .ok();
+        })
+        .detach();
+        rx
     }
 
     pub fn set_terminal_provider(&mut self, provider: impl TerminalProvider + 'static) {
@@ -11631,7 +11766,7 @@ fn load_legacy_panel_size(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
+    use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
     use super::*;
     use crate::{
@@ -17304,5 +17439,203 @@ mod tests {
             workspace.open_url_or_file("nonexistent.txt", None, window, cx);
         });
         assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_open_files_ctrl_enter_opens_new_window(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.use_system_path_prompts = Some(false);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.run_until_parked();
+
+        let initial_window_count = cx.windows().len();
+        let initial_worktree_count = project.read_with(cx, |p, cx| p.worktrees(cx).count());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_prompt_for_open_files(Box::new(|_, _, _, _| {
+                let (tx, rx) = oneshot::channel();
+                tx.send(Some((
+                    vec![PathBuf::from("/root/file.txt")],
+                    OpenFilesMode::OpenInNewWindow,
+                )))
+                .ok();
+                rx
+            }));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            prompt_for_open_files_and_open(
+                workspace,
+                app_state,
+                PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: true,
+                    prompt: None,
+                },
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            initial_window_count + 1,
+            "ctrl-enter should open the file in a new window"
+        );
+        assert_eq!(
+            project.read_with(cx, |p, cx| p.worktrees(cx).count()),
+            initial_worktree_count,
+            "the original project worktree count must not change"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_files_in_existing_project_does_not_add_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.use_system_path_prompts = Some(false);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "existing.txt": "hello" }))
+            .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.run_until_parked();
+
+        let initial_window_count = cx.windows().len();
+        let initial_worktree_count = project.read_with(cx, |p, cx| p.worktrees(cx).count());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                let (tx, rx) = oneshot::channel();
+                tx.send(Some(vec![PathBuf::from("/root/existing.txt")]))
+                    .ok();
+                rx
+            }));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            prompt_for_open_files_and_open(
+                workspace,
+                app_state,
+                PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: true,
+                    prompt: None,
+                },
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            initial_window_count,
+            "no new window should be opened for a file already in the project"
+        );
+        assert_eq!(
+            project.read_with(cx, |p, cx| p.worktrees(cx).count()),
+            initial_worktree_count,
+            "no new worktree should be added for a file already in the project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_files_outside_project_does_not_add_visible_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.use_system_path_prompts = Some(false);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+        fs.insert_tree("/external", json!({ "other.txt": "" }))
+            .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.run_until_parked();
+
+        let initial_window_count = cx.windows().len();
+        let initial_visible_worktree_count =
+            project.read_with(cx, |p, cx| p.visible_worktrees(cx).count());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                let (tx, rx) = oneshot::channel();
+                tx.send(Some(vec![PathBuf::from("/external/other.txt")]))
+                    .ok();
+                rx
+            }));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let app_state = workspace.app_state().clone();
+            prompt_for_open_files_and_open(
+                workspace,
+                app_state,
+                PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: true,
+                    prompt: None,
+                },
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            initial_window_count,
+            "opening a file outside the project must not open a new window"
+        );
+        assert_eq!(
+            project.read_with(cx, |p, cx| p.visible_worktrees(cx).count()),
+            initial_visible_worktree_count,
+            "the external file should not be added as a visible project worktree"
+        );
     }
 }
