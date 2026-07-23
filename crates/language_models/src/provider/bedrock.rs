@@ -1341,7 +1341,11 @@ impl MantleResponseEventMapper {
             .flat_map(move |event| {
                 futures::stream::iter(match event {
                     Ok(event) => self.map_event(event),
-                    Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
+                    Err(error) => {
+                        let mut events = self.finish_current_message();
+                        events.push(Err(LanguageModelCompletionError::from(error)));
+                        events
+                    }
                 })
             })
             .boxed()
@@ -1537,13 +1541,14 @@ impl MantleResponseEventMapper {
         current_message.text.push_str(&delta);
         current_message.output_index = output_index;
         current_message.content_index = content_index;
-        let snapshot = current_message.text.clone();
         let kind = current_message.kind;
-        let phase = current_message.phase.clone();
-        let previous = self.previous_message.clone();
 
         match kind {
             MantleMessageSnapshotKind::Undetermined => {
+                let snapshot = current_message.text.clone();
+                let phase = current_message.phase.clone();
+                let previous = self.previous_message.clone();
+
                 if let Some(previous) = previous
                     && previous.phase == phase
                 {
@@ -1558,11 +1563,7 @@ impl MantleResponseEventMapper {
                         }
                         let mut events = Vec::new();
                         self.flush_pending_message(&mut events, true);
-                        events.extend(self.map_snapshot_suffix(
-                            output_index,
-                            content_index,
-                            snapshot,
-                        ));
+                        events.extend(self.map_snapshot_suffix(output_index, content_index));
                         return events;
                     }
 
@@ -1586,7 +1587,7 @@ impl MantleResponseEventMapper {
                 events
             }
             MantleMessageSnapshotKind::Cumulative => {
-                self.map_snapshot_suffix(output_index, content_index, snapshot)
+                self.map_snapshot_suffix(output_index, content_index)
             }
             MantleMessageSnapshotKind::Independent => {
                 self.map_text_event(item_id, output_index, content_index, delta)
@@ -1598,19 +1599,18 @@ impl MantleResponseEventMapper {
         &mut self,
         output_index: usize,
         content_index: Option<usize>,
-        snapshot: String,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let (item_id, suffix) = {
             let Some(current_message) = self.current_message.as_mut() else {
                 return Vec::new();
             };
 
-            if snapshot.len() <= current_message.emitted_text_length {
+            if current_message.text.len() <= current_message.emitted_text_length {
                 return Vec::new();
             }
 
-            let suffix = snapshot[current_message.emitted_text_length..].to_string();
-            current_message.emitted_text_length = snapshot.len();
+            let suffix = current_message.text[current_message.emitted_text_length..].to_string();
+            current_message.emitted_text_length = current_message.text.len();
             (current_message.item_id.clone(), suffix)
         };
 
@@ -3242,20 +3242,22 @@ mod tests {
     }
 
     #[test]
-    fn mantle_response_mapper_coalesces_multi_delta_cumulative_snapshots() {
-        // The first message is finalized, then a second item replays the full text
-        // across several growing deltas, each of which is a strict prefix extension.
+    fn mantle_response_mapper_coalesces_chained_cumulative_snapshots() {
+        // Each merge must thread `previous_message`/`emitted_text_length`
+        // through to the next.
         let first_message = mantle_message_item("msg_1");
         let second_message = mantle_message_item("msg_2");
+        let third_message = mantle_message_item("msg_3");
         let events = map_mantle_response_events(vec![
             item_added(0, first_message.clone()),
             text_delta("msg_1", 0, "Plan"),
             item_done(0, first_message),
             item_added(1, second_message.clone()),
-            text_delta("msg_2", 1, "Pl"),
-            text_delta("msg_2", 1, "an"),
-            text_delta("msg_2", 1, " and go"),
+            text_delta("msg_2", 1, "Plan and go"),
             item_done(1, second_message),
+            item_added(2, third_message.clone()),
+            text_delta("msg_3", 2, "Plan and go further"),
+            item_done(2, third_message),
         ]);
 
         assert_eq!(
@@ -3266,6 +3268,7 @@ mod tests {
                 },
                 LanguageModelCompletionEvent::Text("Plan".to_string()),
                 LanguageModelCompletionEvent::Text(" and go".to_string()),
+                LanguageModelCompletionEvent::Text(" further".to_string()),
             ]
         );
     }
