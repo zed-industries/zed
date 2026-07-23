@@ -1276,17 +1276,20 @@ impl BufferSearchBar {
         _: &SelectAllMatches,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if !self.dismissed
             && self.active_match_index.is_some()
             && let Some(searchable_item) = self.active_searchable_item.as_ref()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
                 .get(&searchable_item.downgrade())
+            && !matches.is_empty()
         {
             searchable_item.select_matches(matches, *token, window, cx);
             self.focus_editor(&FocusEditor, window, cx);
+            return true;
         }
+        false
     }
 
     pub fn select_match(

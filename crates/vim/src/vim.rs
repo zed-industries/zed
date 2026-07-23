@@ -1015,6 +1015,7 @@ impl Vim {
         editor.set_input_enabled(true);
         editor.set_expects_character_input(true);
         editor.set_autoindent(true);
+        editor.set_highlight_primary_local_selection(false, cx);
         editor.selections.set_line_mode(false);
         editor.unregister_addon::<VimAddon>();
         editor.set_relative_line_number(None, cx);
@@ -2242,14 +2243,25 @@ impl Vim {
     }
 
     fn state_for_editor_settings(&self, cx: &App) -> VimEditorSettingsState {
+        let mode = if HelixModeSetting::get_global(cx).0 {
+            match self.mode {
+                Mode::Normal => Mode::HelixNormal,
+                Mode::Visual => Mode::HelixSelect,
+                mode => mode,
+            }
+        } else {
+            self.mode
+        };
+
         VimEditorSettingsState {
             cursor_shape: self.cursor_shape(cx),
-            clip_at_line_ends: self.clip_at_line_ends(),
+            clip_at_line_ends: matches!(mode, Mode::Normal) && self.clip_at_line_ends(),
             collapse_matches: !HelixModeSetting::get_global(cx).0 && !self.search.cmd_f_search,
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
             cursor_offset_on_selection: self.mode.has_selection(),
+            highlight_primary_local_selection: mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
                 && !(self.mode.is_normal()
@@ -2270,6 +2282,7 @@ impl Vim {
         editor.set_expects_character_input(state.expects_character_input);
         editor.set_autoindent(state.autoindent);
         editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
+        editor.set_highlight_primary_local_selection(state.highlight_primary_local_selection, cx);
         editor.selections.set_line_mode(state.line_mode);
         editor.set_edit_predictions_hidden_for_vim_mode(state.hide_edit_predictions, window, cx);
     }
@@ -2288,6 +2301,7 @@ struct VimEditorSettingsState {
     expects_character_input: bool,
     autoindent: bool,
     cursor_offset_on_selection: bool,
+    highlight_primary_local_selection: bool,
     line_mode: bool,
     hide_edit_predictions: bool,
 }
