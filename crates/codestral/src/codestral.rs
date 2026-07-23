@@ -22,7 +22,6 @@ use std::{
 use text::ToOffset;
 
 pub const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai";
-pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
 static CODESTRAL_API_KEY_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("CODESTRAL_API_KEY");
 
@@ -223,14 +222,13 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         &mut self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
+        _debounce: bool,
         debounce_duration: Option<Duration>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         log::debug!(
-            "Codestral: Refresh called (debounce: {}, debounce_duration: {:?})",
-            debounce,
+            "Codestral: Refresh called (debounce_duration: {:?})",
             debounce_duration
         );
 
@@ -262,12 +260,9 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         let api_url = codestral_api_url(cx).to_string();
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
-            if debounce {
-                let debounce_duration = debounce_duration.unwrap_or(DEBOUNCE_TIMEOUT);
-                if !debounce_duration.is_zero() {
-                    log::debug!("Codestral: Debouncing for {:?}", debounce_duration);
-                    cx.background_executor().timer(debounce_duration).await;
-                }
+            if let Some(debounce_duration) = debounce_duration.filter(|d| !d.is_zero()) {
+                log::debug!("Codestral: Debouncing for {:?}", debounce_duration);
+                cx.background_executor().timer(debounce_duration).await;
             }
 
             let cursor_offset = cursor_position.to_offset(&snapshot);

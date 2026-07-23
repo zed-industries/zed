@@ -323,14 +323,7 @@ where
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(
-                buffer,
-                cursor_position,
-                debounce,
-                debounce_duration,
-                trigger,
-                cx,
-            )
+            this.refresh(buffer, cursor_position, debounce, debounce_duration, trigger, cx)
         })
     }
 
