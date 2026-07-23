@@ -1169,7 +1169,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::BreadcrumbsChanged => {
+            EditorEvent::BreadcrumbsChanged | EditorEvent::OutlineSymbolsChanged => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 

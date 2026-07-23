@@ -5192,10 +5192,12 @@ impl LspStore {
         &mut self,
         buffer_handle: &Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Option<language::AvailableLanguage> {
+    ) {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
-        let file = buffer.file()?;
+        let Some(file) = buffer.file() else {
+            return;
+        };
         let content = buffer.as_rope();
         let modeline_settings = buffer.modeline().map(Arc::as_ref);
 
@@ -5206,14 +5208,13 @@ impl LspStore {
         {
             self.languages
                 .available_language_for_modeline_name(mode_name)
+                .map(|language| language.id())
         } else {
             self.languages.language_for_file(file, Some(content), cx)
         };
-        if let Some(available_language) = &available_language {
-            if let Some(Ok(Ok(new_language))) = self
-                .languages
-                .load_language(available_language)
-                .now_or_never()
+        if let Some(language_id) = available_language {
+            if let Some(Ok(Ok(new_language))) =
+                self.languages.load_language(language_id).now_or_never()
             {
                 self.set_language_for_buffer(buffer_handle, new_language, cx);
             }
@@ -5223,8 +5224,6 @@ impl LspStore {
                 new_language: None,
             });
         }
-
-        available_language
     }
 
     pub(crate) fn set_language_for_buffer(
