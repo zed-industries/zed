@@ -144,25 +144,21 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Mutex<Vec<Option<Vec<BracketMatch<usize>>>>>,
+    brackets_by_chunks: Mutex<HashMap<usize, Vec<BracketMatch<usize>>>>,
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
-        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
+        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
-        self.brackets_by_chunks
-            .get_mut()
-            .resize(self.chunks.len(), None);
     }
 
     fn new(snapshot: &text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
-            brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
-            chunks,
+            chunks: RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK),
+            brackets_by_chunks: Mutex::new(HashMap::default()),
         }
     }
 
@@ -3210,16 +3206,15 @@ impl Buffer {
                 if triggers.is_empty() {
                     self.completion_triggers_per_language_server
                         .remove(&server_id);
-                    self.completion_triggers = self
-                        .completion_triggers_per_language_server
-                        .values()
-                        .flat_map(|triggers| triggers.iter().cloned())
-                        .collect();
                 } else {
                     self.completion_triggers_per_language_server
-                        .insert(server_id, triggers.iter().cloned().collect());
-                    self.completion_triggers.extend(triggers);
+                        .insert(server_id, triggers.into_iter().collect());
                 }
+                self.completion_triggers = self
+                    .completion_triggers_per_language_server
+                    .values()
+                    .flat_map(|triggers| triggers.iter().cloned())
+                    .collect();
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
             Operation::UpdateLineEnding {
@@ -3391,16 +3386,15 @@ impl Buffer {
         if triggers.is_empty() {
             self.completion_triggers_per_language_server
                 .remove(&server_id);
-            self.completion_triggers = self
-                .completion_triggers_per_language_server
-                .values()
-                .flat_map(|triggers| triggers.iter().cloned())
-                .collect();
         } else {
             self.completion_triggers_per_language_server
                 .insert(server_id, triggers.clone());
-            self.completion_triggers.extend(triggers.iter().cloned());
         }
+        self.completion_triggers = self
+            .completion_triggers_per_language_server
+            .values()
+            .flat_map(|triggers| triggers.iter().cloned())
+            .collect();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
                 triggers: triggers.into_iter().collect(),
@@ -3667,7 +3661,12 @@ impl BufferSnapshot {
         let indent_configs = matches
             .grammars()
             .iter()
-            .map(|grammar| grammar.indents_config.as_ref().unwrap())
+            .map(|grammar| {
+                grammar
+                    .indents_config
+                    .as_ref()
+                    .expect("grammar in indent match set has indents_config")
+            })
             .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
@@ -4821,6 +4820,13 @@ impl BufferSnapshot {
         known_chunks: Option<&HashSet<Range<BufferRow>>>,
     ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
         let mut all_bracket_matches = HashMap::default();
+        if self
+            .language
+            .as_ref()
+            .is_none_or(|language| language.grammar().is_none())
+        {
+            return all_bracket_matches;
+        }
 
         for chunk in self
             .tree_sitter_data
@@ -4833,8 +4839,11 @@ impl BufferSnapshot {
             let chunk_range = chunk.anchor_range();
             let chunk_range = chunk_range.to_offset(&self);
 
-            if let Some(cached_brackets) =
-                &self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
+            if let Some(cached_brackets) = self
+                .tree_sitter_data
+                .brackets_by_chunks
+                .lock()
+                .get(&chunk.id)
             {
                 all_bracket_matches.insert(chunk.row_range(), cached_brackets.clone());
                 continue;
@@ -4844,75 +4853,112 @@ impl BufferSnapshot {
             let mut opens = Vec::new();
             let mut color_pairs = Vec::new();
 
-            let mut matches = self.syntax.matches_with_options(
+            let bounded_query = (
                 chunk_range.clone(),
-                &self.text,
                 TreeSitterOptions {
                     max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                     max_start_depth: None,
                 },
-                |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
             );
-            let configs = matches
-                .grammars()
-                .iter()
-                .map(|grammar| grammar.brackets_config.as_ref().unwrap())
-                .collect::<Vec<_>>();
+            // The bounded query drops any pair spanning more than `MAX_BYTES_TO_QUERY`
+            // (tree-sitter's containing byte range requires full containment), which
+            // resets bracket depth at chunk boundaries. Every such pair encloses a
+            // chunk edge, so recover them with two point-sized unbounded queries that
+            // only traverse the syntax tree spine around each edge.
+            let boundary_queries = [chunk_range.start, chunk_range.end].map(|offset| {
+                (
+                    self.clip_offset(offset.saturating_sub(1), Bias::Left)
+                        ..self.clip_offset(offset.saturating_add(1), Bias::Right),
+                    TreeSitterOptions::default(),
+                )
+            });
 
+            let mut grammar_ids = Vec::new();
+            let mut configs = Vec::new();
+            let mut seen_delimiters = HashSet::default();
             // Group matches by open delimiter so we can either trust grammar output
             // or repair it by picking a single closest close per open.
             let mut close_delimiters_by_open = BTreeMap::new();
             let mut bogus_patterns = HashSet::default();
-            while let Some(mat) = matches.peek() {
-                let mut open = None;
-                let mut close = None;
-                let syntax_layer_depth = mat.depth;
-                let pattern_key = BracketPatternKey {
-                    grammar_index: mat.grammar_index,
-                    pattern_index: mat.pattern_index,
-                };
-                let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[mat.pattern_index];
-                for capture in mat.captures {
-                    if capture.index == config.open_capture_ix {
-                        open = Some(capture.node.byte_range());
-                    } else if capture.index == config.close_capture_ix {
-                        close = Some(capture.node.byte_range());
+            for (query_range, options) in iter::once(bounded_query).chain(boundary_queries) {
+                let mut matches =
+                    self.syntax
+                        .matches_with_options(query_range, &self.text, options, |grammar| {
+                            grammar.brackets_config.as_ref().map(|c| &c.query)
+                        });
+                let grammar_indices = matches
+                    .grammars()
+                    .iter()
+                    .map(|grammar| {
+                        grammar_ids
+                            .iter()
+                            .position(|&id| id == grammar.id())
+                            .unwrap_or_else(|| {
+                                grammar_ids.push(grammar.id());
+                                configs.push(grammar.brackets_config.as_ref().unwrap());
+                                grammar_ids.len() - 1
+                            })
+                    })
+                    .collect::<Vec<_>>();
+
+                while let Some(mat) = matches.peek() {
+                    let mut open = None;
+                    let mut close = None;
+                    let syntax_layer_depth = mat.depth;
+                    let grammar_index = grammar_indices[mat.grammar_index];
+                    let pattern_key = BracketPatternKey {
+                        grammar_index,
+                        pattern_index: mat.pattern_index,
+                    };
+                    let config = configs[grammar_index];
+                    let pattern = &config.patterns[mat.pattern_index];
+                    for capture in mat.captures {
+                        if capture.index == config.open_capture_ix {
+                            open = Some(capture.node.byte_range());
+                        } else if capture.index == config.close_capture_ix {
+                            close = Some(capture.node.byte_range());
+                        }
                     }
+
+                    matches.advance();
+
+                    let Some((open_range, close_range)) = open.zip(close) else {
+                        continue;
+                    };
+
+                    let bracket_range = open_range.start..=close_range.end;
+                    if !bracket_range.overlaps(&chunk_range) {
+                        continue;
+                    }
+
+                    let candidate = BracketMatchCandidate {
+                        bracket_match: BracketMatch {
+                            open_range,
+                            close_range,
+                            syntax_layer_depth,
+                            newline_only: pattern.newline_only,
+                            color_index: None,
+                        },
+                        pattern: pattern_key,
+                        rainbow_exclude: pattern.rainbow_exclude,
+                    };
+
+                    if !seen_delimiters
+                        .insert((candidate.open_delimiter(), candidate.close_delimiter()))
+                    {
+                        continue;
+                    }
+
+                    let close_delimiters = close_delimiters_by_open
+                        .entry(candidate.open_delimiter())
+                        .or_insert_with(BTreeSet::new);
+                    close_delimiters.insert(candidate.close_delimiter());
+                    if close_delimiters.len() > 1 {
+                        bogus_patterns.insert(pattern_key);
+                    }
+
+                    all_brackets.push(candidate);
                 }
-
-                matches.advance();
-
-                let Some((open_range, close_range)) = open.zip(close) else {
-                    continue;
-                };
-
-                let bracket_range = open_range.start..=close_range.end;
-                if !bracket_range.overlaps(&chunk_range) {
-                    continue;
-                }
-
-                let candidate = BracketMatchCandidate {
-                    bracket_match: BracketMatch {
-                        open_range,
-                        close_range,
-                        syntax_layer_depth,
-                        newline_only: pattern.newline_only,
-                        color_index: None,
-                    },
-                    pattern: pattern_key,
-                    rainbow_exclude: pattern.rainbow_exclude,
-                };
-
-                let close_delimiters = close_delimiters_by_open
-                    .entry(candidate.open_delimiter())
-                    .or_insert_with(BTreeSet::new);
-                close_delimiters.insert(candidate.close_delimiter());
-                if close_delimiters.len() > 1 {
-                    bogus_patterns.insert(pattern_key);
-                }
-
-                all_brackets.push(candidate);
             }
 
             if !bogus_patterns.is_empty() {
@@ -5061,11 +5107,11 @@ impl BufferSnapshot {
                 (bracket_match.open_range.start, bracket_match.open_range.end)
             });
 
-            if let empty_slot @ None =
-                &mut self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                *empty_slot = Some(all_brackets.clone());
-            }
+            self.tree_sitter_data
+                .brackets_by_chunks
+                .lock()
+                .entry(chunk.id)
+                .or_insert_with(|| all_brackets.clone());
             all_bracket_matches.insert(chunk.row_range(), all_brackets);
         }
 

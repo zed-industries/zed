@@ -177,10 +177,10 @@ impl EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "Typescript".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["ts".to_string()],
                     ..Default::default()
-                },
+                }).into(),
                 brackets: language::BracketPairConfig {
                     pairs: vec![language::BracketPair {
                         start: "{".to_string(),
@@ -282,10 +282,10 @@ impl EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "TSX".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["tsx".to_string()],
                     ..Default::default()
-                },
+                }).into(),
                 brackets: language::BracketPairConfig {
                     pairs: vec![language::BracketPair {
                         start: "{".to_string(),
@@ -390,10 +390,11 @@ impl EditorLspTestContext {
         let language = Language::new(
             LanguageConfig {
                 name: "HTML".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["html".into()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 block_comment: Some(BlockCommentConfig {
                     start: "<!--".into(),
                     prefix: "".into(),
