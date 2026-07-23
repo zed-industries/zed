@@ -2306,6 +2306,54 @@ impl DisplaySnapshot {
         None
     }
 
+    /// For Markdown, returns the end of the fold range for a section heading
+    /// that begins on `buffer_row`. The range spans from the end of the heading
+    /// line through the last non-blank line of the section, so the fold toggle
+    /// is anchored on the heading regardless of how (or whether) the section's
+    /// content is indented — unlike the generic indentation-based fallback,
+    /// which would only fold an indented block and place the toggle wherever the
+    /// indentation happens to increase. Only singleton buffers are supported,
+    /// since the section bounds are read from the buffer's syntax tree in buffer
+    /// coordinates, which coincide with multi-buffer coordinates only there.
+    pub(crate) fn markdown_section_fold_end(&self, buffer_row: MultiBufferRow) -> Option<Point> {
+        let snapshot = self.buffer_snapshot();
+        let buffer = snapshot.as_singleton()?;
+        if buffer.language()?.name().as_ref() != "Markdown" {
+            return None;
+        }
+
+        let row_start = Point::new(buffer_row.0, 0);
+        let row_end = Point::new(buffer_row.0, buffer.line_len(buffer_row.0));
+        let mut section = buffer.syntax_ancestor(row_start..row_end)?;
+        while section.kind() != "section" {
+            section = section.parent()?;
+        }
+
+        let heading = (0..section.child_count())
+            .filter_map(|index| section.child(index as u32))
+            .find(|child| matches!(child.kind(), "atx_heading" | "setext_heading"))?;
+        if heading.start_position().row as u32 != buffer_row.0 {
+            return None;
+        }
+
+        let section_end = section.end_position();
+        let mut last_row = section_end.row as u32;
+        // A section followed by a sibling section ends at the start of the next
+        // heading's line, so the section's own content ends on the prior row.
+        if section_end.column == 0 && last_row > buffer_row.0 {
+            last_row -= 1;
+        }
+        last_row = last_row.min(snapshot.max_row().0);
+        while last_row > buffer_row.0 && snapshot.is_line_blank(MultiBufferRow(last_row)) {
+            last_row -= 1;
+        }
+        if last_row <= buffer_row.0 {
+            return None;
+        }
+
+        Some(Point::new(last_row, snapshot.line_len(MultiBufferRow(last_row))))
+    }
+
     #[instrument(skip_all)]
     pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
         let start =
@@ -2345,9 +2393,22 @@ impl DisplaySnapshot {
                 }),
             }
         } else if !self.use_lsp_folding_ranges
-            && self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
+            if let Some(end) = self.markdown_section_fold_end(buffer_row) {
+                return Some(Crease::Inline {
+                    range: start..end,
+                    placeholder: self.fold_placeholder.clone(),
+                    render_toggle: None,
+                    render_trailer: None,
+                    metadata: None,
+                });
+            }
+
+            if !self.starts_indent(MultiBufferRow(start.row)) {
+                return None;
+            }
+
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
             let snapshot = self.buffer_snapshot();
             let max_point = snapshot.max_point();
@@ -3353,6 +3414,98 @@ pub mod tests {
                 ("() {}\n}".to_string(), Some(Hsla::red())),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_section_fold_end(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        // Section content is deliberately left unindented, the case the
+        // generic indentation-based fold heuristic fails to handle.
+        let text = concat!(
+            "# Title\n",      // row 0
+            "\n",             // row 1
+            "Intro line.\n",  // row 2
+            "\n",             // row 3
+            "## Section\n",   // row 4
+            "\n",             // row 5
+            "Body line.\n",   // row 6
+            "\n",             // row 7 (trailing blank, must be excluded)
+        );
+
+        let buffer =
+            cx.new(|cx| Buffer::local(text, cx).with_language(language::markdown_lang(), cx));
+        cx.condition(&buffer, |buffer, _| !buffer.is_parsing()).await;
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        // The top-level heading folds the whole document, stopping at the last
+        // non-blank line rather than the trailing blank line.
+        assert_eq!(
+            snapshot.markdown_section_fold_end(MultiBufferRow(0)),
+            Some(Point::new(6, "Body line.".len() as u32)),
+        );
+
+        // A nested heading folds only its own section, which here happens to
+        // share the same last line.
+        assert_eq!(
+            snapshot.markdown_section_fold_end(MultiBufferRow(4)),
+            Some(Point::new(6, "Body line.".len() as u32)),
+        );
+
+        // Rows that do not begin a heading are not foldable as sections.
+        assert_eq!(snapshot.markdown_section_fold_end(MultiBufferRow(1)), None);
+        assert_eq!(snapshot.markdown_section_fold_end(MultiBufferRow(2)), None);
+    }
+
+    #[gpui::test]
+    async fn test_markdown_section_fold_end_only_for_markdown(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let rust_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+
+        let text = "fn main() {\n    let value = 1;\n}\n";
+        let buffer =
+            cx.new(|cx| Buffer::local(text, cx).with_language(rust_language, cx));
+        cx.condition(&buffer, |buffer, _| !buffer.is_parsing()).await;
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(snapshot.markdown_section_fold_end(MultiBufferRow(0)), None);
     }
 
     #[gpui::test]
