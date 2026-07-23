@@ -3996,6 +3996,12 @@ impl Project {
                 .ok();
             }
 
+            BufferEvent::Saved => {
+                self.dap_store.update(cx, |dap_store, cx| {
+                    dap_store.on_buffer_saved(cx);
+                });
+            }
+
             _ => {}
         }
 

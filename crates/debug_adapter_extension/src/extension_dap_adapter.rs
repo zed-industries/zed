@@ -10,7 +10,8 @@ use collections::HashMap;
 use dap::{
     StartDebuggingRequestArgumentsRequest,
     adapters::{
-        DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
+        DapCustomAction, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
+        DebugTaskDefinition,
     },
 };
 use extension::{Extension, WorktreeDelegate};
@@ -117,5 +118,12 @@ impl DebugAdapter for ExtensionDapAdapter {
         self.extension
             .dap_request_kind(self.debug_adapter_name.clone(), config.clone())
             .await
+    }
+
+    async fn custom_actions(&self) -> Vec<DapCustomAction> {
+        self.extension
+            .get_dap_custom_actions(self.debug_adapter_name.clone())
+            .await
+            .unwrap_or_default()
     }
 }

@@ -345,6 +345,37 @@ pub async fn download_adapter_from_github(
     Ok(version_path)
 }
 
+/// When a custom action should be triggered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DapCustomActionTrigger {
+    /// Only show as a toolbar button.
+    Toolbar,
+    /// Only trigger automatically on file save.
+    OnSave,
+    /// Both toolbar button and on file save.
+    Both,
+}
+
+/// Icon hint for a custom action toolbar button.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DapCustomActionIcon {
+    Flame,
+    RotateCw,
+    BoltFilled,
+    Play,
+    Sparkle,
+}
+
+/// A custom action declared by an extension for the debugger toolbar.
+#[derive(Debug, Clone)]
+pub struct DapCustomAction {
+    pub label: String,
+    pub command: String,
+    pub arguments: String,
+    pub trigger: DapCustomActionTrigger,
+    pub icon: DapCustomActionIcon,
+}
+
 #[async_trait(?Send)]
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
@@ -394,6 +425,11 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     fn prefer_thread_name(&self) -> bool {
         false
+    }
+
+    /// Returns custom actions to show in the debugger toolbar for this adapter.
+    async fn custom_actions(&self) -> Vec<DapCustomAction> {
+        Vec::new()
     }
 }
 

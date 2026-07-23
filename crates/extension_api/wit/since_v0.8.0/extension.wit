@@ -11,7 +11,7 @@ world extension {
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
-    use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
+    use dap.{attach-request, build-task-template, dap-custom-action, dap-custom-action-icon, dap-custom-action-trigger, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
@@ -176,4 +176,6 @@ world extension {
     export dap-config-to-scenario: func(config: debug-config) -> result<debug-scenario, string>;
     export dap-locator-create-scenario: func(locator-name: string, build-config-template: build-task-template, resolved-label: string, debug-adapter-name: string) -> option<debug-scenario>;
     export run-dap-locator: func(locator-name: string, config: resolved-task) -> result<debug-request, string>;
+    /// Returns a list of custom actions that should be shown in the debugger toolbar for the given adapter.
+    export get-dap-custom-actions: func(adapter-name: string) -> list<dap-custom-action>;
 }

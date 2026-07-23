@@ -516,6 +516,7 @@ impl DapStore {
         let dap_store = cx.weak_entity();
         let console = session.update(cx, |session, cx| session.console_output(cx));
         let session_id = session.read(cx).session_id();
+        let adapter = DapRegistry::global(cx).adapter(&definition.adapter);
 
         cx.spawn({
             let session = session.clone();
@@ -531,6 +532,18 @@ impl DapStore {
                         )
                     })?
                     .await?;
+
+                if let Some(adapter) = adapter {
+                    let custom_actions = adapter.custom_actions().await;
+                    if !custom_actions.is_empty() {
+                        this.update(cx, |_, cx| {
+                            session.update(cx, |session, _cx| {
+                                session.set_custom_actions(custom_actions);
+                            });
+                        })?;
+                    }
+                }
+
                 session
                     .update(cx, |session, cx| {
                         session.boot(binary, worktree, dap_store, cx)
@@ -538,6 +551,35 @@ impl DapStore {
                     .await
             }
         })
+    }
+
+    /// Triggers on-save custom actions for all active debug sessions.
+    pub fn on_buffer_saved(&self, cx: &mut Context<Self>) {
+        use dap::adapters::DapCustomActionTrigger;
+
+        for session in self.sessions.values() {
+            let session = session.clone();
+            let actions: Vec<_> = session
+                .read(cx)
+                .custom_actions()
+                .iter()
+                .filter(|a| {
+                    a.trigger == DapCustomActionTrigger::OnSave
+                        || a.trigger == DapCustomActionTrigger::Both
+                })
+                .cloned()
+                .collect();
+
+            for action in actions {
+                session.update(cx, |session, cx| {
+                    let args = serde_json::from_str(&action.arguments)
+                        .unwrap_or(serde_json::Value::Object(Default::default()));
+                    session
+                        .send_custom_request(action.command, args, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }
     }
 
     pub fn session_by_id(

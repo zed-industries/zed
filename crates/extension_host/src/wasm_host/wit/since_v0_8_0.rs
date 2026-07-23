@@ -231,6 +231,40 @@ impl From<AttachRequest> for task::AttachRequest {
     }
 }
 
+impl From<DapCustomActionIcon> for ::dap::adapters::DapCustomActionIcon {
+    fn from(value: DapCustomActionIcon) -> Self {
+        match value {
+            DapCustomActionIcon::Flame => Self::Flame,
+            DapCustomActionIcon::RotateCw => Self::RotateCw,
+            DapCustomActionIcon::Bolt => Self::BoltFilled,
+            DapCustomActionIcon::Play => Self::Play,
+            DapCustomActionIcon::Sparkle => Self::Sparkle,
+        }
+    }
+}
+
+impl From<DapCustomActionTrigger> for ::dap::adapters::DapCustomActionTrigger {
+    fn from(value: DapCustomActionTrigger) -> Self {
+        match value {
+            DapCustomActionTrigger::Toolbar => Self::Toolbar,
+            DapCustomActionTrigger::OnSave => Self::OnSave,
+            DapCustomActionTrigger::Both => Self::Both,
+        }
+    }
+}
+
+impl From<DapCustomAction> for ::dap::adapters::DapCustomAction {
+    fn from(value: DapCustomAction) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            arguments: value.arguments,
+            trigger: value.trigger.into(),
+            icon: value.icon.into(),
+        }
+    }
+}
+
 impl From<ZedDebugConfig> for DebugConfig {
     fn from(value: ZedDebugConfig) -> Self {
         Self {

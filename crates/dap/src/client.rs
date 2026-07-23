@@ -153,6 +153,47 @@ impl DebugAdapterClient {
         }
     }
 
+    /// Send a custom request with a dynamic command name and JSON arguments.
+    /// This is used for extension-declared custom DAP commands (e.g. "hotReload").
+    pub async fn request_raw(
+        &self,
+        command: &str,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let (callback_tx, callback_rx) = oneshot::channel::<Result<Response>>();
+        let sequence_id = self.next_sequence_id();
+
+        let request = crate::messages::Request {
+            seq: sequence_id,
+            command: command.to_string(),
+            arguments: Some(arguments),
+        };
+        self.transport_delegate
+            .pending_requests
+            .lock()
+            .insert(sequence_id, callback_tx)?;
+
+        log::debug!(
+            "Client {} send custom `{}` request with sequence_id: {}",
+            self.id.0,
+            command,
+            sequence_id
+        );
+
+        self.send_message(Message::Request(request)).await?;
+
+        let response = callback_rx.await??;
+
+        match response.success {
+            true => Ok(response.body.unwrap_or(serde_json::Value::Null)),
+            false => anyhow::bail!(
+                "Custom request '{}' failed: {}",
+                command,
+                response.message.unwrap_or_default()
+            ),
+        }
+    }
+
     pub async fn send_message(&self, message: Message) -> Result<()> {
         self.transport_delegate.send_message(message).await
     }

@@ -19,7 +19,7 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_
 use gpui::{
     Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
-    Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
 };
 
 use itertools::Itertools as _;
@@ -912,6 +912,74 @@ impl DebugPanel {
                                                 }
                                             }),
                                         )
+                                    })
+                                    .map(|this| {
+                                        use dap::adapters::DapCustomActionTrigger;
+                                        let custom_actions: Vec<_> = running_state
+                                            .read(cx)
+                                            .session()
+                                            .read(cx)
+                                            .custom_actions()
+                                            .iter()
+                                            .filter(|a| {
+                                                a.trigger == DapCustomActionTrigger::Toolbar
+                                                    || a.trigger == DapCustomActionTrigger::Both
+                                            })
+                                            .cloned()
+                                            .collect();
+                                        if custom_actions.is_empty() {
+                                            this
+                                        } else {
+                                            this.child(Divider::vertical())
+                                                .children(custom_actions.into_iter().map(
+                                                    |action| {
+                                                        let label = action.label;
+                                                        let command = action.command;
+                                                        let arguments = action.arguments;
+                                                        let icon = match action.icon {
+                                                            dap::adapters::DapCustomActionIcon::Flame => IconName::Flame,
+                                                            dap::adapters::DapCustomActionIcon::RotateCw => IconName::RotateCw,
+                                                            dap::adapters::DapCustomActionIcon::BoltFilled => IconName::BoltFilled,
+                                                            dap::adapters::DapCustomActionIcon::Play => IconName::PlayFilled,
+                                                            dap::adapters::DapCustomActionIcon::Sparkle => IconName::Sparkle,
+                                                        };
+                                                        IconButton::new(
+                                                            SharedString::from(format!(
+                                                                "custom-action-{}",
+                                                                command
+                                                            )),
+                                                            icon,
+                                                        )
+                                                        .icon_size(IconSize::Small)
+                                                        .on_click(window.listener_for(
+                                                            running_state,
+                                                            move |this, _, _window, cx| {
+                                                                let args = serde_json::from_str(
+                                                                    &arguments,
+                                                                )
+                                                                .unwrap_or(
+                                                                    serde_json::Value::Object(
+                                                                        Default::default(),
+                                                                    ),
+                                                                );
+                                                                this.session().update(
+                                                                    cx,
+                                                                    |session, cx| {
+                                                                        session
+                                                                            .send_custom_request(
+                                                                                command.clone(),
+                                                                                args,
+                                                                                cx,
+                                                                            )
+                                                                            .detach_and_log_err(cx);
+                                                                    },
+                                                                );
+                                                            },
+                                                        ))
+                                                        .tooltip(Tooltip::text(label))
+                                                    },
+                                                ))
+                                        }
                                     })
                                     .when(
                                         cx.has_flag::<DebuggerHistoryFeatureFlag>(),

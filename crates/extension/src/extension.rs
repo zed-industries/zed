@@ -179,6 +179,8 @@ pub trait Extension: Send + Sync + 'static {
         locator_name: String,
         config: SpawnInTerminal,
     ) -> Result<DebugRequest>;
+
+    async fn get_dap_custom_actions(&self, adapter_name: Arc<str>) -> Result<Vec<DapCustomAction>>;
 }
 
 pub fn parse_wasm_extension_version(extension_id: &str, wasm_bytes: &[u8]) -> Result<Version> {
