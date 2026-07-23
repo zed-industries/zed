@@ -982,6 +982,39 @@ impl Vim {
                 },
             );
 
+            // In Helix select mode the cursor is a one-character-wide selection, so
+            // selecting to a line boundary must keep the anchored character selected.
+            // The raw editor actions only move the selection head and drop it, so we
+            // route through the Helix motions (the same path as `gh`/`gl`). This fires
+            // however the action is invoked — keybinding or command palette. Other
+            // modes keep the editor's default behavior.
+            Vim::action(
+                editor,
+                cx,
+                |vim, action: &editor::actions::SelectToBeginningOfLine, window, cx| {
+                    if vim.mode == Mode::HelixSelect {
+                        vim.motion(Motion::StartOfLine { display_lines: false }, window, cx);
+                    } else {
+                        vim.update_editor(cx, |_, editor, cx| {
+                            editor.select_to_beginning_of_line(action, window, cx);
+                        });
+                    }
+                },
+            );
+            Vim::action(
+                editor,
+                cx,
+                |vim, action: &editor::actions::SelectToEndOfLine, window, cx| {
+                    if vim.mode == Mode::HelixSelect {
+                        vim.motion(Motion::EndOfLine { display_lines: false }, window, cx);
+                    } else {
+                        vim.update_editor(cx, |_, editor, cx| {
+                            editor.select_to_end_of_line(action, window, cx);
+                        });
+                    }
+                },
+            );
+
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);

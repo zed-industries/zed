@@ -3032,6 +3032,31 @@ mod test {
         cx.assert_state("The ˇ\nfox jumps over", Mode::HelixNormal);
     }
 
+    // Regression test for https://github.com/zed-industries/zed/issues/58983
+    // Executing the editor action directly (as from the command palette) in Helix
+    // select mode must keep the character under the block cursor selected, matching
+    // Helix's `gh`/`gl` motions. Previously the raw action moved only the selection
+    // head and dropped the anchored character.
+    #[gpui::test]
+    async fn test_helix_select_line_boundary_actions(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // SelectToBeginningOfLine includes the char the cursor started on.
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystrokes("v");
+        cx.assert_state("hello «wˇ»orld", Mode::HelixSelect);
+        cx.dispatch_action(editor::actions::SelectToBeginningOfLine::default());
+        cx.assert_state("«ˇhello w»orld", Mode::HelixSelect);
+
+        // SelectToEndOfLine lands on the last char of the line.
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystrokes("v");
+        cx.assert_state("hello «wˇ»orld", Mode::HelixSelect);
+        cx.dispatch_action(editor::actions::SelectToEndOfLine::default());
+        cx.assert_state("hello «worldˇ»", Mode::HelixSelect);
+    }
+
     #[gpui::test]
     async fn test_helix_select_mode_motion_multiple_cursors(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
