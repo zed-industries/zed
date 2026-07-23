@@ -1462,6 +1462,80 @@ fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut Ap
     }
 }
 
+#[test]
+fn test_applicable_row_chunks() {
+    let text = (0..125)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    let buffer = TextBuffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
+    let snapshot = buffer.snapshot();
+    let chunks = row_chunk::RowChunks::new(snapshot, 10);
+    assert_eq!(chunks.len(), 13);
+
+    let row_ranges = |ranges: &[Range<Point>]| {
+        chunks
+            .applicable_chunks(ranges)
+            .map(|chunk| chunk.row_range())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        row_ranges(&[Point::new(15, 0)..Point::new(17, 3)]),
+        vec![10..20],
+        "Range in the middle of a chunk should yield that chunk only"
+    );
+    assert_eq!(
+        row_ranges(&[Point::new(10, 0)..Point::new(12, 0)]),
+        vec![0..10, 10..20],
+        "Range starting exactly at a chunk boundary should also touch the previous chunk"
+    );
+    assert_eq!(
+        row_ranges(&[Point::new(5, 0)..Point::new(9, 0)]),
+        vec![0..10],
+        "Range ending before a chunk boundary should not touch the next chunk"
+    );
+    assert_eq!(
+        row_ranges(&[Point::new(5, 0)..Point::new(10, 0)]),
+        vec![0..10, 10..20],
+        "Range ending exactly at a chunk boundary should touch the next chunk"
+    );
+    assert_eq!(
+        row_ranges(&[
+            Point::new(112, 0)..Point::new(112, 0),
+            Point::new(15, 0)..Point::new(16, 0),
+            Point::new(11, 0)..Point::new(18, 0),
+        ]),
+        vec![10..20, 110..120],
+        "Chunks for multiple ranges should be deduplicated and sorted"
+    );
+
+    let all_chunks = chunks
+        .applicable_chunks(&[Point::zero()..Point::new(125, 0)])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_chunks.iter().map(|chunk| chunk.id).collect::<Vec<_>>(),
+        (0..13).collect::<Vec<_>>()
+    );
+    assert_eq!(all_chunks[12].row_range(), 120..125);
+    for chunk in &all_chunks {
+        assert_eq!(
+            chunk.start_anchor.to_point(snapshot),
+            Point::new(chunk.start, 0)
+        );
+        assert_eq!(
+            chunk.end_anchor.to_point(snapshot),
+            Point::new(chunk.end_exclusive, 0)
+        );
+    }
+    assert_eq!(
+        chunks
+            .applicable_chunks(&[Point::zero()..Point::new(125, 0)])
+            .collect::<Vec<_>>(),
+        all_chunks,
+        "Memoized chunks should be identical to the initially computed ones"
+    );
+}
+
 #[gpui::test]
 fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &mut App) {
     let mut assert = |selection_text, bracket_pair_texts| {
