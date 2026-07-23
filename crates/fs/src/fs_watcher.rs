@@ -1084,7 +1084,13 @@ impl GlobalWatcher {
 fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<notify::Error>()
-        .is_some_and(|error| matches!(&error.kind, notify::ErrorKind::MaxFilesWatch))
+        .is_some_and(|error| match &error.kind {
+            notify::ErrorKind::MaxFilesWatch => true,
+            notify::ErrorKind::Generic(message) if message == "unable to start FSEvent stream" => {
+                cfg!(target_os = "macos")
+            }
+            _ => false,
+        })
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
@@ -1162,6 +1168,7 @@ mod tests {
         watch_calls: Vec<PathBuf>,
         unwatch_calls: Vec<PathBuf>,
         fail_with_watch_limit: bool,
+        fail_with_fsevent_stream_error: bool,
     }
 
     struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
@@ -1173,6 +1180,9 @@ mod tests {
             backend.watch_calls.push(path.clone());
             if backend.fail_with_watch_limit {
                 return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+            }
+            if backend.fail_with_fsevent_stream_error {
+                return Err(notify::Error::generic("unable to start FSEvent stream"));
             }
             backend.watched_paths.insert(path);
             Ok(())
@@ -1610,6 +1620,33 @@ mod tests {
         );
 
         assert_eq!(fired.lock().len(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_fsevent_stream_error_cools_down_subsequent_native_registrations() {
+        let native_backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_fsevent_stream_error: true,
+            ..Default::default()
+        }));
+        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(native_backend.clone()), Some(poll_backend));
+        let first_path = Arc::<Path>::from(Path::new("/repo/first"));
+        let second_path = Arc::<Path>::from(Path::new("/repo/second"));
+
+        let first_registration = watcher
+            .add(first_path.clone(), WatcherMode::Native, |_| {})
+            .expect("FSEvent stream error is handled");
+        let second_registration = watcher
+            .add(second_path, WatcherMode::Native, |_| {})
+            .expect("FSEvent stream error backoff is handled");
+
+        assert!(first_registration.is_none());
+        assert!(second_registration.is_none());
+        assert_eq!(
+            native_backend.lock().watch_calls,
+            &[first_path.to_path_buf()]
+        );
     }
 
     #[test]
