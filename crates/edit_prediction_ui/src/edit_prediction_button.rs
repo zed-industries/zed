@@ -598,8 +598,26 @@ impl EditPredictionButton {
             .filter(|p| *p != EditPredictionProvider::None)
             .collect();
 
-        if !providers.is_empty() {
+        let current_is_available = providers.contains(&current_provider);
+        let has_unavailable_selected = !current_is_available
+            && current_provider != EditPredictionProvider::None;
+
+        if !providers.is_empty() || has_unavailable_selected {
             menu = menu.separator().header("Providers");
+
+            if has_unavailable_selected {
+                if let Some(name) = current_provider.display_name() {
+                    menu = menu.item(
+                        ContextMenuEntry::new(name)
+                            .toggleable(IconPosition::Start, true)
+                            .disabled(true)
+                            .documentation_aside(DocumentationSide::Left, |_cx| {
+                                Label::new("Requires API key or configuration")
+                                    .into_any_element()
+                            }),
+                    );
+                }
+            }
 
             for provider in providers {
                 let Some(name) = provider.display_name() else {
