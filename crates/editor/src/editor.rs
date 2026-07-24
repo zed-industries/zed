@@ -2064,8 +2064,12 @@ impl Editor {
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
+                            editor.invalidate_semantic_tokens(Some(buffer_id));
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::LanguageServerRegistered,
+                                cx,
+                            );
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);
                             editor.refresh_document_highlights(cx);
@@ -9887,6 +9891,7 @@ impl Editor {
             if language_settings_changed {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
                 self.refresh_document_symbols(None, cx);
+                self.refresh_outline_symbols_at_cursor(cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -10943,16 +10948,12 @@ impl Editor {
     }
 
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {
-        let multibuffer = self.buffer().read(cx);
-        let is_singleton = multibuffer.is_singleton();
-        let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
-        let buffer = multibuffer.buffer(*buffer_id)?;
-
-        let buffer = buffer.read(cx);
+        let multi_buffer = self.buffer().read(cx);
         // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
-        let mut breadcrumbs = if is_singleton {
+        let mut breadcrumbs = if let Some(buffer) = multi_buffer.as_singleton() {
             let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
                 buffer
+                    .read(cx)
                     .snapshot()
                     .resolve_file_path(
                         self.project
@@ -10961,27 +10962,30 @@ impl Editor {
                             .unwrap_or_default(),
                         cx,
                     )
-                    .unwrap_or_else(|| {
-                        if multibuffer.is_singleton() {
-                            multibuffer.title(cx).to_string()
-                        } else {
-                            MultiBuffer::DEFAULT_TITLE.to_string()
-                        }
-                    })
+                    .unwrap_or_else(|| multi_buffer.title(cx).to_string())
             });
             vec![HighlightedText {
                 text: text.into(),
                 highlights: vec![],
             }]
         } else {
-            vec![]
+            Vec::new()
         };
 
-        breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
-            text: symbol.text.clone(),
-            highlights: symbol.highlight_ranges.clone(),
-        }));
-        Some(breadcrumbs)
+        if let Some((buffer_id, symbols)) = self.outline_symbols_at_cursor.as_ref()
+            && multi_buffer.buffer(*buffer_id).is_some()
+        {
+            breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
+                text: symbol.text.clone(),
+                highlights: symbol.highlight_ranges.clone(),
+            }));
+        }
+
+        if breadcrumbs.is_empty() {
+            None
+        } else {
+            Some(breadcrumbs)
+        }
     }
 
     fn disable_lsp_data(&mut self) {

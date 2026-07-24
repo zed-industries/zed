@@ -3188,7 +3188,6 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-tungstenite",
- "base64 0.22.1",
  "chrono",
  "clock",
  "cloud_api_client",
@@ -3204,12 +3203,12 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
- "httparse",
  "log",
  "objc2-foundation 0.3.2",
  "parking_lot",
  "paths",
  "postage",
+ "proxy_handshake",
  "rand 0.9.4",
  "regex",
  "release_channel",
@@ -3231,7 +3230,6 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.26.4",
- "tokio-socks",
  "url",
  "util",
  "windows 0.61.3",
@@ -14494,6 +14492,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxy_handshake"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures 0.3.32",
+ "httparse",
+ "percent-encoding",
+ "piper",
+ "proptest",
+ "thiserror 2.0.17",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "proxyvars"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19015,7 +19028,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
 dependencies = [
  "either",
- "futures-io",
  "futures-util",
  "thiserror 1.0.69",
  "tokio",

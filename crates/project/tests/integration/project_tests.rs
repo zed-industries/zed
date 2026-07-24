@@ -13959,6 +13959,80 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_bare_dot_git_changed_event_refreshes_git_state(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".git": {},
+            "file.txt": "new contents",
+        }),
+    )
+    .await;
+
+    let dot_git = Path::new(path!("/repo/.git"));
+    fs.set_head_for_repo(dot_git, &[("file.txt", "old contents".into())], "old-sha");
+    fs.set_index_for_repo(dot_git, &[("file.txt", "old contents".into())]);
+
+    let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository
+                .head_commit
+                .as_ref()
+                .map(|commit| commit.sha.as_ref()),
+            Some("old-sha")
+        );
+        assert_eq!(
+            repository
+                .status_for_path(&repo_path("file.txt"))
+                .map(|entry| entry.status),
+            Some(StatusCode::Modified.worktree())
+        );
+    });
+
+    fs.with_git_state(dot_git, false, |state| {
+        state
+            .head_contents
+            .insert(repo_path("file.txt"), "new contents".into());
+        state
+            .index_contents
+            .insert(repo_path("file.txt"), "new contents".into());
+        state.refs.insert("HEAD".into(), "new-sha".into());
+    })
+    .unwrap();
+    fs.emit_fs_event(dot_git, Some(PathEventKind::Changed));
+
+    cx.run_until_parked();
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository
+                .head_commit
+                .as_ref()
+                .map(|commit| commit.sha.as_ref()),
+            Some("new-sha")
+        );
+        assert_eq!(repository.status_for_path(&repo_path("file.txt")), None);
+    });
+}
+
+#[gpui::test]
 #[ignore]
 async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -14971,10 +15045,11 @@ fn json_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JSON".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["json".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -14985,10 +15060,11 @@ fn js_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15053,10 +15129,11 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Python".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["py".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None, // We're not testing Python parsing with this language.
@@ -15072,10 +15149,11 @@ fn typescript_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -15086,10 +15164,11 @@ fn tsx_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "tsx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

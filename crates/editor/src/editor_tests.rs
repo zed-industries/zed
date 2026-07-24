@@ -9691,6 +9691,32 @@ async fn test_clipboard(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_and_paste_non_empty_selection_followed_by_empty_selection(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        «fooˇ»
+        barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("foo\nbar\n".to_string())
+    );
+
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        fooˇ
+        bar
+        barˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_copy_trim(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -17239,10 +17265,11 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -17690,10 +17717,11 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -18088,6 +18116,80 @@ async fn test_auto_formatter_failure_is_silent(cx: &mut TestAppContext) {
     assert_eq!(
         last_failure, None,
         "an auto-resolved formatter failure should not be surfaced"
+    );
+}
+
+#[gpui::test]
+async fn test_external_formatter_with_no_output_leaves_buffer_unchanged(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        #[cfg(windows)]
+        let (command, arguments) = ("cmd", vec!["/C".to_string(), "more > nul".to_string()]);
+        #[cfg(not(windows))]
+        let (command, arguments) = ("sh", vec!["-c".to_string(), "cat >/dev/null".to_string()]);
+
+        // Consume stdin without printing anything, mirroring tools like `cargo fmt`
+        // that format files in place instead of writing to stdout.
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::External {
+            command: command.into(),
+            arguments: Some(arguments),
+        }));
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "fn main() {}\n".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    // Formatting via an external command spawns a real subprocess, whose I/O
+    // happens off the deterministic test scheduler.
+    cx.executor().allow_parking();
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            "fn main() {}\n",
+            "buffer should be left unchanged when the external formatter produces no output"
+        );
+    });
+
+    let last_failure = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .last_formatting_failure()
+            .map(str::to_string)
+    });
+    assert_eq!(
+        last_failure, None,
+        "producing no output is not a formatter failure"
     );
 }
 
@@ -21133,10 +21235,11 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
     let typescript_language = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
@@ -23944,10 +24047,11 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "{".to_string(),
@@ -24119,10 +24223,11 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: language_name.clone(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -25308,10 +25413,11 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     let mut cx = EditorLspTestContext::new(
         Language::new(
             LanguageConfig {
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["jsx".into()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
@@ -25423,10 +25529,11 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -25513,10 +25620,11 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             prettier_parser_name: Some("typescript".to_string()),
             ..LanguageConfig::default()
         },
@@ -25615,10 +25723,11 @@ async fn test_range_format_with_prettier(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -25691,10 +25800,11 @@ async fn test_range_format_with_prettier_explicit_language(cx: &mut TestAppConte
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             prettier_parser_name: Some("typescript".to_string()),
             ..LanguageConfig::default()
         },
@@ -29885,6 +29995,89 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                preview_tabs.enabled = Some(true);
+                preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Calling `set_state` here will make it such that the underlying buffer
+    // will now report edits since its `preview_version` field, which is set
+    // when the buffer is first created. That is one of the conditions that
+    // determines whether a pane's item should remain as the preview item, or
+    // not, as such, if that field is not updated accordingly, we'd end up not
+    // having a preview item at the end of the test.
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.executor().run_until_parked();
+
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+
+    // Using the `editor: find all references` action adds excerpts to the
+    // multibuffer, which emits `ItemEvent::Edit`. When the pane handles that
+    // event it decides whether to keep its preview item and, if the buffer
+    // reports any edits since its `preview_version`, the item is unpreviewed.
+    // We also need to run until the executor is parked because the
+    // `ItemEvent::Edit` is delivered later, after the item has been registered
+    // with the pane.
+    assert_eq!(
+        cx.update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("Editor::find_all_references should return a task")
+        .await
+        .expect("Should be able to find all references"),
+        Navigated::Yes
+    );
+    cx.executor().run_until_parked();
+
+    cx.update_workspace(|workspace, _window, cx| {
+        let active_pane = workspace.active_pane().read(cx);
+
+        assert_eq!(
+            active_pane.preview_item_id(),
+            Some(active_pane.active_item().unwrap().item_id()),
+            "The preview item id should be the same as the id of the multibuffer"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -32802,10 +32995,11 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -33566,10 +33760,11 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     let html_language = Arc::new(Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -33689,10 +33884,11 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
     let language = Arc::new(Language::new(
         LanguageConfig {
             name: "TSX".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -33760,10 +33956,11 @@ async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut Test
     let language = Arc::new(Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -41519,10 +41716,11 @@ async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContex
         Language::new(
             LanguageConfig {
                 name: "TSX".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["tsx".to_string()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

@@ -4790,6 +4790,14 @@ impl BackgroundScanner {
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
                     }
+
+                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                        log::debug!(
+                            "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
+                        );
+                        dot_git_abs_paths.push(dot_git_abs_path);
+                    }
+
                     if is_dot_git {
                         log::debug!(
                             "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
@@ -4815,13 +4823,6 @@ impl BackgroundScanner {
                             self.watcher.as_ref(),
                         )
                         .await;
-                    }
-
-                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
-                        log::debug!(
-                            "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
-                        );
-                        dot_git_abs_paths.push(dot_git_abs_path);
                     }
                 }
 

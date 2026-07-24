@@ -644,11 +644,15 @@ impl VsCodeSettings {
 
     fn file_types(&self) -> Option<FileTypeMap> {
         // vscodes file association map is inverted from ours, so we flip the mapping before merging
-        let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
+        let mut associations: HashMap<Arc<str>, ExtendingSet<String>> = HashMap::default();
         let map = self.read_value("files.associations")?.as_object()?;
         for (k, v) in map {
             let Some(v) = v.as_str() else { continue };
-            associations.entry(v.into()).or_default().0.push(k.clone());
+            associations
+                .entry(v.into())
+                .or_default()
+                .0
+                .insert(k.clone());
         }
         skip_default(FileTypeMap(associations))
     }

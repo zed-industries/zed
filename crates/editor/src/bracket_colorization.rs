@@ -43,9 +43,17 @@ impl Editor {
                 else {
                     return false;
                 };
-                LanguageSettings::for_buffer(buffer.read(cx), cx).colorize_brackets
+                let buffer = buffer.read(cx);
+                buffer
+                    .language()
+                    .is_some_and(|language| language.grammar().is_some())
+                    && LanguageSettings::for_buffer(buffer, cx).colorize_brackets
             })
             .collect();
+
+        if !invalidate && (accents.is_empty() || excerpt_data.is_empty()) {
+            return;
+        }
 
         let mut fetched_tree_sitter_chunks = excerpt_data
             .iter()

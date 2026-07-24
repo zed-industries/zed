@@ -366,10 +366,11 @@ mod tests {
                 language_registry.add(Arc::new(Language::new(
                     LanguageConfig {
                         name: language_name.into(),
-                        matcher: LanguageMatcher {
+                        matcher: (LanguageMatcher {
                             path_suffixes: vec![path_suffix.to_string()],
                             ..Default::default()
-                        },
+                        })
+                        .into(),
                         ..Default::default()
                     },
                     None,

@@ -4682,12 +4682,11 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
     let dot_git = project_dir.join(DOT_GIT);
 
-    // Case 1: Events for .git AND .git/index.lock should NOT emit UpdatedGitRepositories
+    // Case 1: Event for .git/index.lock only should NOT emit UpdatedGitRepositories
     // (index.lock is in the skipped files list)
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
-        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
         fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
         fs.unpause_events_and_flush();
         executor.run_until_parked();
@@ -4699,7 +4698,7 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
         );
     }
 
-    // Case 2: Event for just .git (bare directory event) should NOT emit UpdatedGitRepositories
+    // Case 2: Event for just .git (bare directory event) should emit UpdatedGitRepositories
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
@@ -4709,8 +4708,8 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
         let got_git_update = drain_git_repo_updates(&mut events);
         assert!(
-            !got_git_update,
-            "should NOT emit UpdatedGitRepositories for a bare .git directory event"
+            got_git_update,
+            "should emit UpdatedGitRepositories for a bare .git directory event"
         );
     }
 
