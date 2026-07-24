@@ -199,29 +199,65 @@ impl SvgRenderer {
         params: &RenderSvgParams,
         bytes: Option<&[u8]>,
     ) -> Result<Option<(Size<DevicePixels>, Vec<u8>)>> {
+        Ok(self
+            .render_pixmap_for_params(params, bytes)?
+            .map(|(size, pixmap)| {
+                let alpha_mask = pixmap
+                    .pixels()
+                    .iter()
+                    .map(|pixel| pixel.alpha())
+                    .collect::<Vec<_>>();
+                (size, alpha_mask)
+            }))
+    }
+
+    pub(crate) fn render_polychrome(
+        &self,
+        params: &RenderSvgParams,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<(Size<DevicePixels>, Vec<u8>)>> {
+        Ok(self
+            .render_pixmap_for_params(params, bytes)?
+            .map(|(size, pixmap)| {
+                let mut bytes = pixmap.take();
+
+                // Swap RGBA to BGRA without unpremultiplying so texture filtering
+                // continues to operate on premultiplied pixels.
+                for pixel in bytes.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+
+                (size, bytes)
+            }))
+    }
+
+    fn render_pixmap_for_params(
+        &self,
+        params: &RenderSvgParams,
+        bytes: Option<&[u8]>,
+    ) -> Result<Option<(Size<DevicePixels>, Pixmap)>> {
         anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
-        let render_pixmap = |bytes| {
+        self.with_svg_data(params, bytes, |bytes| {
             let pixmap = self.render_pixmap(bytes, SvgSize::Size(params.size))?;
-
-            // Convert the pixmap's pixels into an alpha mask.
             let size = Size::new(
                 DevicePixels(pixmap.width() as i32),
                 DevicePixels(pixmap.height() as i32),
             );
-            let alpha_mask = pixmap
-                .pixels()
-                .iter()
-                .map(|p| p.alpha())
-                .collect::<Vec<_>>();
+            Ok((size, pixmap))
+        })
+    }
 
-            Ok(Some((size, alpha_mask)))
-        };
-
+    fn with_svg_data<T>(
+        &self,
+        params: &RenderSvgParams,
+        bytes: Option<&[u8]>,
+        render: impl FnOnce(&[u8]) -> Result<T>,
+    ) -> Result<Option<T>> {
         if let Some(bytes) = bytes {
-            render_pixmap(bytes)
+            render(bytes).map(Some)
         } else if let Some(bytes) = self.asset_source.load(&params.path)? {
-            render_pixmap(&bytes)
+            render(&bytes).map(Some)
         } else {
             Ok(None)
         }
@@ -235,7 +271,8 @@ impl SvgRenderer {
         let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
         let svg_size = tree.size();
         let mut scale = match size {
-            SvgSize::Size(size) => size.width.0 as f32 / svg_size.width(),
+            SvgSize::Size(size) => (size.width.0 as f32 / svg_size.width())
+                .min(size.height.0 as f32 / svg_size.height()),
             SvgSize::ScaleFactor(scale) => scale,
         };
 
@@ -328,6 +365,60 @@ mod tests {
         db.load_font_data(IBM_PLEX_REGULAR.to_vec());
         db.load_font_data(LILEX_REGULAR.to_vec());
         db
+    }
+
+    #[test]
+    fn render_polychrome_svg_preserves_premultiplied_color_and_alpha() {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let params = RenderSvgParams {
+            path: "test.svg".into(),
+            size: Size::new(DevicePixels(20), DevicePixels(10)),
+        };
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"><rect width="2" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
+
+        let (size, bytes) = renderer
+            .render_polychrome(&params, Some(svg))
+            .expect("polychrome SVG should render")
+            .expect("polychrome SVG should produce pixels");
+
+        assert_eq!(size, params.size);
+        assert_eq!(bytes.len(), 20 * 10 * 4);
+        assert_eq!(
+            &bytes[(5 * 20 + 10) * 4..(5 * 20 + 10) * 4 + 4],
+            &[0, 0, 128, 128]
+        );
+    }
+
+    #[test]
+    fn render_svg_size_uses_contain_semantics() {
+        let renderer = SvgRenderer::new(Arc::new(()));
+        let params = RenderSvgParams {
+            path: "test.svg".into(),
+            size: Size::new(DevicePixels(20), DevicePixels(20)),
+        };
+
+        for (svg, expected_size) in [
+            (
+                br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"></svg>"##.as_slice(),
+                Size::new(DevicePixels(20), DevicePixels(10)),
+            ),
+            (
+                br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 2"></svg>"##.as_slice(),
+                Size::new(DevicePixels(10), DevicePixels(20)),
+            ),
+        ] {
+            let (polychrome_size, _) = renderer
+                .render_polychrome(&params, Some(svg))
+                .expect("polychrome SVG should render")
+                .expect("polychrome SVG should produce pixels");
+            assert_eq!(polychrome_size, expected_size);
+
+            let (alpha_mask_size, _) = renderer
+                .render_alpha_mask(&params, Some(svg))
+                .expect("monochrome SVG should render")
+                .expect("monochrome SVG should produce pixels");
+            assert_eq!(alpha_mask_size, expected_size);
+        }
     }
 
     #[test]
