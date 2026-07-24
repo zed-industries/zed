@@ -2209,16 +2209,12 @@ fn participant_location_actions() -> impl Strategy<Value = Vec<ParticipantLocati
     )
     .prop_map(|actions| {
         let mut scenario = vec![
+            ParticipantLocationAction::DeactivateActiveWindow,
+            ParticipantLocationAction::ActivateWindow(LocationWindow::First),
             ParticipantLocationAction::ActivateWorkspace {
                 window: LocationWindow::Second,
                 project: LocationProject::Second,
             },
-            ParticipantLocationAction::ActivateWorkspace {
-                window: LocationWindow::Second,
-                project: LocationProject::First,
-            },
-            ParticipantLocationAction::DeactivateActiveWindow,
-            ParticipantLocationAction::ActivateWindow(LocationWindow::First),
         ];
         scenario.extend(actions);
         scenario
