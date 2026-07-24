@@ -682,13 +682,16 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
     use futures::{future::BoxFuture, stream::BoxStream};
-    use gpui::{AsyncApp, TestAppContext};
+    use gpui::{AsyncApp, TestAppContext, UpdateGlobal, VisualTestContext};
     use language_model::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
         LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-        LanguageModelRequest, LanguageModelToolChoice,
+        LanguageModelRequest, LanguageModelToolChoice, fake_provider::FakeLanguageModelProvider,
     };
     use ui::IconName;
 
@@ -1019,6 +1022,211 @@ mod tests {
             model_ids,
             vec!["openrouter/model-a", "openrouter/model-b", "zed/claude"]
         );
+    }
+
+    fn entry_labels(entries: &[LanguageModelPickerEntry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|entry| match entry {
+                LanguageModelPickerEntry::Model(info) => info.model.name().0.to_string(),
+                LanguageModelPickerEntry::Separator(title)
+                | LanguageModelPickerEntry::GroupHeader { title, .. } => title.to_string(),
+            })
+            .collect()
+    }
+
+    fn register_provider(models: Vec<(&str, &str)>, cx: &mut App) {
+        let provider = models[0].0.to_string();
+        let models = models
+            .into_iter()
+            .map(|(provider, name)| {
+                Arc::new(TestLanguageModel::new(name, provider)) as Arc<dyn LanguageModel>
+            })
+            .collect();
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(
+                Arc::new(
+                    FakeLanguageModelProvider::new(
+                        LanguageModelProviderId::from(provider.clone()),
+                        LanguageModelProviderName::from(provider),
+                    )
+                    .with_models(models),
+                ),
+                cx,
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn confirming_group_header_toggles_collapse(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            language_model::init(cx);
+
+            register_provider(vec![("alpha", "alpha/one"), ("alpha", "alpha/two")], cx);
+            register_provider(vec![("beta", "beta/one")], cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let selected_models = Rc::new(RefCell::new(Vec::<String>::new()));
+        let window_handle = cx.add_window({
+            let selected_models = selected_models.clone();
+            move |window, cx| {
+                language_model_selector(
+                    |_| None,
+                    move |model, _| selected_models.borrow_mut().push(model.name().0.to_string()),
+                    |_, _, _| {},
+                    fs,
+                    true,
+                    cx.focus_handle(),
+                    window,
+                    cx,
+                )
+            }
+        });
+        cx.run_until_parked();
+
+        let picker = window_handle.root(cx).unwrap();
+        let dismiss_count = Rc::new(RefCell::new(0));
+        let _dismiss_subscription = cx.update(|cx| {
+            cx.subscribe(&picker, {
+                let dismiss_count = dismiss_count.clone();
+                move |_, _: &DismissEvent, _| *dismiss_count.borrow_mut() += 1
+            })
+        });
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                assert_eq!(
+                    entry_labels(&picker.delegate.filtered_entries),
+                    vec!["alpha", "alpha/one", "alpha/two", "beta", "beta/one"]
+                );
+
+                picker.delegate.set_selected_index(3, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                assert_eq!(
+                    entry_labels(&picker.delegate.filtered_entries),
+                    vec!["alpha", "alpha/one", "alpha/two", "beta"]
+                );
+                // The cursor stays on the toggled header instead of jumping
+                // back to the active model.
+                assert_eq!(picker.delegate.selected_index, 3);
+
+                // A later unrelated refresh must not move the cursor either.
+                picker.refresh(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                assert_eq!(picker.delegate.selected_index, 3);
+
+                // Confirming the collapsed header again expands the group.
+                picker.delegate.confirm(false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                assert_eq!(
+                    entry_labels(&picker.delegate.filtered_entries),
+                    vec!["alpha", "alpha/one", "alpha/two", "beta", "beta/one"]
+                );
+                assert_eq!(picker.delegate.selected_index, 3);
+                // Toggling headers never selects a model or dismisses the picker.
+                assert!(selected_models.borrow().is_empty());
+                assert_eq!(*dismiss_count.borrow(), 0);
+
+                // Confirming a model does both.
+                picker.delegate.set_selected_index(1, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(selected_models.borrow().as_slice(), ["alpha/one"]);
+        assert_eq!(*dismiss_count.borrow(), 1);
+    }
+
+    #[gpui::test]
+    fn settings_driven_collapse_keeps_cursor_anchored_to_provider(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            language_model::init(cx);
+
+            // The same model id offered by two providers: cursor restoration
+            // must key on provider + model id, not model id alone.
+            register_provider(vec![("alpha", "claude")], cx);
+            register_provider(vec![("beta", "claude")], cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let window_handle = cx.add_window(move |window, cx| {
+            language_model_selector(
+                |_| None,
+                |_, _| {},
+                |_, _, _| {},
+                fs,
+                true,
+                cx.focus_handle(),
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                assert_eq!(
+                    entry_labels(&picker.delegate.filtered_entries),
+                    vec!["alpha", "claude", "beta", "claude"]
+                );
+                picker.delegate.set_selected_index(3, window, cx);
+            })
+            .unwrap();
+
+        // Collapse "beta" from outside this picker (a settings.json edit or
+        // another picker instance): the settings observer refreshes the list.
+        cx.update(|_window, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .agent
+                        .get_or_insert_default()
+                        .set_model_group_collapsed("beta", true);
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        window_handle
+            .update(&mut cx, |picker, _window, _cx| {
+                assert_eq!(
+                    entry_labels(&picker.delegate.filtered_entries),
+                    vec!["alpha", "claude", "beta"]
+                );
+                // The cursor was on beta's copy of "claude"; with beta's
+                // models hidden it must land on beta's own header rather than
+                // jump to alpha's same-id model.
+                assert_eq!(picker.delegate.selected_index, 2);
+            })
+            .unwrap();
     }
 
     #[gpui::test]
