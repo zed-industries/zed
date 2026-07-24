@@ -6,14 +6,16 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason,
+    TokenUsage, env_var,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
+    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ReasoningEffort,
+    ResponseStreamEvent, list_models,
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
@@ -221,13 +223,27 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         let mut settings_models = Vec::new();
 
         for model in &Self::settings(cx).available_models {
+            let mode = model.mode.unwrap_or_default();
+            let (supported_efforts, default_effort) =
+                if matches!(mode, OpenRouterModelMode::Adaptive) {
+                    (
+                        model.reasoning_effort.into_iter().collect(),
+                        model.reasoning_effort,
+                    )
+                } else {
+                    (Vec::new(), None)
+                };
             settings_models.push(open_router::Model {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
-                mode: model.mode.unwrap_or_default(),
+                mode,
+                supported_efforts,
+                default_effort,
+                supports_max_tokens: false,
+                mandatory_reasoning: false,
                 provider: model.provider.clone(),
             });
         }
@@ -350,7 +366,37 @@ impl LanguageModel for OpenRouterLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(self.model.mode, OpenRouterModelMode::Thinking { .. })
+        matches!(
+            self.model.mode,
+            OpenRouterModelMode::Thinking { .. } | OpenRouterModelMode::Adaptive
+        )
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        !self.model.mandatory_reasoning
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        let efforts: &[ReasoningEffort] = if !self.model.supported_efforts.is_empty() {
+            &self.model.supported_efforts
+        } else if self.model.supports_max_tokens {
+            &ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
+        } else {
+            return Vec::new();
+        };
+        let default_effort = self.model.default_effort.or_else(|| {
+            self.model
+                .supports_max_tokens
+                .then_some(ReasoningEffort::Medium)
+        });
+        efforts
+            .iter()
+            .map(|&effort| LanguageModelEffortLevel {
+                name: effort.label().into(),
+                value: effort.value().into(),
+                is_default: Some(effort) == default_effort,
+            })
+            .collect()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -569,23 +615,40 @@ pub fn into_open_router(
         stop: request.stop,
         temperature: request.temperature.unwrap_or(0.4),
         max_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
-            Some(false)
-        } else {
-            None
-        },
+        parallel_tool_calls: (!request.tools.is_empty() && !model.supports_parallel_tool_calls())
+            .then_some(false),
         usage: open_router::RequestUsage { include: true },
-        reasoning: if request.thinking_allowed
-            && let OpenRouterModelMode::Thinking { budget_tokens } = model.mode
-        {
-            Some(open_router::Reasoning {
-                effort: None,
-                max_tokens: budget_tokens,
-                exclude: Some(false),
-                enabled: Some(true),
-            })
-        } else {
-            None
+        reasoning: match model.mode {
+            OpenRouterModelMode::Adaptive if request.thinking_allowed => {
+                Some(open_router::Reasoning {
+                    enabled: Some(true),
+                    effort: request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(|e| e.parse::<ReasoningEffort>().ok()),
+                    max_tokens: None,
+                    exclude: None,
+                })
+            }
+            OpenRouterModelMode::Thinking { budget_tokens } if request.thinking_allowed => {
+                Some(open_router::Reasoning {
+                    enabled: Some(true),
+                    effort: None,
+                    max_tokens: budget_tokens,
+                    exclude: None,
+                })
+            }
+            OpenRouterModelMode::Adaptive | OpenRouterModelMode::Thinking { .. }
+                if !model.mandatory_reasoning =>
+            {
+                Some(open_router::Reasoning {
+                    enabled: Some(false),
+                    effort: None,
+                    max_tokens: None,
+                    exclude: None,
+                })
+            }
+            _ => None,
         },
         tools: request
             .tools
@@ -1122,6 +1185,9 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
+            false,
+            None,
         );
         let expected_session_id = "a".repeat(MAX_OPEN_ROUTER_SESSION_ID_LENGTH);
         let request = LanguageModelRequest {
@@ -1194,6 +1260,9 @@ mod tests {
             Some(true),
             Some(false),
             None,
+            None,
+            None,
+            false,
             None,
         );
 
@@ -1346,6 +1415,9 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
+            false,
+            None,
         );
 
         let request = LanguageModelRequest {
@@ -1409,6 +1481,9 @@ mod tests {
             Some(false),
             None,
             None,
+            None,
+            false,
+            None,
         );
 
         let request = LanguageModelRequest {
@@ -1460,5 +1535,84 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_into_open_router_sends_requested_effort() {
+        let model = open_router::Model::new(
+            "z-ai/glm-5.2",
+            Some("GLM 5.2"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            Some(OpenRouterModelMode::Adaptive),
+            Some(vec![
+                open_router::ReasoningEffort::XHigh,
+                open_router::ReasoningEffort::High,
+            ]),
+            Some(open_router::ReasoningEffort::High),
+            false,
+            None,
+        );
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+        let reasoning = result.reasoning.expect("reasoning should be set");
+        assert_eq!(reasoning.effort, Some(open_router::ReasoningEffort::XHigh));
+        assert_eq!(
+            reasoning.max_tokens, None,
+            "max_tokens should not be sent when effort is used"
+        );
+        assert_eq!(reasoning.exclude, None);
+        assert_eq!(reasoning.enabled, Some(true));
+    }
+
+    #[gpui::test]
+    async fn test_into_open_router_disables_reasoning_when_thinking_not_allowed() {
+        let model = open_router::Model::new(
+            "z-ai/glm-5.2",
+            Some("GLM 5.2"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            Some(OpenRouterModelMode::Adaptive),
+            Some(vec![
+                open_router::ReasoningEffort::XHigh,
+                open_router::ReasoningEffort::High,
+            ]),
+            Some(open_router::ReasoningEffort::High),
+            false,
+            None,
+        );
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thinking_allowed: false,
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+
+        let result = into_open_router(request, &model, None).unwrap();
+        let reasoning = result.reasoning.expect("reasoning should be set");
+        assert_eq!(reasoning.enabled, Some(false));
+        assert_eq!(
+            reasoning.effort, None,
+            "effort should not be sent when reasoning is disabled"
+        );
+        assert_eq!(reasoning.max_tokens, None);
     }
 }

@@ -593,6 +593,7 @@ pub struct OpenRouterAvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub provider: Option<OpenRouterProvider>,
 }
 
