@@ -177,26 +177,28 @@ impl BufferInlayHints {
         server_id: LanguageServerId,
         new_hints: Vec<(InlayId, InlayHint)>,
     ) {
-        let existing_hints = self.hints_by_chunks[chunk.id]
-            .get_or_insert_default()
-            .entry(server_id)
-            .or_insert_with(Vec::new);
-        let existing_count = existing_hints.len();
-        existing_hints.extend(new_hints.into_iter().enumerate().filter_map(
-            |(i, (id, new_hint))| {
-                let new_hint_for_id = HintForId {
+        let chunk_hints = self.hints_by_chunks[chunk.id].get_or_insert_default();
+
+        // A response always covers the entire chunk, so it supersedes the server's previously
+        // cached hints for this chunk: a concurrent fetch for the same chunk and server
+        // (e.g. a server refresh arriving mid-fetch) would otherwise append the same hints
+        // again under fresh ids, duplicating them.
+        for (stale_id, _) in chunk_hints.remove(&server_id).into_iter().flatten() {
+            self.hints_by_id.remove(&stale_id);
+            self.hint_resolves.remove(&stale_id);
+        }
+        let mut inserted_hints = Vec::with_capacity(new_hints.len());
+        for (id, new_hint) in new_hints {
+            if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
+                vacant_entry.insert(HintForId {
                     chunk_id: chunk.id,
                     server_id,
-                    position: existing_count + i,
-                };
-                if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
-                    vacant_entry.insert(new_hint_for_id);
-                    Some((id, new_hint))
-                } else {
-                    None
-                }
-            },
-        ));
+                    position: inserted_hints.len(),
+                });
+                inserted_hints.push((id, new_hint));
+            }
+        }
+        chunk_hints.insert(server_id, inserted_hints);
         *self.fetched_hints(&chunk) = None;
     }
 
