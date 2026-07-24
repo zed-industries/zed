@@ -152,6 +152,31 @@ fn render_provider_section(
         Some(ProviderSettingsView::ApiKey(config)) => {
             render_api_key_providers_item(provider, provider_name.clone(), config, cx)
         }
+        Some(ProviderSettingsView::SignInOrApiKey { sign_in, api_key }) => {
+            let view = get_or_create_configuration_view(
+                settings_window,
+                &provider_id,
+                sign_in.create_view,
+                window,
+                cx,
+            );
+            v_flex()
+                .gap_3()
+                .child(render_inline_body(
+                    provider_name.clone(),
+                    sign_in.title,
+                    sign_in.description,
+                    view,
+                ))
+                .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                .child(render_api_key_providers_item(
+                    provider,
+                    provider_name.clone(),
+                    api_key,
+                    cx,
+                ))
+                .into_any_element()
+        }
         Some(ProviderSettingsView::Inline(settings)) => {
             let view = get_or_create_configuration_view(
                 settings_window,
@@ -296,7 +321,7 @@ fn render_api_key_providers_item(
                         )
                         .child(
                             Label::new(format!(
-                                "Or set the {env_var_name} env var and restart Zed for it to take effect."
+                                "Or set the {env_var_name} env var and restart Vela for it to take effect."
                             ))
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
@@ -464,7 +489,9 @@ fn render_provider_config_sub_page(
             .and_then(|settings_view| match settings_view {
                 ProviderSettingsView::Inline(settings) => Some(settings.create_view),
                 ProviderSettingsView::SubPage(settings) => Some(settings.create_view),
-                ProviderSettingsView::ApiKey(_) => None,
+                ProviderSettingsView::ApiKey(_) | ProviderSettingsView::SignInOrApiKey { .. } => {
+                    None
+                }
             })
     else {
         return div().into_any_element();

@@ -33,7 +33,7 @@ pub fn oauth_callback_page(title: &str, message: &str, is_error: bool) -> String
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Zed</title>
+<title>{title} — Vela</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
@@ -98,7 +98,7 @@ pub fn oauth_callback_page(title: &str, message: &str, is_error: bool) -> String
   </div>
   <h1>{title}</h1>
   <p>{message}</p>
-  <div class="brand">Zed</div>
+  <div class="brand">Vela</div>
 </div>
 </body>
 </html>"#,
@@ -244,6 +244,28 @@ mod server {
         String,
         futures::channel::oneshot::Receiver<Result<OAuthCallbackParams>>,
     )> {
+        start_callback_server(config, true)
+    }
+
+    /// Start a loopback callback server for providers that return an authorization code but do
+    /// not support OAuth `state` (for example OpenRouter's PKCE key-minting flow). PKCE still
+    /// binds the code exchange to this client instance.
+    pub fn start_oauth_code_callback_server_with_config(
+        config: OAuthCallbackServerConfig,
+    ) -> Result<(
+        String,
+        futures::channel::oneshot::Receiver<Result<OAuthCallbackParams>>,
+    )> {
+        start_callback_server(config, false)
+    }
+
+    fn start_callback_server(
+        config: OAuthCallbackServerConfig,
+        require_state: bool,
+    ) -> Result<(
+        String,
+        futures::channel::oneshot::Receiver<Result<OAuthCallbackParams>>,
+    )> {
         let server = bind_callback_server(&config)?;
         let port = server
             .server_addr()
@@ -301,14 +323,14 @@ mod server {
                     return;
                 }
 
-                let result = handle_oauth_callback_request(&request, expected_path);
+                let result = handle_oauth_callback_request(&request, expected_path, require_state);
 
                 let (status_code, body) = match &result {
                     Ok(_) => (
                         200,
                         oauth_callback_page(
                             "Authorization Successful",
-                            "You can close this tab and return to Zed.",
+                            "You can close this tab and return to Vela.",
                             false,
                         ),
                     ),
@@ -318,7 +340,7 @@ mod server {
                             400,
                             oauth_callback_page(
                                 "Authorization Failed",
-                                "Something went wrong. Please try again from Zed.",
+                                "Something went wrong. Please try again from Vela.",
                                 true,
                             ),
                         )
@@ -350,6 +372,7 @@ mod server {
     fn handle_oauth_callback_request(
         request: &tiny_http::Request,
         expected_path: &str,
+        require_state: bool,
     ) -> Result<OAuthCallbackParams> {
         let url = Url::parse(&format!("http://localhost{}", request.url()))
             .context("malformed callback request URL")?;
@@ -361,7 +384,30 @@ mod server {
         let query = url
             .query()
             .ok_or_else(|| anyhow!("OAuth callback has no query string"))?;
-        OAuthCallbackParams::parse_query(query)
+        if require_state {
+            OAuthCallbackParams::parse_query(query)
+        } else {
+            let mut code = None;
+            let mut state = String::new();
+            let mut error = None;
+            for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+                match key.as_ref() {
+                    "code" if !value.is_empty() => code = Some(value.into_owned()),
+                    "state" if !value.is_empty() => state = value.into_owned(),
+                    "error" | "error_description" if !value.is_empty() => {
+                        error = Some(value.into_owned())
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(error) = error {
+                anyhow::bail!("OAuth authorization failed: {error}");
+            }
+            Ok(OAuthCallbackParams {
+                code: code.ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?,
+                state,
+            })
+        }
     }
 
     /// Callback path reserved for evicting a previously-running OAuth callback
@@ -489,5 +535,36 @@ mod server {
 #[cfg(not(target_family = "wasm"))]
 pub use server::{
     OAuthCallbackParams, OAuthCallbackServerConfig, start_oauth_callback_server,
-    start_oauth_callback_server_with_config,
+    start_oauth_callback_server_with_config, start_oauth_code_callback_server_with_config,
 };
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+
+    #[test]
+    fn test_code_only_callback_accepts_missing_state() {
+        let (redirect_uri, receiver) = start_oauth_code_callback_server_with_config(
+            OAuthCallbackServerConfig::default(),
+        )
+        .unwrap();
+        let url = url::Url::parse(&redirect_uri).unwrap();
+        let address = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap());
+        let mut stream = TcpStream::connect(address).unwrap();
+        write!(
+            stream,
+            "GET {}?code=oauth-code HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            url.path()
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+
+        let callback = futures::executor::block_on(receiver).unwrap().unwrap();
+        assert_eq!(callback.code, "oauth-code");
+        assert!(callback.state.is_empty());
+        assert!(response.starts_with("HTTP/1.1 200"));
+    }
+}

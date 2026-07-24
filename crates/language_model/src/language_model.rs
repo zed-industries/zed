@@ -366,6 +366,11 @@ pub trait LanguageModelProvider: 'static {
 #[derive(Clone)]
 pub enum ProviderSettingsView {
     ApiKey(ApiKeyConfiguration),
+    /// Offers an account sign-in flow and API-key setup as equivalent authentication choices.
+    SignInOrApiKey {
+        sign_in: InlineProviderSettings,
+        api_key: ApiKeyConfiguration,
+    },
     Inline(InlineProviderSettings),
     SubPage(SubPageProviderSettings),
 }

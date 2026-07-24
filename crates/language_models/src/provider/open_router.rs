@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task, Window};
+use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
@@ -15,10 +16,14 @@ use language_model::{
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
 };
+use rand::RngCore as _;
+use serde::Deserialize;
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
+use sha2::{Digest, Sha256};
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
-use ui::IconName;
+use ui::{ConfiguredApiCard, prelude::*};
+use util::ResultExt as _;
 
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
@@ -26,6 +31,8 @@ const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openr
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
 
 const API_KEY_ENV_VAR_NAME: &str = "OPENROUTER_API_KEY";
+const OPENROUTER_AUTHORIZE_URL: &str = "https://openrouter.ai/auth";
+const OPENROUTER_KEY_EXCHANGE_URL: &str = "https://openrouter.ai/api/v1/auth/keys";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["HTTP-Referer", "X-Title"];
 const MAX_OPEN_ROUTER_SESSION_ID_LENGTH: usize = 256;
@@ -48,11 +55,17 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
+    oauth_sign_in_task: Option<Task<Result<()>>>,
+    last_auth_error: Option<SharedString>,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
         self.api_key_state.has_key()
+    }
+
+    fn is_signing_in(&self) -> bool {
+        self.oauth_sign_in_task.is_some()
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -157,6 +170,8 @@ impl OpenRouterLanguageModelProvider {
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
+                oauth_sign_in_task: None,
+                last_auth_error: None,
             }
         });
 
@@ -259,17 +274,202 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
 
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
-        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
+        let api_key = ApiKeyConfiguration::new(
             state.api_key_state.has_key(),
             state.api_key_state.is_from_env_var(),
             state.api_key_state.env_var_name().clone(),
             "https://openrouter.ai/keys".into(),
-        )))
+        );
+        let create_view = Arc::new({
+            let state = self.state.clone();
+            let http_client = self.http_client.clone();
+            move |_window: &mut Window, cx: &mut App| {
+                cx.new(|_| OpenRouterAuthView {
+                    state: state.clone(),
+                    http_client: http_client.clone(),
+                })
+                .into()
+            }
+        });
+
+        if state.is_authenticated() {
+            Some(ProviderSettingsView::Inline(
+                language_model::InlineProviderSettings {
+                    title: None,
+                    description: None,
+                    create_view,
+                },
+            ))
+        } else {
+            Some(ProviderSettingsView::SignInOrApiKey {
+                sign_in: language_model::InlineProviderSettings {
+                    title: Some("OpenRouter Account".into()),
+                    description: Some(language_model::InlineDescription::Text(
+                        "Sign in in your browser to create a revocable OpenRouter API key.".into(),
+                    )),
+                    create_view,
+                },
+                api_key,
+            })
+        }
     }
 
     fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(api_key, cx))
+    }
+}
+
+// OpenRouter's OAuth flow mints a permanent, user-revocable API key using PKCE. This Rust
+// implementation follows the protocol behavior documented by Pi while keeping credentials in the
+// system Keychain through `ApiKeyState`.
+#[derive(Deserialize)]
+struct OpenRouterKeyResponse {
+    key: String,
+}
+
+async fn openrouter_oauth_flow(http_client: Arc<dyn HttpClient>, cx: &AsyncApp) -> Result<String> {
+    let (callback_url, callback_rx) =
+        oauth_callback_server::start_oauth_code_callback_server_with_config(
+            oauth_callback_server::OAuthCallbackServerConfig {
+                host: "127.0.0.1",
+                preferred_port: 0,
+                fallback_port: None,
+                path: "/callback",
+            },
+        )
+        .context("Failed to start OpenRouter OAuth callback server")?;
+
+    let mut verifier_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut verifier_bytes);
+    let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+
+    let mut authorize_url = url::Url::parse(OPENROUTER_AUTHORIZE_URL)?;
+    authorize_url
+        .query_pairs_mut()
+        .append_pair("callback_url", &callback_url)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", "S256");
+    cx.update(|cx| cx.open_url(authorize_url.as_str()));
+
+    let callback = callback_rx
+        .await
+        .map_err(|_| anyhow!("OpenRouter OAuth callback was cancelled"))?
+        .context("OpenRouter authorization failed")?;
+
+    let request_body = serde_json::json!({
+        "code": callback.code,
+        "code_verifier": verifier,
+        "code_challenge_method": "S256",
+    });
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(OPENROUTER_KEY_EXCHANGE_URL)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .body(AsyncBody::from(request_body.to_string()))?;
+    let mut response = http_client.send(request).await?;
+    let status = response.status();
+    let mut body = String::new();
+    smol::io::AsyncReadExt::read_to_string(response.body_mut(), &mut body).await?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "OpenRouter OAuth key exchange failed (HTTP {status}): {body}"
+        ));
+    }
+
+    let response: OpenRouterKeyResponse =
+        serde_json::from_str(&body).context("OpenRouter OAuth returned invalid JSON")?;
+    if response.key.trim().is_empty() {
+        return Err(anyhow!("OpenRouter OAuth response contained no API key"));
+    }
+    Ok(response.key)
+}
+
+fn sign_in_with_openrouter(state: &Entity<State>, http_client: &Arc<dyn HttpClient>, cx: &mut App) {
+    if state.read(cx).is_signing_in() {
+        return;
+    }
+
+    let weak_state = state.downgrade();
+    let http_client = http_client.clone();
+    let task = cx.spawn(async move |cx| {
+        let result = async {
+            let key = openrouter_oauth_flow(http_client, &*cx).await?;
+            let store_task = weak_state.update(cx, |state, cx| state.set_api_key(Some(key), cx))?;
+            store_task.await?;
+            anyhow::Ok(())
+        }
+        .await;
+
+        weak_state
+            .update(cx, |state, cx| {
+                state.oauth_sign_in_task = None;
+                state.last_auth_error = result
+                    .as_ref()
+                    .err()
+                    .map(|error| SharedString::from(format!("Sign-in failed: {error}")));
+                cx.notify();
+            })
+            .log_err();
+        result
+    });
+
+    state.update(cx, |state, cx| {
+        state.last_auth_error = None;
+        state.oauth_sign_in_task = Some(task);
+        cx.notify();
+    });
+}
+
+struct OpenRouterAuthView {
+    state: Entity<State>,
+    http_client: Arc<dyn HttpClient>,
+}
+
+impl Render for OpenRouterAuthView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.state.read(cx);
+        if state.is_authenticated() {
+            let provider_state = self.state.clone();
+            return ConfiguredApiCard::new("openrouter-sign-out", "OpenRouter Connected")
+                .button_label("Sign Out")
+                .on_click(move |_, _, cx| {
+                    provider_state
+                        .update(cx, |state, cx| state.set_api_key(None, cx))
+                        .detach_and_log_err(cx);
+                })
+                .into_any_element();
+        }
+
+        let is_signing_in = state.is_signing_in();
+        let last_auth_error = state.last_auth_error.clone();
+        let provider_state = self.state.clone();
+        let http_client = self.http_client.clone();
+        v_flex()
+            .gap_2()
+            .child(
+                Button::new(
+                    "openrouter-oauth-sign-in",
+                    if is_signing_in {
+                        "Signing in…"
+                    } else {
+                        "Sign In"
+                    },
+                )
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .loading(is_signing_in)
+                .disabled(is_signing_in)
+                .on_click(move |_, _, cx| {
+                    sign_in_with_openrouter(&provider_state, &http_client, cx);
+                }),
+            )
+            .when_some(last_auth_error, |this, error| {
+                this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
+            .into_any_element()
     }
 }
 
