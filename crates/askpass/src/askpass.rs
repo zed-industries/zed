@@ -42,9 +42,17 @@ pub enum AskPassResult {
     Timedout,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GpgSigningPrompt {
+    #[default]
+    Zed,
+    System,
+}
+
 pub struct AskPassDelegate {
     tx: mpsc::UnboundedSender<(String, oneshot::Sender<EncryptedPassword>)>,
     executor: BackgroundExecutor,
+    gpg_signing_prompt: GpgSigningPrompt,
     _task: Task<()>,
 }
 
@@ -66,7 +74,17 @@ impl AskPassDelegate {
             tx,
             _task: task,
             executor: cx.background_executor().clone(),
+            gpg_signing_prompt: GpgSigningPrompt::default(),
         }
+    }
+
+    pub fn with_gpg_signing_prompt(mut self, gpg_signing_prompt: GpgSigningPrompt) -> Self {
+        self.gpg_signing_prompt = gpg_signing_prompt;
+        self
+    }
+
+    pub fn gpg_signing_prompt(&self) -> GpgSigningPrompt {
+        self.gpg_signing_prompt
     }
 
     pub fn ask_password(&mut self, prompt: String) -> Task<Option<EncryptedPassword>> {
@@ -83,6 +101,7 @@ pub struct AskPassSession {
     #[cfg(target_os = "windows")]
     secret: std::sync::Arc<std::sync::Mutex<Option<EncryptedPassword>>>,
     askpass_task: PasswordProxy,
+    gpg_signing_prompt: GpgSigningPrompt,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
     executor: BackgroundExecutor,
@@ -99,6 +118,8 @@ impl AskPassSession {
     /// You must retain this session until the master process exits.
     #[must_use]
     pub async fn new(executor: BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
+        let gpg_signing_prompt = delegate.gpg_signing_prompt();
+
         #[cfg(target_os = "windows")]
         let secret = std::sync::Arc::new(std::sync::Mutex::new(None));
 
@@ -146,6 +167,7 @@ impl AskPassSession {
             secret,
 
             askpass_task,
+            gpg_signing_prompt,
             askpass_kill_master_rx: Some(askpass_kill_master_rx),
             askpass_opened_rx: Some(askpass_opened_rx),
             executor,
@@ -200,6 +222,10 @@ impl AskPassSession {
     /// On Windows this is the path to cli.exe directly — no script needed.
     pub fn script_path(&self) -> impl AsRef<OsStr> {
         self.askpass_task.script_path()
+    }
+
+    pub fn gpg_signing_prompt(&self) -> GpgSigningPrompt {
+        self.gpg_signing_prompt
     }
 
     /// Path to a script suitable for git's `gpg.program`, routing GnuPG

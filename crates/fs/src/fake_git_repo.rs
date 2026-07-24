@@ -13,8 +13,8 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepository, GitRepositoryCheckpoint, GpgSigningPrompt, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
         commit_hash_search_query,
     },
     stash::GitStash,
@@ -58,6 +58,7 @@ pub enum FakeCommitDataEntry {
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
+    pub gpg_signing_prompts: Vec<GpgSigningPrompt>,
     pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
@@ -86,6 +87,7 @@ impl FakeGitRepositoryState {
     pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
             event_emitter,
+            gpg_signing_prompts: Default::default(),
             head_contents: Default::default(),
             index_contents: Default::default(),
             unmerged_paths: Default::default(),
@@ -1059,10 +1061,12 @@ impl GitRepository for FakeGitRepository {
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         options: CommitOptions,
-        _askpass: AskPassDelegate,
+        askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            state.gpg_signing_prompts.push(askpass.gpg_signing_prompt());
+
             if !options.allow_empty && !options.amend && state.index_contents == state.head_contents
             {
                 anyhow::bail!("nothing to commit (use allow_empty to create an empty commit)");

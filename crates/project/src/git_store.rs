@@ -14,7 +14,9 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
+use askpass::{
+    AskPassDelegate, EncryptedPassword, GpgSigningPrompt, IKnowWhatIAmDoingAndIHaveReadTheDocs,
+};
 use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense};
 use client::ProjectId;
 use collections::HashMap;
@@ -2830,6 +2832,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
+        let gpg_signing_prompt = gpg_signing_prompt_from_proto(envelope.payload.gpg_signing_prompt);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -2842,7 +2845,12 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(fetch_options, askpass, cx)
+                repository_handle.fetch_with_gpg_signing_prompt(
+                    fetch_options,
+                    askpass,
+                    gpg_signing_prompt,
+                    cx,
+                )
             })
             .await??;
 
@@ -2861,6 +2869,7 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let askpass_id = envelope.payload.askpass_id;
+        let gpg_signing_prompt = gpg_signing_prompt_from_proto(envelope.payload.gpg_signing_prompt);
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
@@ -2884,12 +2893,13 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.push(
+                repository_handle.push_with_gpg_signing_prompt(
                     branch_name,
                     remote_branch_name,
                     remote_name,
                     options,
                     askpass,
+                    gpg_signing_prompt,
                     cx,
                 )
             })
@@ -2908,6 +2918,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
+        let gpg_signing_prompt = gpg_signing_prompt_from_proto(envelope.payload.gpg_signing_prompt);
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
@@ -2921,8 +2932,14 @@ impl GitStore {
         let rebase = envelope.payload.rebase;
 
         let remote_message = repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.pull(branch_name, remote_name, rebase, askpass, cx)
+            .update(&mut cx, |repository_handle, _cx| {
+                repository_handle.pull_with_gpg_signing_prompt(
+                    branch_name,
+                    remote_name,
+                    rebase,
+                    askpass,
+                    gpg_signing_prompt,
+                )
             })
             .await??;
 
@@ -3103,6 +3120,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
+        let gpg_signing_prompt = gpg_signing_prompt_from_proto(envelope.payload.gpg_signing_prompt);
 
         let askpass = make_remote_delegate(
             this,
@@ -3118,8 +3136,8 @@ impl GitStore {
         let options = envelope.payload.options.unwrap_or_default();
 
         repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.commit(
+            .update(&mut cx, |repository_handle, _cx| {
+                repository_handle.commit_with_gpg_signing_prompt(
                     message,
                     name.zip(email),
                     CommitOptions {
@@ -3129,7 +3147,7 @@ impl GitStore {
                         no_verify: options.no_verify,
                     },
                     askpass,
-                    cx,
+                    gpg_signing_prompt,
                 )
             })
             .await??;
@@ -5093,6 +5111,22 @@ impl BufferGitState {
 
             Ok(())
         }));
+    }
+}
+
+fn gpg_signing_prompt_to_proto(gpg_signing_prompt: GpgSigningPrompt) -> i32 {
+    match gpg_signing_prompt {
+        GpgSigningPrompt::Zed => proto::GpgSigningPrompt::Zed as i32,
+        GpgSigningPrompt::System => proto::GpgSigningPrompt::System as i32,
+    }
+}
+
+fn gpg_signing_prompt_from_proto(gpg_signing_prompt: i32) -> GpgSigningPrompt {
+    match proto::GpgSigningPrompt::from_i32(gpg_signing_prompt)
+        .unwrap_or(proto::GpgSigningPrompt::Zed)
+    {
+        proto::GpgSigningPrompt::Zed => GpgSigningPrompt::Zed,
+        proto::GpgSigningPrompt::System => GpgSigningPrompt::System,
     }
 }
 
@@ -7527,9 +7561,28 @@ impl Repository {
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut App,
+    ) -> oneshot::Receiver<Result<()>> {
+        let gpg_signing_prompt = ProjectSettings::get_global(cx).git.gpg_signing_prompt;
+        self.commit_with_gpg_signing_prompt(
+            message,
+            name_and_email,
+            options,
+            askpass,
+            gpg_signing_prompt,
+        )
+    }
+
+    fn commit_with_gpg_signing_prompt(
+        &mut self,
+        message: SharedString,
+        name_and_email: Option<(SharedString, SharedString)>,
+        options: CommitOptions,
+        askpass: AskPassDelegate,
+        gpg_signing_prompt: GpgSigningPrompt,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let askpass = askpass.with_gpg_signing_prompt(gpg_signing_prompt);
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
@@ -7568,6 +7621,7 @@ impl Repository {
                                     no_verify: options.no_verify,
                                 }),
                                 askpass_id,
+                                gpg_signing_prompt: gpg_signing_prompt_to_proto(gpg_signing_prompt),
                             })
                             .await?;
 
@@ -7618,6 +7672,18 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let gpg_signing_prompt = ProjectSettings::get_global(cx).git.gpg_signing_prompt;
+        self.fetch_with_gpg_signing_prompt(fetch_options, askpass, gpg_signing_prompt, cx)
+    }
+
+    fn fetch_with_gpg_signing_prompt(
+        &mut self,
+        fetch_options: FetchOptions,
+        askpass: AskPassDelegate,
+        gpg_signing_prompt: GpgSigningPrompt,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let askpass = askpass.with_gpg_signing_prompt(gpg_signing_prompt);
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
@@ -7663,6 +7729,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 askpass_id,
                                 remote: fetch_options.to_proto(),
+                                gpg_signing_prompt: gpg_signing_prompt_to_proto(gpg_signing_prompt),
                             })
                             .await?;
 
@@ -7685,6 +7752,30 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let gpg_signing_prompt = ProjectSettings::get_global(cx).git.gpg_signing_prompt;
+        self.push_with_gpg_signing_prompt(
+            branch,
+            remote_branch,
+            remote,
+            options,
+            askpass,
+            gpg_signing_prompt,
+            cx,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_with_gpg_signing_prompt(
+        &mut self,
+        branch: SharedString,
+        remote_branch: SharedString,
+        remote: SharedString,
+        options: Option<PushOptions>,
+        askpass: AskPassDelegate,
+        gpg_signing_prompt: GpgSigningPrompt,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let askpass = askpass.with_gpg_signing_prompt(gpg_signing_prompt);
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
@@ -7754,6 +7845,7 @@ impl Repository {
                                     }
                                 }
                                     as i32),
+                                gpg_signing_prompt: gpg_signing_prompt_to_proto(gpg_signing_prompt),
                             })
                             .await?;
 
@@ -7773,8 +7865,21 @@ impl Repository {
         remote: SharedString,
         rebase: bool,
         askpass: AskPassDelegate,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let gpg_signing_prompt = ProjectSettings::get_global(cx).git.gpg_signing_prompt;
+        self.pull_with_gpg_signing_prompt(branch, remote, rebase, askpass, gpg_signing_prompt)
+    }
+
+    fn pull_with_gpg_signing_prompt(
+        &mut self,
+        branch: Option<SharedString>,
+        remote: SharedString,
+        rebase: bool,
+        askpass: AskPassDelegate,
+        gpg_signing_prompt: GpgSigningPrompt,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let askpass = askpass.with_gpg_signing_prompt(gpg_signing_prompt);
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
@@ -7823,6 +7928,7 @@ impl Repository {
                                 rebase,
                                 branch_name: branch.as_ref().map(|b| b.to_string()),
                                 remote_name: remote.to_string(),
+                                gpg_signing_prompt: gpg_signing_prompt_to_proto(gpg_signing_prompt),
                             })
                             .await?;
 

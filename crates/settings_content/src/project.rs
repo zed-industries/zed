@@ -530,6 +530,11 @@ pub struct GitSettings {
     ///
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
+    /// Controls how passphrase prompts are handled when signing Git commits with GPG.
+    /// This setting controls Zed's GPG wrapper, which is not available on Windows.
+    ///
+    /// Default: zed
+    pub gpg_signing_prompt: Option<GpgSigningPrompt>,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0
@@ -580,6 +585,28 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GpgSigningPrompt {
+    /// Show GPG signing passphrase prompts in Zed.
+    #[default]
+    Zed,
+    /// Let GPG use its configured pinentry program.
+    System,
 }
 
 #[with_fallible_options]

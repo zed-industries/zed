@@ -2328,6 +2328,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 {
   "git": {
     "git_gutter": "tracked_files",
+    "gpg_signing_prompt": "zed",
     "inline_blame": {
       "enabled": true
     },
@@ -2386,6 +2387,36 @@ Example:
   }
 }
 ```
+
+### GPG Signing Prompt
+
+- Description: Controls how passphrase prompts are handled when signing Git commits with GPG.
+- Setting: `gpg_signing_prompt`
+- Default: `"zed"`
+
+**Options**
+
+1. Show GPG signing passphrase prompts in Zed:
+
+```json [settings]
+{
+  "git": {
+    "gpg_signing_prompt": "zed"
+  }
+}
+```
+
+2. Let GPG use its configured pinentry program:
+
+```json [settings]
+{
+  "git": {
+    "gpg_signing_prompt": "system"
+  }
+}
+```
+
+Zed's Git processes do not have a terminal attached, so the `"system"` option requires a graphical or otherwise non-terminal pinentry program. This setting controls Zed's GPG wrapper, which is not available on Windows.
 
 ### Inline Git Blame
 

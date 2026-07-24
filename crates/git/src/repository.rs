@@ -39,7 +39,7 @@ use util::rel_path::RelPath;
 use util::{ResultExt, paths};
 use uuid::Uuid;
 
-pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
+pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession, GpgSigningPrompt};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
@@ -3738,6 +3738,23 @@ struct GitBinaryCommandError {
     status: ExitStatus,
 }
 
+fn configure_gpg_program(
+    command: &mut util::command::Command,
+    env: &HashMap<String, String>,
+    gpg_signing_prompt: GpgSigningPrompt,
+    gpg_wrapper: Option<&Path>,
+) {
+    if gpg_signing_prompt == GpgSigningPrompt::Zed
+        && !env.contains_key("GIT_CONFIG_COUNT")
+        && let Some(gpg_wrapper) = gpg_wrapper
+    {
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "gpg.program")
+            .env("GIT_CONFIG_VALUE_0", gpg_wrapper);
+    }
+}
+
 async fn run_git_command(
     env: Arc<HashMap<String, String>>,
     ask_pass: AskPassDelegate,
@@ -3763,14 +3780,12 @@ async fn run_git_command(
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force");
 
-        if !env.contains_key("GIT_CONFIG_COUNT")
-            && let Some(gpg_wrapper) = ask_pass.gpg_wrapper_path()
-        {
-            command
-                .env("GIT_CONFIG_COUNT", "1")
-                .env("GIT_CONFIG_KEY_0", "gpg.program")
-                .env("GIT_CONFIG_VALUE_0", gpg_wrapper);
-        }
+        configure_gpg_program(
+            &mut command,
+            &env,
+            ask_pass.gpg_signing_prompt(),
+            ask_pass.gpg_wrapper_path(),
+        );
 
         #[cfg(target_os = "windows")]
         command.env("ZED_ASKPASS_SOCKET", ask_pass.socket_path());
@@ -4698,6 +4713,96 @@ mod tests {
         let graph_data = request_rx.recv().await.unwrap();
         assert_eq!(graph_data.len(), 1);
         assert_eq!(graph_data[0].sha, commit_sha);
+    }
+
+    async fn configured_gpg_program(
+        executor: BackgroundExecutor,
+        working_directory: &Path,
+        global_config: &Path,
+        env: &HashMap<String, String>,
+        gpg_signing_prompt: GpgSigningPrompt,
+    ) -> String {
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            working_directory.to_path_buf(),
+            working_directory.join(".git"),
+            executor,
+            true,
+        );
+        let mut command = git.build_command(&["config", "--get", "gpg.program"]);
+        command
+            .env_remove("GIT_CONFIG_COUNT")
+            .env_remove("GIT_CONFIG_KEY_0")
+            .env_remove("GIT_CONFIG_VALUE_0")
+            .env_remove("GIT_CONFIG_PARAMETERS")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", global_config)
+            .envs(env.iter());
+        configure_gpg_program(
+            &mut command,
+            env,
+            gpg_signing_prompt,
+            Some(Path::new("zed-gpg-wrapper")),
+        );
+
+        let output = command.output().await.expect("git config should run");
+        assert!(
+            output.status.success(),
+            "git config failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .expect("git config output should be UTF-8")
+            .trim()
+            .to_string()
+    }
+
+    #[gpui::test]
+    async fn test_gpg_signing_prompt_controls_gpg_program(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        assert_eq!(GpgSigningPrompt::default(), GpgSigningPrompt::Zed);
+
+        let temp_dir = tempfile::tempdir().expect("temporary directory should be created");
+        let global_config = temp_dir.path().join("gitconfig");
+        fs::write(&global_config, "[gpg]\n\tprogram = system-gpg\n")
+            .expect("global git config should be written");
+
+        let env = HashMap::default();
+        assert_eq!(
+            configured_gpg_program(
+                cx.executor(),
+                temp_dir.path(),
+                &global_config,
+                &env,
+                GpgSigningPrompt::Zed,
+            )
+            .await,
+            "zed-gpg-wrapper"
+        );
+        assert_eq!(
+            configured_gpg_program(
+                cx.executor(),
+                temp_dir.path(),
+                &global_config,
+                &env,
+                GpgSigningPrompt::System,
+            )
+            .await,
+            "system-gpg"
+        );
+
+        let env = HashMap::from_iter([("GIT_CONFIG_COUNT".to_string(), "0".to_string())]);
+        assert_eq!(
+            configured_gpg_program(
+                cx.executor(),
+                temp_dir.path(),
+                &global_config,
+                &env,
+                GpgSigningPrompt::Zed,
+            )
+            .await,
+            "system-gpg"
+        );
     }
 
     #[gpui::test]

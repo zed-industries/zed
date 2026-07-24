@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use askpass::GpgSigningPrompt;
 use collections::HashMap;
 use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
@@ -465,6 +466,10 @@ pub struct GitSettings {
     ///
     /// Default: tracked_files
     pub git_gutter: settings::GitGutterSetting,
+    /// Controls how passphrase prompts are handled when signing Git commits with GPG.
+    ///
+    /// Default: zed
+    pub gpg_signing_prompt: GpgSigningPrompt,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: 0
@@ -683,6 +688,10 @@ impl Settings for ProjectSettings {
         let git_settings = GitSettings {
             enabled: git_enabled,
             git_gutter: git.git_gutter.unwrap(),
+            gpg_signing_prompt: match git.gpg_signing_prompt.unwrap_or_default() {
+                settings::GpgSigningPrompt::Zed => GpgSigningPrompt::Zed,
+                settings::GpgSigningPrompt::System => GpgSigningPrompt::System,
+            },
             gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();

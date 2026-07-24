@@ -9,7 +9,8 @@ use collections::HashMap;
 use git::{
     Oid,
     repository::{
-        CommitData, GitCommitTemplate, InitialGraphCommitData, RepoPath, Worktree as GitWorktree,
+        AskPassDelegate, CommitData, CommitOptions, GitCommitTemplate, GpgSigningPrompt,
+        InitialGraphCommitData, RepoPath, Worktree as GitWorktree,
     },
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
@@ -17,7 +18,7 @@ use git_ui::git_graph::GitGraph;
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
 use gpui::{
     AppContext as _, BackgroundExecutor, Entity, IntoElement as _, SharedString, TestAppContext,
-    VisualContext as _, VisualTestContext, point, px, size,
+    UpdateGlobal as _, VisualContext as _, VisualTestContext, point, px, size,
 };
 use project::{
     ProjectPath,
@@ -25,11 +26,85 @@ use project::{
 };
 use rand::{SeedableRng, rngs::StdRng};
 use serde_json::json;
+use settings::{GpgSigningPrompt as GpgSigningPromptSetting, SettingsStore};
 
 use util::{path, rel_path::rel_path};
 use workspace::{MultiWorkspace, Workspace};
 
 use crate::TestServer;
+
+#[gpui::test]
+async fn test_gpg_signing_prompt_is_forwarded_to_shared_project(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().gpg_signing_prompt =
+                    Some(GpgSigningPromptSetting::System);
+            });
+        });
+    });
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let repository_b = project_b.read_with(cx_b, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("shared project should have an active repository")
+    });
+    let askpass = cx_b.update(|cx| AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}));
+    repository_b
+        .update(cx_b, |repository, cx| {
+            repository.commit(
+                "Test system GPG prompt".into(),
+                None,
+                CommitOptions {
+                    allow_empty: true,
+                    ..Default::default()
+                },
+                askpass,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let gpg_signing_prompts = client_a
+        .fs()
+        .with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state.gpg_signing_prompts.clone()
+        })
+        .unwrap();
+    assert_eq!(gpg_signing_prompts, vec![GpgSigningPrompt::System]);
+}
 
 #[gpui::test]
 async fn test_root_repo_common_dir_sync(
