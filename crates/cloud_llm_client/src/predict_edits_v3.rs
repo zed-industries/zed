@@ -25,6 +25,8 @@ pub struct RawCompletionRequest {
     pub temperature: Option<f32>,
     pub stop: Vec<Cow<'static, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
 }
 
