@@ -685,32 +685,44 @@ fn parse_blocks(
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
-    let ui_font_family = settings.ui_font.family.clone();
+    let prose_font_family = settings.markdown_prose_font_family().clone();
+    let inline_code_font_family = settings.markdown_inline_code_font_family().clone();
     let ui_font_features = settings.ui_font.features.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
     let buffer_font_family = settings.buffer_font.family.clone();
     let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
     let buffer_font_weight = settings.buffer_font.weight;
+    let buffer_font_size = settings.buffer_font_size(cx);
+    let hover_popover_font_size = settings.hover_popover_font_size();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family),
+        font_family: Some(prose_font_family),
         font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
+        font_size: hover_popover_font_size.map(Into::into),
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
     });
+    // Rendered text takes its size from the inherited text style rather than
+    // `base_text_style`, so the font size must also be set on the container.
+    let mut container_style = StyleRefinement::default();
+    container_style.text.font_size = hover_popover_font_size.map(Into::into);
+    let code_block = StyleRefinement::default()
+        .my(rems(1.))
+        .font_family(buffer_font_family)
+        .font_features(buffer_font_features.clone())
+        .font_weight(buffer_font_weight)
+        .text_size(buffer_font_size)
+        .line_height(buffer_font_size * 1.75);
     MarkdownStyle {
+        container_style,
         base_text_style,
-        code_block: StyleRefinement::default()
-            .my(rems(1.))
-            .font_buffer(cx)
-            .font_features(buffer_font_features.clone())
-            .font_weight(buffer_font_weight),
+        code_block,
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
-            font_family: Some(buffer_font_family),
+            font_family: Some(inline_code_font_family),
             font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             font_weight: Some(buffer_font_weight),
@@ -746,16 +758,16 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
-    let ui_font_family = settings.ui_font.family.clone();
+    let prose_font_family = settings.markdown_prose_font_family().clone();
+    let inline_code_font_family = settings.markdown_inline_code_font_family().clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
     let ui_font_features = settings.ui_font.features.clone();
-    let buffer_font_family = settings.buffer_font.family.clone();
     let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family),
+        font_family: Some(prose_font_family),
         font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
@@ -766,7 +778,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
-            font_family: Some(buffer_font_family),
+            font_family: Some(inline_code_font_family),
             font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             ..Default::default()

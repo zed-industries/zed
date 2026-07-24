@@ -191,12 +191,19 @@ impl MarkdownStyle {
         let body_font_family = if is_preview {
             theme_settings.markdown_preview_font_family().clone()
         } else {
-            theme_settings.ui_font.family.clone()
+            theme_settings.markdown_prose_font_family().clone()
         };
         let code_font_family = if is_preview {
             theme_settings.markdown_preview_code_font_family().clone()
         } else {
             theme_settings.buffer_font.family.clone()
+        };
+        let inline_code_font_family = if is_preview {
+            theme_settings
+                .markdown_preview_inline_code_font_family()
+                .clone()
+        } else {
+            theme_settings.markdown_inline_code_font_family().clone()
         };
 
         let mut text_style = window.text_style();
@@ -256,7 +263,7 @@ impl MarkdownStyle {
                 border_color: Some(colors.border_variant),
                 background: Some(colors.editor_background.into()),
                 text: TextStyleRefinement {
-                    font_family: Some(code_font_family.clone()),
+                    font_family: Some(code_font_family),
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
@@ -266,10 +273,9 @@ impl MarkdownStyle {
                 ..Default::default()
             },
             inline_code: TextStyleRefinement {
-                font_family: Some(code_font_family),
+                font_family: Some(inline_code_font_family),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
-                font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
                 ..Default::default()
