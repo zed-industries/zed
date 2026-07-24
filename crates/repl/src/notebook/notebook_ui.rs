@@ -1282,7 +1282,7 @@ impl NotebookEditor {
             .items_center()
             .justify_center()
             .gap_3()
-            .child(Label::new("This notebook is empty").color(Color::Muted))
+            .child(Label::new("This notebook is empty.").color(Color::Muted))
             .child(
                 h_flex()
                     .gap_2()
