@@ -4,6 +4,9 @@
 
 (code_span) @text.literal.markup
 
+((html_tag) @comment
+  (#match? @comment "^<!--"))
+
 (strikethrough) @strikethrough.markup
 
 [

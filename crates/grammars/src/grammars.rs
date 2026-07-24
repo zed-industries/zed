@@ -110,3 +110,44 @@ pub fn load_queries(name: &str) -> LanguageQueries {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Context as _;
+    use tree_sitter::StreamingIterator as _;
+
+    #[test]
+    fn highlights_inline_markdown_comments() -> anyhow::Result<()> {
+        let source = "before <!-- hidden note --> <span>after</span>";
+        let language = tree_sitter_md::INLINE_LANGUAGE.into();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language)?;
+        let tree = parser
+            .parse(source, None)
+            .context("failed to parse inline Markdown")?;
+        let highlights = load_queries("markdown-inline")
+            .highlights
+            .context("missing inline Markdown highlights query")?;
+        let query = tree_sitter::Query::new(&language, &highlights)?;
+        let comment_capture_index = query
+            .capture_index_for_name("comment")
+            .context("missing comment capture")?;
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+        let mut comments = Vec::new();
+
+        while let Some(query_match) = matches.next() {
+            comments.extend(
+                query_match
+                    .captures
+                    .iter()
+                    .filter(|capture| capture.index == comment_capture_index)
+                    .map(|capture| &source[capture.node.byte_range()]),
+            );
+        }
+
+        assert_eq!(comments, ["<!-- hidden note -->"]);
+        Ok(())
+    }
+}
