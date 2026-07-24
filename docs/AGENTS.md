@@ -117,7 +117,7 @@ Use bold labels for callouts:
 Images are hosted externally. Reference format:
 
 ```markdown
-![Alt text description](https://zed.dev/img/path/to/image.webp)
+![Alt text description](https://www.zed.dev/img/path/to/image.webp)
 ```
 
 ### Cross-Linking
