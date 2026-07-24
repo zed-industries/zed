@@ -1,6 +1,7 @@
 mod connection;
 mod diff;
 mod mention;
+pub mod session_client_state_store;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
@@ -24,7 +25,7 @@ use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{
-    AgentLocation, Project,
+    AgentId, AgentLocation, Project,
     git_store::{GitStoreCheckpoint, GitStoreEvent, RepositoryEvent},
 };
 use serde::{Deserialize, Serialize};
@@ -2340,6 +2341,20 @@ impl AcpThread {
         self.draft_prompt.as_deref()
     }
 
+    pub fn persist_client_state_draft_prompt(
+        &self,
+        agent_id: AgentId,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let session_id = self.session_id.clone();
+        let draft_prompt = self.draft_prompt.clone().unwrap_or_default();
+        if draft_prompt.is_empty() {
+            session_client_state_store::delete(agent_id, session_id, cx)
+        } else {
+            session_client_state_store::write_draft_prompt(agent_id, session_id, draft_prompt, cx)
+        }
+    }
+
     pub fn set_draft_prompt(
         &mut self,
         prompt: Option<Vec<acp::ContentBlock>>,
@@ -3651,6 +3666,8 @@ impl AcpThread {
         );
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
+
+        self.set_draft_prompt(None, cx);
 
         let client_user_message_ids = self.connection.client_user_message_ids(cx);
         let client_id = client_user_message_ids

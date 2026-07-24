@@ -3463,6 +3463,33 @@ impl AgentPanel {
         })
     }
 
+    fn initial_content_for_thread_id(
+        agent: &Agent,
+        thread_id: ThreadId,
+        cx: &App,
+    ) -> Option<AgentInitialContent> {
+        let metadata = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry(thread_id).cloned())?;
+        let blocks = if metadata.is_draft() {
+            crate::draft_prompt_store::read(thread_id, cx)
+        } else if !agent.is_native() {
+            metadata.session_id.as_ref().and_then(|session_id| {
+                acp_thread::session_client_state_store::read_draft_prompt(
+                    &agent.id(),
+                    session_id,
+                    cx,
+                )
+            })
+        } else {
+            None
+        }?;
+
+        Some(AgentInitialContent::ContentBlock {
+            blocks,
+            auto_submit: false,
+        })
+    }
+
     fn external_thread(
         &mut self,
         agent_choice: Option<crate::Agent>,
@@ -4424,27 +4451,12 @@ impl AgentPanel {
             return;
         }
 
-        // Not in memory. Build a fresh ConversationView. For drafts we
-        // also seed the message editor with any prompt text the user had
-        // typed before closing the window (persisted in the scoped kvp
-        // draft-prompt store).
-        let is_draft = ThreadMetadataStore::try_global(cx)
-            .and_then(|store| store.read(cx).entry(thread_id).map(|m| m.is_draft()))
-            .unwrap_or(false);
-        let initial_content = is_draft
-            .then(|| crate::draft_prompt_store::read(thread_id, cx))
-            .flatten()
-            .map(|blocks| AgentInitialContent::ContentBlock {
-                blocks,
-                auto_submit: false,
-            });
-
         self.external_thread(
             Some(agent),
             Some(thread_id),
             work_dirs,
             title,
-            initial_content,
+            None,
             focus,
             source,
             window,
@@ -4533,6 +4545,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AgentThread {
+        let initial_content = initial_content.or_else(|| {
+            resume_thread_id
+                .and_then(|thread_id| Self::initial_content_for_thread_id(&agent, thread_id, cx))
+        });
         let thread_id = resume_thread_id.unwrap_or_else(ThreadId::new);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
@@ -7954,6 +7970,102 @@ mod tests {
         assert!(
             blocks.is_empty(),
             "cleared editor snapshot should override stale saved draft prompt"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_external_acp_session_restores_draft_prompt_after_first_message(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let agent_id: AgentId = "loadable-stub".into();
+        let agent = Agent::Custom {
+            id: agent_id.clone(),
+        };
+        let connection = StubAgentConnection::new()
+            .with_supports_load_session(true)
+            .with_agent_id(agent_id.clone())
+            .with_telemetry_id("loadable-stub".into());
+
+        open_thread_with_custom_connection(&panel, connection.clone(), &mut cx);
+        let session_id = active_session_id(&panel, &cx);
+        let thread_id = active_thread_id(&panel, &cx);
+
+        send_message(&panel, &mut cx);
+        connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
+        cx.run_until_parked();
+
+        crate::test_support::type_draft_prompt(&panel, "draft after first message", &mut cx);
+
+        let persisted = cx
+            .update(|_, cx| {
+                acp_thread::session_client_state_store::read_draft_prompt(
+                    &agent.id(),
+                    &session_id,
+                    cx,
+                )
+            })
+            .expect("ACP client state should be persisted");
+        assert_eq!(
+            persisted.first().map(expect_text_block),
+            Some("draft after first message")
+        );
+
+        let other_connection = StubAgentConnection::new().with_agent_id("other-stub".into());
+        open_thread_with_custom_connection(&panel, other_connection, &mut cx);
+        assert!(
+            panel.update(&mut cx, |panel, _cx| panel
+                .test_unload_retained_thread(thread_id)),
+            "original thread should have been retained before unloading"
+        );
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_restored_thread_with_server(
+                Rc::new(
+                    crate::test_support::StubAgentServer::new(connection.clone())
+                        .with_connection_agent_id(),
+                ),
+                session_id.clone(),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let restored_text = panel.read_with(&cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .expect("restored thread view should be active")
+                .read(cx)
+                .message_editor
+                .read(cx)
+                .text(cx)
+        });
+        assert_eq!(restored_text, "draft after first message");
+
+        let thread_view = panel.read_with(&cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .expect("restored thread view should be active")
+        });
+        thread_view.update_in(&mut cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        connection.end_turn(session_id.clone(), acp::StopReason::EndTurn);
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(crate::conversation_view::DRAFT_PROMPT_PERSIST_DEBOUNCE * 2);
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|_, cx| {
+                acp_thread::session_client_state_store::read_draft_prompt(
+                    &agent.id(),
+                    &session_id,
+                    cx,
+                )
+            })
+            .is_none(),
+            "sending the restored draft should clear its persisted client state"
         );
     }
 

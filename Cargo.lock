@@ -104,6 +104,7 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "collections",
+ "db",
  "env_logger 0.11.8",
  "feature_flags",
  "file_icons",
