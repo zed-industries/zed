@@ -57,6 +57,23 @@ pub fn split_local_url_fragment(url: &str) -> (&str, Option<&str>) {
     }
 }
 
+pub fn source_position_from_fragment(fragment: &str) -> Option<(u32, u32)> {
+    let fragment = fragment.strip_prefix('L').unwrap_or(fragment);
+    let (line, column) = match fragment.split_once([',', ':']) {
+        Some((line, column)) => (line, Some(column)),
+        None => (
+            fragment.split_once('-').map_or(fragment, |(line, _)| line),
+            None,
+        ),
+    };
+    let line = line.parse::<u32>().ok()?.checked_sub(1)?;
+    let column = column
+        .and_then(|column| column.parse::<u32>().ok())
+        .and_then(|column| column.checked_sub(1))
+        .unwrap_or(0);
+    Some((line, column))
+}
+
 /// Indicates that the wrapped `String` is markdown text.
 #[derive(Debug, Clone)]
 pub struct MarkdownString(pub String);
@@ -348,6 +365,18 @@ mod tests {
             split_local_url_fragment("123:not-a-scheme#frag"),
             ("123:not-a-scheme", Some("frag"))
         );
+    }
+
+    #[test]
+    fn test_source_position_from_fragment() {
+        assert_eq!(source_position_from_fragment("9,16"), Some((8, 15)));
+        assert_eq!(source_position_from_fragment("33,33"), Some((32, 32)));
+        assert_eq!(source_position_from_fragment("L42"), Some((41, 0)));
+        assert_eq!(source_position_from_fragment("L42:7"), Some((41, 6)));
+        assert_eq!(source_position_from_fragment("5"), Some((4, 0)));
+        assert_eq!(source_position_from_fragment("L10-L20"), Some((9, 0)));
+        assert_eq!(source_position_from_fragment("heading"), None);
+        assert_eq!(source_position_from_fragment("0,0"), None);
     }
 
     #[test]

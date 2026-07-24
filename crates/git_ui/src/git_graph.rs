@@ -1,7 +1,7 @@
 pub use crate::commit_context_menu::{CopyCommitSha, CopyCommitTag, OpenCommitView};
 use crate::{
     commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
-    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_tooltip::CommitAvatar,
     commit_view::CommitView,
     git_status_icon,
 };
@@ -10,7 +10,6 @@ use editor::Editor;
 use file_icons::FileIcons;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
-    commit::ParsedCommitMessage,
     parse_git_remote_url,
     repository::{
         CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
@@ -1295,7 +1294,7 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
 struct GitGraphContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
-    entry_idx: Option<usize>,
+    target_entry_index: Option<usize>,
     _subscription: Subscription,
 }
 
@@ -1694,10 +1693,6 @@ impl GitGraph {
         git_store.repositories().get(&self.repo_id).cloned()
     }
 
-    fn has_context_menu(&self) -> bool {
-        self.context_menu.is_some()
-    }
-
     /// Checks whether a ref name from git's `%D` decoration
     ///  format refers to the currently checked-out branch.
     fn is_head_ref(ref_name: &str, head_branch_name: &Option<SharedString>) -> bool {
@@ -1791,7 +1786,6 @@ impl GitGraph {
         });
 
         let row_height = Self::row_height(window, cx);
-        let has_context_menu = self.has_context_menu();
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1899,55 +1893,6 @@ impl GitGraph {
                     div()
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
-                        .when(!has_context_menu, |this| {
-                            if let CommitDataState::Loaded(commit_data) = &data {
-                                let sha = commit.data.sha.to_string();
-                                let author_name = commit_data.author_name.clone();
-                                let author_email = commit_data.author_email.clone();
-                                let message = commit_data.message.clone();
-                                let commit_timestamp = commit_data.commit_timestamp;
-                                let tag_names = commit
-                                    .data
-                                    .tag_names()
-                                    .into_iter()
-                                    .map(SharedString::from)
-                                    .collect::<Vec<_>>();
-                                let workspace = self.workspace.clone();
-                                let repository = repository.clone();
-                                this.hoverable_tooltip(move |_window, cx| {
-                                    let remote_url = repository.read(cx).default_remote_url();
-                                    let provider_registry =
-                                        GitHostingProviderRegistry::default_global(cx);
-                                    let commit_details = CommitDetails {
-                                        sha: sha.clone().into(),
-                                        author_name: author_name.clone(),
-                                        author_email: author_email.clone(),
-                                        commit_time: OffsetDateTime::from_unix_timestamp(
-                                            commit_timestamp,
-                                        )
-                                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                                        message: Some(ParsedCommitMessage::parse(
-                                            sha.clone(),
-                                            message.to_string(),
-                                            remote_url.as_deref(),
-                                            Some(provider_registry),
-                                        )),
-                                        tag_names: tag_names.clone(),
-                                    };
-                                    cx.new(|cx| {
-                                        CommitTooltip::new(
-                                            commit_details,
-                                            repository.clone(),
-                                            workspace.clone(),
-                                            cx,
-                                        )
-                                    })
-                                    .into()
-                                })
-                            } else {
-                                this
-                            }
-                        })
                         .child(
                             h_flex()
                                 .gap_2()
@@ -2501,7 +2446,7 @@ impl GitGraph {
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
-        entry_idx: Option<usize>,
+        target_entry_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2526,7 +2471,7 @@ impl GitGraph {
         self.context_menu = Some(GitGraphContextMenu {
             menu: context_menu,
             position,
-            entry_idx,
+            target_entry_index,
             _subscription: subscription,
         });
         cx.notify();
@@ -3260,7 +3205,10 @@ impl GitGraph {
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_entry_idx = self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
+        let context_menu_target_index = self
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.target_entry_index);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
@@ -3284,7 +3232,7 @@ impl GitGraph {
                         let is_hovered = hovered_entry_idx == Some(absolute_row_idx);
                         let is_selected = selected_entry_idx == Some(absolute_row_idx);
                         let is_context_menu_target =
-                            context_menu_entry_idx == Some(absolute_row_idx);
+                            context_menu_target_index == Some(absolute_row_idx);
 
                         if is_hovered || is_selected || is_context_menu_target {
                             let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
@@ -3895,8 +3843,10 @@ impl Render for GitGraph {
                             let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
-                            let context_menu_entry_idx =
-                                self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
+                            let context_menu_target_index = self
+                                .context_menu
+                                .as_ref()
+                                .and_then(|menu| menu.target_entry_index);
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
                             let table_focus_handle =
@@ -3936,7 +3886,7 @@ impl Render for GitGraph {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
                                     let is_context_menu_target =
-                                        context_menu_entry_idx == Some(index);
+                                        context_menu_target_index == Some(index);
                                     let table_focus_handle = table_focus_handle.clone();
                                     let is_focused = focus_handle.is_focused(window)
                                         || table_focus_handle.is_focused(window);
