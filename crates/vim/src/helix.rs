@@ -34,6 +34,8 @@ actions!(
     [
         /// Yanks the current selection or character if no selection.
         HelixYank,
+        /// Replaces the current selection with text from the selected register.
+        HelixReplaceWithYanked,
         /// Inserts at the beginning of the selection.
         HelixInsert,
         /// Appends at the end of the selection.
@@ -72,6 +74,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_insert_end_of_line);
     Vim::action(editor, cx, Vim::helix_yank);
+    Vim::action(editor, cx, Vim::helix_replace_with_yanked);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
     Vim::action(editor, cx, Vim::helix_paste);
     Vim::action(editor, cx, Vim::helix_select_regex);
@@ -1754,13 +1757,13 @@ mod test {
     use std::{fmt::Write, time::Duration};
 
     use editor::{HighlightKey, MultiBufferOffset};
-    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
+    use gpui::{ClipboardItem, KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::{CursorShape, Point};
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
-    use settings::{SettingsStore, ThemeColorsContent, ThemeStyleContent};
+    use settings::{SettingsStore, ThemeColorsContent, ThemeStyleContent, UseSystemClipboard};
     use theme::ActiveTheme as _;
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
@@ -2602,25 +2605,75 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
+    async fn test_shift_r_uses_yanked_register(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
-        // First copy some text to clipboard
-        cx.set_state("«hello worldˇ»", Mode::HelixNormal);
-        cx.simulate_keystrokes("y");
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_system_clipboard =
+                    Some(UseSystemClipboard::Never);
+            });
+        });
 
-        // Test paste with shift-r on single cursor
+        cx.write_to_clipboard(ClipboardItem::new_string("system clipboard".to_string()));
+        cx.set_state("«registerˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("system clipboard");
+
         cx.set_state("foo ˇbar", Mode::HelixNormal);
         cx.simulate_keystrokes("shift-r");
+        cx.assert_state("foo «registerˇ»ar", Mode::HelixNormal);
 
-        cx.assert_state("foo hello worldˇbar", Mode::HelixNormal);
+        cx.set_state("foo «barˇ» baz", Mode::HelixSelect);
+        cx.simulate_keystrokes("shift-r");
+        cx.assert_state("foo «registerˇ» baz", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("system clipboard");
 
-        // Test paste with shift-r on selection
+        cx.set_state("ˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
         cx.set_state("foo «barˇ» baz", Mode::HelixNormal);
         cx.simulate_keystrokes("shift-r");
+        cx.assert_state("foo ˇ baz", Mode::HelixNormal);
+    }
 
-        cx.assert_state("foo hello worldˇ baz", Mode::HelixNormal);
+    #[gpui::test]
+    async fn test_shift_r_distributes_yanked_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_system_clipboard =
+                    Some(UseSystemClipboard::Never);
+            });
+        });
+
+        cx.set_state("«oneˇ» «twoˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        cx.set_state("«aaaˇ» «bbbˇ» «cccˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("2 shift-r");
+        cx.assert_state("«oneoneˇ» «twotwoˇ» «twotwoˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_shift_r_preserves_primary_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_system_clipboard =
+                    Some(UseSystemClipboard::Never);
+            });
+        });
+
+        cx.set_state("«xˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.set_state("aaaaaa\n«bbbbbbˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("alt-shift-c shift-r ,");
+        cx.assert_state("«xˇ»\nx", Mode::HelixNormal);
     }
 
     #[gpui::test]

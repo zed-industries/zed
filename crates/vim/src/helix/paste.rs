@@ -1,10 +1,20 @@
-use editor::{ToOffset, movement};
+use std::ops::Range;
+
+use editor::{
+    Anchor, DisplayPoint, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects, ToOffset,
+    display_map::DisplaySnapshot, movement,
+};
 use gpui::{Action, Context, Window};
+use language::{Bias, Selection};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use text::LineEnding;
+use text::{LineEnding, SelectionGoal};
 
-use crate::{Vim, state::Mode};
+use crate::{
+    Vim,
+    helix::HelixReplaceWithYanked,
+    state::{Mode, Register},
+};
 
 /// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -15,7 +25,185 @@ pub struct HelixPaste {
     before: bool,
 }
 
+struct ReplacementTarget {
+    edit_range: Range<MultiBufferOffset>,
+    start_anchor: Anchor,
+    replacement_len: usize,
+    id: usize,
+    reversed: bool,
+    goal: SelectionGoal,
+}
+
+impl ReplacementTarget {
+    fn is_replaceable(&self) -> bool {
+        !self.edit_range.is_empty()
+    }
+
+    fn into_selection(self, snapshot: &MultiBufferSnapshot) -> Selection<MultiBufferOffset> {
+        let start = self.start_anchor.to_offset(snapshot);
+        Selection {
+            id: self.id,
+            start,
+            end: start + self.replacement_len,
+            reversed: self.reversed,
+            goal: self.goal,
+        }
+    }
+}
+
+fn register_texts_for_selections(
+    register: Register,
+    selection_count: usize,
+    count: usize,
+) -> Option<Vec<String>> {
+    let Register {
+        text,
+        clipboard_selections,
+    } = register;
+    let mut start_offset: usize = 0;
+    let mut replacement_texts: Vec<String> = Vec::with_capacity(selection_count);
+
+    for index in 0..selection_count {
+        let replacement_text = if let Some(clipboard_selection) = clipboard_selections
+            .as_ref()
+            .and_then(|items| items.get(index))
+        {
+            let end_offset = start_offset.checked_add(clipboard_selection.len)?;
+            let replacement_text = text.get(start_offset..end_offset)?.to_string();
+            start_offset = if clipboard_selection.is_entire_line {
+                end_offset
+            } else {
+                end_offset.checked_add(1)?
+            };
+            replacement_text
+        } else if let Some(last_text) = replacement_texts.last() {
+            last_text.clone()
+        } else {
+            text.to_string()
+        };
+
+        replacement_texts.push(replacement_text);
+    }
+
+    for replacement_text in &mut replacement_texts {
+        // Clipboard metadata describes the original bytes, but `Editor::edit` normalizes line
+        // endings. Normalize after splitting and before callers measure lengths, otherwise CRLF
+        // input can produce selections beyond the inserted text.
+        LineEnding::normalize(replacement_text);
+        *replacement_text = replacement_text.repeat(count);
+    }
+
+    Some(replacement_texts)
+}
+
+fn replacement_targets(
+    display_map: &DisplaySnapshot,
+    selections: Vec<Selection<DisplayPoint>>,
+) -> Vec<ReplacementTarget> {
+    selections
+        .into_iter()
+        .map(|selection| {
+            let mut range = selection.range();
+            if range.is_empty() {
+                range.end = movement::saturating_right(display_map, range.start);
+            }
+
+            let edit_range = range.start.to_offset(display_map, Bias::Left)
+                ..range.end.to_offset(display_map, Bias::Left);
+            ReplacementTarget {
+                start_anchor: display_map
+                    .buffer_snapshot()
+                    .anchor_before(edit_range.start),
+                edit_range,
+                replacement_len: 0,
+                id: selection.id,
+                reversed: selection.reversed,
+                goal: selection.goal,
+            }
+        })
+        .collect()
+}
+
+fn prepare_replacement_edits(
+    targets: &mut [ReplacementTarget],
+    replacement_texts: Vec<String>,
+) -> Option<Vec<(Range<MultiBufferOffset>, String)>> {
+    let mut edits = Vec::with_capacity(replacement_texts.len());
+    let mut replacement_texts = replacement_texts.into_iter();
+
+    for target in targets {
+        if !target.is_replaceable() {
+            continue;
+        }
+
+        let replacement_text = replacement_texts.next()?;
+        target.replacement_len = replacement_text.len();
+        edits.push((target.edit_range.clone(), replacement_text));
+    }
+
+    Some(edits)
+}
+
 impl Vim {
+    pub fn helix_replace_with_yanked(
+        &mut self,
+        _: &HelixReplaceWithYanked,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.store_visual_marks(window, cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+
+        self.update_editor(cx, |vim, editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+
+                let selected_register = vim.selected_register.take();
+                let Some(register) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                }) else {
+                    return;
+                };
+
+                let display_map = editor.display_snapshot(cx);
+                let current_selections = editor.selections.all_display(&display_map);
+                let mut targets = replacement_targets(&display_map, current_selections);
+                let replacement_count = targets
+                    .iter()
+                    .filter(|target| target.is_replaceable())
+                    .count();
+
+                let Some(replacement_texts) =
+                    register_texts_for_selections(register, replacement_count, count)
+                else {
+                    return;
+                };
+                let Some(edits) = prepare_replacement_edits(&mut targets, replacement_texts) else {
+                    return;
+                };
+
+                editor.edit(edits, cx);
+
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select(
+                        targets
+                            .into_iter()
+                            .map(|target| target.into_selection(&snapshot))
+                            .collect(),
+                    );
+                });
+            });
+        });
+
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
+    }
+
     pub fn helix_paste(
         &mut self,
         action: &HelixPaste,
@@ -44,9 +232,6 @@ impl Vim {
                 .filter(|reg| !reg.text.is_empty()) else {
                     return;
                 };
-                let text = register.text;
-                let clipboard_selections = register.clipboard_selections;
-
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
 
@@ -61,30 +246,11 @@ impl Vim {
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
-                let mut start_offset = 0;
-
-                let mut replacement_texts: Vec<String> = Vec::new();
-
-                for ix in 0..current_selections.len() {
-                    let to_insert = if let Some(clip_sel) =
-                        clipboard_selections.as_ref().and_then(|s| s.get(ix))
-                    {
-                        let end_offset = start_offset + clip_sel.len;
-                        let text = text[start_offset..end_offset].to_string();
-                        start_offset = if clip_sel.is_entire_line {
-                            end_offset
-                        } else {
-                            end_offset + 1
-                        };
-                        text
-                    } else if let Some(last_text) = replacement_texts.last() {
-                        // We have more current selections than clipboard selections: repeat the last one.
-                        last_text.to_owned()
-                    } else {
-                        text.to_string()
-                    };
-                    replacement_texts.push(to_insert);
-                }
+                let Some(replacement_texts) =
+                    register_texts_for_selections(register, current_selections.len(), count)
+                else {
+                    return;
+                };
 
                 let line_mode = replacement_texts.iter().any(|text| text.ends_with('\n'));
 
@@ -126,12 +292,6 @@ impl Vim {
                     } else {
                         display_map.buffer_snapshot().anchor_before(point)
                     };
-                    let mut to_insert = to_insert.repeat(count);
-                    // Buffer edits normalize line endings, so measure the normalized text.
-                    // Otherwise CRLF paste text can produce a selection range past the inserted text.
-                    // which can cause panics (selection offset greater than snapshot len) or invalid
-                    // selections
-                    LineEnding::normalize(&mut to_insert);
                     new_selections.push((anchor, to_insert.len()));
                     edits.push((point..point, to_insert));
                 }
