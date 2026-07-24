@@ -224,10 +224,15 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        debounce_duration: Option<Duration>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
-        log::debug!("Codestral: Refresh called (debounce: {})", debounce);
+        log::debug!(
+            "Codestral: Refresh called (debounce: {}, debounce_duration: {:?})",
+            debounce,
+            debounce_duration
+        );
 
         let Some(api_key) = codestral_api_key(cx) else {
             log::warn!("Codestral: No API key configured, skipping refresh");
@@ -258,8 +263,11 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
-                log::debug!("Codestral: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
-                cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
+                let debounce_duration = debounce_duration.unwrap_or(DEBOUNCE_TIMEOUT);
+                if !debounce_duration.is_zero() {
+                    log::debug!("Codestral: Debouncing for {:?}", debounce_duration);
+                    cx.background_executor().timer(debounce_duration).await;
+                }
             }
 
             let cursor_offset = cursor_position.to_offset(&snapshot);

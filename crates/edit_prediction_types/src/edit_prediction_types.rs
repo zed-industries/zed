@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
@@ -203,6 +203,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        debounce_duration: Option<Duration>,
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     );
@@ -240,6 +241,7 @@ pub trait EditPredictionDelegateHandle {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        debounce_duration: Option<Duration>,
         trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     );
@@ -316,11 +318,19 @@ where
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        debounce_duration: Option<Duration>,
         trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(buffer, cursor_position, debounce, trigger, cx)
+            this.refresh(
+                buffer,
+                cursor_position,
+                debounce,
+                debounce_duration,
+                trigger,
+                cx,
+            )
         })
     }
 

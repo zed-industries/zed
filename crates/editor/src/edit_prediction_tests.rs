@@ -1798,6 +1798,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
+        _debounce_duration: Option<std::time::Duration>,
         _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {
@@ -1877,6 +1878,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
+        _debounce_duration: Option<std::time::Duration>,
         _trigger: edit_prediction_types::EditPredictionRequestTrigger,
         _cx: &mut gpui::Context<Self>,
     ) {
