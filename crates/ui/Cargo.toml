@@ -30,6 +30,7 @@ strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
 gpui_util.workspace = true
+unicode-segmentation.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

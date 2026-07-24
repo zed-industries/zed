@@ -168,6 +168,7 @@ impl RenderOnce for AiSettingItem {
                         .with_easing(pulsating_between(0.4, 0.8)),
                     |element, delta| element.opacity(delta),
                 )
+                .with_max_fps(15)
                 .into_any_element()
         } else {
             icon_element.into_any_element()

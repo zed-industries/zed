@@ -253,7 +253,49 @@ impl DerefMut for Stateful<Img> {
 struct ImgState {
     frame_index: usize,
     last_frame_time: Option<Instant>,
+    scheduled_frame: Option<ScheduledImageFrame>,
     started_loading: Option<(Instant, Task<()>)>,
+}
+
+struct ScheduledImageFrame {
+    deadline: Instant,
+    _task: Task<()>,
+}
+
+impl ImgState {
+    fn stop_animation(&mut self) {
+        self.last_frame_time = None;
+        self.scheduled_frame.take();
+    }
+
+    fn schedule_frame(&mut self, deadline: Instant, window: &mut Window, cx: &mut App) {
+        let now = cx.background_executor().now();
+        if deadline <= now {
+            self.scheduled_frame.take();
+            window.request_animation_frame();
+            return;
+        }
+
+        if self
+            .scheduled_frame
+            .as_ref()
+            .is_some_and(|frame| frame.deadline == deadline)
+        {
+            return;
+        }
+
+        self.scheduled_frame.take();
+        let current_view = window.current_view();
+        let delay = deadline.saturating_duration_since(now);
+        let task = window.spawn(cx, async move |cx| {
+            cx.background_executor().timer(delay).await;
+            cx.update(move |_, cx| cx.notify(current_view)).log_err();
+        });
+        self.scheduled_frame = Some(ScheduledImageFrame {
+            deadline,
+            _task: task,
+        });
+    }
 }
 
 /// The image layout state between frames
@@ -291,6 +333,7 @@ impl Element for Img {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
                     last_frame_time: None,
+                    scheduled_frame: None,
                     started_loading: None,
                 })
             });
@@ -320,7 +363,7 @@ impl Element for Img {
                                 state.frame_index = state.frame_index.min(max_frame_index);
                                 if frame_count > 1 && !cx.reduce_motion() {
                                     if window.is_window_active() {
-                                        let current_time = Instant::now();
+                                        let current_time = cx.background_executor().now();
                                         if let Some(last_frame_time) = state.last_frame_time {
                                             let elapsed = current_time - last_frame_time;
                                             let frame_duration =
@@ -335,11 +378,18 @@ impl Element for Img {
                                         } else {
                                             state.last_frame_time = Some(current_time);
                                         }
+
+                                        let frame_duration =
+                                            Duration::from(data.delay(state.frame_index));
+                                        let deadline = state
+                                            .last_frame_time
+                                            .map_or(current_time, |time| time + frame_duration);
+                                        state.schedule_frame(deadline, window, cx);
                                     } else {
-                                        state.last_frame_time = None;
+                                        state.stop_animation();
                                     }
                                 } else {
-                                    state.last_frame_time = None;
+                                    state.stop_animation();
                                 }
                                 state.started_loading = None;
                                 frame_index = state.frame_index;
@@ -375,14 +425,6 @@ impl Element for Img {
                                     _ => Length::Definite(image_size.height.into()),
                                 };
                             }
-
-                            if global_id.is_some()
-                                && data.frame_count() > 1
-                                && window.is_window_active()
-                                && !cx.reduce_motion()
-                            {
-                                window.request_animation_frame();
-                            }
                         }
                         Some(_err) => {
                             if let Some(fallback) = self.style.fallback.as_ref() {
@@ -391,11 +433,13 @@ impl Element for Img {
                                 layout_state.replacement = Some(element);
                             }
                             if let Some(state) = &mut state {
+                                state.stop_animation();
                                 state.started_loading = None;
                             }
                         }
                         None => {
                             if let Some(state) = &mut state {
+                                state.stop_animation();
                                 if let Some((started_loading, _)) = state.started_loading {
                                     if started_loading.elapsed() > LOADING_DELAY
                                         && let Some(loading) = self.style.loading.as_ref()
@@ -790,8 +834,11 @@ impl From<image::ImageError> for ImageCacheError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
-    use image::{Frame, ImageBuffer, Rgba};
+    use crate::{
+        Context, ParentElement as _, Render, TestAppContext, canvas, div, point, px, size,
+    };
+    use image::{Delay, Frame, ImageBuffer, Rgba};
+    use std::{cell::Cell, rc::Rc};
 
     const TEST_IMG_ID: &str = "test-img";
 
@@ -800,6 +847,36 @@ mod tests {
         Arc::new(RenderImage::new(SmallVec::from_iter(
             (0..frame_count).map(|_| frame.clone()),
         )))
+    }
+
+    fn test_animated_image(frame_delays: &[Duration]) -> Arc<RenderImage> {
+        Arc::new(RenderImage::new(SmallVec::from_iter(
+            frame_delays.iter().map(|delay| {
+                Frame::from_parts(
+                    ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(delay.as_millis() as u32, 1),
+                )
+            }),
+        )))
+    }
+
+    struct AnimatedImageTestView {
+        image: Arc<RenderImage>,
+        render_count: Rc<Cell<usize>>,
+        show_image: bool,
+    }
+
+    impl Render for AnimatedImageTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            if self.show_image {
+                img(self.image.clone()).id(TEST_IMG_ID).into_any_element()
+            } else {
+                div().into_any_element()
+            }
+        }
     }
 
     /// Overwrites the cached `frame_index` of the sibling `img` during paint.
@@ -844,5 +921,98 @@ mod tests {
                 .id(TEST_IMG_ID)
                 .into_any_element()
         });
+    }
+
+    #[gpui::test]
+    fn animated_image_renders_at_frame_deadlines(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let render_count = render_count.clone();
+            move |_, _| AnimatedImageTestView {
+                image: test_animated_image(&[
+                    Duration::from_millis(100),
+                    Duration::from_millis(250),
+                ]),
+                render_count,
+                show_image: true,
+            }
+        });
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 1);
+
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 2);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 2);
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 3);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(49));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 3);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 4);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(249));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 4);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 5);
+
+        window
+            .update(cx, |this, _, cx| {
+                this.show_image = false;
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 6);
+
+        cx.background_executor
+            .advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 6);
+    }
+
+    #[gpui::test]
+    fn animated_image_does_not_schedule_frames_with_reduced_motion(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let render_count = Rc::new(Cell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let render_count = render_count.clone();
+            move |_, _| AnimatedImageTestView {
+                image: test_animated_image(&[Duration::from_millis(100); 2]),
+                render_count,
+                show_image: true,
+            }
+        });
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 1);
+
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 2);
+
+        cx.background_executor.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(render_count.get(), 2);
     }
 }

@@ -505,13 +505,15 @@ impl Render for EditPredictionButton {
 
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
-                        icon_button.with_animation(
-                            "pulsating-label",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.2, 1.0)),
-                            |icon_button, delta| icon_button.alpha(delta),
-                        ),
+                        icon_button
+                            .with_animation(
+                                "pulsating-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.2, 1.0)),
+                                |icon_button, delta| icon_button.alpha(delta),
+                            )
+                            .with_max_fps(15),
                     );
                 } else {
                     popover_menu = popover_menu.trigger(icon_button);
@@ -1580,7 +1582,8 @@ fn render_zeta_tab_animation(cx: &App) -> impl IntoElement {
 
                         tab.text_color(text_color.opacity(opacity))
                     },
-                ),
+                )
+                .with_max_fps(15),
         )
     };
 
