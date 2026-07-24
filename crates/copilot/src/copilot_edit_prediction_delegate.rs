@@ -78,15 +78,17 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        debounce_duration: Option<Duration>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
             if debounce {
-                cx.background_executor()
-                    .timer(COPILOT_DEBOUNCE_TIMEOUT)
-                    .await;
+                let debounce_duration = debounce_duration.unwrap_or(COPILOT_DEBOUNCE_TIMEOUT);
+                if !debounce_duration.is_zero() {
+                    cx.background_executor().timer(debounce_duration).await;
+                }
             }
 
             let completions = copilot
