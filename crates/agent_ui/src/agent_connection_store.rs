@@ -69,6 +69,7 @@ pub struct ActiveAcpConnection {
 pub struct AgentConnectionStore {
     project: Entity<Project>,
     entries: HashMap<Agent, Entity<AgentConnectionEntry>>,
+    ref_counts: HashMap<Agent, usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -79,6 +80,7 @@ impl AgentConnectionStore {
         Self {
             project,
             entries: HashMap::default(),
+            ref_counts: HashMap::default(),
             _subscriptions: vec![subscription],
         }
     }
@@ -137,6 +139,7 @@ impl AgentConnectionStore {
         }
 
         self.entries.remove(&key);
+        self.ref_counts.remove(&key);
         self.request_connection(key, server, cx)
     }
 
@@ -198,6 +201,7 @@ impl AgentConnectionStore {
                             })
                             .ok();
                         this.entries.remove(&key);
+                        this.ref_counts.remove(&key);
                         cx.notify();
                     })
                     .ok();
@@ -228,6 +232,7 @@ impl AgentConnectionStore {
                             })
                             .ok();
                         this.entries.remove(&key);
+                        this.ref_counts.remove(&key);
                         cx.notify();
                     })
                     .ok();
@@ -265,6 +270,31 @@ impl AgentConnectionStore {
         entry
     }
 
+    pub fn acquire_connection(
+        &mut self,
+        key: Agent,
+        server: Rc<dyn AgentServer>,
+        cx: &mut Context<Self>,
+    ) -> Entity<AgentConnectionEntry> {
+        let entry = self.request_connection(key.clone(), server, cx);
+        *self.ref_counts.entry(key).or_default() += 1;
+        entry
+    }
+
+    pub fn release_connection(&mut self, key: &Agent, cx: &mut Context<Self>) {
+        let Some(count) = self.ref_counts.get_mut(key) else {
+            return;
+        };
+        *count = count.saturating_sub(1);
+        if *count > 0 {
+            return;
+        }
+
+        self.ref_counts.remove(key);
+        self.entries.remove(key);
+        cx.notify();
+    }
+
     fn handle_agent_servers_updated(
         &mut self,
         store: Entity<AgentServerStore>,
@@ -278,6 +308,8 @@ impl AgentConnectionStore {
             #[cfg(any(test, feature = "test-support"))]
             Agent::Stub => true,
         });
+        self.ref_counts
+            .retain(|key, _| self.entries.contains_key(key));
         cx.notify();
     }
 

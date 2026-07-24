@@ -592,6 +592,7 @@ pub struct ConversationView {
     agent: Rc<dyn AgentServer>,
     connection_store: Entity<AgentConnectionStore>,
     connection_key: Agent,
+    connection_released: bool,
     agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -846,6 +847,12 @@ impl ConversationView {
             if let Some(connected) = this.as_connected() {
                 connected.close_all_sessions(cx).detach();
             }
+            if !this.connection_released {
+                this.connection_store.update(cx, |store, cx| {
+                    store.release_connection(&this.connection_key, cx);
+                });
+                this.connection_released = true;
+            }
             for window in this.notifications.drain(..) {
                 window
                     .update(cx, |_, window, _| {
@@ -862,6 +869,7 @@ impl ConversationView {
             agent: agent.clone(),
             connection_store: connection_store.clone(),
             connection_key: connection_key.clone(),
+            connection_released: false,
             agent_server_store,
             workspace,
             project: project.clone(),
@@ -995,6 +1003,12 @@ impl ConversationView {
         self.clear_resolved_request_elicitations(cx);
         self.loading_status = None;
 
+        if !self.connection_released {
+            self.connection_store.update(cx, |store, cx| {
+                store.release_connection(&self.connection_key, cx);
+            });
+            self.connection_released = true;
+        }
         let state = Self::initial_state(
             self.agent.clone(),
             self.connection_store.clone(),
@@ -1008,6 +1022,7 @@ impl ConversationView {
             window,
             cx,
         );
+        self.connection_released = false;
         self.set_server_state(state, cx);
 
         if let Some(view) = self.root_thread_view() {
@@ -1045,7 +1060,7 @@ impl ConversationView {
         let session_work_dirs = work_dirs.unwrap_or_else(|| project.read(cx).default_path_list(cx));
 
         let connection_entry = connection_store.update(cx, |store, cx| {
-            store.request_connection(connection_key, agent.clone(), cx)
+            store.acquire_connection(connection_key, agent.clone(), cx)
         });
 
         let connection_entry_subscription =
@@ -10987,6 +11002,37 @@ pub(crate) mod tests {
         assert!(
             closed_count > 0,
             "close_session should have been called for each thread"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_releases_connection_after_last_conversation_drops(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
+
+        cx.run_until_parked();
+        conversation_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.connection_store
+                    .read(cx)
+                    .connection_status(view.agent_key(), cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+            );
+        });
+
+        let connection_store =
+            conversation_view.read_with(cx, |view, _cx| view.connection_store.clone());
+        let connection_key = conversation_view.read_with(cx, |view, _cx| view.agent_key().clone());
+        drop(conversation_view);
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        assert_eq!(
+            connection_store
+                .read_with(cx, |store, cx| store.connection_status(&connection_key, cx)),
+            crate::agent_connection_store::AgentConnectionStatus::Disconnected,
         );
     }
 
