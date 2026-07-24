@@ -5,7 +5,19 @@ pub struct WebpageChromeRemover;
 
 impl HandleTag for WebpageChromeRemover {
     fn should_handle(&self, tag: &str) -> bool {
-        matches!(tag, "head" | "script" | "style" | "nav")
+        matches!(
+            tag,
+            "head"
+                | "script"
+                | "style"
+                | "nav"
+                | "aside"
+                | "footer"
+                | "form"
+                | "svg"
+                | "iframe"
+                | "noscript"
+        )
     }
 
     fn handle_tag_start(
@@ -14,7 +26,8 @@ impl HandleTag for WebpageChromeRemover {
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
         match tag.tag() {
-            "head" | "script" | "style" | "nav" => return StartTagOutcome::Skip,
+            "head" | "script" | "style" | "nav" | "aside" | "footer" | "form" | "svg"
+            | "iframe" | "noscript" => return StartTagOutcome::Skip,
             _ => {}
         }
 
@@ -272,5 +285,59 @@ impl HandleTag for CodeHandler {
         }
 
         HandlerOutcome::NoOp
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
+
+    use crate::{TagHandler, convert_html_to_markdown};
+
+    use super::*;
+
+    fn webpage_handlers() -> Vec<TagHandler> {
+        vec![
+            Rc::new(RefCell::new(WebpageChromeRemover)),
+            Rc::new(RefCell::new(ParagraphHandler)),
+            Rc::new(RefCell::new(HeadingHandler)),
+            Rc::new(RefCell::new(ListHandler)),
+            Rc::new(RefCell::new(StyledTextHandler)),
+            Rc::new(RefCell::new(CodeHandler)),
+        ]
+    }
+
+    fn convert(html: &str) -> String {
+        convert_html_to_markdown(html.as_bytes(), &mut webpage_handlers()).unwrap()
+    }
+
+    #[test]
+    fn test_non_content_elements_are_removed() {
+        let html = indoc! {r#"
+            <body>
+                <header><nav>Home About</nav></header>
+                <aside>Related links</aside>
+                <p>The actual article content.</p>
+                <form><button>Subscribe</button></form>
+                <footer>Copyright 2024</footer>
+                <noscript>Please enable JavaScript</noscript>
+            </body>
+        "#};
+
+        assert_eq!(convert(html), "The actual article content.");
+    }
+
+    #[test]
+    fn test_content_is_kept() {
+        let html = indoc! {r#"
+            <p>First paragraph.</p>
+            <p>Second paragraph.</p>
+        "#};
+
+        assert_eq!(convert(html), "First paragraph.\n\nSecond paragraph.");
     }
 }
