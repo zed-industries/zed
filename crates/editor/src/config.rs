@@ -208,6 +208,15 @@ impl Editor {
         }
     }
 
+    pub fn set_show_git_diff_hunk_signs_gutter(
+        &mut self,
+        show_git_diff_hunk_signs_gutter: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_git_diff_hunk_signs_gutter = Some(show_git_diff_hunk_signs_gutter);
+        cx.notify();
+    }
+
     pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
         self.show_code_actions = Some(show_code_actions);
         cx.notify();

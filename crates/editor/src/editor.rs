@@ -986,6 +986,7 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
+    show_git_diff_hunk_signs_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_bookmarks: Option<bool>,
@@ -1213,6 +1214,7 @@ pub struct EditorSnapshot {
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
+    show_git_diff_hunk_signs_gutter: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
@@ -2292,6 +2294,7 @@ impl Editor {
             enable_code_lens: full_mode,
             enable_mouse_wheel_zoom: full_mode,
             show_git_diff_gutter: None,
+            show_git_diff_hunk_signs_gutter: None,
             show_code_actions: None,
             show_runnables: None,
             show_bookmarks: None,
@@ -2991,6 +2994,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
+            show_git_diff_hunk_signs_gutter: self.show_git_diff_hunk_signs_gutter,
             semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
@@ -11611,9 +11615,10 @@ impl EditorSnapshot {
             let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    GitGutterSetting::TrackedFiles
+                    GitGutterSetting::TrackedFiles | GitGutterSetting::TrackedFilesWithSigns
                 )
             });
+
             let gutter_settings = EditorSettings::get_global(cx).gutter;
             let show_line_numbers = self
                 .show_line_numbers
