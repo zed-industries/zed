@@ -6610,6 +6610,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "db",
  "editor",
  "file_icons",
  "futures 0.3.32",
