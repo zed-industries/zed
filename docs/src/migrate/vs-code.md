@@ -14,7 +14,7 @@ It covers which settings import automatically, which shortcuts map cleanly, and 
 Zed is available on macOS, Windows, and Linux.
 
 For macOS, you can download it from zed.dev/download, or install via Homebrew:
-`brew install zed-editor/zed/zed`
+`brew install --cask zed`
 
 For most Linux users, the easiest way to install Zed is through our installation script:
 `curl -f https://zed.dev/install.sh | sh`
@@ -329,9 +329,9 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed’s hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
-- Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html).
+- Use Zed’s hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
+- Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
+- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html).
 
 ### Advanced Config and Productivity Tweaks
 

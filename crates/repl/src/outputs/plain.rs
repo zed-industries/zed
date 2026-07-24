@@ -1,8 +1,8 @@
 //! # Plain Text Output
 //!
 //! This module provides functionality for rendering plain text output in a terminal-like format.
-//! It uses the Alacritty terminal emulator backend to process and display text, supporting
-//! ANSI escape sequences for formatting, colors, and other terminal features.
+//! It uses Zed's terminal emulator to process and display text, supporting ANSI escape
+//! sequences for formatting, colors, and other terminal features.
 //!
 //! The main component of this module is the `TerminalOutput` struct, which handles the parsing
 //! and rendering of text input, simulating a basic terminal environment within REPL output.
@@ -15,20 +15,14 @@
 //! - Error tracebacks
 //!
 
-use alacritty_terminal::{
-    event::VoidListener,
-    grid::Dimensions as _,
-    index::{Column, Line, Point},
-    term::Config,
-    vte::ansi::Processor,
-};
 use gpui::{Bounds, ClipboardItem, Entity, FontStyle, Pixels, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
-use terminal::terminal_settings::TerminalSettings;
+use terminal::{Terminal, TerminalBuilder, terminal_settings::TerminalSettings};
 use terminal_view::terminal_element::TerminalElement;
 use theme_settings::ThemeSettings;
 use ui::{IntoElement, prelude::*};
+use util::paths::PathStyle;
 
 use crate::outputs::OutputContent;
 use crate::repl_settings::ReplSettings;
@@ -43,15 +37,12 @@ use crate::repl_settings::ReplSettings;
 /// * text/plain content
 /// * error tracebacks
 ///
-/// It uses the Alacritty terminal emulator backend to process and render text,
+/// It uses Zed's terminal emulator backend to process and render text,
 /// supporting ANSI escape sequences for text formatting and colors.
 ///
 pub struct TerminalOutput {
     full_buffer: Option<Entity<Buffer>>,
-    /// ANSI escape sequence processor for parsing input text.
-    parser: Processor,
-    /// Alacritty terminal instance that manages the terminal state and content.
-    handler: alacritty_terminal::Term<VoidListener>,
+    terminal: Entity<Terminal>,
 }
 
 /// Returns the default text style for the terminal output.
@@ -141,16 +132,21 @@ impl TerminalOutput {
     /// This method initializes a new terminal emulator with default configuration
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
-    pub fn new(window: &mut Window, cx: &mut App) -> Self {
-        let term = alacritty_terminal::Term::new(
-            Config::default(),
-            &terminal_size(window, cx),
-            VoidListener,
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let terminal_bounds = terminal_size(window, cx);
+        let background_executor = cx.background_executor().clone();
+        let terminal_builder = TerminalBuilder::new_display_only_with_bounds(
+            TerminalSettings::get_global(cx).cursor_shape,
+            TerminalSettings::get_global(cx).alternate_scroll,
+            None,
+            0,
+            &background_executor,
+            PathStyle::local(),
+            terminal_bounds,
         );
 
         Self {
-            parser: Processor::new(),
-            handler: term,
+            terminal: cx.new(|cx| terminal_builder.subscribe(cx)),
             full_buffer: None,
         }
     }
@@ -167,7 +163,7 @@ impl TerminalOutput {
     /// # Returns
     ///
     /// A new instance of `TerminalOutput` containing the provided text.
-    pub fn from(text: &str, window: &mut Window, cx: &mut App) -> Self {
+    pub fn from(text: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut output = Self::new(window, cx);
         output.append_text(text, cx);
         output
@@ -199,16 +195,10 @@ impl TerminalOutput {
     /// # Arguments
     ///
     /// * `text` - A string slice containing the text to be appended.
-    pub fn append_text(&mut self, text: &str, cx: &mut App) {
-        for byte in text.as_bytes() {
-            if *byte == b'\n' {
-                // Dirty (?) hack to move the cursor down
-                self.parser.advance(&mut self.handler, &[b'\r']);
-                self.parser.advance(&mut self.handler, &[b'\n']);
-            } else {
-                self.parser.advance(&mut self.handler, &[*byte]);
-            }
-        }
+    pub fn append_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |terminal, cx| {
+            terminal.write_output(text.as_bytes(), cx);
+        });
 
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
         if let Some(buffer) = self.full_buffer.as_ref() {
@@ -218,7 +208,11 @@ impl TerminalOutput {
         }
     }
 
-    pub fn full_text(&self) -> String {
+    pub fn full_text(&self, cx: &App) -> String {
+        Self::sanitize_terminal_text(self.terminal.read(cx).get_content())
+    }
+
+    fn sanitize_terminal_text(text: String) -> String {
         fn sanitize(mut line: String) -> Option<String> {
             line.retain(|ch| ch != '\u{0}' && ch != '\r');
             if line.trim().is_empty() {
@@ -228,32 +222,10 @@ impl TerminalOutput {
             Some(trimmed.to_owned())
         }
 
-        let mut lines = Vec::new();
-
-        // Get the total number of lines, including history
-        let total_lines = self.handler.grid().total_lines();
-        let visible_lines = self.handler.screen_lines();
-        let history_lines = total_lines - visible_lines;
-
-        // Capture history lines in correct order (oldest to newest)
-        for line in (0..history_lines).rev() {
-            let line_index = Line(-(line as i32) - 1);
-            let start = Point::new(line_index, Column(0));
-            let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            if let Some(cleaned) = sanitize(self.handler.bounds_to_string(start, end)) {
-                lines.push(cleaned);
-            }
-        }
-
-        // Capture visible lines
-        for line in 0..visible_lines {
-            let line_index = Line(line as i32);
-            let start = Point::new(line_index, Column(0));
-            let end = Point::new(line_index, Column(self.handler.columns() - 1));
-            if let Some(cleaned) = sanitize(self.handler.bounds_to_string(start, end)) {
-                lines.push(cleaned);
-            }
-        }
+        let lines = text
+            .lines()
+            .filter_map(|line| sanitize(line.to_string()))
+            .collect::<Vec<_>>();
 
         if lines.is_empty() {
             String::new()
@@ -311,6 +283,72 @@ mod tests {
         let expected_f32: f32 = expected.into();
         assert!((result_f32 - expected_f32).abs() < 0.01);
     }
+
+    #[gpui::test]
+    fn test_append_text_preserves_split_ansi_sequence(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let text = cx.update(|window, cx| {
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("\x1b[", cx);
+                output.append_text("31mred\x1b[0m", cx);
+                output.full_text(cx)
+            })
+        });
+
+        assert_eq!(text, "red\n");
+    }
+
+    #[gpui::test]
+    fn test_full_text_reads_terminal_output(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("hello\n", cx);
+                assert_eq!(output.full_text(cx), "hello\n");
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_initial_text_uses_repl_terminal_size(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let (text, expected) = cx.update(|window, cx| {
+            let columns = ReplSettings::get_global(cx).max_columns;
+            let input = format!("\x1b[{columns}Gx");
+            let output = cx.new(|cx| TerminalOutput::from(&input, window, cx));
+            (
+                output.read(cx).full_text(cx),
+                format!("{}x\n", " ".repeat(columns - 1)),
+            )
+        });
+
+        assert_eq!(text, expected);
+    }
+
+    #[gpui::test]
+    fn test_repl_history_ignores_terminal_scrollback_setting(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let (text, expected) = cx.update(|window, cx| {
+            cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings
+                        .terminal
+                        .get_or_insert_default()
+                        .max_scroll_history_lines = Some(0);
+                });
+            });
+
+            let input = (0..40)
+                .map(|line| format!("line-{line}\n"))
+                .collect::<String>();
+            let output = cx.new(|cx| TerminalOutput::from(&input, window, cx));
+            (output.read(cx).full_text(cx), input)
+        });
+
+        assert_eq!(text, expected);
+    }
 }
 
 impl Render for TerminalOutput {
@@ -320,31 +358,25 @@ impl Render for TerminalOutput {
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let text_style = text_style(window, cx);
-        let text_system = window.text_system();
+        let terminal = self.terminal.clone();
 
-        let grid = self
-            .handler
-            .renderable_content()
-            .display_iter
-            .map(|ic| terminal::IndexedCell {
-                point: ic.point,
-                cell: ic.cell.clone(),
-            });
+        let text_style = text_style(window, cx);
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
-        let (rects, batched_text_runs) =
-            TerminalElement::layout_grid(grid, 0, &text_style, None, minimum_contrast, cx);
+        let (rects, batched_text_runs) = terminal.read(cx).with_renderable_cells(|cells| {
+            TerminalElement::layout_grid(cells, 0, &text_style, None, minimum_contrast, cx)
+        });
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
         let num_lines = batched_text_runs
             .iter()
-            .map(|b| b.start_point.line)
+            .map(|b| b.start_point.line())
             .max()
             .unwrap_or(0)
             + 1;
         let height = num_lines as f32 * text_line_height;
 
+        let text_system = window.text_system();
         let font_pixels = text_style.font_size.to_pixels(window.rem_size());
         let font_id = text_system.resolve_font(&text_style.font());
 
@@ -386,12 +418,13 @@ impl Render for TerminalOutput {
         )
         // We must set the height explicitly for the editor block to size itself correctly
         .h(height)
+        .into_any_element()
     }
 }
 
 impl OutputContent for TerminalOutput {
     fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_string(self.full_text()))
+        Some(ClipboardItem::new_string(self.full_text(_cx)))
     }
 
     fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
@@ -408,8 +441,8 @@ impl OutputContent for TerminalOutput {
         }
 
         let buffer = cx.new(|cx| {
-            let mut buffer =
-                Buffer::local(self.full_text(), cx).with_language(language::PLAIN_TEXT.clone(), cx);
+            let mut buffer = Buffer::local(self.full_text(cx), cx)
+                .with_language(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });

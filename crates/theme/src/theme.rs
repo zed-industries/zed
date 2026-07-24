@@ -8,6 +8,7 @@
 //!
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
+mod color_space;
 mod default_colors;
 mod fallback_themes;
 mod font_family_cache;
@@ -25,10 +26,12 @@ use std::sync::Arc;
 use gpui::BorrowAppContext;
 use gpui::Global;
 use gpui::{
-    App, AssetSource, Hsla, Pixels, SharedString, WindowAppearance, WindowBackgroundAppearance, px,
+    App, AssetSource, Hsla, Pixels, SharedString, Styled, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, px,
 };
 use serde::Deserialize;
 
+pub use crate::color_space::*;
 pub use crate::default_colors::*;
 pub use crate::fallback_themes::{apply_status_color_defaults, apply_theme_color_defaults};
 pub use crate::font_family_cache::*;
@@ -48,6 +51,28 @@ pub const DEFAULT_DARK_THEME: &str = "One Dark";
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
 /// Defines window shadow size for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_SHADOW: Pixels = px(10.0);
+
+/// Styling helpers for elements that follow client-side window decorations.
+pub trait ClientDecorationsExt: Styled {
+    /// Rounds each corner whose two adjacent edges are both untiled.
+    fn rounded_client_corners(mut self, tiling: Tiling) -> Self {
+        if !tiling.top && !tiling.left {
+            self = self.rounded_tl(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        if !tiling.top && !tiling.right {
+            self = self.rounded_tr(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        if !tiling.bottom && !tiling.left {
+            self = self.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        if !tiling.bottom && !tiling.right {
+            self = self.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING);
+        }
+        self
+    }
+}
+
+impl<T: Styled> ClientDecorationsExt for T {}
 
 /// The appearance of the theme.
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]

@@ -588,6 +588,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                language_name: ActiveValue::set(server.language_name.clone()),
                 worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
@@ -598,6 +599,7 @@ impl Database {
                 ])
                 .update_columns([
                     language_server::Column::Name,
+                    language_server::Column::LanguageName,
                     language_server::Column::Capabilities,
                     language_server::Column::WorktreeId,
                 ])
@@ -962,7 +964,7 @@ impl Database {
         let path_style = if project.windows_paths {
             PathStyle::Windows
         } else {
-            PathStyle::Posix
+            PathStyle::Unix
         };
         let features: Vec<String> = serde_json::from_str(&project.features).unwrap_or_default();
 
@@ -989,6 +991,7 @@ impl Database {
                         id: language_server.id as u64,
                         name: language_server.name,
                         worktree_id: language_server.worktree_id.map(|id| id as u64),
+                        language_name: language_server.language_name,
                     },
                     capabilities: language_server.capabilities,
                 })

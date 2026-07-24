@@ -148,6 +148,7 @@ mod tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/oversized"),
             skill_file_path: PathBuf::from("/skills/oversized/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };

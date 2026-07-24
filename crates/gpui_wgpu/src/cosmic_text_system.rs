@@ -106,7 +106,7 @@ impl PlatformTextSystem for CosmicTextSystem {
             .faces()
             .filter_map(|face| face.families.first().map(|family| family.0.clone()))
             .collect_vec();
-        result.sort();
+        result.sort_unstable();
         result.dedup();
         result
     }

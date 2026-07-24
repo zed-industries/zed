@@ -1469,6 +1469,22 @@ impl Vim {
                 } else {
                     mode = "waiting".to_string();
                 }
+            } else if matches!(
+                active_operator,
+                Operator::HelixNext { .. } | Operator::HelixPrevious { .. }
+            ) {
+                // Helix `[`/`]` take a curated, keymap-dispatched selector key
+                // rather than a motion over a range, so they keep `operator_id`
+                // set (so `vim_operator == helix_next/previous` context must
+                // resolve) but must not use the `operator` mode, as that adds
+                // `VimControl` and the `vim_mode == operator` context, whose `g
+                // ...` bindings would make a single-key follow-up like `g` a
+                // multi-key prefix and leave `] g` waiting for more input.
+                // Setting the mode to `waiting` carries none of those
+                // conflicting bindings and still provides bindings for
+                // `escape`/`ctrl-c` to `ClearOperators`.
+                operator_id = active_operator.id();
+                mode = "waiting".to_string();
             } else {
                 operator_id = active_operator.id();
                 mode = "operator".to_string();

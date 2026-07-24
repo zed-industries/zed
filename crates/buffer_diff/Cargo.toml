@@ -16,7 +16,6 @@ test-support = ["settings"]
 
 [dependencies]
 clock.workspace = true
-futures.workspace = true
 imara-diff.workspace = true
 gpui.workspace = true
 language.workspace = true

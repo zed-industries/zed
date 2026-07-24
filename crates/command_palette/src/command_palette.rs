@@ -83,6 +83,15 @@ impl CommandPalette {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if workspace.active_modal::<CommandPalette>(cx).is_some() {
+            workspace.hide_modal(window, cx);
+            return;
+        }
+
+        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+            return;
+        }
+
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
         };
@@ -125,7 +134,10 @@ impl CommandPalette {
         );
 
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx);
+            // One-shot action; there's nothing to reopen.
+            let picker = Picker::uniform_list(delegate, window, cx)
+                .reopenable(false, cx)
+                .show_scrollbar(true);
             picker.set_query(query, window, cx);
             picker
         });
@@ -150,7 +162,6 @@ impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }
@@ -376,6 +387,10 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "command palette"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
     }
@@ -488,7 +503,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     CommandInterceptResult {
                         results: vec![CommandInterceptItem {
                             action: OpenZedUrl {
-                                url: query_for_link.clone(),
+                                url: query_for_link.clone().into(),
                             }
                             .boxed_clone(),
                             string: query_for_link,
@@ -1023,6 +1038,28 @@ mod tests {
                 Point::new(2, 0)
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_reopen_command_palette_over_another_modal(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        cx.simulate_keystrokes("cmd-n");
+
+        for _ in 0..2 {
+            cx.simulate_keystrokes("cmd-shift-p");
+            cx.simulate_input("go to line: Toggle");
+            cx.simulate_keystrokes("enter");
+
+            workspace.update(cx, |workspace, cx| {
+                assert!(workspace.active_modal::<GoToLine>(cx).is_some());
+            });
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

@@ -7,7 +7,7 @@ use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_paths,
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
@@ -328,6 +328,13 @@ mod tests {
             title.contains("agent skills"),
             "Authorization title should mention agent skills, got: {title}",
         );
+        assert!(
+            auth.options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .is_none(),
+            "agent skills prompt must not offer an \"Always allow\" option: {:?}",
+            auth.options,
+        );
         auth.response
             .send(acp_thread::SelectedPermissionOutcome::new(
                 acp::PermissionOptionId::new("allow"),
@@ -386,6 +393,13 @@ mod tests {
         assert!(
             title.contains("agent skills"),
             "Authorization title should mention agent skills, got: {title}",
+        );
+        assert!(
+            auth.options
+                .first_option_of_kind(acp::PermissionOptionKind::AllowAlways)
+                .is_none(),
+            "agent skills prompt must not offer an \"Always allow\" option: {:?}",
+            auth.options,
         );
         auth.response
             .send(acp_thread::SelectedPermissionOutcome::new(

@@ -2,6 +2,7 @@ use editor::{ToOffset, movement};
 use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use text::LineEnding;
 
 use crate::{Vim, state::Mode};
 
@@ -125,8 +126,14 @@ impl Vim {
                     } else {
                         display_map.buffer_snapshot().anchor_before(point)
                     };
-                    edits.push((point..point, to_insert.repeat(count)));
-                    new_selections.push((anchor, to_insert.len() * count));
+                    let mut to_insert = to_insert.repeat(count);
+                    // Buffer edits normalize line endings, so measure the normalized text.
+                    // Otherwise CRLF paste text can produce a selection range past the inserted text.
+                    // which can cause panics (selection offset greater than snapshot len) or invalid
+                    // selections
+                    LineEnding::normalize(&mut to_insert);
+                    new_selections.push((anchor, to_insert.len()));
+                    edits.push((point..point, to_insert));
                 }
 
                 editor.edit(edits, cx);
@@ -203,6 +210,18 @@ mod test {
         cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
         cx.simulate_keystrokes("p");
         cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_system_clipboard_crlf_paste_at_end_of_buffer(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇ", Mode::HelixNormal);
+
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("«a\nbˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]

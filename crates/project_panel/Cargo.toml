@@ -19,7 +19,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 futures.workspace = true
@@ -45,16 +44,19 @@ client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
+markdown_preview.workspace = true
 zed_actions.workspace = true
 telemetry.workspace = true
 notifications.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 remote_connection = { workspace = true, features = ["test-support"] }
