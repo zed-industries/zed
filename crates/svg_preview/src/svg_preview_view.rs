@@ -1,23 +1,29 @@
-use std::mem;
-use std::sync::Arc;
+use std::{io::Cursor, mem, sync::Arc};
 
 use file_icons::FileIcons;
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Render,
-    RenderImage, Styled, Subscription, Task, WeakEntity, Window, div, img,
+    App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, Image, ImageFormat,
+    IntoElement, ParentElement, Render, RenderImage, Styled, Subscription, Task, WeakEntity,
+    Window, div, img,
 };
 use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
-use ui::prelude::*;
+use ui::{ContextMenu, prelude::*, right_click_menu};
 use workspace::item::Item;
 use workspace::{Pane, Workspace};
 
-use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
+use crate::{CopyAsImage, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
+
+#[derive(Clone)]
+struct RenderedSvg {
+    preview_image: Arc<RenderImage>,
+    clipboard_image: Arc<Image>,
+}
 
 pub struct SvgPreviewView {
     focus_handle: FocusHandle,
     buffer: Option<Entity<Buffer>>,
-    current_svg: Option<Result<Arc<RenderImage>, SharedString>>,
+    current_svg: Option<Result<RenderedSvg, SharedString>>,
     _refresh: Task<()>,
     _buffer_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
@@ -110,15 +116,22 @@ impl SvgPreviewView {
         let renderer = cx.svg_renderer();
         let content = buffer.read(cx).snapshot();
         let background_task = cx.background_spawn(async move {
-            renderer.render_single_frame(content.text().as_bytes(), SCALE_FACTOR)
+            let preview_image = renderer
+                .render_single_frame(content.text().as_bytes(), SCALE_FACTOR)
+                .map_err(|error| SharedString::from(error.to_string()))?;
+            let clipboard_image = Arc::new(Self::clipboard_image_for_render_image(&preview_image)?);
+
+            Ok(RenderedSvg {
+                preview_image,
+                clipboard_image,
+            })
         });
 
         self._refresh = cx.spawn_in(window, async move |this, cx| {
             let result = background_task.await;
 
             this.update_in(cx, |view, window, cx| {
-                let current = result.map_err(|e| e.to_string().into());
-                view.set_current(Some(current), window, cx);
+                view.set_current(Some(result), window, cx);
             })
             .ok();
         });
@@ -126,14 +139,54 @@ impl SvgPreviewView {
 
     fn set_current(
         &mut self,
-        image: Option<Result<Arc<RenderImage>, SharedString>>,
+        image: Option<Result<RenderedSvg, SharedString>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(Ok(image)) = mem::replace(&mut self.current_svg, image) {
-            window.drop_image(image).ok();
+        if let Some(Ok(rendered_svg)) = mem::replace(&mut self.current_svg, image) {
+            window.drop_image(rendered_svg.preview_image).ok();
         }
         cx.notify();
+    }
+
+    fn clipboard_image_for_render_image(render_image: &RenderImage) -> Result<Image, SharedString> {
+        let size = render_image.size(0);
+        let width = u32::try_from(size.width.0)
+            .map_err(|_| SharedString::from("Failed to render SVG image"))?;
+        let height = u32::try_from(size.height.0)
+            .map_err(|_| SharedString::from("Failed to render SVG image"))?;
+
+        if width == 0 || height == 0 {
+            return Err("Failed to render SVG image".into());
+        }
+
+        let mut rgba_bytes = render_image
+            .as_bytes(0)
+            .ok_or_else(|| SharedString::from("Failed to render SVG image"))?
+            .to_vec();
+
+        for pixel in rgba_bytes.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+
+        let rgba_image = image::RgbaImage::from_raw(width, height, rgba_bytes)
+            .ok_or_else(|| SharedString::from("Failed to encode SVG image"))?;
+        let dynamic_image = image::DynamicImage::ImageRgba8(rgba_image);
+        let mut png_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut png_bytes);
+        dynamic_image
+            .write_to(&mut cursor, image::ImageFormat::Png)
+            .map_err(|error| SharedString::from(format!("Failed to encode SVG image: {error}")))?;
+
+        Ok(Image::from_bytes(ImageFormat::Png, png_bytes))
+    }
+
+    fn copy_as_image(&mut self, _: &CopyAsImage, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Ok(rendered_svg)) = self.current_svg.as_ref() {
+            cx.write_to_clipboard(ClipboardItem::new_image(
+                rendered_svg.clipboard_image.as_ref(),
+            ));
+        }
     }
 
     fn find_existing_preview_item_idx(
@@ -278,25 +331,46 @@ impl SvgPreviewView {
 
 impl Render for SvgPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+
         v_flex()
             .id("SvgPreview")
             .key_context("SvgPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::copy_as_image))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .flex()
             .justify_center()
             .items_center()
             .map(|this| match self.current_svg.clone() {
-                Some(Ok(image)) => {
-                    this.child(img(image).max_w_full().max_h_full().with_fallback(|| {
-                        h_flex()
-                            .p_4()
-                            .gap_2()
-                            .child(Icon::new(IconName::Warning))
-                            .child("Failed to load SVG image")
-                            .into_any_element()
-                    }))
+                Some(Ok(rendered_svg)) => {
+                    let menu_focus_handle = focus_handle.clone();
+
+                    this.child(
+                        right_click_menu("svg-preview-context-menu")
+                            .trigger(move |_, _, _| {
+                                img(rendered_svg.preview_image)
+                                    .max_w_full()
+                                    .max_h_full()
+                                    .with_fallback(|| {
+                                        h_flex()
+                                            .p_4()
+                                            .gap_2()
+                                            .child(Icon::new(IconName::Warning))
+                                            .child("Failed to load SVG image")
+                                            .into_any_element()
+                                    })
+                            })
+                            .menu(move |window, cx| {
+                                let menu_focus_handle = menu_focus_handle.clone();
+
+                                ContextMenu::build(window, cx, move |menu, _, _| {
+                                    menu.context(menu_focus_handle)
+                                        .action("Copy Image", Box::new(CopyAsImage))
+                                })
+                            }),
+                    )
                 }
                 Some(Err(e)) => this.child(div().p_4().child(e).into_any_element()),
                 None => this.child(div().p_4().child("No SVG file selected")),
@@ -337,4 +411,28 @@ impl Item for SvgPreviewView {
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_image_for_render_image_encodes_png() {
+        let render_image = RenderImage::new(vec![image::Frame::new(
+            image::RgbaImage::from_raw(1, 1, vec![3, 2, 1, 4]).unwrap(),
+        )]);
+
+        let clipboard_image =
+            SvgPreviewView::clipboard_image_for_render_image(&render_image).unwrap();
+
+        assert_eq!(clipboard_image.format, ImageFormat::Png);
+
+        let decoded =
+            image::load_from_memory_with_format(&clipboard_image.bytes, image::ImageFormat::Png)
+                .unwrap()
+                .into_rgba8();
+
+        assert_eq!(decoded.get_pixel(0, 0).0, [1, 2, 3, 4]);
+    }
 }
