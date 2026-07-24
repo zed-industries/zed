@@ -1689,6 +1689,13 @@
     },
     "blame": {
       "show_avatar": true,
+      // How to color git blame entries based on commit age.
+      //
+      // Default: none
+      // - none: Do not color blame entries based on age
+      // - commit: Vary the commit color intensity
+      // - heatmap: Vary a theme-aware heatmap color
+      "age_coloring": "none",
     },
     // Control which information is shown in the branch picker.
     "branch_picker": {

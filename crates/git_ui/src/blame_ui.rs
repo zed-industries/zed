@@ -11,7 +11,7 @@ use gpui::{
 use markdown::{Markdown, MarkdownElement};
 use project::{
     git_store::Repository,
-    project_settings::{InlineBlameLocation, ProjectSettings},
+    project_settings::{BlameAgeColoring, InlineBlameLocation, ProjectSettings},
 };
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
@@ -160,6 +160,7 @@ impl BlameRenderer for GitBlameRenderer {
         let short_commit_id = blame_entry.sha.display_short();
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
+        let age_background = blame_entry_age_background(&blame_entry, sha_color, cx);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
             let author_email = blame_entry.author_mail.as_ref().map(|email| {
@@ -195,6 +196,7 @@ impl BlameRenderer for GitBlameRenderer {
                         .font(style.font())
                         .line_height(style.line_height)
                         .text_color(cx.theme().status().hint)
+                        .when_some(age_background, |this, background| this.bg(background))
                         .child(
                             h_flex()
                                 .gap_2()
@@ -508,6 +510,50 @@ impl BlameRenderer for GitBlameRenderer {
     }
 }
 
+fn blame_entry_age_background(blame_entry: &BlameEntry, sha_color: Hsla, cx: &App) -> Option<Hsla> {
+    let age_coloring = ProjectSettings::get_global(cx).git.blame.age_coloring;
+    if age_coloring == BlameAgeColoring::None {
+        return None;
+    }
+
+    let author_time = blame_entry.author_time?;
+    let age_seconds = OffsetDateTime::now_utc()
+        .unix_timestamp()
+        .saturating_sub(author_time);
+    let alpha = blame_age_background_alpha(blame_age_alpha(age_seconds));
+
+    match age_coloring {
+        BlameAgeColoring::None => None,
+        BlameAgeColoring::Commit => Some(sha_color.opacity(alpha)),
+        BlameAgeColoring::Heatmap => Some(cx.theme().status().info.opacity(alpha)),
+    }
+}
+
+fn blame_age_background_alpha(age_alpha: f32) -> f32 {
+    0.04 + age_alpha * 0.18
+}
+
+fn blame_age_alpha(age_seconds: i64) -> f32 {
+    const HOUR: i64 = 60 * 60;
+    const DAY: i64 = 24 * HOUR;
+    const WEEK: i64 = 7 * DAY;
+    const MONTH: i64 = 30 * DAY;
+    const QUARTER: i64 = 3 * MONTH;
+    const HALF_YEAR: i64 = 6 * MONTH;
+    const YEAR: i64 = 365 * DAY;
+
+    match age_seconds {
+        ..HOUR => 1.0,
+        HOUR..DAY => 0.9,
+        DAY..WEEK => 0.75,
+        WEEK..MONTH => 0.6,
+        MONTH..QUARTER => 0.45,
+        QUARTER..HALF_YEAR => 0.3,
+        HALF_YEAR..YEAR => 0.15,
+        _ => 0.0,
+    }
+}
+
 fn deploy_blame_entry_context_menu(
     blame_entry: &BlameEntry,
     details: Option<&ParsedCommitMessage>,
@@ -552,5 +598,22 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
             )
         }
         Err(_) => "Error parsing date".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::blame_age_alpha;
+
+    #[test]
+    fn blame_age_alpha_decreases_with_age() {
+        let one_hour = 60 * 60;
+        let two_days = 2 * 24 * 60 * 60;
+        let two_weeks = 14 * 24 * 60 * 60;
+        let two_years = 2 * 365 * 24 * 60 * 60;
+
+        assert!(blame_age_alpha(one_hour) > blame_age_alpha(two_days));
+        assert!(blame_age_alpha(two_days) > blame_age_alpha(two_weeks));
+        assert!(blame_age_alpha(two_weeks) > blame_age_alpha(two_years));
     }
 }

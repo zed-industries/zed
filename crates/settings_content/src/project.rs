@@ -645,6 +645,30 @@ pub enum InlineBlameLocation {
     StatusBar,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BlameAgeColoring {
+    /// Do not color git blame entries based on commit age.
+    #[default]
+    None,
+    /// Color git blame entries by varying the commit color intensity.
+    Commit,
+    /// Color git blame entries by varying a theme-aware heatmap color.
+    Heatmap,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -686,6 +710,10 @@ pub struct BlameSettings {
     ///
     /// Default: true
     pub show_avatar: Option<bool>,
+    /// How to color git blame entries based on commit age.
+    ///
+    /// Default: none
+    pub age_coloring: Option<BlameAgeColoring>,
 }
 
 #[with_fallible_options]
