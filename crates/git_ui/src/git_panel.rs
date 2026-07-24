@@ -18,6 +18,7 @@ use crate::{
 use agent_settings::{AgentSettings, UserAgentsMd};
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
+use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::zed_urls;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
@@ -927,6 +928,12 @@ pub struct GitPanel {
     entry_count: usize,
     changes_count: usize,
     diff_stat_total: DiffStat,
+    display_diff_stats_repo: Option<RepositoryId>,
+    display_diff_stats: HashMap<RepoPath, DiffStat>,
+    display_diffs: HashMap<RepoPath, Entity<BufferDiff>>,
+    display_diff_subscriptions: Vec<Subscription>,
+    display_diff_stats_loading: bool,
+    display_diff_stats_task: Task<()>,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
     pending_remote_operation: Option<RemoteOperationKind>,
@@ -1124,6 +1131,9 @@ impl GitPanel {
                     update_entries = true;
                 }
                 if (diff_stats != was_diff_stats) || update_entries {
+                    if diff_stats != was_diff_stats {
+                        this.invalidate_display_diff_stats();
+                    }
                     this.update_visible_entries(window, cx);
                 }
                 if file_icons != was_file_icons || folder_icons != was_folder_icons {
@@ -1188,6 +1198,7 @@ impl GitPanel {
                     | GitStoreEvent::RepositoryRemoved(_)
                     | GitStoreEvent::ActiveRepositoryChanged(_)
                     | GitStoreEvent::DiffBaseChanged => {
+                        this.invalidate_display_diff_stats();
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
@@ -1230,6 +1241,12 @@ impl GitPanel {
                 new_staged_count: 0,
                 changes_count: 0,
                 diff_stat_total: DiffStat::default(),
+                display_diff_stats_repo: None,
+                display_diff_stats: HashMap::default(),
+                display_diffs: HashMap::default(),
+                display_diff_subscriptions: Vec::new(),
+                display_diff_stats_loading: false,
+                display_diff_stats_task: Task::ready(()),
                 pending_commit: None,
                 pending_remote_operation: None,
                 amend_pending,
@@ -4383,6 +4400,7 @@ impl GitPanel {
         let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
             != new_active_repository.as_ref().map(Entity::entity_id);
         if active_repository_changed {
+            self.invalidate_display_diff_stats();
             if self.amend_pending {
                 // Leaving a repository with a pending amend: undo it so the amend
                 // state doesn't carry over to the newly active repository. The
@@ -4412,6 +4430,95 @@ impl GitPanel {
                     })
                     .ok();
             }
+        });
+    }
+
+    fn invalidate_display_diff_stats(&mut self) {
+        self.display_diff_stats_repo = None;
+        self.display_diff_stats.clear();
+        self.display_diffs.clear();
+        self.display_diff_subscriptions.clear();
+        self.display_diff_stats_loading = false;
+        self.display_diff_stats_task = Task::ready(());
+    }
+
+    fn schedule_display_diff_stats(
+        &mut self,
+        repo_id: RepositoryId,
+        paths: Vec<(RepoPath, ProjectPath)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.display_diff_stats_repo == Some(repo_id) {
+            return;
+        }
+
+        self.invalidate_display_diff_stats();
+        self.display_diff_stats_repo = Some(repo_id);
+        self.display_diff_stats_loading = true;
+
+        let project = self.project.clone();
+        self.display_diff_stats_task = cx.spawn_in(window, async move |this, cx| {
+            let mut display_diffs = HashMap::default();
+            for (repo_path, project_path) in paths {
+                let diff = async {
+                    let buffer = project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await?;
+                    project
+                        .update(cx, |project, cx| {
+                            project
+                                .git_store()
+                                .update(cx, |git_store, cx| git_store.open_display_diff(buffer, cx))
+                        })
+                        .await
+                }
+                .await;
+
+                if let Some(diff) = diff.log_err() {
+                    display_diffs.insert(repo_path, diff);
+                }
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                if this.display_diff_stats_repo != Some(repo_id) {
+                    return;
+                }
+
+                this.display_diff_stats_loading = false;
+                this.display_diff_stats.clear();
+                this.display_diffs = display_diffs;
+                this.display_diff_subscriptions.clear();
+
+                let display_diffs = this
+                    .display_diffs
+                    .iter()
+                    .map(|(repo_path, diff)| (repo_path.clone(), diff.clone()))
+                    .collect::<Vec<_>>();
+                for (repo_path, diff) in display_diffs {
+                    let (added, deleted) = diff.read(cx).snapshot(cx).changed_row_counts();
+                    this.display_diff_stats
+                        .insert(repo_path.clone(), DiffStat { added, deleted });
+
+                    this.display_diff_subscriptions.push(cx.subscribe_in(
+                        &diff,
+                        window,
+                        move |this, diff, _: &BufferDiffEvent, window, cx| {
+                            if this.display_diff_stats_repo != Some(repo_id) {
+                                return;
+                            }
+
+                            let (added, deleted) = diff.read(cx).snapshot(cx).changed_row_counts();
+                            this.display_diff_stats
+                                .insert(repo_path.clone(), DiffStat { added, deleted });
+                            this.update_visible_entries(window, cx);
+                        },
+                    ));
+                }
+
+                this.update_visible_entries(window, cx);
+            })
+            .log_err();
         });
     }
 
@@ -4596,13 +4703,19 @@ impl GitPanel {
         let mut max_width_estimate = 0usize;
         let mut max_width_item_index = None;
 
-        let Some(repo) = self.active_repository.as_ref() else {
+        let Some(repo_entity) = self.active_repository.clone() else {
             // Just clear entries if no repository is active.
             cx.notify();
             return;
         };
 
-        let repo = repo.read(cx);
+        let repo = repo_entity.read(cx);
+        let tree_diff = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .tree_diff_for_repo(repo.id);
 
         self.stash_entries = repo.cached_stash();
 
@@ -4662,13 +4775,7 @@ impl GitPanel {
         }
 
         let mut committed_entries = Vec::new();
-        if let Some(tree_diff) = self
-            .project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .tree_diff_for_repo(repo.id)
-        {
+        if let Some(tree_diff) = tree_diff.as_ref() {
             for (repo_path, tree_status) in tree_diff.entries.iter() {
                 if repo.status_for_path(repo_path).is_some() {
                     continue;
@@ -4677,7 +4784,16 @@ impl GitPanel {
                     repo_path: repo_path.clone(),
                     status: diff_status_to_file_status(tree_status),
                     staging: StageStatus::Unstaged,
-                    diff_stat: None,
+                    diff_stat: if self.display_diff_stats_repo == Some(repo.id)
+                        && !self.display_diff_stats_loading
+                    {
+                        self.display_diff_stats
+                            .get(repo_path)
+                            .copied()
+                            .filter(|stat| *stat != DiffStat::default())
+                    } else {
+                        None
+                    },
                 });
             }
         }
@@ -4879,6 +4995,38 @@ impl GitPanel {
         self.max_width_item_index = max_width_item_index;
 
         self.update_counts(repo);
+        if tree_diff.is_some() {
+            if self.display_diff_stats_repo == Some(repo.id) && !self.display_diff_stats_loading {
+                self.diff_stat_total = self.display_diff_stats.values().fold(
+                    DiffStat::default(),
+                    |mut total, stat| {
+                        total.added = total.added.saturating_add(stat.added);
+                        total.deleted = total.deleted.saturating_add(stat.deleted);
+                        total
+                    },
+                );
+            } else {
+                self.diff_stat_total = DiffStat::default();
+            }
+        }
+
+        let display_diff_paths =
+            (tree_diff.is_some() && GitPanelSettings::get_global(cx).diff_stats).then(|| {
+                repo.cached_status()
+                    .map(|entry| entry.repo_path)
+                    .chain(
+                        tree_diff
+                            .iter()
+                            .flat_map(|tree_diff| tree_diff.entries.keys().cloned()),
+                    )
+                    .unique()
+                    .filter_map(|repo_path| {
+                        let project_path = repo.repo_path_to_project_path(&repo_path, cx)?;
+                        Some((repo_path, project_path))
+                    })
+                    .collect::<Vec<_>>()
+            });
+        let repo_id = repo.id;
 
         let bulk_staging_anchor_new_index = bulk_staging
             .as_ref()
@@ -4909,6 +5057,10 @@ impl GitPanel {
         self.commit_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(&placeholder_text, window, cx)
         });
+
+        if let Some(paths) = display_diff_paths {
+            self.schedule_display_diff_stats(repo_id, paths, window, cx);
+        }
 
         cx.notify();
     }
@@ -9038,6 +9190,13 @@ mod tests {
         handle.await;
     }
 
+    async fn await_git_panel_diff_stats(panel: &Entity<GitPanel>, cx: &mut VisualTestContext) {
+        let handle = cx.update_window_entity(panel, |panel, _, _| {
+            std::mem::replace(&mut panel.display_diff_stats_task, Task::ready(()))
+        });
+        handle.await;
+    }
+
     fn assert_editor_opened_with_path(
         workspace: &Entity<Workspace>,
         expected_path: &Path,
@@ -9342,8 +9501,16 @@ mod tests {
 
         let panel = workspace.update_in(&mut cx, GitPanel::new);
         await_git_panel_entries(&panel, &mut cx).await;
+        await_git_panel_diff_stats(&panel, &mut cx).await;
 
         panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                panel.diff_stat_total,
+                DiffStat {
+                    added: 2,
+                    deleted: 2,
+                }
+            );
             assert_eq!(panel.entries.len(), 4);
             assert!(matches!(
                 panel.entries.first(),
@@ -9366,6 +9533,10 @@ mod tests {
                 panel.entries.get(3),
                 Some(GitListEntry::Status(entry))
                     if entry.repo_path == repo_path("committed.txt")
+                        && entry.diff_stat == Some(DiffStat {
+                            added: 1,
+                            deleted: 1,
+                        })
             ));
         });
 
@@ -9381,6 +9552,13 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                panel.diff_stat_total,
+                DiffStat {
+                    added: 1,
+                    deleted: 1,
+                }
+            );
             assert!(
                 !panel.entries.iter().any(|entry| matches!(
                     entry,
