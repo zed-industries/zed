@@ -89,7 +89,13 @@ pub fn detect_language(
                         .available_language_for_name(language_registry_key(model_language)?)
                         .map(|language| (score, language))
                 });
-        let current_language_score = current_language_name.as_ref().and_then(|current_name| {
+        let Some((score, language)) = detected_language else {
+            return None;
+        };
+        if current_language_name == Some(language.name()) {
+            return None;
+        }
+        let current_language_score = current_language_name.and_then(|current_name| {
             detection
                 .top_languages()
                 .find_map(|(score, model_language)| {
@@ -98,12 +104,6 @@ pub fn detect_language(
                         .then_some(score)
                 })
         });
-        let Some((score, language)) = detected_language else {
-            return None;
-        };
-        if current_language_name.is_some_and(|current_name| current_name == language.name()) {
-            return None;
-        }
         // Prefer the current language unless another candidate has a clear confidence advantage.
         if current_language_score.is_some_and(|current_score| {
             score <= current_score + MIN_LANGUAGE_SWITCH_CONFIDENCE_GAP
