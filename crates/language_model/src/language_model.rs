@@ -35,6 +35,16 @@ impl DisabledReason {
     }
 }
 
+/// The outcome of an explicit [`LanguageModel::compact`] request.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompactionResult {
+    /// The replacement context to persist and use in subsequent requests.
+    pub context: CompactedContext,
+    /// Token usage of the compaction request itself, as reported by the
+    /// provider.
+    pub usage: TokenUsage,
+}
+
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
     pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
@@ -129,6 +139,24 @@ pub trait LanguageModel: Send + Sync {
     /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
     fn supports_server_side_compaction(&self) -> bool {
         false
+    }
+
+    fn supports_explicit_compaction(&self) -> bool {
+        false
+    }
+
+    fn compact(
+        &self,
+        _request: LanguageModelRequest,
+        _cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let provider = self.provider_name();
+        async move {
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "{provider} does not support explicit compaction"
+            )))
+        }
+        .boxed()
     }
 
     /// Whether this model supports images

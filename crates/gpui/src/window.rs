@@ -2427,6 +2427,15 @@ impl Window {
             .render_to_image(&self.rendered_frame.scene)
     }
 
+    /// Simulates an assistive technology activating accessibility for this test window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_a11y_activation(&mut self) {
+        self.platform_window
+            .as_test()
+            .expect("test-support windows must use the test platform")
+            .simulate_a11y_activation();
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);

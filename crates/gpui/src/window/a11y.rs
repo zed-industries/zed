@@ -408,11 +408,17 @@ impl A11yNodeBuilder {
         debug_assert!(!self.ids_stack.is_empty(), "node pushed before push_root");
 
         if !self.seen_ids.insert(id) {
-            debug_assert!(
-                false,
-                "Duplicate a11y node id: {id:?}. In a release build, this node would be silently discarded from the a11y tree."
-            );
-            return false;
+            #[cfg(debug_assertions)]
+            {
+                let existing_node = self.node_info.get(&id);
+                panic!(
+                    "Duplicate a11y node id: {id:?}. The first node was {existing_node:?}. In a release build, this node would be silently discarded from the a11y tree."
+                );
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                return false;
+            }
         }
 
         true

@@ -28,7 +28,7 @@ struct CapturedFrame {
 }
 
 #[cfg(debug_assertions)]
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct NodeDebugInfo {
     /// Whether the node was synthesized via
     /// [`crate::Element::a11y_synthetic_children`] rather than created from a

@@ -519,7 +519,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
-        let mut responses_request = into_open_ai_response(
+        let mut responses_request = match into_open_ai_response(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
@@ -529,26 +529,18 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model
                 .supported_reasoning_efforts()
                 .contains(&ReasoningEffort::None),
-        );
+            &PROVIDER_ID,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         responses_request.store = Some(false);
 
-        // The Codex backend requires system messages to be in the top-level
-        // `instructions` field rather than as input items.
-        let mut instructions = Vec::new();
-        responses_request.input.retain(|item| {
-            if let open_ai::responses::ResponseInputItem::Message(msg) = item {
-                if msg.role == open_ai::Role::System {
-                    for part in &msg.content {
-                        if let open_ai::responses::ResponseInputContent::Text { text } = part {
-                            instructions.push(text.clone());
-                        }
-                    }
-                    return false;
-                }
-            }
-            true
-        });
-        responses_request.instructions = Some(instructions.join("\n\n"));
+        // `into_open_ai_response` already hoists system messages into
+        // `instructions`, which is the only form the Codex backend accepts.
+        // Codex has only ever been sent requests with the field present
+        // (possibly empty), so keep sending it even without system messages.
+        responses_request.instructions.get_or_insert_default();
 
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
@@ -594,7 +586,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         });
 
         async move {
-            let mapper = OpenAiResponseEventMapper::new();
+            let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
             Ok(mapper.map_stream(future.await?.boxed()).boxed())
         }
         .boxed()

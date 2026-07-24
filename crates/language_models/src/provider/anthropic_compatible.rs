@@ -345,6 +345,7 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
             self.model.max_output_tokens,
             self.model.mode.clone(),
             self.cache_mode,
+            &self.provider_id,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -354,9 +355,10 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
         }
         let completion_request = self.stream_completion(request, cx);
         let provider_name = self.provider_name.clone();
+        let provider_id = self.provider_id.clone();
         let future = self.request_limiter.stream(async move {
             let response = completion_request.await?;
-            Ok(AnthropicEventMapper::new(provider_name).map_stream(response))
+            Ok(AnthropicEventMapper::new(provider_name, provider_id).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
