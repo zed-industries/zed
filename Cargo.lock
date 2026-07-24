@@ -323,9 +323,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "1.3.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d386d6a58f4dbe0ebfa98e915caa54005dabdefd419de3d4678b28cd5752444"
+checksum = "6d87bc7769eba641753ba5dc52f73ec3765d51022c6753bf040967125ddc86a8"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -347,19 +347,19 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "1.3.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b94934d118a69e921d14e94d4af5b3076563318c52662c89a0ecb3f139e1da"
+checksum = "3abd4080f51e4f24f5042beb7fb7a66ede29a2dc1c2582c329532e1c27264ddc"
 dependencies = [
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06679e1542356341f4550ccfb16338b64f37f6af70de2105446ef6fbb078234c"
+checksum = "d5c231915b4ab578c722eca2d1bd7df4d300bfd6cac3b8e9f0d1e3ddc95b187c"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -3188,7 +3188,6 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-tungstenite",
- "base64 0.22.1",
  "chrono",
  "clock",
  "cloud_api_client",
@@ -3204,12 +3203,12 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
- "httparse",
  "log",
  "objc2-foundation 0.3.2",
  "parking_lot",
  "paths",
  "postage",
+ "proxy_handshake",
  "rand 0.9.4",
  "regex",
  "release_channel",
@@ -3231,7 +3230,6 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.26.4",
- "tokio-socks",
  "url",
  "util",
  "windows 0.61.3",
@@ -14494,6 +14492,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxy_handshake"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures 0.3.32",
+ "httparse",
+ "percent-encoding",
+ "piper",
+ "proptest",
+ "thiserror 2.0.17",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "proxyvars"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18144,6 +18157,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19015,7 +19039,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
 dependencies = [
  "either",
- "futures-io",
  "futures-util",
  "thiserror 1.0.69",
  "tokio",

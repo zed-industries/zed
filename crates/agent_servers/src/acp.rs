@@ -81,17 +81,30 @@ pub struct AcpDebugMessage {
 }
 
 impl AcpDebugMessage {
-    fn parse(direction: AcpDebugMessageDirection, line: &str) -> Option<Self> {
+    fn parse_line(direction: AcpDebugMessageDirection, line: &str) -> Vec<Self> {
         if direction == AcpDebugMessageDirection::Stderr {
-            return Some(Self {
+            return vec![Self {
                 direction,
                 message: AcpDebugMessageContent::Stderr {
                     line: Arc::from(line),
                 },
-            });
+            }];
         }
 
-        let value: serde_json::Value = serde_json::from_str(line).ok()?;
+        let Ok(value) = serde_json::from_str(line) else {
+            return Vec::new();
+        };
+
+        match value {
+            serde_json::Value::Array(entries) => entries
+                .into_iter()
+                .filter_map(|entry| Self::parse_value(direction, entry))
+                .collect(),
+            value => Self::parse_value(direction, value).into_iter().collect(),
+        }
+    }
+
+    fn parse_value(direction: AcpDebugMessageDirection, value: serde_json::Value) -> Option<Self> {
         let object = value.as_object()?;
 
         let parsed_id = object
@@ -178,26 +191,29 @@ impl AcpDebugLog {
     }
 
     fn record_line(&self, direction: AcpDebugMessageDirection, line: &str) {
-        let Some(message) = AcpDebugMessage::parse(direction, line) else {
+        let messages = AcpDebugMessage::parse_line(direction, line);
+        if messages.is_empty() {
             return;
-        };
-        self.record_message(message);
+        }
+        self.record_messages(messages);
     }
 
-    fn record_message(&self, message: AcpDebugMessage) {
+    fn record_messages(&self, messages: Vec<AcpDebugMessage>) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
-            state.messages.pop_front();
-        }
-        state.messages.push_back(message.clone());
-
         state.subscribers.retain(|sender| !sender.is_closed());
-        for sender in &state.subscribers {
-            sender.try_send(message.clone()).log_err();
+        for message in messages {
+            if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
+                state.messages.pop_front();
+            }
+            state.messages.push_back(message.clone());
+
+            for sender in &state.subscribers {
+                sender.try_send(message.clone()).log_err();
+            }
         }
     }
 
@@ -322,7 +338,6 @@ where
     Notif: Send + 'static,
 {
     notification: Notif,
-    connection: ConnectionTo<Agent>,
     handler: fn(Notif, &mut AsyncApp, &ClientContext),
 }
 
@@ -334,17 +349,12 @@ where
         let Self {
             notification,
             handler,
-            ..
         } = *self;
         handler(notification, cx, ctx);
     }
 
     fn reject(self: Box<Self>) {
-        let Self { connection, .. } = *self;
         log::error!("ACP foreground dispatch queue closed while handling inbound notification");
-        connection
-            .send_error_notification(dispatch_queue_closed_error())
-            .log_err();
     }
 }
 
@@ -370,14 +380,12 @@ fn enqueue_request<Req, Res>(
 fn enqueue_notification<Notif>(
     dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
     notification: Notif,
-    connection: ConnectionTo<Agent>,
     handler: fn(Notif, &mut AsyncApp, &ClientContext),
 ) where
     Notif: Send + 'static,
 {
     let work: ForegroundWork = Box::new(NotificationForegroundWork {
         notification,
-        connection,
         handler,
     });
     if let Err(err) = dispatch_tx.unbounded_send(work) {
@@ -685,8 +693,8 @@ fn connect_client_future(
     macro_rules! on_notification {
         ($handler:ident) => {{
             let dispatch_tx = dispatch_tx.clone();
-            async move |notif, connection| {
-                enqueue_notification(&dispatch_tx, notif, connection, $handler);
+            async move |notif, _connection| {
+                enqueue_notification(&dispatch_tx, notif, $handler);
                 Ok(())
             }
         }};
@@ -3148,6 +3156,78 @@ mod tests {
             debug_log.trailing_stderr().as_deref(),
             Some("recent stderr")
         );
+    }
+
+    #[test]
+    fn debug_log_records_each_json_rpc_batch_entry() {
+        let debug_log = AcpDebugLog::default();
+        debug_log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","method":"legacy/update"}"#,
+        );
+        debug_log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"[
+                {"jsonrpc":"2.0","method":"session/update","params":{"value":1}},
+                null,
+                [{"jsonrpc":"2.0","method":"nested/update"}],
+                {"jsonrpc":"2.0","id":1,"method":"session/one","params":{"value":2}},
+                {"jsonrpc":"2.0","id":{"invalid":true},"method":"invalid/id"}
+            ]"#,
+        );
+        debug_log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"[
+                {"jsonrpc":"2.0","id":1,"result":{"accepted":true}},
+                {"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}
+            ]"#,
+        );
+
+        let (messages, _receiver) = debug_log.subscribe();
+        let mut messages = messages.iter();
+
+        assert!(matches!(
+            messages.next(),
+            Some(AcpDebugMessage {
+                direction: AcpDebugMessageDirection::Incoming,
+                message: AcpDebugMessageContent::Notification { method, .. },
+            }) if method.as_ref() == "legacy/update"
+        ));
+        assert!(matches!(
+            messages.next(),
+            Some(AcpDebugMessage {
+                direction: AcpDebugMessageDirection::Incoming,
+                message: AcpDebugMessageContent::Notification { method, .. },
+            }) if method.as_ref() == "session/update"
+        ));
+        assert!(matches!(
+            messages.next(),
+            Some(AcpDebugMessage {
+                direction: AcpDebugMessageDirection::Incoming,
+                message: AcpDebugMessageContent::Request { id, method, .. },
+            }) if id == &acp::RequestId::Number(1) && method.as_ref() == "session/one"
+        ));
+        assert!(matches!(
+            messages.next(),
+            Some(AcpDebugMessage {
+                direction: AcpDebugMessageDirection::Outgoing,
+                message: AcpDebugMessageContent::Response {
+                    id,
+                    result: Ok(Some(_)),
+                },
+            }) if id == &acp::RequestId::Number(1)
+        ));
+        assert!(matches!(
+            messages.next(),
+            Some(AcpDebugMessage {
+                direction: AcpDebugMessageDirection::Outgoing,
+                message: AcpDebugMessageContent::Response {
+                    id,
+                    result: Err(_),
+                },
+            }) if id == &acp::RequestId::Null
+        ));
+        assert!(messages.next().is_none());
     }
 
     #[test]
