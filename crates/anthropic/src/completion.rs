@@ -858,7 +858,6 @@ mod tests {
                 128_000,
                 AnthropicModelMode::AdaptiveThinking,
                 AnthropicPromptCacheMode::Automatic,
-                &ANTHROPIC_PROVIDER_ID,
             )
             .unwrap();
 
