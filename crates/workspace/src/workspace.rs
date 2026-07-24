@@ -6877,6 +6877,23 @@ impl Workspace {
                 cx.background_spawn(async move { db.update_timestamp(database_id).await })
                     .detach();
             }
+
+            let buffers = self
+                .panes
+                .iter()
+                .filter_map(|pane| {
+                    let pane = pane.read(cx);
+                    let project_path = pane.active_item()?.project_path(cx)?;
+                    self.project.read(cx).get_open_buffer(&project_path, cx)
+                })
+                .collect::<HashSet<_>>();
+            if !buffers.is_empty() {
+                self.project
+                    .update(cx, |project, cx| {
+                        project.refresh_buffers_from_disk(buffers, cx)
+                    })
+                    .detach();
+            }
         } else {
             // When window is deactivated, flush any deferred saves since focus has left the window
             self.flush_deferred_saves(window, cx);
@@ -11641,7 +11658,7 @@ mod tests {
             test::{TestItem, TestProjectItem},
         },
     };
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs};
     use gpui::{
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
@@ -12601,6 +12618,67 @@ mod tests {
         left_pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_window_activation_refreshes_buffer_for_wrapped_item(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file.txt": "initial contents",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                1,
+                "file.txt",
+                worktree_id,
+                cx,
+            )])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+        });
+
+        cx.deactivate_window();
+        fs.pause_events();
+        fs.save(
+            path!("/dir/file.txt").as_ref(),
+            &"changed on disk".into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "initial contents");
+        });
+
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "changed on disk");
+        });
+
+        fs.unpause_events_and_flush();
     }
 
     #[gpui::test]

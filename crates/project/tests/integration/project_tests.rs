@@ -7013,6 +7013,97 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_refresh_buffers_from_disk(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "the-file": "initial contents",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/the-file"), cx))
+        .await
+        .unwrap();
+
+    // Simulate a filesystem event that never reaches the worktree (as happens
+    // for files inside git-ignored directories, whose parent directories are
+    // never watched by the background scanner).
+    fs.pause_events();
+    fs.save(
+        path!("/dir/the-file").as_ref(),
+        &"changed on disk".into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "initial contents");
+        assert!(!buffer.has_conflict());
+    });
+
+    // Refreshing from disk re-stats the file directly, bypassing the dropped
+    // watcher event, and reloads the clean buffer.
+    project
+        .update(cx, |project, cx| {
+            project.refresh_buffers_from_disk([buffer.clone()], cx)
+        })
+        .await;
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "changed on disk");
+        assert!(!buffer.is_dirty());
+        assert!(!buffer.has_conflict());
+    });
+
+    // If the buffer has unsaved edits, refreshing surfaces a conflict instead
+    // of clobbering them.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "unsaved ")], None, cx);
+        assert!(buffer.is_dirty());
+    });
+    fs.save(
+        path!("/dir/the-file").as_ref(),
+        &"changed again on disk".into(),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.refresh_buffers_from_disk([buffer.clone()], cx)
+        })
+        .await;
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "unsaved changed on disk");
+        assert!(buffer.has_conflict());
+    });
+
+    // Deleting the file on disk is picked up as a `DiskState::Deleted`
+    // transition once refreshed.
+    fs.remove_file(path!("/dir/the-file").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.refresh_buffers_from_disk([buffer.clone()], cx)
+        })
+        .await;
+    cx.executor().run_until_parked();
+    buffer.update(cx, |buffer, _| {
+        assert!(buffer.file().unwrap().disk_state().is_deleted());
+    });
+
+    fs.unpause_events_and_flush();
+}
+
+#[gpui::test]
 async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

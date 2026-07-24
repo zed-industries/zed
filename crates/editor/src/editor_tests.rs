@@ -43,7 +43,7 @@ use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffse
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    FakeFs, Project, ProjectPath,
+    FakeFs, Fs, Project, ProjectPath,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
@@ -213,6 +213,88 @@ fn test_edit_events(cx: &mut TestAppContext) {
         editor.backspace(&Backspace, window, cx);
     });
     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+}
+
+#[gpui::test]
+async fn test_refresh_only_active_multibuffer_from_disk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "active.txt": "active contents",
+            "inactive.txt": "inactive contents",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let active_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/active.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let inactive_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/inactive.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            active_buffer.clone(),
+            [Point::zero()..active_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            inactive_buffer.clone(),
+            [Point::zero()..inactive_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.read_with(cx, |editor, cx| {
+        assert_eq!(editor.active_buffer(cx), Some(active_buffer.clone()));
+    });
+
+    fs.pause_events();
+    fs.save(
+        path!("/dir/active.txt").as_ref(),
+        &"changed active contents".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.save(
+        path!("/dir/inactive.txt").as_ref(),
+        &"changed inactive contents".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    editor.update(cx, |editor, cx| editor.refresh_buffers_from_disk(cx));
+    cx.run_until_parked();
+
+    active_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "changed active contents");
+    });
+    inactive_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "inactive contents");
+    });
+
+    fs.unpause_events_and_flush();
 }
 
 #[gpui::test]
