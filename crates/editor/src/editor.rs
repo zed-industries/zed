@@ -10875,26 +10875,24 @@ impl Editor {
         self.refresh_document_symbols(for_buffer, cx);
     }
 
+    fn is_eligible_for_language_detection(buffer: &Buffer) -> bool {
+        buffer.file().is_none()
+            && buffer.content_language_detection_enabled()
+            && buffer.len() >= MIN_LANGUAGE_DETECTION_LEN
+    }
+
     fn detect_buffer_language(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
         self.language_detection_task = Task::ready(());
         if DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
-
         let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
             return;
         };
-
-        {
-            let buffer = buffer_entity.read(cx);
-            if buffer.file().is_some()
-                || !buffer.content_language_detection_enabled()
-                || buffer.len() < MIN_LANGUAGE_DETECTION_LEN
-            {
-                return;
-            }
+        let buffer = buffer_entity.read(cx);
+        if !Self::is_eligible_for_language_detection(buffer) {
+            return;
         }
-
         self.language_detection_task = cx.spawn(async move |_, cx| {
             cx.background_executor()
                 .timer(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT)
@@ -10902,9 +10900,7 @@ impl Editor {
             let Some((buffer_snapshot, language_registry)) =
                 buffer_entity.read_with(cx, |buffer, cx| {
                     if DisableAiSettings::get_global(cx).disable_ai
-                        || buffer.file().is_some()
-                        || !buffer.content_language_detection_enabled()
-                        || buffer.len() < MIN_LANGUAGE_DETECTION_LEN
+                        || !Self::is_eligible_for_language_detection(buffer)
                     {
                         return None;
                     }
@@ -10918,9 +10914,8 @@ impl Editor {
                 cx.update(|cx| detect_language(buffer_snapshot, language_registry, cx));
             if let Some(detected_language) = detected_language.await {
                 buffer_entity.update(cx, |buffer, cx| {
-                    if buffer.file().is_none()
-                        && buffer.content_language_detection_enabled()
-                        && !buffer.version().changed_since(&buffer_version)
+                    if !buffer.version().changed_since(&buffer_version)
+                        && Self::is_eligible_for_language_detection(buffer)
                     {
                         buffer.set_language(Some(detected_language), cx);
                     }
