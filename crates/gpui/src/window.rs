@@ -8,17 +8,17 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
-    transparent_black,
+    MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, ScrollWheelEvent, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, profiler, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -704,6 +704,11 @@ impl HitboxId {
 }
 
 impl HitboxId {
+    #[cfg(test)]
+    pub(crate) const fn test(id: u64) -> Self {
+        Self(id)
+    }
+
     /// Checks if the hitbox with this ID is currently hovered. Returns `false` during keyboard
     /// input modality so that keyboard navigation suppresses hover highlights. Except when handling
     /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
@@ -1139,6 +1144,10 @@ pub struct Window {
     /// The hitbox that has captured the pointer, if any.
     /// While captured, mouse events route to this hitbox regardless of hit testing.
     captured_hitbox: Option<HitboxId>,
+    /// When a `MouseDown` triggered a keymap-bound action, the matching `MouseUp` is
+    /// swallowed so the bound action doesn't also produce a click. Stores the
+    /// `(button, modifiers)` of the consumed press.
+    suppressed_mouse_up: Option<(MouseButton, Modifiers)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     pub(crate) a11y: A11y,
@@ -1873,6 +1882,7 @@ impl Window {
             client_inset: None,
             image_cache_stack: Vec::new(),
             captured_hitbox: None,
+            suppressed_mouse_up: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             a11y: A11y::new(
@@ -3316,6 +3326,23 @@ impl Window {
             self.next_frame.focus = self.focus;
         }
 
+        // Carry over hitbox-node associations from the reused range,
+        // remapping node ids into the new frame's index space.
+        for hitbox in
+            &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
+        {
+            if let Some(old_node_id) = self
+                .rendered_frame
+                .dispatch_tree
+                .node_id_for_hitbox(hitbox.id)
+            {
+                let new_node_id = reused_subtree.refresh_node_id(old_node_id);
+                self.next_frame
+                    .dispatch_tree
+                    .associate_hitbox(hitbox.id, new_node_id);
+            }
+        }
+
         self.next_frame.deferred_draws.extend(
             self.rendered_frame.deferred_draws
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
@@ -4539,6 +4566,11 @@ impl Window {
             behavior,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
+        // Pointer bindings dispatch against the node path under the cursor, so
+        // remember which dispatch node produced each hitbox.
+        self.next_frame
+            .dispatch_tree
+            .set_active_node_hitbox(hitbox.id);
         hitbox
     }
 
@@ -4913,10 +4945,24 @@ impl Window {
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
-        if let Some(any_mouse_event) = event.mouse_event() {
-            self.dispatch_mouse_event(any_mouse_event, cx);
-        } else if let Some(any_key_event) = event.keyboard_event() {
-            self.dispatch_key_event(any_key_event, cx);
+        // Give keymap-bound mouse and scroll actions a chance to run before the normal
+        // mouse listener chain. MouseUp is suppressed when its matching MouseDown
+        // consumed a binding, so dragging logic isn't tripped.
+        let consumed_by_binding = match &event {
+            PlatformInput::MouseDown(mouse_down) => {
+                self.try_dispatch_mouse_button_binding(mouse_down, cx)
+            }
+            PlatformInput::MouseUp(mouse_up) => self.try_consume_suppressed_mouse_up(mouse_up),
+            PlatformInput::ScrollWheel(scroll) => self.try_dispatch_scroll_binding(scroll, cx),
+            _ => false,
+        };
+
+        if !consumed_by_binding {
+            if let Some(any_mouse_event) = event.mouse_event() {
+                self.dispatch_mouse_event(any_mouse_event, cx);
+            } else if let Some(any_key_event) = event.keyboard_event() {
+                self.dispatch_key_event(any_key_event, cx);
+            }
         }
 
         if self.invalidator.update_count() > update_count_before {
@@ -5300,6 +5346,94 @@ impl Window {
                     .focusable_node_id(focus_id)
             })
             .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id())
+    }
+
+    /// Returns dispatch nodes under the cursor, from frontmost to back.
+    ///
+    /// Hitboxes can be layered: a front hitbox may have no matching pointer binding while a
+    /// hitbox behind it does. Try each associated node in paint order before falling back to focus.
+    fn dispatch_node_ids_at_cursor(&self) -> SmallVec<[DispatchNodeId; 8]> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let mut node_ids = SmallVec::new();
+        for hitbox_id in &self.mouse_hit_test.ids {
+            if let Some(node_id) = dispatch_tree.node_id_for_hitbox(*hitbox_id) {
+                if !node_ids.contains(&node_id) {
+                    node_ids.push(node_id);
+                }
+            }
+        }
+        node_ids
+    }
+
+    /// Resolve and dispatch keymap bindings for a synthesized pointer keystroke against the
+    /// dispatch path under the cursor. Returns whether any binding consumed the event.
+    fn dispatch_pointer_keystroke(&mut self, keystroke: &Keystroke, cx: &mut App) -> bool {
+        let hit_test = self.rendered_frame.hit_test(self.mouse_position());
+        if hit_test != self.mouse_hit_test {
+            self.mouse_hit_test = hit_test;
+            self.reset_cursor_style(cx);
+        }
+
+        let mut node_ids = self.dispatch_node_ids_at_cursor();
+        let focused_node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        if !node_ids.contains(&focused_node_id) {
+            node_ids.push(focused_node_id);
+        }
+
+        let Some((node_id, bindings)) = node_ids.into_iter().find_map(|node_id| {
+            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+            let (bindings, _, _) = self
+                .rendered_frame
+                .dispatch_tree
+                .bindings_for_input(std::slice::from_ref(keystroke), &dispatch_path);
+            (!bindings.is_empty()).then_some((node_id, bindings))
+        }) else {
+            return false;
+        };
+
+        for binding in bindings {
+            cx.propagate_event = true;
+            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+            if !cx.propagate_event {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn try_dispatch_mouse_button_binding(&mut self, event: &MouseDownEvent, cx: &mut App) -> bool {
+        let keystroke =
+            Keystroke::from_mouse_button(event.button, event.modifiers, event.click_count);
+        if self.dispatch_pointer_keystroke(&keystroke, cx) {
+            // Suppress the matching MouseUp so click handlers don't also fire.
+            self.suppressed_mouse_up = Some((event.button, event.modifiers));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn try_dispatch_scroll_binding(&mut self, event: &ScrollWheelEvent, cx: &mut App) -> bool {
+        // Only consider scroll bindings when at least one modifier is held, so plain
+        // scrolling continues to flow through the normal listener chain.
+        if !event.modifiers.modified() {
+            return false;
+        }
+        let Some(keystroke) = Keystroke::from_scroll(event.delta, event.modifiers) else {
+            return false;
+        };
+        self.dispatch_pointer_keystroke(&keystroke, cx)
+    }
+
+    fn try_consume_suppressed_mouse_up(&mut self, event: &MouseUpEvent) -> bool {
+        if let Some((button, modifiers)) = self.suppressed_mouse_up
+            && button == event.button
+            && modifiers == event.modifiers
+        {
+            self.suppressed_mouse_up = None;
+            return true;
+        }
+        false
     }
 
     fn dispatch_action_on_node(

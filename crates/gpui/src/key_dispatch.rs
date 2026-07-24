@@ -50,8 +50,8 @@
 //!  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 
 use crate::{
-    Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window,
+    Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, HitboxId, KeyBinding,
+    KeyContext, Keymap, Keystroke, ModifiersChangedEvent, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -75,6 +75,7 @@ pub(crate) struct DispatchTree {
     nodes: Vec<DispatchNode>,
     focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
+    hitbox_node_ids: FxHashMap<HitboxId, DispatchNodeId>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
 }
@@ -145,6 +146,7 @@ impl DispatchTree {
             nodes: Vec::new(),
             focusable_node_ids: FxHashMap::default(),
             view_node_ids: FxHashMap::default(),
+            hitbox_node_ids: FxHashMap::default(),
             keymap,
             action_registry,
         }
@@ -157,6 +159,7 @@ impl DispatchTree {
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
+        self.hitbox_node_ids.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -221,6 +224,26 @@ impl DispatchTree {
         let node_id = *self.node_stack.last().unwrap();
         self.nodes[node_id.0].focus_id = Some(focus_id);
         self.focusable_node_ids.insert(focus_id, node_id);
+    }
+
+    /// Records that the given hitbox belongs to the currently active dispatch node.
+    ///
+    /// Pointer bindings use this to resolve actions against the dispatch path under the cursor
+    /// instead of the keyboard focus path.
+    pub fn set_active_node_hitbox(&mut self, hitbox_id: HitboxId) {
+        if let Some(node_id) = self.node_stack.last().copied() {
+            self.hitbox_node_ids.insert(hitbox_id, node_id);
+        }
+    }
+
+    /// Look up the dispatch node associated with a hitbox in the current frame.
+    pub fn node_id_for_hitbox(&self, hitbox_id: HitboxId) -> Option<DispatchNodeId> {
+        self.hitbox_node_ids.get(&hitbox_id).copied()
+    }
+
+    /// Associates a hitbox with a remapped dispatch node when reusing a subtree.
+    pub fn associate_hitbox(&mut self, hitbox_id: HitboxId, node_id: DispatchNodeId) {
+        self.hitbox_node_ids.insert(hitbox_id, node_id);
     }
 
     pub fn set_view_id(&mut self, view_id: EntityId) {
@@ -317,6 +340,9 @@ impl DispatchTree {
                 self.view_node_ids.remove(&view_id);
             }
         }
+        // Hitbox-node associations are frame-local, so drop entries that pointed
+        // into the truncated range.
+        self.hitbox_node_ids.retain(|_, node_id| node_id.0 < index);
         self.nodes.truncate(index);
     }
 
@@ -445,7 +471,7 @@ impl DispatchTree {
         }
     }
 
-    fn bindings_for_input(
+    pub(crate) fn bindings_for_input(
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
@@ -822,6 +848,68 @@ mod tests {
 
         assert_eq!(result.pending.len(), 1);
         assert!(!result.pending_has_binding);
+    }
+
+    #[test]
+    fn test_pointer_bindings_use_dispatch_path_context() {
+        let mut tree = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-middleclick", TestAction, Some("Editor")),
+            KeyBinding::new("ctrl-middleclick", SecondaryTestAction, Some("Workspace")),
+        ]);
+
+        let workspace_node = tree.push_node();
+        tree.set_key_context(KeyContext::parse("Workspace").unwrap());
+        let editor_node = tree.push_node();
+        tree.set_key_context(KeyContext::parse("Editor").unwrap());
+
+        let dispatch_path = tree.dispatch_path(editor_node);
+        let (bindings, pending, context_stack) = tree.bindings_for_input(
+            &[Keystroke::parse("ctrl-middleclick").unwrap()],
+            &dispatch_path,
+        );
+
+        assert!(!pending);
+        assert_eq!(context_stack.len(), 2);
+        assert_eq!(bindings.len(), 2);
+        assert!(bindings[0].action.partial_eq(&TestAction));
+        assert!(bindings[1].action.partial_eq(&SecondaryTestAction));
+
+        let dispatch_path = tree.dispatch_path(workspace_node);
+        let (bindings, pending, context_stack) = tree.bindings_for_input(
+            &[Keystroke::parse("ctrl-middleclick").unwrap()],
+            &dispatch_path,
+        );
+
+        assert!(!pending);
+        assert_eq!(context_stack.len(), 1);
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].action.partial_eq(&SecondaryTestAction));
+    }
+
+    #[test]
+    fn test_hitbox_dispatch_node_associations_are_frame_local() {
+        let mut tree = test_dispatch_tree(Vec::new());
+
+        let root_node = tree.push_node();
+        tree.set_active_node_hitbox(crate::HitboxId::test(1));
+        assert_eq!(
+            tree.node_id_for_hitbox(crate::HitboxId::test(1)),
+            Some(root_node)
+        );
+
+        let child_node = tree.push_node();
+        tree.set_active_node_hitbox(crate::HitboxId::test(2));
+        assert_eq!(
+            tree.node_id_for_hitbox(crate::HitboxId::test(2)),
+            Some(child_node)
+        );
+
+        tree.truncate(child_node.0);
+        assert_eq!(
+            tree.node_id_for_hitbox(crate::HitboxId::test(1)),
+            Some(root_node)
+        );
+        assert_eq!(tree.node_id_for_hitbox(crate::HitboxId::test(2)), None);
     }
 
     #[crate::test]

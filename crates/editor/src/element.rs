@@ -446,6 +446,11 @@ impl EditorElement {
                 .go_to_type_definition_split(action, window, cx)
                 .detach_and_log_err(cx);
         });
+        register_action(editor, window, Editor::add_cursor_at_mouse);
+        register_action(editor, window, Editor::extend_selection_to_mouse);
+        register_action(editor, window, Editor::go_to_definition_at_mouse);
+        register_action(editor, window, Editor::go_to_type_definition_at_mouse);
+        register_action(editor, window, Editor::start_columnar_selection_at_mouse);
         register_action(editor, window, Editor::open_url);
         register_action(editor, window, Editor::open_selected_filename);
         register_action(editor, window, Editor::fold);
