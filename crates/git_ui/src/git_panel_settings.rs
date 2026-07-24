@@ -35,6 +35,7 @@ pub struct GitPanelSettings {
     pub starts_open: bool,
     pub commit_title_max_length: usize,
     pub entry_primary_click_action: GitPanelClickBehavior,
+    pub open_file_on_double_click: bool,
 }
 
 #[derive(Default)]
@@ -84,6 +85,7 @@ impl Settings for GitPanelSettings {
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
             entry_primary_click_action: git_panel.entry_primary_click_action.unwrap(),
+            open_file_on_double_click: git_panel.open_file_on_double_click.unwrap(),
         }
     }
 }
