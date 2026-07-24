@@ -546,10 +546,9 @@ mod tests {
 
     #[test]
     fn test_code_only_callback_accepts_missing_state() {
-        let (redirect_uri, receiver) = start_oauth_code_callback_server_with_config(
-            OAuthCallbackServerConfig::default(),
-        )
-        .unwrap();
+        let (redirect_uri, receiver) =
+            start_oauth_code_callback_server_with_config(OAuthCallbackServerConfig::default())
+                .unwrap();
         let url = url::Url::parse(&redirect_uri).unwrap();
         let address = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap());
         let mut stream = TcpStream::connect(address).unwrap();
