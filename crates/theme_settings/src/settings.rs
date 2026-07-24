@@ -57,14 +57,24 @@ pub struct ThemeSettings {
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
     git_commit_buffer_font_size: Option<Pixels>,
-    /// The font family to use for rendering in the markdown preview.
+    /// The font family used for prose in markdown-rendered surfaces.
     /// Falls back to the UI font family if unset.
+    markdown_prose_font_family: Option<SharedString>,
+    /// The font family used for inline code in markdown-rendered surfaces.
+    /// Falls back to the buffer font family if unset.
+    markdown_inline_code_font_family: Option<SharedString>,
+    /// The font size used for prose in hover popups and other
+    /// markdown-rendered tooltips. Inherits the surrounding text size if unset.
+    hover_popover_font_size: Option<Pixels>,
+    /// The font family to use for rendering in the markdown preview.
+    /// Falls back to the markdown prose font family, then the UI font family.
     markdown_preview_font_family: Option<SharedString>,
     /// The font family to use for code in the markdown preview.
-    /// Falls back to the buffer font family if unset.
+    /// When unset, code blocks use the buffer font family and inline code uses
+    /// `markdown_inline_code_font_family`.
     markdown_preview_code_font_family: Option<SharedString>,
     /// The font size to use for rendering in the markdown preview.
-    /// Falls back to the UI font size if unset.
+    /// Falls back to the UI font size.
     markdown_preview_font_size: Option<Pixels>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
@@ -433,12 +443,39 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
+    /// Returns the font family to use for prose in markdown-rendered surfaces.
+    pub fn markdown_prose_font_family(&self) -> &SharedString {
+        self.markdown_prose_font_family
+            .as_ref()
+            .unwrap_or(&self.ui_font.family)
+    }
+
+    /// Returns the font family to use for inline code in markdown-rendered surfaces.
+    pub fn markdown_inline_code_font_family(&self) -> &SharedString {
+        self.markdown_inline_code_font_family
+            .as_ref()
+            .unwrap_or(&self.buffer_font.family)
+    }
+
+    /// Returns the font size to use for prose in hover popups, if configured.
+    pub fn hover_popover_font_size(&self) -> Option<Pixels> {
+        self.hover_popover_font_size.map(clamp_font_size)
+    }
+
+    /// Returns the font family to use for inline code in the markdown preview.
+    pub fn markdown_preview_inline_code_font_family(&self) -> &SharedString {
+        self.markdown_preview_code_font_family
+            .as_ref()
+            .or(self.markdown_inline_code_font_family.as_ref())
+            .unwrap_or(&self.buffer_font.family)
+    }
+
     /// Returns the font family to use in the markdown preview,
-    /// falling back to the UI font family when unset.
+    /// falling back to the prose and UI font families when unset.
     pub fn markdown_preview_font_family(&self) -> &SharedString {
         self.markdown_preview_font_family
             .as_ref()
-            .unwrap_or(&self.ui_font.family)
+            .unwrap_or_else(|| self.markdown_prose_font_family())
     }
 
     /// Returns the font family to use for code in the markdown preview,
@@ -740,6 +777,15 @@ impl settings::Settings for ThemeSettings {
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
+            markdown_prose_font_family: content
+                .markdown_prose_font_family
+                .as_ref()
+                .map(|f| f.0.clone().into()),
+            markdown_inline_code_font_family: content
+                .markdown_inline_code_font_family
+                .as_ref()
+                .map(|f| f.0.clone().into()),
+            hover_popover_font_size: content.hover_popover_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content
                 .markdown_preview_font_family
                 .as_ref()
