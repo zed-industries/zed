@@ -30,6 +30,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
+use url::Url;
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
     paths::PathStyle, rel_path::RelPath,
@@ -363,13 +364,17 @@ fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>
             continue;
         }
 
-        *url = delegate
-            .resolve_relative_path(url.clone().into())
-            .to_string_lossy()
-            .into_owned();
+        let path = delegate.resolve_relative_path(url.clone().into());
+        if let Some(file_url) = file_path_to_schema_url(&path) {
+            *url = file_url;
+        }
     }
 
     Some(Value::Object(settings_map))
+}
+
+fn file_path_to_schema_url(path: &Path) -> Option<String> {
+    Url::from_file_path(path).ok().map(|url| url.to_string())
 }
 
 fn json_schema_proxy_settings(proxy: Option<String>) -> Option<Value> {
@@ -404,9 +409,34 @@ async fn get_cached_server_binary(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use serde_json::json;
 
-    use super::json_schema_proxy_settings;
+    use super::{file_path_to_schema_url, json_schema_proxy_settings};
+
+    #[cfg(unix)]
+    #[test]
+    fn test_file_path_to_schema_url_converts_unix_absolute_path() {
+        assert_eq!(
+            file_path_to_schema_url(Path::new("/worktree/schema.json")),
+            Some("file:///worktree/schema.json".to_string())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_file_path_to_schema_url_converts_windows_absolute_path() {
+        assert_eq!(
+            file_path_to_schema_url(Path::new(r"C:\worktree\schema.json")),
+            Some("file:///C:/worktree/schema.json".to_string())
+        );
+    }
+
+    #[test]
+    fn test_file_path_to_schema_url_ignores_relative_path() {
+        assert_eq!(file_path_to_schema_url(Path::new("schema.json")), None);
+    }
 
     #[test]
     fn test_json_schema_proxy_settings_includes_proxy() {
