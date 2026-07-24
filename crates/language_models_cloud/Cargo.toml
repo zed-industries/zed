@@ -29,4 +29,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }

@@ -22,6 +22,7 @@ pub struct ListHeader {
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     inset: bool,
     selected: bool,
+    height: Option<DefiniteLength>,
 }
 
 impl ListHeader {
@@ -36,7 +37,13 @@ impl ListHeader {
             disclosure_shape: None,
             on_toggle: None,
             selected: false,
+            height: None,
         }
+    }
+
+    pub fn height(mut self, height: impl Into<DefiniteLength>) -> Self {
+        self.height = Some(height.into());
+        self
     }
 
     pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
@@ -97,9 +104,12 @@ impl RenderOnce for ListHeader {
             .group("list_header")
             .child(
                 div()
-                    .map(|this| match ui_density {
-                        UiDensity::Comfortable => this.h_5(),
-                        _ => this.h_7(),
+                    .map(|this| match self.height {
+                        Some(height) => this.h(height),
+                        None => match ui_density {
+                            UiDensity::Comfortable => this.h_5(),
+                            _ => this.h_7(),
+                        },
                     })
                     .when(self.inset, |this| this.px_2())
                     .when(self.selected, |this| {

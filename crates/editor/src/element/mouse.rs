@@ -1007,8 +1007,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !editor.has_pending_selection()
-            && matches!(editor.selection_drag_state, SelectionDragState::None)
+        if editor.has_autoscroll_request()
+            || !editor.has_pending_selection()
+                && matches!(editor.selection_drag_state, SelectionDragState::None)
         {
             return;
         }
@@ -1193,4 +1194,95 @@ fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 
 fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
     (delta.pow(1.2) / 300.0).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        SelectionEffects, editor_tests::init_test, scroll::Autoscroll,
+        test::editor_test_context::EditorTestContext,
+    };
+    use gpui::{Modifiers, TestAppContext};
+
+    #[gpui::test]
+    async fn test_mouse_drag_preserves_pending_sticky_header_autoscroll(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        let line_height = cx.update_editor(|editor, window, cx| {
+            editor
+                .style(cx)
+                .text
+                .line_height_in_pixels(window.rem_size())
+        });
+
+        let buffer = indoc::indoc! {"
+                ˇfn foo() {
+                    let abc = 123;
+                }
+                struct Bar;
+                impl Bar {
+                    fn new() -> Self {
+                        Self
+                    }
+                }
+                fn baz() {
+                }
+            "};
+        cx.set_state(&buffer);
+
+        let text_origin_x = cx.update_editor(|editor, _, _| {
+            editor
+                .last_position_map
+                .as_ref()
+                .unwrap()
+                .text_hitbox
+                .bounds
+                .origin
+                .x
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll(gpui::Point { x: 0., y: 5.5 }, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        let mouse_drag_position = gpui::Point {
+            x: text_origin_x,
+            y: 2.25 * line_height,
+        };
+        cx.update_editor(|editor, window, cx| {
+            let position_map = editor.last_position_map.as_ref().unwrap().clone();
+            let anchor = editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .display_point_to_anchor(DisplayPoint::new(DisplayRow(5), 0), Bias::Left);
+
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::top_relative(1.0)),
+                window,
+                cx,
+                |selections| {
+                    selections.clear_disjoint();
+                    selections
+                        .set_pending_anchor_range(anchor..anchor, crate::SelectMode::Character);
+                },
+            );
+            assert!(editor.has_autoscroll_request());
+
+            EditorElement::mouse_dragged(
+                editor,
+                &MouseMoveEvent {
+                    position: mouse_drag_position,
+                    modifiers: Modifiers::none(),
+                    pressed_button: Some(MouseButton::Left),
+                },
+                &position_map,
+                window,
+                cx,
+            );
+            assert!(editor.has_autoscroll_request());
+        });
+    }
 }

@@ -3478,7 +3478,7 @@ impl Workspace {
                                         // (Note that the tests always do this implicitly, so you must manually test with something like:
                                         //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                                         // )
-                                        window.draw(cx).clear();
+                                        window.draw(cx).clear(cx);
                                         return true;
                                     }
                                     false

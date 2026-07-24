@@ -428,6 +428,14 @@ impl Server {
                 broadcast_project_message_from_host::<proto::RefreshSemanticTokens>,
             )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentColors>,
+            )
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshDocumentLinks>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshFoldingRanges>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentSymbols>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
