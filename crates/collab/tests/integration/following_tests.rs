@@ -2447,6 +2447,157 @@ async fn test_active_multi_workspace_determines_participant_location(
     }
 }
 
+#[gpui::property_test(config = ProptestConfig {
+    cases: 8,
+    ..Default::default()
+})]
+async fn test_active_multi_workspace_determines_follower_view(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "first.txt": "first",
+                "second.txt": "second",
+            }),
+        )
+        .await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (first_workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    first_workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("first.txt")), None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let peer_id_a = client_a.peer_id().unwrap();
+    workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.start_following(peer_id_a, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should have an active item");
+        assert_eq!(active_item.tab_content_text(0, cx), "first.txt");
+    });
+
+    let multi_workspace_a = cx_a
+        .window_handle()
+        .downcast::<MultiWorkspace>()
+        .expect("window should contain a multi-workspace");
+    let app_state = client_a.app_state.clone();
+    let second_workspace_a = multi_workspace_a
+        .update(cx_a, |multi_workspace, window, cx| {
+            let workspace =
+                cx.new(|cx| Workspace::new(None, project_a.clone(), app_state, window, cx));
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+            workspace
+        })
+        .unwrap();
+    second_workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("second.txt")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should have an active item");
+        assert_eq!(active_item.tab_content_text(0, cx), "second.txt");
+    });
+    multi_workspace_a
+        .read_with(cx_a, |multi_workspace, _| {
+            assert!(multi_workspace.is_workspace_retained(&first_workspace_a));
+            assert!(multi_workspace.is_workspace_retained(&second_workspace_a));
+        })
+        .unwrap();
+
+    cx_a.deactivate_window();
+    multi_workspace_a
+        .update(cx_a, |multi_workspace, window, cx| {
+            multi_workspace.activate(first_workspace_a.clone(), None, window, cx)
+        })
+        .unwrap();
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should retain its active item while the host is inactive");
+        assert_eq!(active_item.tab_content_text(0, cx), "second.txt");
+    });
+
+    cx_a.update(|window, _| window.activate_window());
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        assert!(workspace.is_being_followed(peer_id_a));
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(peer_id_a.into())
+        );
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should have the active workspace's item");
+        assert_eq!(active_item.tab_content_text(0, cx), "first.txt");
+    });
+
+    workspace_b.update_in(cx_b, |workspace, window, cx| {
+        workspace.unfollow(peer_id_a, window, cx).unwrap();
+        workspace.close_all_items_and_panes(&Default::default(), window, cx);
+    });
+    first_workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.close_all_items_and_panes(&Default::default(), window, cx)
+    });
+    second_workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.close_all_items_and_panes(&Default::default(), window, cx)
+    });
+    executor.run_until_parked();
+}
+
 #[gpui::test]
 async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let (_server, client_a, client_b, channel) = TestServer::start2(cx_a, cx_b).await;
