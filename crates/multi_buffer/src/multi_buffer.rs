@@ -512,6 +512,7 @@ struct DiffState {
     diff: Entity<BufferDiff>,
     main_buffer: Option<Entity<language::Buffer>>,
     _subscription: gpui::Subscription,
+    _main_buffer_subscription: Option<gpui::Subscription>,
 }
 
 impl DiffState {
@@ -633,6 +634,7 @@ impl DiffState {
             }),
             diff,
             main_buffer: None,
+            _main_buffer_subscription: None,
         }
     }
 
@@ -642,6 +644,7 @@ impl DiffState {
         cx: &mut Context<MultiBuffer>,
     ) -> Self {
         let weak_main_buffer = main_buffer.downgrade();
+        let main_buffer_subscription = cx.observe(&main_buffer, |_, _, cx| cx.notify());
         DiffState {
             _subscription: cx.subscribe(&diff, {
                 move |this, diff, event, cx| {
@@ -669,6 +672,7 @@ impl DiffState {
             }),
             diff,
             main_buffer: Some(main_buffer),
+            _main_buffer_subscription: Some(main_buffer_subscription),
         }
     }
 }
@@ -1311,7 +1315,12 @@ impl MultiBuffer {
         }
         let mut diff_bases = HashMap::default();
         for (buffer_id, diff) in self.diffs.iter() {
-            diff_bases.insert(*buffer_id, DiffState::new(diff.diff.clone(), new_cx));
+            let diff_state = if let Some(main_buffer) = &diff.main_buffer {
+                DiffState::new_inverted(diff.diff.clone(), main_buffer.clone(), new_cx)
+            } else {
+                DiffState::new(diff.diff.clone(), new_cx)
+            };
+            diff_bases.insert(*buffer_id, diff_state);
         }
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
@@ -2182,6 +2191,76 @@ impl MultiBuffer {
         } else {
             AllLanguageSettings::get_global(cx).defaults.clone()
         }
+    }
+
+    pub fn indentation_settings(
+        &self,
+        cx: &App,
+    ) -> (IndentationSettings, HashMap<BufferId, IndentationSettings>) {
+        let default = self
+            .as_singleton()
+            .map(|buffer| {
+                let buffer_id = buffer.read(cx).remote_id();
+                let settings_buffer = self
+                    .diffs
+                    .get(&buffer_id)
+                    .and_then(|diff_state| diff_state.main_buffer.as_ref())
+                    .unwrap_or(&buffer);
+                LanguageSettings::for_buffer(&settings_buffer.read(cx), cx).indentation()
+            })
+            .unwrap_or_else(|| AllLanguageSettings::get_global(cx).defaults.indentation());
+        if self.singleton {
+            return (default, HashMap::default());
+        }
+        let mut by_buffer = HashMap::default();
+
+        for (buffer_id, buffer_state) in &self.buffers {
+            if self
+                .diffs
+                .get(buffer_id)
+                .is_some_and(|diff_state| diff_state.main_buffer.is_some())
+            {
+                continue;
+            }
+            let indentation =
+                LanguageSettings::for_buffer(&buffer_state.buffer.read(cx), cx).indentation();
+            if indentation != default {
+                by_buffer.insert(*buffer_id, indentation);
+                if let Some(diff_state) = self.diffs.get(buffer_id) {
+                    by_buffer.insert(
+                        diff_state
+                            .diff
+                            .read(cx)
+                            .base_text_buffer()
+                            .read(cx)
+                            .remote_id(),
+                        indentation,
+                    );
+                }
+            }
+        }
+
+        for (buffer_id, diff_state) in &self.diffs {
+            let Some(main_buffer) = &diff_state.main_buffer else {
+                continue;
+            };
+            let indentation = LanguageSettings::for_buffer(&main_buffer.read(cx), cx).indentation();
+            if indentation != default {
+                by_buffer.insert(*buffer_id, indentation);
+                by_buffer.insert(
+                    diff_state
+                        .diff
+                        .read(cx)
+                        .base_text_buffer()
+                        .read(cx)
+                        .remote_id(),
+                    indentation,
+                );
+                by_buffer.insert(main_buffer.read(cx).remote_id(), indentation);
+            }
+        }
+
+        (default, by_buffer)
     }
 
     pub fn for_each_buffer(&self, f: &mut dyn FnMut(&Entity<Buffer>)) {

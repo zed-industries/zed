@@ -2317,7 +2317,7 @@ impl Render for SplittableEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, sync::Arc};
+    use std::{any::TypeId, num::NonZeroU32, sync::Arc};
 
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
@@ -2325,7 +2325,7 @@ mod tests {
     use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
     use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
-    use language::{Buffer, Capability};
+    use language::{Buffer, Capability, ModelineSettings};
     use multi_buffer::{MultiBuffer, PathKey};
     use pretty_assertions::assert_eq;
     use project::Project;
@@ -2869,6 +2869,106 @@ mod tests {
             fff"
             .unindent(),
             &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_diff_uses_per_buffer_tab_widths(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let (narrow_buffer, narrow_diff) =
+            buffer_with_diff("x\tnarrow old", "x\tnarrow new", &mut cx);
+        let (wide_buffer, wide_diff) = buffer_with_diff("x\twide old", "x\twide new", &mut cx);
+
+        narrow_buffer.update(cx, |buffer, _| {
+            buffer.set_modeline(Some(ModelineSettings {
+                tab_size: NonZeroU32::new(2),
+                indent_size: NonZeroU32::new(8),
+                ..Default::default()
+            }));
+        });
+        wide_buffer.update(cx, |buffer, _| {
+            buffer.set_modeline(Some(ModelineSettings {
+                tab_size: NonZeroU32::new(8),
+                indent_size: NonZeroU32::new(2),
+                ..Default::default()
+            }));
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                narrow_buffer.clone(),
+                [Point::zero()..narrow_buffer.read(cx).max_point()],
+                0,
+                narrow_diff,
+                cx,
+            );
+            editor.update_excerpts_for_path(
+                PathKey::sorted(1),
+                wide_buffer.clone(),
+                [Point::zero()..wide_buffer.read(cx).max_point()],
+                0,
+                wide_diff,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _| {
+            (
+                editor.rhs_editor.clone(),
+                editor
+                    .lhs
+                    .as_ref()
+                    .expect("split editor should have an lhs editor")
+                    .editor
+                    .clone(),
+            )
+        });
+        let expanded_lines = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+            editor.update(cx, |editor, cx| {
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map
+                        .snapshot(cx)
+                        .tab_snapshot()
+                        .text()
+                        .lines()
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+            })
+        };
+
+        assert_eq!(
+            expanded_lines(&rhs_editor, &mut cx),
+            ["x narrow new".to_owned(), "x       wide new".to_owned()]
+        );
+        assert_eq!(
+            expanded_lines(&lhs_editor, &mut cx),
+            ["x narrow old".to_owned(), "x       wide old".to_owned()]
+        );
+
+        wide_buffer.update(cx, |buffer, cx| {
+            if buffer.set_modeline(Some(ModelineSettings {
+                tab_size: NonZeroU32::new(4),
+                indent_size: NonZeroU32::new(2),
+                ..Default::default()
+            })) {
+                cx.notify();
+            }
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            expanded_lines(&rhs_editor, &mut cx),
+            ["x narrow new".to_owned(), "x   wide new".to_owned()]
+        );
+        assert_eq!(
+            expanded_lines(&lhs_editor, &mut cx),
+            ["x narrow old".to_owned(), "x   wide old".to_owned()]
         );
     }
 
