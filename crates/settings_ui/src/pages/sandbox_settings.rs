@@ -183,6 +183,21 @@ pub(crate) fn render_sandbox_settings_page(
                         },
                     )
                     .tab_index(0),
+                )
+                .child(
+                    SwitchField::new(
+                        "sandbox-warn-ntfs-grants",
+                        Some("Warn About Windows-Drive Grants"),
+                        Some(
+                            "Windows only: warn when a sandbox grant targets a file on a Windows drive (accessed inside WSL via DrvFs). Such grants are enforced through a translated path and their sandbox-integrity guarantees are weaker than files on the Linux distro's own filesystem."
+                                .into(),
+                        ),
+                        permissions.warn_ntfs_grants,
+                        move |state, _window, cx| {
+                            set_warn_ntfs_grants(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
                 ),
         )
         )
@@ -473,6 +488,12 @@ fn set_warn_confusable_unicode(value: bool, cx: &mut App) {
     });
 }
 
+fn set_warn_ntfs_grants(value: bool, cx: &mut App) {
+    update_sandbox_permissions(cx, move |permissions| {
+        permissions.warn_ntfs_grants = Some(value);
+    });
+}
+
 fn add_network_host(host: String, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         let hosts = &mut permissions.network_hosts.get_or_insert_default().0;
@@ -513,6 +534,7 @@ fn insert_write_path_subtree(paths: &mut Vec<settings::GrantedWritePathContent>,
     paths.push(settings::GrantedWritePathContent {
         requested: path,
         resolved: None,
+        on_windows_fs: false,
     });
 }
 

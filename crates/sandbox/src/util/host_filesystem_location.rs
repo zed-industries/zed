@@ -43,9 +43,8 @@ use std::os::fd::{BorrowedFd, OwnedFd};
 ///   compares `fstat` of this descriptor against `lstat` of the mounted path
 ///   after the mounts, catching a swap between the host check and the mount (the
 ///   post-mount half; see `linux_bubblewrap::validate_binds` and `README.md`).
-/// - **Windows**: only the raw path — a Windows process holds no Linux fds, so
-///   the real capture-at-validation happens inside WSL (in the
-///   `--wsl-sandbox-helper`).
+/// - **Windows**: the persisted canonical path is resolved inside WSL at
+///   approval time. The WSL helper reopens and verifies it before binding it.
 ///
 /// The type is deliberately **opaque**: it does not `Deref`. Its paths are
 /// readable only through [`HostFilesystemLocation::display`] (for showing the
@@ -143,22 +142,13 @@ impl HostFilesystemLocation {
         }
     }
 
-    /// The captured canonical path (Linux/macOS), falling back to the raw path
-    /// on platforms that capture no canonical identity of their own (Windows).
+    /// The captured canonical path, falling back to the raw path only on
+    /// platforms that do not resolve a separate canonical identity.
     ///
     /// Used both for display and as the subtree key in
-    /// [`normalize_host_filesystem_locations`]. On Linux/macOS this is the
-    /// symlink-free path proven at capture time, so `Path::starts_with` on it
-    /// models real filesystem containment.
+    /// [`normalize_host_filesystem_locations`].
     fn canonical_or_raw_path(&self) -> &Path {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            self.canonical.path()
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            &self.untrusted_raw_path
-        }
+        self.canonical.path()
     }
 
     /// Whether the raw request resolved through a symlink to a different target.
@@ -216,14 +206,16 @@ impl HostFilesystemLocation {
         self.canonical.dup_fd()
     }
 
-    /// Windows: the requested path, to be mapped into WSL and handed to the
-    /// in-WSL helper. Windows captures no identity itself (it holds no Linux
-    /// fds); the real capture-at-validation happens WSL-side in the helper, so
-    /// here the requested path *is* the location. (WSL currently binds the
-    /// requested path; moving this to the canonical is a separate future change.)
+    /// Windows: the requested path, retained for distro selection and display.
     #[cfg(target_os = "windows")]
-    pub(crate) fn windows_path(&self) -> &Path {
+    pub(crate) fn windows_requested_path(&self) -> &Path {
         &self.untrusted_raw_path
+    }
+
+    /// Windows: the canonical path resolved inside WSL at approval time.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn windows_canonical_path(&self) -> &Path {
+        self.canonical.path()
     }
 }
 

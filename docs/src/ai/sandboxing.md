@@ -23,6 +23,10 @@ sandbox?](#trust) for more details.
 Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language servers, extensions, tasks, your normal
 terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
 
+> **Note**: Under some conditions, sandboxes on Windows are weaker than those on
+  Linux and MacOS, and may not prevent all escape attempts. See
+  [Windows](#windows) for more detail.
+
 ## Sandboxed Tools {#sandboxed-tools}
 
 Zed Agent sandboxing currently applies to the `terminal` and `fetch` tools.
@@ -279,6 +283,16 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 
 On Windows, Zed Agent sandboxing is supported only when the agent action runs inside WSL.
 
+> **Warning**: Due to limitations in WSL's implementation, it is possible that a
+  terminal command may write outside sandbox grants when the user has given
+  write access to any path that resides on the NTFS drive. This includes the
+  current-project grant for projects stored on NTFS. Zed will show a warning
+  when this happens.
+
+  In practice, we believe this is difficult to exploit, but security cannot be
+  guaranteed. See [below](#why-ntfs-compromise) for a more technical
+  explanation. todo! check formatting.
+
 Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that
 Bubblewrap needs. Native Windows processes do not currently have the same sandbox integration in Zed, so a native Windows
 command cannot be confined by Zed Agent's OS sandbox in the same way.
@@ -295,6 +309,38 @@ behavior of running in your native shell. It selects the shell using the usual p
 Git Bash) when one is installed, otherwise PowerShell, and finally `cmd.exe`. Because the command then runs against native
 Windows paths instead of WSL's Linux filesystem, path conventions change accordingly (for example `C:\...` or `/c/...`
 rather than WSL's `/mnt/c/...`), so a command written for the sandboxed WSL shell may behave differently.
+
+#### Why do NTFS objects compromise the sandbox? {#why-ntfs-compromise}
+
+In general, the security of the sandbox relies on two things matching:
+
+- The path that the user was presented when they approved
+- The filesystem object to which write access was granted
+
+If a user believes they granted access to `/foo/hello`, but they actually granted
+access to `/bar/world`, then the sandbox has failed.
+
+On Linux, this "filesystem object" is called an `inode`.
+
+But `/foo/hello` doesn't refer to an inode. Loosely, it refers to a location
+where an inode might exist. It may refer to one inode at one point in time,
+and another inode later. 
+
+There are various ways in which an attacker can change the inode that a given
+path refers to, but they mostly involve replacing parts of the path with a
+symlink to somewhere else. And so, on non-WSL Linux, we can protect against this
+by using a canonicalized, symlink-free path as the source of truth for the
+inode. But on its own, this is not enough, since there is a timing window
+between showing the approval prompt (or loading the persisted path) and
+constructing the sandbox during which it can be swapped for a symlink.
+
+To protect against that, we deal with "file descriptors", which are loosely
+"references to inodes", rather than paths, which are "places an inode could be".
+This means that replacing some component of the path with a symlink has no
+effect on which inode is pointed to by a file descriptor.
+
+
+
 
 ## Choosing What to Approve {#choosing-what-to-approve}
 

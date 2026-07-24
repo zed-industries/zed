@@ -32,6 +32,8 @@ pub use util::{
     HostFilesystemLocation, HostFilesystemLocationDisplay, normalize_host_filesystem_locations,
     resolve_canonical,
 };
+#[cfg(target_os = "windows")]
+pub use windows_wsl::{ResolvedGrant, resolve_canonical_for_grant};
 #[cfg(target_os = "linux")]
 use util::{CanonicalPathBuf, linux_fd_identity};
 #[cfg(target_os = "macos")]
@@ -121,6 +123,23 @@ pub enum SandboxNetPolicy {
 /// The caller computes this list because the sandbox layer does not know which
 /// application-specific paths need stronger protection.
 pub type ProtectedPaths = Vec<HostFilesystemLocation>;
+
+/// Whether `path` (a host path) resides on a Windows drive reached through WSL's
+/// DrvFs, where sandbox-integrity guarantees are weaker than on the distro's
+/// native filesystem. Always `false` off Windows, where no such filesystem
+/// exists. This is a cheap structural check on the path shape; the authoritative
+/// per-grant classification is done in WSL by [`resolve_canonical_for_grant`].
+pub fn path_is_on_windows_drive(path: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows_wsl::path_is_on_windows_drive(path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        false
+    }
+}
 
 impl SandboxPolicy {
     /// Combine two policy layers. Filesystem/network grants are unioned into the
@@ -844,19 +863,19 @@ impl Sandbox {
             allow_network: matches!(self.network, NetSetup::Unrestricted),
             allow_fs_write: self.fs.allow_fs_write,
         };
-        // On Windows the location carries only the requested path; the in-WSL
-        // helper performs the real capture-at-validation. These are mapped into
-        // WSL by `wrap_invocation`.
-        let writable_paths: Vec<PathBuf> = self
+        let writable_paths = self
             .fs
             .writable_paths
             .iter()
-            .map(|location| location.windows_path().to_path_buf())
+            .map(|location| windows_wsl::WritablePath {
+                requested: location.windows_requested_path().to_path_buf(),
+                canonical: location.windows_canonical_path().to_path_buf(),
+            })
             .collect();
         let protected_paths: Vec<PathBuf> = self
             .protected_paths()
             .iter()
-            .map(|location| location.windows_path().to_path_buf())
+            .map(|location| location.windows_requested_path().to_path_buf())
             .collect();
         let (program, args) = windows_wsl::wrap_invocation(
             command.program.clone(),
@@ -901,6 +920,8 @@ impl Drop for Sandbox {
 /// otherwise it's dead code on macOS.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) const WSL_SANDBOX_HELPER_FLAG: &str = "--wsl-sandbox-helper";
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) const WSL_SANDBOX_RESOLVE_FLAG: &str = "--wsl-sandbox-resolve-path";
 
 /// Handle a possible re-exec of this binary as a sandbox helper.
 ///

@@ -48,6 +48,7 @@ const LAUNCHER_FLAG: &str = "--zed-linux-sandbox-launcher";
 /// capture must happen WSL-side because a Windows process holds no Linux fds.
 /// See `README.md`. Shared with the Windows side via `crate::WSL_SANDBOX_HELPER_FLAG`.
 const WSL_HELPER_FLAG: &str = crate::WSL_SANDBOX_HELPER_FLAG;
+const WSL_RESOLVE_FLAG: &str = crate::WSL_SANDBOX_RESOLVE_FLAG;
 /// Sentinel argv token meaning "this optional field is absent".
 const LAUNCHER_NONE: &str = "-";
 const PROXY_SOCKET_SANDBOX_PATH_PREFIX: &str = "/tmp/zed-sandbox";
@@ -1133,18 +1134,6 @@ fn lstat_dev_ino(path: &Path) -> std::io::Result<(u64, u64)> {
     Ok((metadata.dev(), metadata.ino()))
 }
 
-/// Open an `O_PATH` descriptor pinning `path`'s inode (read/write on contents is
-/// not granted), the same capture the native-Linux policy layer performs in
-/// `HostFilesystemLocation::new`.
-fn open_o_path_fd(path: &Path) -> std::io::Result<OwnedFd> {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_PATH | libc::O_CLOEXEC)
-        .open(path)?;
-    Ok(OwnedFd::from(file))
-}
-
 /// A decoded WSL-helper invocation (`--wsl-sandbox-helper`). All fields are
 /// produced by the trusted Windows side and parsed before any untrusted command
 /// runs.
@@ -1166,7 +1155,48 @@ struct WslHelperInvocation {
 /// Handle a possible re-exec of this binary as the WSL-side sandbox helper. Does
 /// not return if it was invoked as one.
 pub fn run_wsl_helper_if_invoked() {
-    let Some(invocation) = parse_wsl_helper_args(std::env::args_os()) else {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    if args.get(1).and_then(|arg| arg.to_str()) == Some(WSL_RESOLVE_FLAG) {
+        let Some(path) = args.get(2) else {
+            eprintln!("zed: malformed WSL canonical-path resolver invocation");
+            std::process::exit(127);
+        };
+        if args.len() != 3 {
+            eprintln!("zed: malformed WSL canonical-path resolver invocation");
+            std::process::exit(127);
+        }
+        match crate::util::CanonicalPathBuf::resolve(PathBuf::from(path.as_os_str())) {
+            Ok(canonical) => {
+                let Some(canonical) = canonical.path().to_str() else {
+                    eprintln!("zed: canonical WSL sandbox grant is not valid UTF-8");
+                    std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+                };
+                let Ok(distro) = std::env::var("WSL_DISTRO_NAME") else {
+                    eprintln!("zed: WSL_DISTRO_NAME is unavailable while resolving sandbox grant");
+                    std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+                };
+                // Classify the backing filesystem of the *canonical* target (the
+                // path that will actually be bound), so the Windows side can
+                // persist whether this grant lives on a Windows-hosted (DrvFs)
+                // filesystem, whose sandbox-integrity guarantees are weaker.
+                let fs_class = if path_is_on_windows_fs(Path::new(canonical)) {
+                    "windows-fs"
+                } else {
+                    "native-fs"
+                };
+                println!("{distro}");
+                println!("{canonical}");
+                println!("{fs_class}");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("zed: could not resolve WSL sandbox grant: {error}");
+                std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);
+            }
+        }
+    }
+
+    let Some(invocation) = parse_wsl_helper_args(args) else {
         return;
     };
     let invocation = match invocation {
@@ -1177,6 +1207,27 @@ pub fn run_wsl_helper_if_invoked() {
         }
     };
     run_wsl_helper(invocation);
+}
+
+/// Whether `path` resides on a Windows-hosted filesystem exposed to WSL via
+/// DrvFs. Inside WSL the Windows drives (`/mnt/<letter>`) are served by either
+/// 9p or virtiofs, whereas the distro's own filesystems are native (ext4/btrfs/
+/// overlay/tmpfs). We use the backing filesystem type rather than a `/mnt/`
+/// path prefix so a reconfigured automount root, or a symlink that lands on a
+/// Windows drive, is still classified correctly. Fails safe: if the type can't
+/// be determined we report `true` (weaker guarantees ⇒ warn) rather than
+/// silently treating it as native.
+fn path_is_on_windows_fs(path: &Path) -> bool {
+    // `statfs.f_type` magics for the DrvFs transports. virtiofs is FUSE-backed.
+    const V9FS_MAGIC: i64 = 0x0102_1997;
+    const FUSE_SUPER_MAGIC: i64 = 0x6573_5546;
+    match nix::sys::statfs::statfs(path) {
+        Ok(stat) => {
+            let fs_type = stat.filesystem_type().0 as i64;
+            fs_type == V9FS_MAGIC || fs_type == FUSE_SUPER_MAGIC
+        }
+        Err(_) => true,
+    }
 }
 
 fn parse_wsl_helper_args(
@@ -1243,16 +1294,15 @@ fn parse_count(value: OsString, what: &str) -> Result<usize> {
     reason = "the WSL helper is a dedicated per-command process that must spawn and wait for bwrap"
 )]
 fn run_wsl_helper(invocation: WslHelperInvocation) -> ! {
-    // Capture an `O_PATH` fd per writable bind *here*, inside WSL — this is the
-    // capture-at-validation step that on native Linux happens in the Zed process.
     let mut fds = Vec::with_capacity(invocation.writable_paths.len());
     for path in &invocation.writable_paths {
-        match open_o_path_fd(path) {
+        let fd = crate::util::CanonicalPathBuf::from_canonical(path.clone())
+            .and_then(|canonical| canonical.dup_fd());
+        match fd {
             Ok(fd) => fds.push(fd),
             Err(error) => {
-                // Fail closed: a writable bind we can't pin can't be verified.
                 eprintln!(
-                    "zed: WSL sandbox helper could not open writable bind {}: {error}",
+                    "zed: WSL sandbox helper could not verify canonical writable bind {}: {error}",
                     path.display()
                 );
                 std::process::exit(SANDBOX_SETUP_FAILED_EXIT_CODE);

@@ -15,6 +15,13 @@ pub struct GrantedWritePath {
     /// approved. `None` for a legacy/hand-authored bare-string settings entry,
     /// which is resolved fresh at enforcement time.
     pub resolved: Option<PathBuf>,
+    /// Windows/WSL only: whether the canonical target lives on a Windows-hosted
+    /// (DrvFs) filesystem, whose sandbox-integrity guarantees are weaker than a
+    /// distro-native filesystem. Recorded at approval time (after the user was
+    /// shown the weaker-guarantee warning) so later commands can reuse the grant
+    /// without re-classifying it. Always `false` on other platforms and for
+    /// legacy/bare-string entries.
+    pub on_windows_fs: bool,
 }
 
 impl GrantedWritePath {
@@ -24,14 +31,25 @@ impl GrantedWritePath {
         Self {
             requested,
             resolved: None,
+            on_windows_fs: false,
         }
     }
 
-    /// A grant whose canonical target was resolved when it was approved.
+    /// A grant whose canonical target was resolved when it was approved. Assumes
+    /// a native (non-Windows-hosted) filesystem; use [`Self::resolved_on_fs`] to
+    /// record the Windows/WSL DrvFs classification.
     pub fn resolved(requested: PathBuf, resolved: PathBuf) -> Self {
+        Self::resolved_on_fs(requested, resolved, false)
+    }
+
+    /// A grant whose canonical target was resolved when it was approved,
+    /// recording whether that target lives on a Windows-hosted (DrvFs)
+    /// filesystem.
+    pub fn resolved_on_fs(requested: PathBuf, resolved: PathBuf, on_windows_fs: bool) -> Self {
         Self {
             requested,
             resolved: Some(resolved),
+            on_windows_fs,
         }
     }
 
@@ -53,9 +71,16 @@ impl serde::Serialize for GrantedWritePath {
             None => self.requested.serialize(serializer),
             Some(resolved) => {
                 use serde::ser::SerializeStruct as _;
-                let mut state = serializer.serialize_struct("GrantedWritePath", 2)?;
+                // Emit `on_windows_fs` only when set, so native grants (the
+                // common case, and every grant on non-Windows platforms) keep
+                // the compact two-field form and legacy rows round-trip.
+                let field_count = if self.on_windows_fs { 3 } else { 2 };
+                let mut state = serializer.serialize_struct("GrantedWritePath", field_count)?;
                 state.serialize_field("requested", &self.requested)?;
                 state.serialize_field("resolved", resolved)?;
+                if self.on_windows_fs {
+                    state.serialize_field("on_windows_fs", &self.on_windows_fs)?;
+                }
                 state.end()
             }
         }
@@ -69,6 +94,8 @@ impl<'de> serde::Deserialize<'de> for GrantedWritePath {
             requested: PathBuf,
             #[serde(default)]
             resolved: Option<PathBuf>,
+            #[serde(default)]
+            on_windows_fs: bool,
         }
 
         #[derive(serde::Deserialize)]
@@ -82,13 +109,16 @@ impl<'de> serde::Deserialize<'de> for GrantedWritePath {
             StringOrObject::String(requested) => Self {
                 requested,
                 resolved: None,
+                on_windows_fs: false,
             },
             StringOrObject::Object(Object {
                 requested,
                 resolved,
+                on_windows_fs,
             }) => Self {
                 requested,
                 resolved,
+                on_windows_fs,
             },
         })
     }

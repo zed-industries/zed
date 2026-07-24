@@ -18,6 +18,12 @@ use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
 /// enforcement can prove the object living at the path *now* is still the one
 /// that was captured, closing the classic time-of-check-to-time-of-use hole
 /// where a verified path is swapped for a symlink before it is actually used.
+/// On **Windows** it is a plain path string, but constrained by construction to
+/// one of the two shapes a sandboxed WSL command can name: a Windows drive path
+/// (`C:\...`, on NTFS) or a Linux-absolute path (`/...`, inside the WSL distro).
+/// `\\wsl.localhost\...`, other UNC paths, and relative paths are rejected — a
+/// sandboxed project is always local (WSL projects are remote and unsandboxed),
+/// so a grant is either the project's own NTFS files or a WSL-native location.
 /// On other platforms it is a plain canonical path (see the constructors for the
 /// per-platform rationale).
 ///
@@ -54,6 +60,8 @@ impl CanonicalPathBuf {
         // rejecting here fails closed for all of them at once.
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         require_absolute(path)?;
+        #[cfg(target_os = "windows")]
+        require_windows_grant_shape(path)?;
 
         #[cfg(target_os = "macos")]
         {
@@ -113,6 +121,8 @@ impl CanonicalPathBuf {
         // (macOS).
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         require_absolute(&path)?;
+        #[cfg(target_os = "windows")]
+        require_windows_grant_shape(&path)?;
 
         #[cfg(target_os = "macos")]
         {
@@ -214,6 +224,36 @@ fn require_absolute(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Windows: enforce that a stored grant path is one of the two shapes a
+/// sandboxed WSL command can name — a Windows drive path (`C:\...` or `\\?\C:\...`,
+/// on NTFS) or a Linux-absolute path (`/...`, inside the WSL distro). Everything
+/// else (notably `\\wsl.localhost\...` and other UNC paths, and relative paths)
+/// is rejected, so an invalid grant shape can't be represented as a
+/// [`CanonicalPathBuf`]. `Path::is_absolute` isn't used: it would reject a
+/// perfectly valid Linux-absolute grant like `/home/me` on Windows.
+#[cfg(target_os = "windows")]
+fn require_windows_grant_shape(path: &Path) -> io::Result<()> {
+    let text = path.to_string_lossy();
+    // Linux-absolute (WSL): exactly one leading '/'.
+    let is_wsl = text.starts_with('/') && !text.starts_with("//");
+    // Windows drive (NTFS): `X:...`, optionally behind the `\\?\` verbatim prefix.
+    let drive = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    let drive = drive.as_bytes();
+    let is_windows_drive = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
+    if is_wsl || is_windows_drive {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "sandbox grant path {} is neither a Windows drive path (`C:\\...`) \
+                 nor a WSL absolute path (`/...`)",
+                path.display()
+            ),
+        ))
+    }
+}
+
 impl PartialEq for CanonicalPathBuf {
     /// Two values are equal when they refer to the **same filesystem object**:
     /// the inode behind the `O_PATH` fd on Linux, the canonical path on
@@ -278,6 +318,36 @@ mod tests {
         match CanonicalPathBuf::from_canonical(PathBuf::from("relative/dir")) {
             Ok(_) => panic!("from_canonical must reject a relative path"),
             Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput),
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::CanonicalPathBuf;
+    use std::path::PathBuf;
+
+    #[test]
+    fn constructors_enforce_windows_grant_shape() {
+        // Accepted: Windows drive paths (NTFS) and WSL absolute paths.
+        for ok in [r"C:\Users\me", r"\\?\C:\Users\me", "/home/me/proj", "/mnt/c/Users/me"] {
+            assert!(
+                CanonicalPathBuf::from_canonical(PathBuf::from(ok)).is_ok(),
+                "{ok} should be accepted"
+            );
+        }
+        // Rejected: `\\wsl.localhost\...`, other UNC, and relative paths.
+        for bad in [
+            r"\\wsl.localhost\Ubuntu\home\me",
+            r"\\wsl$\Ubuntu\home\me",
+            r"\\server\share\dir",
+            r"relative\dir",
+            "also/relative",
+        ] {
+            match CanonicalPathBuf::from_canonical(PathBuf::from(bad)) {
+                Ok(_) => panic!("{bad} should be rejected"),
+                Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput),
+            }
         }
     }
 }

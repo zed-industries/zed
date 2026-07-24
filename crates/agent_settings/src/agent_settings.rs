@@ -438,6 +438,10 @@ pub struct SandboxPermissions {
     /// that contain potentially confusable Unicode characters (homoglyphs,
     /// invisible characters, or bidirectional overrides). Enabled by default.
     pub warn_confusable_unicode: bool,
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem, whose sandbox-integrity guarantees
+    /// are weaker than a distro-native filesystem. Enabled by default.
+    pub warn_ntfs_grants: bool,
 }
 
 impl Default for SandboxPermissions {
@@ -450,6 +454,8 @@ impl Default for SandboxPermissions {
             write_paths: Vec::new(),
             // The confusable-Unicode warning is a safety net, so it defaults on.
             warn_confusable_unicode: true,
+            // The weaker-guarantee warning for Windows-hosted grants defaults on.
+            warn_ntfs_grants: true,
         }
     }
 }
@@ -834,7 +840,7 @@ fn compile_sandbox_permissions(
                 let Ok(resolved) = util::paths::normalize_lexically(&resolved) else {
                     continue;
                 };
-                settings::GrantedWritePath::resolved(requested, resolved)
+                settings::GrantedWritePath::resolved_on_fs(requested, resolved, entry.on_windows_fs)
             }
             None => settings::GrantedWritePath::from_requested(requested),
         };
@@ -853,6 +859,7 @@ fn compile_sandbox_permissions(
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
         warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
+        warn_ntfs_grants: content.warn_ntfs_grants.unwrap_or(true),
     }
 }
 

@@ -573,6 +573,7 @@ async fn run_terminal_tool(
     // what lets enforcement rebuild the grant via a verifying reopen rather than
     // re-resolving the requested path by string (closing a symlink TOCTOU). A
     // path that can't be resolved is dropped — fail-closed.
+    #[cfg(not(target_os = "windows"))]
     let write_paths: Vec<settings::GrantedWritePath> = write_paths
         .into_iter()
         .filter_map(|requested| match sandbox::resolve_canonical(&requested) {
@@ -586,6 +587,31 @@ async fn run_terminal_tool(
             }
         })
         .collect();
+    #[cfg(target_os = "windows")]
+    let write_paths: Vec<settings::GrantedWritePath> = {
+        let Some(release) = wsl_zed_release.clone() else {
+            return Err("Could not select a Linux Zed release for WSL sandboxing".to_string());
+        };
+        let mut resolved_paths = Vec::with_capacity(write_paths.len());
+        for requested in write_paths {
+            match sandbox::resolve_canonical_for_grant(requested.clone(), release.clone()).await {
+                Ok(resolved) => {
+                    resolved_paths.push(settings::GrantedWritePath::resolved_on_fs(
+                        requested,
+                        resolved.canonical,
+                        resolved.on_windows_fs,
+                    ));
+                }
+                Err(error) => {
+                    log::warn!(
+                        "could not resolve sandbox write path {} in WSL: {error:#}",
+                        requested.display()
+                    );
+                }
+            }
+        }
+        resolved_paths
+    };
 
     let request = crate::sandboxing::SandboxRequest {
         network,
@@ -593,6 +619,41 @@ async fn run_terminal_tool(
         unsandboxed: want_unsandboxed,
         write_paths,
     };
+
+    // Before any escalation prompt: if this command's sandbox will contain a
+    // path on a Windows drive (DrvFs) — from an explicit grant, a standing
+    // grant, or the default project directory — its integrity guarantees are
+    // weaker. When the warning is enabled, confirm with the user first. This
+    // gate is transient (never persisted): on "Continue" the normal flow
+    // (including any escalation prompt) proceeds; on "Abort" the command is
+    // cancelled. It recurs until the warning is disabled in settings.
+    if sandboxing && !want_unsandboxed && persistent.warn_ntfs_grants {
+        let effective = event_stream.effective_sandbox_request(&request, &persistent);
+        let contains_windows_fs = effective
+            .write_paths
+            .iter()
+            .any(|granted| granted.on_windows_fs)
+            || cx.update(|cx| {
+                let project = project.read(cx);
+                working_dir
+                    .as_deref()
+                    .is_some_and(|path| sandbox::path_is_on_windows_drive(path))
+                    || sandbox_worktree_writable_paths(project, cx)
+                        .iter()
+                        .any(|path| sandbox::path_is_on_windows_drive(path))
+            });
+        if contains_windows_fs
+            && cx
+                .update(|cx| event_stream.authorize_windows_fs_warning(cx))
+                .await
+                .is_err()
+        {
+            return Ok(
+                "Command cancelled: the user declined to run a command whose sandbox writes to a Windows drive."
+                    .to_string(),
+            );
+        }
+    }
 
     if request.needs_escalation() {
         let reason = sandbox_input
