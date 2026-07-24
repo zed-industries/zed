@@ -3284,7 +3284,8 @@ impl GitPanel {
         user_agents_md: Option<&str>,
         rules_content: Option<&str>,
         instructions: Option<&str>,
-        subject: &str,
+        commit_template: Option<&str>,
+        current_message: &str,
         diff_text: &str,
     ) -> String {
         let user_agents_md_section = match user_agents_md {
@@ -3311,14 +3312,31 @@ impl GitPanel {
             _ => String::new(),
         };
 
-        let subject_section = if subject.trim().is_empty() {
+        let template_section = match commit_template {
+            Some(template) if !template.trim().is_empty() => format!(
+                "\n\nThe repository has a git commit message template configured. The commit message you write must follow its structure and include the boilerplate text it contains. Trailers (lines like Signed-off-by) always go at the very end of the message, after the body. Lines starting with a comment character (usually '#') are guidance only and must not appear in the commit message:\n\
+                <commit_template>\n{template}\n</commit_template>\n"
+            ),
+            _ => String::new(),
+        };
+
+        let current_message_section = if current_message.trim().is_empty() {
             String::new()
         } else {
-            format!("\nHere is the user's subject line:\n{subject}")
+            format!(
+                "\nHere is the current content of the commit message editor. Your response replaces it entirely. Respect what is already there: keep its intent, phrasing, and any structure or trailers it contains, only rewriting what is unclear, incomplete, or inconsistent with the rules above:\n<current_message>\n{current_message}\n</current_message>\n"
+            )
+        };
+
+        let closing_reminder = if template_section.is_empty() && current_message_section.is_empty()
+        {
+            ""
+        } else {
+            "\n\nRemember: respond with the complete commit message and nothing else. Never include the diff or any code in the message. Trailers (lines like Signed-off-by) go at the very end of the message."
         };
 
         format!(
-            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{template_section}{current_message_section}\nHere are the changes in this commit:\n{diff_text}{closing_reminder}"
         )
     }
 
@@ -3356,13 +3374,27 @@ impl GitPanel {
         let instructions = AgentSettings::get_global(cx)
             .commit_message_instructions
             .clone();
+        let commit_template = self
+            .commit_template
+            .as_ref()
+            .map(|template| template.template.clone())
+            .filter(|template| !template.trim().is_empty());
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
+        // The streamed message is inserted at tracked positions, so user
+        // edits during generation would corrupt it.
+        self.commit_editor
+            .update(cx, |editor, _| editor.set_read_only(true));
+        cx.notify();
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
             async move {
-                let _defer = cx.on_drop(&this, |this, _cx| {
+                let _defer = cx.on_drop(&this, |this, cx| {
                     this.generate_commit_message_task.take();
+                    this.commit_editor
+                        .update(cx, |editor, _| editor.set_read_only(false));
+                    cx.notify();
                 });
 
                 if let Some(task) = cx.update(|cx| {
@@ -3408,24 +3440,18 @@ impl GitPanel {
 
                 let prompt = include_str!("../src/commit_message_prompt.txt");
 
-                let subject = this.update(cx, |this, cx| {
-                    this.commit_editor
-                        .read(cx)
-                        .text(cx)
-                        .lines()
-                        .next()
-                        .map(ToOwned::to_owned)
-                        .unwrap_or_default()
-                })?;
-
-                let text_empty = subject.trim().is_empty();
+                let current_message = this
+                    .update(cx, |this, cx| this.commit_editor.read(cx).text(cx))?
+                    .trim()
+                    .to_owned();
 
                 let content = Self::build_commit_message_prompt(
                     &prompt,
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
                     instructions.as_deref(),
-                    &subject,
+                    commit_template.as_deref(),
+                    &current_message,
                     &diff_text,
                 );
 
@@ -3452,26 +3478,33 @@ impl GitPanel {
                 let stream = model.stream_completion_text(request, cx);
                 match stream.await {
                     Ok(mut messages) => {
-                        if !text_empty {
-                            this.update(cx, |this, cx| {
-                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                    let insert_position = buffer.anchor_before(buffer.len());
-                                    buffer.edit(
-                                        [(insert_position..insert_position, "\n")],
-                                        None,
-                                        cx,
-                                    )
-                                });
-                            })?;
-                        }
+                        // Clearing is deferred until the stream is
+                        // established, so a failed request leaves the buffer
+                        // untouched.
+                        this.update(cx, |this, cx| {
+                            this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                let end = buffer.len();
+                                buffer.edit([(0..end, "")], None, cx);
+                            });
+                        })?;
 
+                        let mut first_chunk = true;
                         while let Some(message) = messages.stream.next().await {
                             match message {
                                 Ok(text) => {
+                                    let text = if first_chunk {
+                                        let trimmed = text.trim_start().to_owned();
+                                        if trimmed.is_empty() {
+                                            continue;
+                                        }
+                                        first_chunk = false;
+                                        trimmed
+                                    } else {
+                                        text
+                                    };
                                     this.update(cx, |this, cx| {
                                         this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                                            let insert_position =
-                                                buffer.anchor_before(buffer.len());
+                                            let insert_position = buffer.len();
                                             buffer.edit(
                                                 [(insert_position..insert_position, text)],
                                                 None,
@@ -3485,6 +3518,46 @@ impl GitPanel {
                                     break;
                                 }
                             }
+                        }
+
+                        // Small models sometimes ignore the instructions and
+                        // echo the diff back or wrap the whole message in
+                        // quotes; both are stripped deterministically.
+                        if !first_chunk {
+                            this.update(cx, |this, cx| {
+                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                    let text = buffer.text();
+                                    let echoed_diff_start = if text.starts_with("diff --git ") {
+                                        Some(0)
+                                    } else {
+                                        text.find("\ndiff --git ")
+                                    };
+                                    if let Some(echoed_diff_start) = echoed_diff_start {
+                                        let end = buffer.len();
+                                        buffer.edit(
+                                            [(echoed_diff_start..end, String::new())],
+                                            None,
+                                            cx,
+                                        );
+                                    }
+
+                                    let text = buffer.text();
+                                    let trimmed = text.trim_end();
+                                    if trimmed.len() >= 2
+                                        && (trimmed.starts_with('"') && trimmed.ends_with('"')
+                                            || trimmed.starts_with('`') && trimmed.ends_with('`'))
+                                    {
+                                        buffer.edit(
+                                            [
+                                                (0..1, String::new()),
+                                                (trimmed.len() - 1..trimmed.len(), String::new()),
+                                            ],
+                                            None,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            })?;
                         }
                     }
                     Err(e) => {
@@ -12051,6 +12124,7 @@ mod tests {
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
             Some("Follow the configured commit message format."),
+            Some("Signed-off-by: Test User <test@example.com>"),
             "Update generated message",
             "diff --git a/file b/file",
         );
@@ -12064,8 +12138,10 @@ mod tests {
         let user_agents_md_index = prompt.find("<rules>").unwrap();
         let project_rules_index = prompt.find("<project_rules>").unwrap();
         let instructions_index = prompt.find("<commit_message_instructions>").unwrap();
+        let template_index = prompt.find("<commit_template>").unwrap();
         assert!(user_agents_md_index < project_rules_index);
         assert!(project_rules_index < instructions_index);
+        assert!(instructions_index < template_index);
     }
 
     #[test]
@@ -12075,11 +12151,222 @@ mod tests {
             None,
             None,
             Some("   \n  "),
+            None,
             "",
             "diff --git a/file b/file",
         );
 
         assert!(!prompt.contains("<commit_message_instructions>"));
+    }
+
+    #[test]
+    fn test_commit_message_prompt_omits_blank_commit_template() {
+        let prompt = GitPanel::build_commit_message_prompt(
+            "Write a commit message.",
+            None,
+            None,
+            None,
+            Some("   \n  "),
+            "",
+            "diff --git a/file b/file",
+        );
+
+        assert!(!prompt.contains("<commit_template>"));
+    }
+
+    #[test]
+    fn test_commit_message_prompt_includes_current_message() {
+        let prompt = GitPanel::build_commit_message_prompt(
+            "Write a commit message.",
+            None,
+            None,
+            None,
+            None,
+            "fix the thing\n\nSigned-off-by: Test User <test@example.com>",
+            "diff --git a/file b/file",
+        );
+
+        assert!(prompt.contains("<current_message>"));
+        assert!(prompt.contains("fix the thing"));
+        assert!(prompt.contains("Signed-off-by: Test User <test@example.com>"));
+
+        let prompt = GitPanel::build_commit_message_prompt(
+            "Write a commit message.",
+            None,
+            None,
+            None,
+            None,
+            "  \n ",
+            "diff --git a/file b/file",
+        );
+
+        assert!(!prompt.contains("<current_message>"));
+    }
+
+    async fn setup_commit_message_generation_test(
+        commit_template: Option<&str>,
+        cx: &mut TestAppContext,
+    ) -> (
+        VisualTestContext,
+        Entity<GitPanel>,
+        Arc<dyn language_model::LanguageModel>,
+    ) {
+        init_test(cx);
+
+        let model = cx.update(|cx| {
+            AgentSettings::register(cx);
+            LanguageModelRegistry::test(cx);
+            LanguageModelRegistry::read_global(cx)
+                .default_model()
+                .unwrap()
+                .model
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+        if let Some(template) = commit_template {
+            fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.commit_template = Some(GitCommitTemplate {
+                    template: template.to_string(),
+                });
+            })
+            .unwrap();
+        }
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, &mut cx);
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.run_until_parked();
+
+        (cx, panel, model)
+    }
+
+    #[gpui::test]
+    async fn test_generate_commit_message_replaces_message(cx: &mut TestAppContext) {
+        const TEMPLATE: &str = "\nSigned-off-by: Test User <test@example.com>\n";
+        let (mut cx, panel, model) = setup_commit_message_generation_test(Some(TEMPLATE), cx).await;
+        let cx = &mut cx;
+
+        let (initial_text, loaded_template) = panel.update(cx, |panel, cx| {
+            (
+                panel.commit_editor.read(cx).text(cx),
+                panel.commit_template.clone(),
+            )
+        });
+        assert_eq!(
+            loaded_template.map(|template| template.template),
+            Some(TEMPLATE.to_string()),
+            "commit template should be loaded from the repository"
+        );
+        assert_eq!(initial_text, TEMPLATE);
+
+        panel.update(cx, |panel, cx| panel.generate_commit_message(cx));
+        cx.run_until_parked();
+
+        let fake_model = model.as_fake();
+        let pending_completions = fake_model.pending_completions();
+        assert_eq!(pending_completions.len(), 1);
+        let prompt = pending_completions[0].messages[0].string_contents();
+        assert!(prompt.contains("<commit_template>"));
+        assert!(prompt.contains("Signed-off-by: Test User <test@example.com>"));
+        assert!(prompt.contains("<current_message>"));
+
+        assert!(panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(panel.update(cx, |panel, _| panel.is_generating_commit_message()));
+
+        fake_model.send_last_completion_stream_text_chunk(concat!(
+            " \"Update tracked\n",
+            "\n",
+            "Signed-off-by: Test User <test@example.com>\"",
+        ));
+        fake_model.send_last_completion_stream_text_chunk("\ndiff --git a/tracked b/tracked");
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        let text = panel.update(cx, |panel, cx| panel.commit_editor.read(cx).text(cx));
+        assert_eq!(
+            text, "Update tracked\n\nSigned-off-by: Test User <test@example.com>",
+            "the leading whitespace, wrapping quotes, and echoed diff should be stripped"
+        );
+        assert!(!panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(!panel.update(cx, |panel, _| panel.is_generating_commit_message()));
+    }
+
+    #[gpui::test]
+    async fn test_generate_commit_message_error_unlocks_editor(cx: &mut TestAppContext) {
+        let (mut cx, panel, model) = setup_commit_message_generation_test(None, cx).await;
+        let cx = &mut cx;
+
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let end = buffer.len();
+                buffer.edit([(0..end, "my rough draft")], None, cx);
+            });
+        });
+
+        panel.update(cx, |panel, cx| panel.generate_commit_message(cx));
+        cx.run_until_parked();
+
+        let fake_model = model.as_fake();
+        let prompt = fake_model.pending_completions()[0].messages[0].string_contents();
+        assert!(prompt.contains("<current_message>"));
+        assert!(prompt.contains("my rough draft"));
+        assert!(!prompt.contains("<commit_template>"));
+
+        assert!(panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+
+        fake_model.send_last_completion_stream_error(
+            language_model::LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "connection reset"
+            )),
+        );
+        fake_model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        assert!(!panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(!panel.update(cx, |panel, _| panel.is_generating_commit_message()));
+    }
+
+    #[gpui::test]
+    async fn test_cancel_generate_commit_message_unlocks_editor(cx: &mut TestAppContext) {
+        let (mut cx, panel, _model) = setup_commit_message_generation_test(None, cx).await;
+        let cx = &mut cx;
+
+        panel.update(cx, |panel, cx| panel.generate_commit_message(cx));
+        cx.run_until_parked();
+        assert!(panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+
+        panel.update(cx, |panel, cx| {
+            panel.generate_commit_message_task.take();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(!panel.update(cx, |panel, cx| panel.commit_editor.read(cx).read_only(cx)));
+        assert!(!panel.update(cx, |panel, _| panel.is_generating_commit_message()));
     }
 
     #[gpui::test]
