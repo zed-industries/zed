@@ -82,6 +82,7 @@ ztracing.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 ctor.workspace = true
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
@@ -96,6 +97,7 @@ remote_connection = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
 unindent.workspace = true
+url.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 

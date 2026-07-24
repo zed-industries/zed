@@ -49,9 +49,11 @@ pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
 mod git_runtime_diagnostics;
+mod inline_pull_request_comments;
 pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
+pub mod pull_request_store;
 pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod solo_diff_view;
@@ -87,6 +89,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
+        inline_pull_request_comments::register_editor(editor, cx);
     })
     .detach();
 
