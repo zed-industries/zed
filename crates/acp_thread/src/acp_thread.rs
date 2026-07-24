@@ -1168,8 +1168,8 @@ impl ToolCall {
     }
 }
 
-// Separate so we can hold a strong reference to the buffer
-// for saving on the thread
+// Holds the buffer alive until resolution finishes: `shared_buffers`
+// and `AgentLocation` only keep weak handles.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResolvedLocation {
     buffer: Entity<Buffer>,
@@ -2088,7 +2088,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
     update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
-    shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
+    shared_buffers: HashMap<WeakEntity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
@@ -3324,9 +3324,12 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
 
+                this.prune_dead_shared_buffers();
                 for location in resolved_locations.iter().flatten() {
-                    this.shared_buffers
-                        .insert(location.buffer.clone(), location.buffer.read(cx).snapshot());
+                    this.shared_buffers.insert(
+                        location.buffer.downgrade(),
+                        location.buffer.read(cx).snapshot(),
+                    );
                 }
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
@@ -4178,6 +4181,11 @@ impl AcpThread {
         })
     }
 
+    fn prune_dead_shared_buffers(&mut self) {
+        self.shared_buffers
+            .retain(|buffer, _| buffer.is_upgradable());
+    }
+
     pub fn read_text_file(
         &self,
         path: PathBuf,
@@ -4206,7 +4214,7 @@ impl AcpThread {
 
             let snapshot = if reuse_shared_snapshot {
                 this.read_with(cx, |this, _| {
-                    this.shared_buffers.get(&buffer.clone()).cloned()
+                    this.shared_buffers.get(&buffer.downgrade()).cloned()
                 })
                 .log_err()
                 .flatten()
@@ -4223,7 +4231,9 @@ impl AcpThread {
 
                 let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
-                    this.shared_buffers.insert(buffer.clone(), snapshot.clone());
+                    this.prune_dead_shared_buffers();
+                    this.shared_buffers
+                        .insert(buffer.downgrade(), snapshot.clone());
                 })?;
                 snapshot
             };
@@ -4277,7 +4287,7 @@ impl AcpThread {
             let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
-                    .get(&buffer)
+                    .get(&buffer.downgrade())
                     .cloned()
                     .unwrap_or_else(|| buffer.read(cx).snapshot())
             })?;
@@ -6034,6 +6044,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_shared_buffers_do_not_accumulate_dead_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/tmp"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let dead_buffer = cx.new(|cx| Buffer::local("stale", cx));
+        let snapshot = dead_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        thread.update(cx, |thread, _| {
+            thread
+                .shared_buffers
+                .insert(dead_buffer.downgrade(), snapshot);
+        });
+        drop(dead_buffer);
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.shared_buffers.len(), 1);
+            assert!(
+                thread
+                    .shared_buffers
+                    .keys()
+                    .all(|buffer| buffer.is_upgradable())
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_reading_from_line(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -6324,6 +6384,14 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [], cx).await;
+        // Keeps the buffer alive: `shared_buffers` holds only weak handles,
+        // so it would drop as soon as resolution finishes.
+        let external_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/tmp/skills/test-skill/SKILL.md"), cx)
+            })
+            .await
+            .unwrap();
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
             .update(|cx| {
@@ -6358,7 +6426,8 @@ mod tests {
             let buffer = agent_location
                 .buffer
                 .upgrade()
-                .expect("resolved location should keep an open buffer");
+                .expect("resolved location should reference the opened buffer");
+            assert_eq!(buffer.entity_id(), external_buffer.entity_id());
             assert_eq!(buffer.read(cx).text(), "skill body");
         });
     }
