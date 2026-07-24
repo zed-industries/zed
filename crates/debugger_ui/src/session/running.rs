@@ -1143,6 +1143,8 @@ impl RunningState {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
+                task.resolved.args.retain(|arg| !arg.is_empty());
+
                 let locator_name = if let Some(locator_name) = locator_name {
                     extra_config = config.clone();
                     debug_assert!(!config_is_valid);
