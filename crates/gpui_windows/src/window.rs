@@ -842,8 +842,8 @@ impl PlatformWindow for WindowsWindow {
                 let info = FLASHWINFO {
                     cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
                     hwnd,
-                    dwFlags: FLASHW_ALL | FLASHW_TIMERNOFG,
-                    uCount: 0,
+                    dwFlags: FLASHW_ALL,
+                    uCount: 1,
                     dwTimeout: 0,
                 };
                 unsafe { FlashWindowEx(&info).ok().log_err() };
