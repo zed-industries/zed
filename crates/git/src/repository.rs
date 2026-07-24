@@ -4,6 +4,7 @@ use crate::status::{DiffTreeType, GitStatus, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
+use chardetng::EncodingDetector;
 use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
@@ -1226,6 +1227,176 @@ pub struct RealGitRepository {
     is_trusted: Arc<AtomicBool>,
 }
 
+const FILE_ANALYSIS_BYTES: usize = 1024;
+
+enum ByteContent {
+    Utf16Le,
+    Utf16Be,
+    Binary,
+    Unknown,
+}
+
+fn decode_blob_text(bytes: Vec<u8>) -> Result<String> {
+    let byte_content = analyze_blob_bytes(&bytes);
+    match byte_content {
+        ByteContent::Utf16Le => {
+            let (text, _, _) = encoding_rs::UTF_16LE.decode(&bytes);
+            Ok(text.into_owned())
+        }
+        ByteContent::Utf16Be => {
+            let (text, _, _) = encoding_rs::UTF_16BE.decode(&bytes);
+            Ok(text.into_owned())
+        }
+        ByteContent::Binary => bail!("Binary files are not supported"),
+        ByteContent::Unknown => {
+            if let Some((encoding, _bom_len)) = encoding_rs::Encoding::for_bom(&bytes) {
+                let (text, _) = encoding.decode_with_bom_removal(&bytes);
+                return Ok(text.into_owned());
+            }
+
+            match String::from_utf8(bytes) {
+                Ok(text) => Ok(text),
+                Err(error) => {
+                    let bytes = error.into_bytes();
+                    let mut detector = EncodingDetector::new();
+                    detector.feed(&bytes, true);
+                    let encoding = detector.guess(None, true);
+                    let (text, _, _) = encoding.decode(&bytes);
+                    Ok(text.into_owned())
+                }
+            }
+        }
+    }
+}
+
+fn analyze_blob_bytes(bytes: &[u8]) -> ByteContent {
+    if bytes.len() < 2 {
+        return ByteContent::Unknown;
+    }
+
+    if is_known_binary_header(bytes) {
+        return ByteContent::Binary;
+    }
+
+    let limit = bytes.len().min(FILE_ANALYSIS_BYTES);
+    let mut even_null_count = 0usize;
+    let mut odd_null_count = 0usize;
+    let mut non_text_like_count = 0usize;
+
+    for (index, &byte) in bytes[..limit].iter().enumerate() {
+        if byte == 0 {
+            if index % 2 == 0 {
+                even_null_count += 1;
+            } else {
+                odd_null_count += 1;
+            }
+            non_text_like_count += 1;
+            continue;
+        }
+
+        let is_text_like = match byte {
+            b'\t' | b'\n' | b'\r' | 0x0C => true,
+            0x20..=0x7E => true,
+            0x80..=0xBF | 0xC2..=0xF4 => true,
+            _ => false,
+        };
+
+        if !is_text_like {
+            non_text_like_count += 1;
+        }
+    }
+
+    let total_null_count = even_null_count + odd_null_count;
+    if total_null_count == 0 {
+        return ByteContent::Unknown;
+    }
+
+    let has_significant_nulls = total_null_count >= limit / 16;
+    let nulls_skew_to_even = even_null_count > odd_null_count * 4;
+    let nulls_skew_to_odd = odd_null_count > even_null_count * 4;
+
+    if has_significant_nulls {
+        let sample = &bytes[..limit];
+        if nulls_skew_to_even && is_plausible_utf16_text(sample, false) {
+            return ByteContent::Utf16Be;
+        }
+
+        if nulls_skew_to_odd && is_plausible_utf16_text(sample, true) {
+            return ByteContent::Utf16Le;
+        }
+
+        return ByteContent::Binary;
+    }
+
+    if non_text_like_count * 100 < limit * 8 {
+        ByteContent::Unknown
+    } else {
+        ByteContent::Binary
+    }
+}
+
+fn is_known_binary_header(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-")
+        || bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+        || bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || bytes.starts_with(b"\xFF\xD8\xFF")
+        || bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || bytes.starts_with(b"IWAD")
+        || bytes.starts_with(b"PWAD")
+        || bytes.starts_with(b"RIFF")
+        || bytes.starts_with(b"OggS")
+        || bytes.starts_with(b"fLaC")
+        || bytes.starts_with(b"ID3")
+        || bytes.starts_with(b"\xFF\xFB")
+        || bytes.starts_with(b"\xFF\xFA")
+        || bytes.starts_with(b"\xFF\xF3")
+        || bytes.starts_with(b"\xFF\xF2")
+}
+
+fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
+    let mut suspicious_count = 0usize;
+    let mut total = 0usize;
+    let mut offset = 0;
+
+    while let Some(code_unit) = read_u16(bytes, offset, little_endian) {
+        total += 1;
+
+        match code_unit {
+            0x0009 | 0x000A | 0x000C | 0x000D => {}
+            0x0000..=0x001F | 0x007F..=0x009F | 0xFFFE | 0xFFFF => suspicious_count += 1,
+            0xD800..=0xDBFF => {
+                let next_offset = offset + 2;
+                let has_low_surrogate = read_u16(bytes, next_offset, little_endian)
+                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next));
+                if has_low_surrogate {
+                    total += 1;
+                    offset += 2;
+                } else {
+                    suspicious_count += 1;
+                }
+            }
+            0xDC00..=0xDFFF => suspicious_count += 1,
+            _ => {}
+        }
+
+        offset += 2;
+    }
+
+    total > 0 && suspicious_count * 100 < total * 2
+}
+
+fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
+    let pair = [*bytes.get(offset)?, *bytes.get(offset + 1)?];
+    Some(if little_endian {
+        u16::from_le_bytes(pair)
+    } else {
+        u16::from_be_bytes(pair)
+    })
+}
+
 #[derive(Debug)]
 pub enum RefEdit {
     Update { ref_name: String, commit: String },
@@ -1646,7 +1817,19 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         let oid_str = oid.to_string();
         self.executor
-            .spawn(async move { git_binary.run_raw(&["cat-file", "blob", &oid_str]).await })
+            .spawn(async move {
+                let mut command = git_binary.build_command(&["cat-file", "blob", &oid_str]);
+                let output = command.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    GitBinaryCommandError {
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                        status: output.status,
+                    }
+                );
+                decode_blob_text(output.stdout).context("decoding blob content")
+            })
             .boxed()
     }
 
@@ -1863,7 +2046,7 @@ impl GitRepository for RealGitRepository {
                             stdout.read_exact(&mut newline).await?;
 
                             if object_type == "blob" {
-                                results.push(String::from_utf8(content).ok());
+                                results.push(decode_blob_text(content).ok());
                             } else {
                                 results.push(None);
                             }
@@ -5154,6 +5337,62 @@ mod tests {
                 Some("space file committed contents".into()),
                 None,
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_load_revisions_decodes_windows_1251_blobs(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let file_path = repo_dir.path().join("legacy.txt");
+        let committed_text = "строка один\nстрока два\n";
+        let staged_text = "строка один\nстрока три\n";
+        let (committed_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(committed_text);
+        smol::fs::write(&file_path, committed_bytes.as_ref())
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("legacy.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        let (staged_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(staged_text);
+        smol::fs::write(&file_path, staged_bytes.as_ref())
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("legacy.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        let results = repo
+            .load_revisions(vec!["HEAD:legacy.txt".into(), ":legacy.txt".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results,
+            vec![Some(committed_text.into()), Some(staged_text.into())]
         );
     }
 
