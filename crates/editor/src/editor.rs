@@ -12023,6 +12023,102 @@ impl EditorSnapshot {
             .language_at(position)
     }
 
+    pub fn display_row_for_inline_code_action(&self, buffer_point: Point) -> Option<DisplayRow> {
+        // do not show code action for folded line
+        if self.is_line_folded(MultiBufferRow(buffer_point.row)) {
+            return None;
+        }
+
+        // do not show code action for blank line with cursor
+        let line_indent = self
+            .display_snapshot
+            .buffer_snapshot()
+            .line_indent_for_row(MultiBufferRow(buffer_point.row));
+        if line_indent.is_line_blank() {
+            return None;
+        }
+
+        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
+        const MAX_ALTERNATE_DISTANCE: u32 = 8;
+
+        let is_valid_row = |row_candidate: u32| -> bool {
+            // move to other row if folded row
+            if self.is_line_folded(MultiBufferRow(row_candidate)) {
+                return false;
+            }
+            if buffer_point.row == row_candidate {
+                // move to other row if cursor is in slot
+                if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
+                    return false;
+                }
+            } else {
+                let candidate_point = MultiBufferPoint {
+                    row: row_candidate,
+                    column: 0,
+                };
+                // move to other row if different excerpt
+                let range = if candidate_point < buffer_point {
+                    candidate_point..buffer_point
+                } else {
+                    buffer_point..candidate_point
+                };
+                if self
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .excerpt_containing(range)
+                    .is_none()
+                {
+                    return false;
+                }
+            }
+            let line_indent = self
+                .display_snapshot
+                .buffer_snapshot()
+                .line_indent_for_row(MultiBufferRow(row_candidate));
+            // use this row if it's blank
+            if line_indent.is_line_blank() {
+                true
+            } else {
+                // use this row if code starts after slot
+                let indent_size = self
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .indent_size_for_line(MultiBufferRow(row_candidate));
+                indent_size.len >= INLINE_SLOT_CHAR_LIMIT
+            }
+        };
+
+        let new_buffer_row = if is_valid_row(buffer_point.row) {
+            Some(buffer_point.row)
+        } else {
+            let max_row = self.display_snapshot.buffer_snapshot().max_point().row;
+            (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
+                let row_above = buffer_point.row.saturating_sub(offset);
+                let row_below = buffer_point.row + offset;
+                if row_above != buffer_point.row && is_valid_row(row_above) {
+                    Some(row_above)
+                } else if row_below <= max_row && is_valid_row(row_below) {
+                    Some(row_below)
+                } else {
+                    None
+                }
+            })
+        }?;
+
+        let new_display_row = self
+            .display_snapshot
+            .point_to_display_point(
+                Point {
+                    row: new_buffer_row,
+                    column: buffer_point.column,
+                },
+                text::Bias::Left,
+            )
+            .row();
+
+        Some(new_display_row)
+    }
+
     pub fn is_focused(&self) -> bool {
         self.is_focused
     }
