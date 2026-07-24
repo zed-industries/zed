@@ -1545,6 +1545,10 @@ impl Panel for TerminalPanel {
         true
     }
 
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        TerminalSettings::get_global(cx).starts_open
+    }
+
     fn set_position(
         &mut self,
         position: DockPosition,
@@ -2101,6 +2105,42 @@ mod tests {
             .expect("Failed to initialize workspace with terminal panel");
 
         (window_handle, terminal_panel)
+    }
+
+    #[gpui::test]
+    async fn test_terminal_panel_starts_open_follows_setting(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    assert!(
+                        !terminal_panel.starts_open(window, cx),
+                        "terminal panel should not start open by default"
+                    );
+                });
+            })
+            .expect("Failed to read terminal panel starts_open default");
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().starts_open = Some(true);
+            });
+        });
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    assert!(
+                        terminal_panel.starts_open(window, cx),
+                        "terminal panel should start open when configured"
+                    );
+                });
+            })
+            .expect("Failed to read configured terminal panel starts_open");
     }
 
     #[gpui::test]
