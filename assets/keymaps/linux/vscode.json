@@ -1,0 +1,72 @@
+[
+  // VS Code for Linux (and Windows). See: https://code.visualstudio.com/docs/reference/default-keybindings
+  //
+  // Zed's default keymap is close to VS Code's, so this overlay only contains
+  // the bindings where the two diverge.
+  {
+    "context": "Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-alt-f": "editor::Format", // Format Document (Windows-style; Linux `ctrl-shift-i` is a Zed default already)
+      "ctrl-k ctrl-f": "editor::FormatSelections", // Format Selection
+      "shift-alt-i": "editor::SplitSelectionIntoLines", // Insert cursor at end of each line selected
+      "alt-z": "editor::ToggleSoftWrap", // Toggle Word Wrap
+      "ctrl-shift-space": "editor::ShowSignatureHelp", // Trigger Parameter Hints
+      "ctrl-shift-a": "editor::ToggleBlockComments", // Toggle Block Comment
+      "ctrl-k f12": "editor::GoToDefinitionSplit", // Open Definition to the Side
+    },
+  },
+  {
+    "context": "Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      // In VS Code `ctrl-k z` is Zen Mode; the word wrap toggle moves to `alt-z`.
+      "ctrl-k z": "workspace::ToggleCenteredLayout",
+      "ctrl-i": "assistant::InlineAssist", // Inline Chat
+    },
+  },
+  {
+    "context": "!AcpThread > Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "editor::NewlineBelow", // Insert Line Below (Inline Chat lives on `ctrl-i`)
+    },
+  },
+  {
+    "context": "Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": null,
+    },
+  },
+  {
+    "context": "Workspace",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "debugger::Start", // Start Debugging
+      "ctrl-alt-i": "agent::ToggleFocus", // Open Chat
+    },
+  },
+  {
+    "context": "Workspace && debugger_running",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": null,
+    },
+  },
+  {
+    "context": "Workspace && debugger_stopped",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "debugger::Continue",
+    },
+  },
+  {
+    "context": "Workspace && debugger_session",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f10": "debugger::StepOver",
+      "f11": "debugger::StepInto",
+    },
+  },
+]
