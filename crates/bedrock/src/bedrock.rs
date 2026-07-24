@@ -56,15 +56,8 @@ pub async fn stream_completion(
             ]);
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
-        Some(Thinking::Adaptive { effort: _ }) => {
-            let thinking_config = HashMap::from([
-                ("type".to_string(), Document::String("adaptive".to_string())),
-                (
-                    "display".to_string(),
-                    Document::String("summarized".to_string()),
-                ),
-            ]);
-            additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
+        Some(Thinking::Adaptive { effort }) => {
+            additional_fields.extend(adaptive_thinking_request_fields(effort));
         }
         _ => {}
     }
@@ -214,6 +207,30 @@ pub enum Thinking {
     },
 }
 
+fn adaptive_thinking_request_fields(
+    effort: BedrockAdaptiveThinkingEffort,
+) -> HashMap<String, Document> {
+    HashMap::from([
+        (
+            "thinking".to_string(),
+            Document::from(HashMap::from([
+                ("type".to_string(), Document::String("adaptive".to_string())),
+                (
+                    "display".to_string(),
+                    Document::String("summarized".to_string()),
+                ),
+            ])),
+        ),
+        (
+            "output_config".to_string(),
+            Document::from(HashMap::from([(
+                "effort".to_string(),
+                Document::String(effort.as_str().to_string()),
+            )])),
+        ),
+    ])
+}
+
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
@@ -254,4 +271,31 @@ pub enum BedrockError {
     InternalServer(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string_field<'a>(document: &'a Document, key: &str) -> Option<&'a str> {
+        match document {
+            Document::Object(map) => match map.get(key) {
+                Some(Document::String(value)) => Some(value.as_str()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_adaptive_thinking_serializes_effort_in_output_config() {
+        let fields = adaptive_thinking_request_fields(BedrockAdaptiveThinkingEffort::XHigh);
+
+        let thinking = fields.get("thinking").expect("thinking field");
+        assert_eq!(string_field(thinking, "type"), Some("adaptive"));
+        assert_eq!(string_field(thinking, "display"), Some("summarized"));
+
+        let output_config = fields.get("output_config").expect("output_config field");
+        assert_eq!(string_field(output_config, "effort"), Some("xhigh"));
+    }
 }
