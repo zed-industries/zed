@@ -4876,10 +4876,13 @@ impl BufferSnapshot {
             let mut grammar_ids = Vec::new();
             let mut configs = Vec::new();
             let mut seen_delimiters = HashSet::default();
+            let mut delimiter_kinds_by_pattern = HashMap::default();
+            let mut syntax_layer_depths_by_delimiter = HashMap::default();
             // Group matches by open delimiter so we can either trust grammar output
             // or repair it by picking a single closest close per open.
             let mut close_delimiters_by_open = BTreeMap::new();
             let mut bogus_patterns = HashSet::default();
+            let mut incomplete_patterns = HashSet::default();
             for (query_range, options) in iter::once(bounded_query).chain(boundary_queries) {
                 let mut matches =
                     self.syntax
@@ -4914,15 +4917,17 @@ impl BufferSnapshot {
                     let pattern = &config.patterns[mat.pattern_index];
                     for capture in mat.captures {
                         if capture.index == config.open_capture_ix {
-                            open = Some(capture.node.byte_range());
+                            open = Some((capture.node.byte_range(), capture.node.kind_id()));
                         } else if capture.index == config.close_capture_ix {
-                            close = Some(capture.node.byte_range());
+                            close = Some((capture.node.byte_range(), capture.node.kind_id()));
                         }
                     }
 
                     matches.advance();
 
-                    let Some((open_range, close_range)) = open.zip(close) else {
+                    let Some(((open_range, open_kind), (close_range, close_kind))) =
+                        open.zip(close)
+                    else {
                         continue;
                     };
 
@@ -4943,6 +4948,19 @@ impl BufferSnapshot {
                         rainbow_exclude: pattern.rainbow_exclude,
                     };
 
+                    let (open_kinds, close_kinds) = delimiter_kinds_by_pattern
+                        .entry(pattern_key)
+                        .or_insert_with(|| (HashSet::default(), HashSet::default()));
+                    open_kinds.insert(open_kind);
+                    close_kinds.insert(close_kind);
+
+                    syntax_layer_depths_by_delimiter
+                        .entry(candidate.open_delimiter())
+                        .or_insert(syntax_layer_depth);
+                    syntax_layer_depths_by_delimiter
+                        .entry(candidate.close_delimiter())
+                        .or_insert(syntax_layer_depth);
+
                     if !seen_delimiters
                         .insert((candidate.open_delimiter(), candidate.close_delimiter()))
                     {
@@ -4961,9 +4979,129 @@ impl BufferSnapshot {
                 }
             }
 
+            let unambiguous_delimiter_kinds = delimiter_kinds_by_pattern
+                .iter()
+                .filter_map(|(pattern, (open_kinds, close_kinds))| {
+                    let open_kind = open_kinds.iter().next().copied()?;
+                    let close_kind = close_kinds.iter().next().copied()?;
+                    // Syntax leaves cannot distinguish the two roles of delimiters such as quotes.
+                    (open_kinds.len() == 1 && close_kinds.len() == 1 && open_kind != close_kind)
+                        .then_some((*pattern, open_kind, close_kind))
+                })
+                .collect::<Vec<_>>();
+            let mut syntax_opens_by_pattern = HashMap::<_, HashSet<_>>::default();
+            let mut syntax_closes_by_pattern = HashMap::<_, HashSet<_>>::default();
+            for layer in self
+                .syntax
+                .layers_for_range(chunk_range.clone(), &self.text, true)
+            {
+                let Some(grammar) = layer.language.grammar() else {
+                    continue;
+                };
+                let Some(grammar_index) = grammar_ids.iter().position(|&id| id == grammar.id())
+                else {
+                    continue;
+                };
+                let relevant_patterns = unambiguous_delimiter_kinds
+                    .iter()
+                    .filter(|(pattern, _, _)| pattern.grammar_index == grammar_index)
+                    .collect::<Vec<_>>();
+                if relevant_patterns.is_empty() {
+                    continue;
+                }
+
+                let root_node = layer.node();
+                if !root_node.has_error() {
+                    continue;
+                }
+                let mut nodes = vec![(root_node, root_node.is_error())];
+                while let Some((node, inside_error)) = nodes.pop() {
+                    let node_range = node.byte_range();
+                    if node_range.end <= chunk_range.start || node_range.start >= chunk_range.end {
+                        continue;
+                    }
+                    let inside_error = inside_error || node.is_error();
+                    if !inside_error && !node.has_error() {
+                        continue;
+                    }
+
+                    if node.child_count() == 0 {
+                        if !inside_error
+                            || node_range.is_empty()
+                            || !chunk_range.contains(&node_range.start)
+                        {
+                            continue;
+                        }
+
+                        for (pattern, open_kind, close_kind) in &relevant_patterns {
+                            let delimiter = BracketDelimiter {
+                                start: node_range.start,
+                                end: node_range.end,
+                                pattern: *pattern,
+                            };
+                            if node.kind_id() == *open_kind {
+                                syntax_opens_by_pattern
+                                    .entry(*pattern)
+                                    .or_default()
+                                    .insert(delimiter);
+                                syntax_layer_depths_by_delimiter
+                                    .entry(delimiter)
+                                    .or_insert(layer.depth);
+                            } else if node.kind_id() == *close_kind {
+                                syntax_closes_by_pattern
+                                    .entry(*pattern)
+                                    .or_default()
+                                    .insert(delimiter);
+                                syntax_layer_depths_by_delimiter
+                                    .entry(delimiter)
+                                    .or_insert(layer.depth);
+                            }
+                        }
+                    } else {
+                        let mut cursor = node.walk();
+                        nodes.extend(
+                            node.children(&mut cursor)
+                                .map(|child| (child, inside_error)),
+                        );
+                    }
+                }
+            }
+
+            for (pattern, _, _) in &unambiguous_delimiter_kinds {
+                let Some(syntax_opens) = syntax_opens_by_pattern.get(pattern) else {
+                    continue;
+                };
+                let Some(syntax_closes) = syntax_closes_by_pattern.get(pattern) else {
+                    continue;
+                };
+                // Repairing unbalanced error nodes would invent partners for delimiters that
+                // may genuinely be missing while the user is editing.
+                if syntax_opens.len() != syntax_closes.len() {
+                    continue;
+                }
+
+                let query_opens = all_brackets
+                    .iter()
+                    .filter(|candidate| candidate.pattern == *pattern)
+                    .map(|candidate| candidate.open_delimiter())
+                    .filter(|open| chunk_range.contains(&open.start))
+                    .collect::<HashSet<_>>();
+                let query_closes = all_brackets
+                    .iter()
+                    .filter(|candidate| candidate.pattern == *pattern)
+                    .map(|candidate| candidate.close_delimiter())
+                    .filter(|close| chunk_range.contains(&close.start))
+                    .collect::<HashSet<_>>();
+                let has_missing_open = !syntax_opens.is_subset(&query_opens);
+                let has_missing_close = !syntax_closes.is_subset(&query_closes);
+                if has_missing_open || has_missing_close {
+                    bogus_patterns.insert(*pattern);
+                    incomplete_patterns.insert(*pattern);
+                }
+            }
+
             if !bogus_patterns.is_empty() {
-                // Certain patterns produce bogus matches where one open is paired with multiple
-                // closes (e.g. same-character delimiters inside a single parent node).
+                // Certain patterns produce bogus or incomplete matches during error recovery.
                 // Repair only those patterns, keeping trustworthy grammar output intact:
                 // clean patterns may legitimately pair an open in one chunk with a close in
                 // another, and must not be dropped by the chunk-local repair below.
@@ -4984,19 +5122,43 @@ impl BufferSnapshot {
                     .collect::<HashMap<_, _>>();
 
                 // Collect unique opens and closes within this chunk
-                let unique_opens = all_brackets
+                let mut unique_opens = all_brackets
                     .iter()
                     .filter(|candidate| is_bogus(candidate))
                     .map(|candidate| candidate.open_delimiter())
-                    .filter(|open| chunk_range.contains(&open.start))
+                    .filter(|open| {
+                        if incomplete_patterns.contains(&open.pattern) {
+                            // Tree-sitter represents missing error-recovery tokens as empty nodes.
+                            open.start < open.end
+                        } else {
+                            chunk_range.contains(&open.start)
+                        }
+                    })
                     .collect::<HashSet<_>>();
+                for pattern in &bogus_patterns {
+                    if let Some(syntax_opens) = syntax_opens_by_pattern.get(pattern) {
+                        unique_opens.extend(syntax_opens);
+                    }
+                }
 
                 let mut unique_closes = all_brackets
                     .iter()
                     .filter(|candidate| is_bogus(candidate))
                     .map(|candidate| candidate.close_delimiter())
-                    .filter(|close| chunk_range.contains(&close.start))
+                    .filter(|close| {
+                        if incomplete_patterns.contains(&close.pattern) {
+                            // Tree-sitter represents missing error-recovery tokens as empty nodes.
+                            close.start < close.end
+                        } else {
+                            chunk_range.contains(&close.start)
+                        }
+                    })
                     .collect::<Vec<_>>();
+                for pattern in &bogus_patterns {
+                    if let Some(syntax_closes) = syntax_closes_by_pattern.get(pattern) {
+                        unique_closes.extend(syntax_closes);
+                    }
+                }
                 unique_closes.sort_unstable();
                 unique_closes.dedup();
 
@@ -5036,6 +5198,13 @@ impl BufferSnapshot {
                                 pattern: close.pattern,
                             };
                             valid_pairs.insert((inferred, *close));
+                            let syntax_layer_depth = syntax_layer_depths_by_delimiter
+                                .get(close)
+                                .copied()
+                                .unwrap_or(0);
+                            syntax_layer_depths_by_delimiter
+                                .entry(inferred)
+                                .or_insert(syntax_layer_depth);
                             let pattern = &configs[close.pattern.grammar_index].patterns
                                 [close.pattern.pattern_index];
                             all_brackets.push(BracketMatchCandidate {
@@ -5043,7 +5212,7 @@ impl BufferSnapshot {
                                     open_range: inferred.start..inferred.end,
                                     close_range: close.start..close.end,
                                     newline_only: pattern.newline_only,
-                                    syntax_layer_depth: 0,
+                                    syntax_layer_depth,
                                     color_index: None,
                                 },
                                 pattern: close.pattern,
@@ -5051,6 +5220,32 @@ impl BufferSnapshot {
                             });
                         }
                     }
+                }
+
+                for (open, close) in &valid_pairs {
+                    if all_brackets.iter().any(|candidate| {
+                        candidate.open_delimiter() == *open && candidate.close_delimiter() == *close
+                    }) {
+                        continue;
+                    }
+
+                    let pattern =
+                        &configs[open.pattern.grammar_index].patterns[open.pattern.pattern_index];
+                    all_brackets.push(BracketMatchCandidate {
+                        bracket_match: BracketMatch {
+                            open_range: open.start..open.end,
+                            close_range: close.start..close.end,
+                            newline_only: pattern.newline_only,
+                            syntax_layer_depth: syntax_layer_depths_by_delimiter
+                                .get(open)
+                                .copied()
+                                .or_else(|| syntax_layer_depths_by_delimiter.get(close).copied())
+                                .unwrap_or(0),
+                            color_index: None,
+                        },
+                        pattern: open.pattern,
+                        rainbow_exclude: pattern.rainbow_exclude,
+                    });
                 }
 
                 all_brackets.retain(|candidate| {
