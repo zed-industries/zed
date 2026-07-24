@@ -111,7 +111,7 @@ pub fn detect_language(
             return None;
         }
         language_registry
-            .load_language(&language)
+            .load_language(language.id())
             .await
             .ok()
             .and_then(|language| language.ok())
