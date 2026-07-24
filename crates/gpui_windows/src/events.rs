@@ -86,10 +86,15 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> LRESULT {
         let handled = match msg {
-            // eagerly activate the window, so calls to `active_window` will work correctly
+            // eagerly activate activatable windows, so calls to `active_window` will work correctly
             WM_MOUSEACTIVATE => {
-                unsafe { SetActiveWindow(handle).ok() };
-                None
+                let ex_style = unsafe { get_window_long(handle, GWL_EXSTYLE) };
+                if (ex_style & WS_EX_NOACTIVATE.0 as isize) != 0 {
+                    Some(MA_NOACTIVATE as isize)
+                } else {
+                    unsafe { SetActiveWindow(handle).ok() };
+                    None
+                }
             }
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(handle),

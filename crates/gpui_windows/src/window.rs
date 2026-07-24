@@ -23,7 +23,13 @@ use windows::{
         System::{
             Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
         },
-        UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            Shell::*,
+            WindowsAndMessaging::*,
+        },
     },
     core::*,
 };
@@ -469,7 +475,11 @@ impl WindowsWindow {
         );
 
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+            let mut dwexstyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
+            if !params.focus {
+                dwexstyle |= WS_EX_NOACTIVATE;
+            }
+            (dwexstyle, WINDOW_STYLE(0x0))
         } else {
             let mut dwstyle = WS_SYSMENU;
 
@@ -548,6 +558,17 @@ impl WindowsWindow {
         let hwnd = creation_result?;
         let this = this.unwrap();
 
+        if params.kind == WindowKind::PopUp && !params.focus {
+            // On Windows, windows created on the same thread share the default IME context,
+            // so avoid committing an active IME composition in another window.
+            unsafe {
+                // `hwnd` is a valid window handle created above, and a null `HIMC` detaches its IME context.
+                ImmAssociateContextEx(hwnd, HIMC::default(), 0)
+                    .ok()
+                    .context("unable to disable IME for non-activating popup")?;
+            }
+        }
+
         register_drag_drop(&this)?;
         set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
@@ -560,6 +581,10 @@ impl WindowsWindow {
             &this.state.border_offset,
         )?;
         if params.show {
+            let mut placement = placement;
+            if !params.focus {
+                placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
+            }
             unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
             this.state.initial_placement.set(Some(WindowOpenStatus {
