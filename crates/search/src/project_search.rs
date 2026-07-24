@@ -1771,9 +1771,6 @@ impl ProjectSearchView {
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
             });
-            if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
-                self.focus_results_editor(window, cx);
-            }
         }
 
         cx.emit(ViewEvent::UpdateTab);
@@ -2023,6 +2020,9 @@ impl ProjectSearchBar {
                     project_view.included_files_editor.focus_handle(cx),
                     project_view.excluded_files_editor.focus_handle(cx),
                 ]);
+            }
+            if project_view.has_matches() {
+                views.push(project_view.results_editor.focus_handle(cx));
             }
             let current_index = match views.iter().position(|focus| focus.is_focused(window)) {
                 Some(index) => index,
@@ -3467,11 +3467,13 @@ pub mod tests {
             "Expected no search panel to be active"
         );
 
+        let search_bar_for_toolbar = search_bar.clone();
         workspace.update_in(cx, move |workspace, window, cx| {
             assert_eq!(workspace.panes().len(), 1);
             workspace.panes()[0].update(cx, |pane, cx| {
-                pane.toolbar()
-                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar_for_toolbar, window, cx)
+                })
             });
 
             ProjectSearchView::deploy_search(
@@ -3601,11 +3603,49 @@ pub mod tests {
                     "Search view results should match the query"
                 );
                 assert!(
-                    search_view.results_editor.focus_handle(cx).is_focused(window),
-                    "Search view with mismatching query should be focused after search results are available",
+                    search_view.query_editor.focus_handle(cx).is_focused(window),
+                    "Search query should remain focused after search results are available",
                 );
             });
         }).unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.confirm(&Confirm, window, cx);
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view.query_editor.focus_handle(cx).is_focused(window),
+                        "Search query should remain focused after confirming the search",
+                    );
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.tab(&Tab, window, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        search_view
+                            .results_editor
+                            .focus_handle(cx)
+                            .is_focused(window),
+                        "Tab should move focus from the search query to the results editor",
+                    );
+                });
+            })
+            .unwrap();
         cx.spawn(|mut cx| async move {
             window
                 .update(&mut cx, |_, window, cx| {
@@ -3956,8 +3996,8 @@ pub mod tests {
                     "Search view results should match the query"
                 );
                 assert!(
-                    search_view.results_editor.focus_handle(cx).is_focused(window),
-                    "Search view with mismatching query should be focused after search results are available",
+                    search_view.query_editor.focus_handle(cx).is_focused(window),
+                    "Search query should remain focused after search results are available",
                 );
             })).unwrap();
         cx.spawn(|mut cx| async move {
@@ -4047,8 +4087,9 @@ pub mod tests {
             .unwrap();
 
         cx.background_executor.run_until_parked();
-        window.update(cx, |_, window, cx| {
-            search_view_2.update(cx, |search_view_2, cx| {
+        window
+            .update(cx, |_, window, cx| {
+                search_view_2.update(cx, |search_view_2, cx| {
                     assert_eq!(
                         search_view_2
                             .results_editor
@@ -4057,11 +4098,15 @@ pub mod tests {
                         "New search view with the updated query should have new search results"
                     );
                     assert!(
-                        search_view_2.results_editor.focus_handle(cx).is_focused(window),
-                        "Search view with mismatching query should be focused after search results are available",
+                        search_view_2
+                            .query_editor
+                            .focus_handle(cx)
+                            .is_focused(window),
+                        "Search query should remain focused after search results are available",
                     );
                 });
-        }).unwrap();
+            })
+            .unwrap();
 
         cx.spawn(|mut cx| async move {
             window
