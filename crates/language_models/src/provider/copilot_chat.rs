@@ -368,6 +368,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         AnthropicModelMode::Default
                     },
                     AnthropicPromptCacheMode::Legacy,
+                    &PROVIDER_ID,
                 )?;
 
                 anthropic_request.temperature = None;
@@ -413,7 +414,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
+                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
                         Ok(mapper.map_stream(events).boxed())
                     })
                     .await
