@@ -59,6 +59,7 @@ pub enum ContextMenuItem {
     Submenu {
         label: SharedString,
         icon: Option<IconName>,
+        custom_icon_path: Option<SharedString>,
         icon_color: Option<Color>,
         builder: Rc<dyn Fn(ContextMenu, &mut Window, &mut Context<ContextMenu>) -> ContextMenu>,
     },
@@ -869,6 +870,7 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::Submenu {
             label: label.into(),
             icon: None,
+            custom_icon_path: None,
             icon_color: None,
             builder: Rc::new(builder),
         });
@@ -884,6 +886,23 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::Submenu {
             label: label.into(),
             icon: Some(icon),
+            custom_icon_path: None,
+            icon_color: None,
+            builder: Rc::new(builder),
+        });
+        self
+    }
+
+    pub fn submenu_with_custom_icon_path(
+        mut self,
+        label: impl Into<SharedString>,
+        icon_path: impl Into<SharedString>,
+        builder: impl Fn(ContextMenu, &mut Window, &mut Context<ContextMenu>) -> ContextMenu + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Submenu {
+            label: label.into(),
+            icon: None,
+            custom_icon_path: Some(icon_path.into()),
             icon_color: None,
             builder: Rc::new(builder),
         });
@@ -900,6 +919,7 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::Submenu {
             label: label.into(),
             icon: Some(icon),
+            custom_icon_path: None,
             icon_color: Some(icon_color),
             builder: Rc::new(builder),
         });
@@ -1578,6 +1598,7 @@ impl ContextMenu {
             ContextMenuItem::Submenu {
                 label,
                 icon,
+                custom_icon_path,
                 icon_color,
                 ..
             } => self
@@ -1585,6 +1606,7 @@ impl ContextMenu {
                     ix,
                     label.clone(),
                     *icon,
+                    custom_icon_path.clone(),
                     *icon_color,
                     is_active_descendant(true),
                     cx,
@@ -1598,6 +1620,7 @@ impl ContextMenu {
         ix: usize,
         label: SharedString,
         icon: Option<IconName>,
+        custom_icon_path: Option<SharedString>,
         icon_color: Option<Color>,
         is_active_descendant: bool,
         cx: &mut Context<Self>,
@@ -1729,6 +1752,13 @@ impl ContextMenu {
                             .child(
                                 h_flex()
                                     .gap_1p5()
+                                    .when_some(custom_icon_path, |this, icon_path| {
+                                        this.child(
+                                            Icon::from_path(icon_path)
+                                                .size(IconSize::Small)
+                                                .color(icon_color.unwrap_or(Color::Muted)),
+                                        )
+                                    })
                                     .when_some(icon, |this, icon_name| {
                                         this.child(
                                             Icon::new(icon_name)

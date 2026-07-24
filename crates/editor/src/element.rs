@@ -39,6 +39,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
+use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
@@ -63,6 +64,7 @@ use multi_buffer::{
 };
 
 use project::{
+    ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::{InlineBlameLocation, ProjectSettings},
 };
@@ -90,10 +92,11 @@ use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{ButtonLike, POPOVER_Y_PADDING, Tooltip, prelude::*, scrollbars::ShowScrollbar};
 use unicode_segmentation::UnicodeSegmentation;
-use util::{ResultExt, debug_panic};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{
     CollaboratorId, ItemHandle, Workspace,
     item::{Item, ItemBufferKind},
+    notifications::DetachAndPromptErr as _,
 };
 
 /// Determines what kinds of highlights should be applied to a lines background.
@@ -6740,23 +6743,21 @@ impl Gutter<'_> {
     }
 }
 
-pub fn render_breadcrumb_text(
-    mut segments: Vec<HighlightedText>,
-    breadcrumb_font: Option<Font>,
-    prefix: Option<gpui::AnyElement>,
-    active_item: &dyn ItemHandle,
-    multibuffer_header: bool,
-    window: &mut Window,
-    cx: &App,
-) -> gpui::AnyElement {
-    const MAX_SEGMENTS: usize = 12;
+const MAX_BREADCRUMB_SEGMENTS: usize = 12;
+const MAX_BREADCRUMB_MENU_ENTRIES: usize = 200;
 
-    let element = h_flex().flex_grow_1().text_ui(cx);
+#[derive(Clone)]
+struct BreadcrumbPathComponent {
+    label: SharedString,
+    menu_root: ProjectPath,
+    is_file: bool,
+}
 
-    let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
+fn truncate_breadcrumb_segments(segments: &mut Vec<HighlightedText>) {
+    let prefix_end_ix = cmp::min(segments.len(), MAX_BREADCRUMB_SEGMENTS / 2);
     let suffix_start_ix = cmp::max(
         prefix_end_ix,
-        segments.len().saturating_sub(MAX_SEGMENTS / 2),
+        segments.len().saturating_sub(MAX_BREADCRUMB_SEGMENTS / 2),
     );
 
     if suffix_start_ix > prefix_end_ix {
@@ -6768,28 +6769,402 @@ pub fn render_breadcrumb_text(
             }),
         );
     }
+}
+
+fn breadcrumb_text_style(
+    breadcrumb_font: Option<&Font>,
+    window: &Window,
+    cx: &App,
+) -> gpui::TextStyle {
+    let mut text_style = window.text_style();
+    if let Some(font) = breadcrumb_font {
+        text_style.font_family = font.family.clone();
+        text_style.font_features = font.features.clone();
+        text_style.font_style = font.style;
+        text_style.font_weight = font.weight;
+    }
+    text_style.color = Color::Muted.color(cx);
+    text_style
+}
+
+fn breadcrumb_path_components(
+    project_path: &ProjectPath,
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> Option<Vec<BreadcrumbPathComponent>> {
+    let project = workspace.read(cx).project().clone();
+    let project = project.read(cx);
+    let include_root = project.visible_worktrees(cx).count() > 1;
+    let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+    let worktree = worktree.read(cx);
+    let mut components = Vec::new();
+
+    if include_root || project_path.path.is_empty() {
+        components.push(BreadcrumbPathComponent {
+            label: worktree.root_name_str().into(),
+            menu_root: ProjectPath {
+                worktree_id: project_path.worktree_id,
+                path: RelPath::empty_arc(),
+            },
+            is_file: false,
+        });
+    }
+
+    let mut current_path = RelPath::empty_arc();
+    for component in project_path.path.components() {
+        let component_path = RelPath::unix(component).ok()?;
+        current_path = current_path.join(component_path);
+        let is_file = worktree
+            .entry_for_path(&current_path)
+            .is_some_and(|entry| entry.is_file());
+        let menu_root = if is_file {
+            match current_path.parent() {
+                Some(parent) => parent.into_arc(),
+                None => RelPath::empty_arc(),
+            }
+        } else {
+            current_path.clone()
+        };
+
+        components.push(BreadcrumbPathComponent {
+            label: component.into(),
+            menu_root: ProjectPath {
+                worktree_id: project_path.worktree_id,
+                path: menu_root,
+            },
+            is_file,
+        });
+    }
+
+    (!components.is_empty()).then_some(components)
+}
+
+fn append_breadcrumb_menu_entries(
+    mut menu: ui::ContextMenu,
+    workspace: WeakEntity<Workspace>,
+    parent_path: ProjectPath,
+    _window: &mut Window,
+    cx: &mut Context<ui::ContextMenu>,
+) -> ui::ContextMenu {
+    let Some(workspace_entity) = workspace.upgrade() else {
+        return menu.label("No entries");
+    };
+    let project = workspace_entity.read(cx).project().clone();
+    let project = project.read(cx);
+    let Some(worktree) = project.worktree_for_id(parent_path.worktree_id, cx) else {
+        return menu.label("No entries");
+    };
+    let worktree = worktree.read(cx);
+    let mut entries = worktree
+        .child_entries(&parent_path.path)
+        .filter_map(|entry| {
+            let is_dir = entry.is_dir();
+            Some((
+                SharedString::from(entry.path.file_name()?),
+                ProjectPath {
+                    worktree_id: parent_path.worktree_id,
+                    path: entry.path.clone(),
+                },
+                if is_dir {
+                    FileIcons::get_folder_icon(false, entry.path.as_std_path(), cx)
+                } else {
+                    FileIcons::get_icon(entry.path.as_std_path(), cx)
+                },
+                is_dir,
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    if entries.is_empty() {
+        return menu.label("No entries");
+    }
+
+    entries.sort_by(
+        |(left_label, _, _, left_is_dir), (right_label, _, _, right_is_dir)| {
+            right_is_dir
+                .cmp(left_is_dir)
+                .then_with(|| left_label.as_ref().cmp(right_label.as_ref()))
+        },
+    );
+
+    let truncated = entries.len() > MAX_BREADCRUMB_MENU_ENTRIES;
+    entries.truncate(MAX_BREADCRUMB_MENU_ENTRIES);
+
+    for (label, project_path, icon_path, is_dir) in entries {
+        if is_dir {
+            let workspace = workspace.clone();
+            if let Some(icon_path) = icon_path {
+                menu = menu.submenu_with_custom_icon_path(
+                    label,
+                    icon_path,
+                    move |menu, window, cx| {
+                        append_breadcrumb_menu_entries(
+                            menu,
+                            workspace.clone(),
+                            project_path.clone(),
+                            window,
+                            cx,
+                        )
+                    },
+                );
+            } else {
+                menu = menu.submenu_with_icon(label, IconName::Folder, move |menu, window, cx| {
+                    append_breadcrumb_menu_entries(
+                        menu,
+                        workspace.clone(),
+                        project_path.clone(),
+                        window,
+                        cx,
+                    )
+                });
+            }
+        } else {
+            let workspace = workspace.clone();
+            let mut menu_entry = ui::ContextMenuEntry::new(label)
+                .icon_color(Color::Muted)
+                .handler(move |window, cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.open_path(project_path.clone(), None, true, window, cx)
+                            })
+                            .detach_and_prompt_err("Failed to open file", window, cx, |_, _, _| {
+                                None
+                            });
+                    }
+                });
+            menu_entry = if let Some(icon_path) = icon_path {
+                menu_entry.custom_icon_path(icon_path)
+            } else {
+                menu_entry.icon(IconName::File)
+            };
+            menu = menu.item(menu_entry);
+        }
+    }
+
+    if truncated {
+        menu = menu.separator().label("More entries not shown");
+    }
+
+    menu
+}
+
+fn render_plain_breadcrumb_segment(
+    segment: HighlightedText,
+    index: usize,
+    breadcrumb_font: Option<&Font>,
+    active_item: &dyn ItemHandle,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    let text_style = breadcrumb_text_style(breadcrumb_font, window, cx);
+
+    if index == 0
+        && !workspace::TabBarSettings::get_global(cx).show
+        && active_item.is_dirty(cx)
+        && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+    {
+        return styled_element;
+    }
+
+    StyledText::new(segment.text.replace('\n', " "))
+        .with_default_highlights(&text_style, segment.highlights)
+        .into_any()
+}
+
+fn render_symbol_breadcrumb_segment(
+    segment: HighlightedText,
+    index: usize,
+    breadcrumb_font: Option<&Font>,
+    editor: WeakEntity<Editor>,
+    focus_handle: gpui::FocusHandle,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    let text_style = breadcrumb_text_style(breadcrumb_font, window, cx);
+    let text = StyledText::new(segment.text.replace('\n', " "))
+        .with_default_highlights(&text_style, segment.highlights);
+    let tooltip_focus_handle = focus_handle.clone();
+    let click_editor = editor.clone();
+
+    ButtonLike::new(("breadcrumb-symbol", index))
+        .style(ButtonStyle::Transparent)
+        .size(ButtonSize::None)
+        .child(text)
+        .tooltip(Tooltip::element(move |_window, cx| {
+            h_flex()
+                .gap_1()
+                .justify_between()
+                .child(Label::new("Show Symbol Outline"))
+                .child(ui::KeyBinding::for_action_in(
+                    &zed_actions::outline::ToggleOutline,
+                    &tooltip_focus_handle,
+                    cx,
+                ))
+                .into_any_element()
+        }))
+        .on_click(move |_, window, cx| {
+            if let Some((editor, callback)) = click_editor
+                .upgrade()
+                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+            {
+                callback(editor.to_any_view(), window, cx);
+            }
+        })
+        .into_any_element()
+}
+
+fn render_breadcrumb_path_component(
+    component: BreadcrumbPathComponent,
+    index: usize,
+    breadcrumb_font: Option<&Font>,
+    workspace: WeakEntity<Workspace>,
+    editor: WeakEntity<Editor>,
+    active_item_is_dirty: bool,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    let mut text_style = breadcrumb_text_style(breadcrumb_font, window, cx);
+    if component.is_file && active_item_is_dirty && !workspace::TabBarSettings::get_global(cx).show
+    {
+        text_style.font_weight = FontWeight::BOLD;
+        text_style.color = Color::Default.color(cx);
+    }
+
+    let label = component.label.clone();
+    let menu_workspace = workspace.clone();
+    let menu_root = component.menu_root.clone();
+    let right_click_editor = editor.clone();
+    let mut label_element = div()
+        .text_color(text_style.color)
+        .group_hover("", |style| style.text_color(Color::Default.color(cx)))
+        .child(label);
+    if let Some(font) = breadcrumb_font {
+        label_element = label_element.font(font.clone());
+    }
+    label_element = label_element.font_weight(text_style.font_weight);
+
+    let trigger = ButtonLike::new(("breadcrumb-path-component", index))
+        .style(ButtonStyle::Subtle)
+        .size(ButtonSize::Compact)
+        .child(label_element)
+        .on_right_click(move |_, _, cx| {
+            if let Some(abs_path) = right_click_editor
+                .upgrade()
+                .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
+                && let Some(path_str) = abs_path.to_str()
+            {
+                cx.write_to_clipboard(ClipboardItem::new_string(path_str.to_string()));
+            }
+        });
+
+    ui::PopoverMenu::new(("breadcrumb-path-component-menu", index))
+        .menu(move |window, cx| {
+            Some(ui::ContextMenu::build(window, cx, {
+                let menu_workspace = menu_workspace.clone();
+                let menu_root = menu_root.clone();
+                move |menu, window, cx| {
+                    append_breadcrumb_menu_entries(
+                        menu,
+                        menu_workspace.clone(),
+                        menu_root.clone(),
+                        window,
+                        cx,
+                    )
+                }
+            }))
+        })
+        .trigger(trigger)
+        .into_any_element()
+}
+
+pub fn render_breadcrumb_text(
+    mut segments: Vec<HighlightedText>,
+    breadcrumb_font: Option<Font>,
+    prefix: Option<gpui::AnyElement>,
+    active_item: &dyn ItemHandle,
+    multibuffer_header: bool,
+    window: &mut Window,
+    cx: &App,
+) -> gpui::AnyElement {
+    let element = h_flex().flex_grow_1().text_ui(cx);
+    let editor = active_item
+        .downcast::<Editor>()
+        .map(|editor| editor.downgrade());
+    let has_project_path = active_item.project_path(cx).is_some();
+
+    if !multibuffer_header
+        && let Some(editor) = editor.as_ref()
+        && let Some(editor_entity) = editor.upgrade()
+        && let Some(workspace) = editor_entity.read(cx).workspace()
+        && let Some(project_path) = active_item.project_path(cx)
+        && let Some(path_components) = breadcrumb_path_components(&project_path, &workspace, cx)
+    {
+        let workspace = workspace.downgrade();
+        let active_item_is_dirty = active_item.is_dirty(cx);
+        let focus_handle = editor_entity.focus_handle(cx);
+        let mut breadcrumb_elements = Vec::new();
+
+        breadcrumb_elements.extend(path_components.into_iter().enumerate().map(
+            |(index, component)| {
+                render_breadcrumb_path_component(
+                    component,
+                    index,
+                    breadcrumb_font.as_ref(),
+                    workspace.clone(),
+                    editor.clone(),
+                    active_item_is_dirty,
+                    window,
+                    cx,
+                )
+            },
+        ));
+
+        let mut symbol_segments = segments.into_iter().skip(1).collect::<Vec<_>>();
+        truncate_breadcrumb_segments(&mut symbol_segments);
+        breadcrumb_elements.extend(symbol_segments.into_iter().enumerate().map(
+            |(index, segment)| {
+                render_symbol_breadcrumb_segment(
+                    segment,
+                    index,
+                    breadcrumb_font.as_ref(),
+                    editor.clone(),
+                    focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            },
+        ));
+
+        let breadcrumbs = Itertools::intersperse_with(breadcrumb_elements.into_iter(), || {
+            Label::new("›").color(Color::Placeholder).into_any_element()
+        });
+
+        let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
+        let breadcrumbs = if let Some(prefix) = prefix {
+            h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+        } else {
+            breadcrumbs_stack
+        };
+
+        return element
+            .id("breadcrumb_container")
+            .overflow_x_scroll()
+            .child(breadcrumbs)
+            .into_any_element();
+    }
+
+    truncate_breadcrumb_segments(&mut segments);
 
     let highlighted_segments = segments.into_iter().enumerate().map(|(index, segment)| {
-        let mut text_style = window.text_style();
-        if let Some(font) = &breadcrumb_font {
-            text_style.font_family = font.family.clone();
-            text_style.font_features = font.features.clone();
-            text_style.font_style = font.style;
-            text_style.font_weight = font.weight;
-        }
-        text_style.color = Color::Muted.color(cx);
-
-        if index == 0
-            && !workspace::TabBarSettings::get_global(cx).show
-            && active_item.is_dirty(cx)
-            && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
-        {
-            return styled_element;
-        }
-
-        StyledText::new(segment.text.replace('\n', " "))
-            .with_default_highlights(&text_style, segment.highlights)
-            .into_any()
+        render_plain_breadcrumb_segment(
+            segment,
+            index,
+            breadcrumb_font.as_ref(),
+            active_item,
+            window,
+            cx,
+        )
     });
 
     let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
@@ -6810,12 +7185,6 @@ pub fn render_breadcrumb_text(
     } else {
         breadcrumbs_stack
     };
-
-    let editor = active_item
-        .downcast::<Editor>()
-        .map(|editor| editor.downgrade());
-
-    let has_project_path = active_item.project_path(cx).is_some();
 
     match editor {
         Some(editor) => element
