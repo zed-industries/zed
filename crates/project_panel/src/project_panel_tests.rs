@@ -4596,26 +4596,25 @@ async fn test_rename_survives_window_deactivation(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
-async fn test_external_paths_for_dragged_selection_filters_missing_paths(
-    cx: &mut gpui::TestAppContext,
-) {
+async fn test_file_drag_paths_use_worktree_snapshot(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let temp_dir = tempfile::tempdir().unwrap();
     let root_path = temp_dir.path();
     let existing_a = root_path.join("existing_a.txt");
     let existing_b = root_path.join("existing_b.txt");
-    let deleted = root_path.join("deleted.txt");
+    let deleted_directory = root_path.join("deleted_dir");
     std::fs::write(&existing_a, "a").unwrap();
     std::fs::write(&existing_b, "b").unwrap();
-    std::fs::write(&deleted, "deleted").unwrap();
+    std::fs::create_dir(&deleted_directory).unwrap();
+    std::fs::write(deleted_directory.join("nested.txt"), "nested").unwrap();
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree_from_real_fs(root_path, root_path).await;
-    std::fs::remove_file(&deleted).unwrap();
+    std::fs::remove_dir_all(&deleted_directory).unwrap();
 
     let project = Project::test(fs.clone(), [root_path], cx).await;
-    let (worktree_id, existing_a_id, existing_b_id, deleted_id) = cx.update(|cx| {
+    let (worktree_id, existing_a_id, existing_b_id, deleted_directory_id) = cx.update(|cx| {
         let project = project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap();
         let worktree = worktree.read(cx);
@@ -4629,7 +4628,7 @@ async fn test_external_paths_for_dragged_selection_filters_missing_paths(
                 .entry_for_path(rel_path("existing_b.txt"))
                 .unwrap()
                 .id,
-            worktree.entry_for_path(rel_path("deleted.txt")).unwrap().id,
+            worktree.entry_for_path(rel_path("deleted_dir")).unwrap().id,
         )
     });
 
@@ -4649,7 +4648,7 @@ async fn test_external_paths_for_dragged_selection_filters_missing_paths(
             },
             SelectedEntry {
                 worktree_id,
-                entry_id: deleted_id,
+                entry_id: deleted_directory_id,
             },
         ]),
     };
@@ -4660,7 +4659,14 @@ async fn test_external_paths_for_dragged_selection_filters_missing_paths(
         })
         .unwrap();
 
-    assert_eq!(paths.paths(), &[existing_a, existing_b]);
+    assert_eq!(
+        paths.entries(),
+        &[
+            (existing_a, false),
+            (existing_b, false),
+            (deleted_directory, true),
+        ]
+    );
 }
 
 #[gpui::test]
@@ -4708,7 +4714,7 @@ async fn test_external_paths_for_dragged_selection_uses_active_selection_unless_
         })
         .unwrap();
 
-    assert_eq!(paths.paths(), &[active_path]);
+    assert_eq!(paths.entries(), &[(active_path, false)]);
 }
 
 #[gpui::test]

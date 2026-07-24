@@ -6721,7 +6721,7 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty, ExternalPaths,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty, FileDragPaths,
         FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, MouseButton,
         MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render,
         StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
@@ -6888,7 +6888,7 @@ mod tests {
                 .size_full()
                 .on_drag_with_external_paths(
                     self.path.clone(),
-                    |path, _, _| Some(ExternalPaths(vec![path.clone()].into())),
+                    |path, _, _| Some(FileDragPaths(vec![(path.clone(), true)].into())),
                     |_, _, _, cx| cx.new(|_| Empty),
                 )
                 .on_drag_move({
@@ -6978,7 +6978,7 @@ mod tests {
         );
         assert_eq!(
             cx.test_window(successful.window).file_drag_paths(),
-            [successful_path]
+            [(successful_path, true)]
         );
         // Views must still see the move that leaves the window, otherwise they never learn to tear
         // down the drag state they built up while the pointer was inside.
@@ -7009,7 +7009,7 @@ mod tests {
         );
         assert_eq!(
             cx.test_window(failed.window).file_drag_paths(),
-            [failed_path]
+            [(failed_path, true)]
         );
     }
 

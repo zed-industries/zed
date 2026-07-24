@@ -25,12 +25,12 @@ use cocoa::{
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
-    px, size,
+    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
+    WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -1838,8 +1838,8 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn start_file_drag(&self, paths: &ExternalPaths) -> bool {
-        if paths.paths().is_empty() {
+    fn start_file_drag(&self, paths: &FileDragPaths) -> bool {
+        if paths.entries().is_empty() {
             log::warn!("start_file_drag declined: no paths");
             return false;
         }
@@ -1875,18 +1875,17 @@ impl PlatformWindow for MacWindow {
                 NSSize::new(32., 32.),
             );
 
-            for path in paths.paths() {
+            for (path, is_directory) in paths.entries() {
                 // Preserve non-UTF-8 paths
                 let Ok(path_bytes) = CString::new(path.as_os_str().as_bytes()) else {
                     log::warn!("start_file_drag skipped path containing an interior nul byte");
                     continue;
                 };
 
-                let is_directory: BOOL = if path.is_dir() {YES } else { NO };
                 let url: id = msg_send![
                     class!(NSURL),
                     fileURLWithFileSystemRepresentation: path_bytes.as_ptr()
-                    isDirectory: is_directory
+                    isDirectory: is_directory.to_objc()
                     relativeToURL: nil
                 ];
 

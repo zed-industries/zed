@@ -38,7 +38,7 @@ pub(crate) struct TestWindowState {
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
     appearance: WindowAppearance,
-    file_drag_paths: Vec<PathBuf>,
+    file_drag_paths: Vec<(PathBuf, bool)>,
     start_file_drag_result: bool,
 }
 
@@ -144,7 +144,7 @@ impl TestWindow {
         !result.propagate
     }
 
-    pub fn file_drag_paths(&self) -> Vec<PathBuf> {
+    pub fn file_drag_paths(&self) -> Vec<(PathBuf, bool)> {
         self.0.lock().file_drag_paths.clone()
     }
 
@@ -365,9 +365,9 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn start_file_drag(&self, paths: &crate::ExternalPaths) -> bool {
+    fn start_file_drag(&self, paths: &crate::FileDragPaths) -> bool {
         let mut state = self.0.lock();
-        state.file_drag_paths.extend_from_slice(paths.paths());
+        state.file_drag_paths.extend_from_slice(paths.entries());
         state.start_file_drag_result
     }
 

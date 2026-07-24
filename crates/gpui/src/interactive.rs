@@ -691,6 +691,18 @@ impl ExternalPaths {
     }
 }
 
+/// Paths handed to the platform for a native file drag. Directory metadata is
+/// provided by the caller to avoid querying it when the platform drag starts.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct FileDragPaths(pub SmallVec<[(PathBuf, bool); 2]>);
+
+impl FileDragPaths {
+    /// The dragged paths, each paired with whether it is a directory.
+    pub fn entries(&self) -> &[(PathBuf, bool)] {
+        &self.0
+    }
+}
+
 impl Render for ExternalPaths {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // the platform will render icons for the dragged files

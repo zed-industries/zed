@@ -18,7 +18,7 @@
 use crate::PinchEvent;
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, ExternalPaths, FocusHandle, Global,
+    Display, Element, ElementId, Entity, EntityId, FileDragPaths, FocusHandle, Global,
     GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
     KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
@@ -608,7 +608,7 @@ impl Interactivity {
     pub fn on_drag_with_external_paths<T, W>(
         &mut self,
         value: T,
-        external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalPaths> + 'static,
+        external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<FileDragPaths> + 'static,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) where
         Self: Sized,
@@ -1557,7 +1557,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     fn on_drag_with_external_paths<T, W>(
         mut self,
         value: T,
-        external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalPaths> + 'static,
+        external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<FileDragPaths> + 'static,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) -> Self
     where
@@ -1641,7 +1641,7 @@ pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
 
 pub(crate) type ExternalPathsExtractor =
-    Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalPaths> + 'static>;
+    Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<FileDragPaths> + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
 

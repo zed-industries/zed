@@ -22,8 +22,8 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement,
+    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
     PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
@@ -4764,7 +4764,7 @@ impl ProjectPanel {
         project: &Entity<Project>,
         selections: &DraggedSelection,
         cx: &App,
-    ) -> Option<ExternalPaths> {
+    ) -> Option<FileDragPaths> {
         let project = project.read(cx);
         let paths = selections
             .items()
@@ -4773,12 +4773,12 @@ impl ProjectPanel {
                 if !worktree.is_local() {
                     return None;
                 }
-                let project_path = project.path_for_entry(selection.entry_id, cx)?.path;
-                Some(worktree.absolutize(&project_path))
+                let entry = worktree.entry_for_id(selection.entry_id)?;
+                Some((worktree.absolutize(&entry.path), entry.is_dir()))
             })
             .collect::<SmallVec<[_; 2]>>();
 
-        (!paths.is_empty()).then_some(ExternalPaths(paths))
+        (!paths.is_empty()).then_some(FileDragPaths(paths))
     }
 
     fn drag_onto(
