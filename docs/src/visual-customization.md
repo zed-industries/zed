@@ -74,15 +74,17 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "agent_buffer_font_size": 12,
 
   // Controls the font family for prose in markdown-rendered surfaces
-  // (hover popups, diagnostics, the agent panel, the markdown preview).
+  // (hover popups, the agent panel, the markdown preview).
   // If not specified, it falls back to the UI font family.
+  // Diagnostic messages continue to use the UI font family.
   "markdown_prose_font_family": null,
   // Controls the font family for inline code in markdown-rendered surfaces.
   // If not specified, it falls back to the editor font family.
+  // Diagnostic messages continue to use the editor font family.
   "markdown_inline_code_font_family": null,
 
-  // Controls the font size for prose in hover popups and other
-  // markdown-rendered tooltips.
+  // Controls the font size for prose in symbol hover popups and other
+  // documentation tooltips.
   // If not specified, it inherits the surrounding text size.
   "hover_popover_font_size": null,
 

@@ -74,12 +74,14 @@
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
   // The font family for prose in markdown-rendered surfaces (hover popups, the agent panel,
-  // the markdown preview). Falls back to the UI font family if unset.
+  // the markdown preview). Falls back to the UI font family if unset. Diagnostic messages
+  // continue to use the UI font family.
   "markdown_prose_font_family": null,
   // The font family for inline code in markdown-rendered surfaces.
-  // Falls back to the editor font family if unset.
+  // Falls back to the editor font family if unset. Diagnostic messages continue to use
+  // the editor font family.
   "markdown_inline_code_font_family": null,
-  // The font size for prose in hover popups and other markdown-rendered tooltips.
+  // The font size for prose in symbol hover popups and other documentation tooltips.
   // Inherits the surrounding text size if unset.
   "hover_popover_font_size": null,
   // The default font size for the markdown preview. Falls back to the UI font size if unset.

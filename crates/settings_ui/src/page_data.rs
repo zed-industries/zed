@@ -1181,7 +1181,7 @@ fn appearance_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Markdown Fonts"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Prose Font Family",
-                description: "Font family for prose in markdown-rendered surfaces (hover popups, the agent panel, the markdown preview). Falls back to the UI font family.",
+                description: "Font family for prose in markdown-rendered surfaces (hover popups, the agent panel, the markdown preview). Falls back to the UI font family. Diagnostic messages continue to use the UI font family.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("markdown_prose_font_family"),
@@ -1201,7 +1201,7 @@ fn appearance_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Inline Code Font Family",
-                description: "Font family for inline code in markdown-rendered surfaces. Falls back to the editor font family.",
+                description: "Font family for inline code in markdown-rendered surfaces. Falls back to the editor font family. Diagnostic messages continue to use the editor font family.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("markdown_inline_code_font_family"),
@@ -1227,7 +1227,7 @@ fn appearance_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Hover Popup Font"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Font Size",
-                description: "Font size for prose in hover popups and other markdown-rendered tooltips. Inherits the surrounding text size when unset.",
+                description: "Font size for prose in symbol hover popups and other documentation tooltips. Inherits the surrounding text size when unset.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("hover_popover_font_size"),

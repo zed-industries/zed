@@ -758,16 +758,16 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
-    let prose_font_family = settings.markdown_prose_font_family().clone();
-    let inline_code_font_family = settings.markdown_inline_code_font_family().clone();
+    let ui_font_family = settings.ui_font.family.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
     let ui_font_features = settings.ui_font.features.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
     let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(prose_font_family),
+        font_family: Some(ui_font_family),
         font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
@@ -778,7 +778,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
-            font_family: Some(inline_code_font_family),
+            font_family: Some(buffer_font_family),
             font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             ..Default::default()

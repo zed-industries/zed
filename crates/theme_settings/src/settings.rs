@@ -58,13 +58,15 @@ pub struct ThemeSettings {
     agent_buffer_font_size: Option<Pixels>,
     git_commit_buffer_font_size: Option<Pixels>,
     /// The font family used for prose in markdown-rendered surfaces.
-    /// Falls back to the UI font family if unset.
+    /// Falls back to the UI font family if unset. Diagnostic messages continue
+    /// to use the UI font family.
     markdown_prose_font_family: Option<SharedString>,
     /// The font family used for inline code in markdown-rendered surfaces.
-    /// Falls back to the buffer font family if unset.
+    /// Falls back to the buffer font family if unset. Diagnostic messages
+    /// continue to use the buffer font family.
     markdown_inline_code_font_family: Option<SharedString>,
-    /// The font size used for prose in hover popups and other
-    /// markdown-rendered tooltips. Inherits the surrounding text size if unset.
+    /// The font size used for prose in symbol hover popups and other
+    /// documentation tooltips. Inherits the surrounding text size if unset.
     hover_popover_font_size: Option<Pixels>,
     /// The font family to use for rendering in the markdown preview.
     /// Falls back to the markdown prose font family, then the UI font family.
