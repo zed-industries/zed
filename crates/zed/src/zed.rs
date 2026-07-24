@@ -1655,7 +1655,6 @@ fn open_about_window(cx: &mut App) {
         width: px(440.),
         height: px(300.),
     };
-
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
