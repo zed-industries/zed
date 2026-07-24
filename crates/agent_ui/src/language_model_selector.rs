@@ -15,7 +15,7 @@ use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use ui::prelude::*;
-use zed_actions::agent::OpenSettings;
+use zed_actions::OpenSettingsAt;
 
 use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
 
@@ -564,7 +564,18 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             return None;
         }
 
-        Some(ModelSelectorFooter::new(OpenSettings.boxed_clone(), focus_handle).into_any_element())
+        Some(
+            ModelSelectorFooter::new(
+                OpenSettingsAt {
+                    path: "llm_providers".to_string(),
+                    target: None,
+                }
+                .boxed_clone(),
+                focus_handle,
+            )
+            .label("Connect Providers")
+            .into_any_element(),
+        )
     }
 }
 

@@ -216,6 +216,7 @@ impl RenderOnce for ModelSelectorListItem {
 pub struct ModelSelectorFooter {
     action: Box<dyn Action>,
     focus_handle: FocusHandle,
+    label: SharedString,
 }
 
 impl ModelSelectorFooter {
@@ -223,7 +224,13 @@ impl ModelSelectorFooter {
         Self {
             action,
             focus_handle,
+            label: "Configure".into(),
         }
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
+        self
     }
 }
 
@@ -231,6 +238,7 @@ impl RenderOnce for ModelSelectorFooter {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let action = self.action;
         let focus_handle = self.focus_handle;
+        let label = self.label;
 
         h_flex()
             .w_full()
@@ -238,7 +246,7 @@ impl RenderOnce for ModelSelectorFooter {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
-                Button::new("configure", "Configure")
+                Button::new("configure", label)
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .key_binding(

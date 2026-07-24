@@ -27,7 +27,13 @@ pub(crate) fn render_llm_providers_page(
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let providers = LanguageModelRegistry::read_global(cx).visible_providers();
+    let mut providers = LanguageModelRegistry::read_global(cx).visible_providers();
+    providers.sort_by_key(|provider| match provider.id().0.as_ref() {
+        "openai-subscribed" => (0, provider.name().0.to_string()),
+        "copilot_chat" => (1, provider.name().0.to_string()),
+        "openrouter" => (2, provider.name().0.to_string()),
+        _ => (3, provider.name().0.to_string()),
+    });
 
     v_flex()
         .id("llm-providers-page")
@@ -36,6 +42,18 @@ pub(crate) fn render_llm_providers_page(
         .pb_16()
         .track_scroll(scroll_handle)
         .overflow_y_scroll()
+        .child(
+            v_flex()
+                .pt_4()
+                .pb_2()
+                .gap_1()
+                .child(Label::new("Connect a Model Provider"))
+                .child(
+                    Label::new("Sign in with ChatGPT or GitHub Copilot, or configure an API key.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+        )
         .children(
             providers
                 .iter()

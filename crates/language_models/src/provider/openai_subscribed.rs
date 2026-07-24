@@ -28,8 +28,7 @@ use util::ResultExt as _;
 use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai_response};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
-const PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("ChatGPT Subscription");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("ChatGPT");
 
 const SUBSCRIPTION_DESCRIPTION: &str =
     "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Vela's Agent.";
@@ -242,7 +241,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         let title = if is_authenticated {
             None
         } else {
-            Some("Configure ChatGPT".into())
+            Some("Sign in with ChatGPT".into())
         };
         let description = if is_authenticated {
             None
