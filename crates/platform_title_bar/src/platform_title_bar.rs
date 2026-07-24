@@ -229,13 +229,18 @@ impl Render for PlatformTitleBar {
                             }
                         })
                     })
-                    .when(self.platform_style == PlatformStyle::Linux, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.click_count() == 2 {
-                                window.zoom_window();
-                            }
-                        })
-                    })
+                    .when(
+                        self.platform_style == PlatformStyle::Linux
+                            && supported_controls.maximize
+                            && window.is_resizable(),
+                        |this| {
+                            this.on_click(|event, window, _| {
+                                if event.click_count() == 2 {
+                                    window.zoom_window();
+                                }
+                            })
+                        },
+                    )
             })
             .map(|this| {
                 let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
