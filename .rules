@@ -1,3 +1,12 @@
+# Citadel architecture: the Rust/C boundary
+
+Citadel targets AVR/Arduino firmware generated from user projects, not just the IDE itself. Every code path that produces or edits a sketch (codegen, templates, linting, the "new project" flow, etc.) must enforce this boundary:
+
+* C/C++ (`.c`/`.cpp`/`.ino`) may only perform direct, linear I/O hand-off: reading a pin, writing a pin, sending a byte, declaring `pinMode`/board constants. No `if`, no `for`/`while`, no ternaries, no computed intermediate variables — if a sketch needs a decision or a calculation, that decision or calculation belongs in Rust, not C/C++.
+* All logic — state transitions, calculations, control decisions — must live in Rust (`no_std` firmware crate), never in the generated C/C++.
+* The two sides only exchange plain data across `extern "C"`: C/C++ calls into `extern "C"` Rust functions, and Rust may read `extern "C"` variables/constants defined in C/C++. Do not introduce any other bridging mechanism (callbacks into C logic, macros that expand to branches, etc.).
+* Toolchain/build work enforcing this (e.g. rejecting `if`/`for`/`while` in generated or user C/C++) is compile-time gating, not a lint suggestion — treat a bypass of this check as a correctness bug, not a style nit.
+
 # Rust coding guidelines
 
 * Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
