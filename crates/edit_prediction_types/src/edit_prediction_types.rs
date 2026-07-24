@@ -323,15 +323,7 @@ where
         trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     ) {
-        self.update(cx, |this, cx| {
-            this.refresh(
-                buffer,
-                cursor_position,
-                debounce,
-                debounce_duration,
-                trigger,
-                cx,
-            )
+        self.update(cx, |this, cx| {this.refresh(buffer, cursor_position, debounce, debounce_duration, trigger, cx)
         })
     }
 
