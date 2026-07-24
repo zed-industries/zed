@@ -1879,7 +1879,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::{MultiWorkspace, WorkspaceId};
+    use workspace::{DockData, DockStructure, MultiWorkspace, WorkspaceId};
 
     #[test]
     fn test_prepare_empty_task() {
@@ -2526,6 +2526,72 @@ mod tests {
         cx.run_until_parked();
     }
 
+    fn create_unregistered_terminal_panel(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<TerminalPanel> {
+        let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+        });
+
+        terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+            let terminal = cx.new(|cx| {
+                terminal::TerminalBuilder::new_display_only(
+                    terminal::terminal_settings::CursorShape::default(),
+                    terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    util::paths::PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            let (workspace_id, project) = terminal_panel
+                .workspace
+                .read_with(cx, |workspace, _| {
+                    (workspace.database_id(), workspace.project().downgrade())
+                })
+                .expect("Terminal panel workspace should exist");
+            let terminal_view = cx.new(|cx| {
+                TerminalView::new(
+                    terminal,
+                    terminal_panel.workspace.clone(),
+                    workspace_id,
+                    project,
+                    window,
+                    cx,
+                )
+            });
+            terminal_panel.active_pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(terminal_view), true, false, None, window, cx);
+            });
+        });
+
+        terminal_panel
+    }
+
+    fn restore_zoomed_terminal_dock(
+        workspace: &Entity<Workspace>,
+        terminal_panel: &Entity<TerminalPanel>,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock_position = terminal_panel.read(cx).position(window, cx);
+            let terminal_dock = DockData {
+                visible: true,
+                active_panel: Some(TerminalPanel::persistent_name().to_owned()),
+                zoom: true,
+            };
+            let mut dock_structure = DockStructure::default();
+            match dock_position {
+                DockPosition::Left => dock_structure.left = terminal_dock,
+                DockPosition::Bottom => dock_structure.bottom = terminal_dock,
+                DockPosition::Right => dock_structure.right = terminal_dock,
+            }
+            workspace.set_dock_structure(dock_structure, window, cx);
+        });
+    }
+
     #[gpui::test]
     async fn test_center_terminal_keeps_focus_on_active_modal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2598,6 +2664,88 @@ mod tests {
             assert!(
                 terminal_view.focus_handle(cx).contains_focused(window, cx),
                 "with no modal open, a new center terminal should take focus"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delayed_restored_zoomed_terminal_takes_focus(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        let center_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        center_pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(workspace::item::test::TestItem::new);
+            pane.add_item(Box::new(item), true, true, None, window, cx);
+        });
+
+        let terminal_panel = create_unregistered_terminal_panel(&workspace, cx);
+        restore_zoomed_terminal_dock(&workspace, &terminal_panel, cx);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(terminal_panel.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |_, window, cx| {
+            assert!(terminal_panel.is_zoomed(window, cx));
+            assert!(
+                terminal_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                "a restored zoomed terminal should take focus after delayed startup"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delayed_restored_zoomed_terminal_keeps_modal_focus(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        let modal_focus_handle = workspace.update_in(cx, |workspace, window, cx| {
+            let focus_handle = cx.focus_handle();
+            workspace.toggle_modal(window, cx, {
+                let focus_handle = focus_handle.clone();
+                move |_, _| FocusOnlyModal { focus_handle }
+            });
+            focus_handle
+        });
+        let terminal_panel = create_unregistered_terminal_panel(&workspace, cx);
+        restore_zoomed_terminal_dock(&workspace, &terminal_panel, cx);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(terminal_panel.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |_, window, _| {
+            assert!(
+                modal_focus_handle.is_focused(window),
+                "a restored terminal must not steal focus from an active modal"
             );
         });
     }
