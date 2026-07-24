@@ -622,6 +622,14 @@ actions!(
         HalfPageUp,
         /// Shows hover information for the symbol at cursor.
         Hover,
+        /// Expands the selected debugger hover entry.
+        DebuggerHoverExpandSelected,
+        /// Collapses the selected debugger hover entry.
+        DebuggerHoverCollapseSelected,
+        /// Selects the next debugger hover entry.
+        DebuggerHoverSelectNext,
+        /// Selects the previous debugger hover entry.
+        DebuggerHoverSelectPrevious,
         /// Increases indentation of selected lines.
         Indent,
         /// Inserts a UUID v4 at cursor position.

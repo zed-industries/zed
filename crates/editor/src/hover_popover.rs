@@ -7,28 +7,35 @@ use crate::{
     movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
+use dap::client::SessionId;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
-    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
-    TextStyleRefinement, Window, canvas, div, px,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    ScrollHandle, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task,
+    TaskExt, TextStyleRefinement, WeakEntity, Window, canvas, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
-use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
+use project::{
+    DebuggerHoverData, DebuggerHoverVariable, HoverBlock, HoverBlockKind, InlayHintLabelPart,
+    Project,
+};
 use settings::Settings;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
+    collections::HashMap,
 };
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme_settings::ThemeSettings;
-use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
+use ui::{
+    CopyButton, Disclosure, Scrollbars, Tooltip, WithScrollbar, prelude::*, theme_is_transparent,
+};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -201,6 +208,7 @@ pub fn hover_at_inlay(
                     .await;
                 this.update(cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
+                    this.hover_state.stable_debugger_hover_origin = None;
                 })?;
 
                 let language_registry = project.read_with(cx, |p, _| p.languages().clone());
@@ -221,15 +229,17 @@ pub fn hover_at_inlay(
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
+                    debugger_hover: None,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
                     last_bounds: Rc::new(Cell::new(None)),
-                    _subscription: subscription,
+                    _subscriptions: subscription.into_iter().collect(),
                 };
 
                 this.update(cx, |this, cx| {
                     // TODO: no background highlights happen for inlays currently
+                    this.hover_state.stable_debugger_hover_origin = None;
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
                 })?;
@@ -255,6 +265,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.hiding_delay_task = None;
     editor.hover_state.closest_mouse_distance = None;
+    editor.hover_state.stable_debugger_hover_origin = None;
 
     editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
@@ -291,6 +302,7 @@ fn show_hover(
     let language_registry = editor
         .project()
         .map(|project| project.read(cx).languages().clone());
+    let debugger_project = editor.project().map(|project| project.downgrade());
     let provider = editor.semantics_provider.clone()?;
 
     editor.hover_state.hiding_delay_task = None;
@@ -468,35 +480,42 @@ fn show_hover(
             } else {
                 Vec::new()
             };
+            let show_debugger_hover_only = hovers_response
+                .iter()
+                .any(|hover_result| hover_result.debugger_value.is_some());
             let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
                 hovers_response.len() + if invisible_char.is_some() { 1 } else { 0 },
             );
 
-            if let Some((invisible, range)) = invisible_char {
+            if !show_debugger_hover_only && let Some((invisible, range)) = invisible_char {
                 let blocks = vec![HoverBlock {
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
                 let parsed_content = parse_blocks(&blocks, language_registry.as_ref(), None, cx);
                 let scroll_handle = ScrollHandle::new();
-                let subscription = this
+                let subscriptions = this
                     .update(cx, |_, cx| {
-                        parsed_content.as_ref().map(|parsed_content| {
-                            cx.observe(parsed_content, |_, _, cx| cx.notify())
-                        })
+                        parsed_content
+                            .as_ref()
+                            .map(|parsed_content| {
+                                vec![cx.observe(parsed_content, |_, _, cx| cx.notify())]
+                            })
+                            .unwrap_or_default()
                     })
                     .ok()
-                    .flatten();
+                    .unwrap_or_default();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     parsed_content,
+                    debugger_hover: None,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                     last_bounds: Rc::new(Cell::new(None)),
-                    _subscription: subscription,
+                    _subscriptions: subscriptions,
                 })
             }
 
@@ -522,9 +541,19 @@ fn show_hover(
             };
 
             for hover_result in hovers_response {
+                if show_debugger_hover_only && hover_result.debugger_value.is_none() {
+                    continue;
+                }
+
+                let project::Hover {
+                    contents: blocks,
+                    range: hover_range,
+                    language,
+                    debugger_value,
+                } = hover_result;
+
                 // Create symbol range of anchors for highlighting and filtering of future requests.
-                let range = hover_result
-                    .range
+                let range = hover_range
                     .and_then(|range| {
                         let range = snapshot
                             .buffer_snapshot()
@@ -538,28 +567,40 @@ fn show_hover(
                     })
                     .unwrap_or_else(|| anchor..anchor);
 
-                let blocks = hover_result.contents;
-                let language = hover_result.language;
-                let parsed_content =
-                    parse_blocks(&blocks, language_registry.as_ref(), language, cx);
+                let parsed_content = if show_debugger_hover_only {
+                    None
+                } else {
+                    parse_blocks(&blocks, language_registry.as_ref(), language, cx)
+                };
+                let debugger_hover =
+                    build_debugger_hover_view(debugger_value, debugger_project.clone(), cx);
+                if parsed_content.is_none() && debugger_hover.is_none() {
+                    continue;
+                }
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
-                let subscription = this
+                let subscriptions = this
                     .update(cx, |_, cx| {
-                        parsed_content.as_ref().map(|parsed_content| {
-                            cx.observe(parsed_content, |_, _, cx| cx.notify())
-                        })
+                        let mut subscriptions = Vec::new();
+                        if let Some(parsed_content) = parsed_content.as_ref() {
+                            subscriptions.push(cx.observe(parsed_content, |_, _, cx| cx.notify()));
+                        }
+                        if let Some(debugger_hover) = debugger_hover.as_ref() {
+                            subscriptions.push(cx.observe(debugger_hover, |_, _, cx| cx.notify()));
+                        }
+                        subscriptions
                     })
                     .ok()
-                    .flatten();
+                    .unwrap_or_default();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     parsed_content,
+                    debugger_hover,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                     last_bounds: Rc::new(Cell::new(None)),
-                    _subscription: subscription,
+                    _subscriptions: subscriptions,
                 });
             }
 
@@ -581,11 +622,12 @@ fn show_hover(
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(multi_buffer_range),
                     parsed_content,
+                    debugger_hover: None,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                     last_bounds: Rc::new(Cell::new(None)),
-                    _subscription: subscription,
+                    _subscriptions: subscription.into_iter().collect(),
                 });
             }
 
@@ -602,6 +644,10 @@ fn show_hover(
                     );
                 }
 
+                if show_debugger_hover_only {
+                    editor.hover_state.diagnostic_popover = None;
+                }
+                editor.hover_state.stable_debugger_hover_origin = None;
                 editor.hover_state.info_popovers = info_popovers;
                 cx.notify();
                 window.refresh();
@@ -672,6 +718,10 @@ fn parse_blocks(
         })
         .join("\n\n");
 
+    if combined_text.trim().is_empty() {
+        return None;
+    }
+
     cx.new_window_entity(|_window, cx| {
         Markdown::new(
             combined_text.into(),
@@ -681,6 +731,545 @@ fn parse_blocks(
         )
     })
     .ok()
+}
+
+fn build_debugger_hover_view(
+    debugger_value: Option<DebuggerHoverData>,
+    project: Option<WeakEntity<Project>>,
+    cx: &mut AsyncWindowContext,
+) -> Option<Entity<DebuggerHoverView>> {
+    let debugger_value = debugger_value?;
+
+    cx.new_window_entity(|_window, _cx| DebuggerHoverView::new(debugger_value, project))
+        .ok()
+}
+
+enum DebuggerHoverChildren {
+    Unsupported,
+    Unloaded,
+    Loading,
+    Loaded(Vec<DebuggerHoverNode>),
+    Failed(String),
+}
+
+struct DebuggerHoverNode {
+    variable: DebuggerHoverVariable,
+    is_expanded: bool,
+    children: DebuggerHoverChildren,
+    load_task: Option<Task<()>>,
+}
+
+impl DebuggerHoverNode {
+    fn new(variable: DebuggerHoverVariable) -> Self {
+        let children = if variable.has_children() {
+            DebuggerHoverChildren::Unloaded
+        } else {
+            DebuggerHoverChildren::Unsupported
+        };
+
+        Self {
+            variable,
+            is_expanded: false,
+            children,
+            load_task: None,
+        }
+    }
+
+    fn has_children(&self) -> bool {
+        self.variable.has_children()
+    }
+}
+
+struct DebuggerHoverView {
+    project: Option<WeakEntity<Project>>,
+    session_id: SessionId,
+    root: DebuggerHoverNode,
+    selected_path: Vec<usize>,
+    row_bounds: Rc<RefCell<HashMap<Vec<usize>, Bounds<Pixels>>>>,
+}
+
+struct DebuggerHoverVariableColors {
+    name: Option<Hsla>,
+    value: Option<Hsla>,
+    type_name: Option<Hsla>,
+}
+
+const DEBUGGER_HOVER_NAME_FLEX_BASIS: f32 = 0.36;
+const DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH: Pixels = px(120.0);
+
+impl DebuggerHoverView {
+    fn new(debugger_value: DebuggerHoverData, project: Option<WeakEntity<Project>>) -> Self {
+        Self {
+            project,
+            session_id: debugger_value.session_id,
+            root: DebuggerHoverNode::new(debugger_value.root),
+            selected_path: Vec::new(),
+            row_bounds: Rc::new(RefCell::new(HashMap::default())),
+        }
+    }
+
+    fn node_mut(&mut self, path: &[usize]) -> Option<&mut DebuggerHoverNode> {
+        let mut node = &mut self.root;
+        for index in path {
+            match &mut node.children {
+                DebuggerHoverChildren::Loaded(children) => node = children.get_mut(*index)?,
+                DebuggerHoverChildren::Unsupported
+                | DebuggerHoverChildren::Unloaded
+                | DebuggerHoverChildren::Loading
+                | DebuggerHoverChildren::Failed(_) => return None,
+            }
+        }
+
+        Some(node)
+    }
+
+    fn toggle_node(&mut self, path: Vec<usize>, cx: &mut Context<Self>) {
+        let Some(node) = self.node_mut(&path) else {
+            return;
+        };
+
+        if !node.has_children() {
+            return;
+        }
+
+        node.is_expanded = !node.is_expanded;
+        let should_load = node.is_expanded
+            && matches!(
+                node.children,
+                DebuggerHoverChildren::Unloaded | DebuggerHoverChildren::Failed(_)
+            );
+        let variables_reference = node.variable.variables_reference;
+        if should_load {
+            node.children = DebuggerHoverChildren::Loading;
+        }
+
+        cx.notify();
+
+        if should_load {
+            self.load_children(path, variables_reference, cx);
+        }
+    }
+
+    fn load_children(
+        &mut self,
+        path: Vec<usize>,
+        variables_reference: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.clone();
+        let session_id = self.session_id;
+        let Some(node) = self.node_mut(&path) else {
+            return;
+        };
+
+        node.load_task = Some(cx.spawn(async move |this, cx| {
+            let result = match project {
+                Some(project) => match project.update(cx, |project, cx| {
+                    project.load_debugger_hover_children(session_id, variables_reference, cx)
+                }) {
+                    Ok(task) => task.await.map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                },
+                None => Err(anyhow!("project is no longer available").to_string()),
+            };
+
+            this.update(cx, |this, cx| {
+                let Some(node) = this.node_mut(&path) else {
+                    return;
+                };
+
+                node.load_task.take();
+                node.children = match result {
+                    Ok(children) => DebuggerHoverChildren::Loaded(
+                        children.into_iter().map(DebuggerHoverNode::new).collect(),
+                    ),
+                    Err(error) => DebuggerHoverChildren::Failed(error),
+                };
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn visible_paths(&self) -> Vec<Vec<usize>> {
+        fn collect(node: &DebuggerHoverNode, path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+            out.push(path.clone());
+
+            if !node.is_expanded {
+                return;
+            }
+
+            if let DebuggerHoverChildren::Loaded(children) = &node.children {
+                for (index, child) in children.iter().enumerate() {
+                    path.push(index);
+                    collect(child, path, out);
+                    path.pop();
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        collect(&self.root, &mut Vec::new(), &mut out);
+        out
+    }
+
+    fn select_path(&mut self, path: Vec<usize>, cx: &mut Context<Self>) {
+        self.selected_path = path;
+        cx.notify();
+    }
+
+    fn select_next(&mut self, cx: &mut Context<Self>) {
+        let visible_paths = self.visible_paths();
+        let Some(index) = visible_paths
+            .iter()
+            .position(|path| path == &self.selected_path)
+        else {
+            self.selected_path = Vec::new();
+            cx.notify();
+            return;
+        };
+
+        if let Some(path) = visible_paths.get(index + 1) {
+            self.selected_path = path.clone();
+            cx.notify();
+        }
+    }
+
+    fn select_previous(&mut self, cx: &mut Context<Self>) {
+        let visible_paths = self.visible_paths();
+        let Some(index) = visible_paths
+            .iter()
+            .position(|path| path == &self.selected_path)
+        else {
+            self.selected_path = Vec::new();
+            cx.notify();
+            return;
+        };
+
+        if index > 0 {
+            self.selected_path = visible_paths[index - 1].clone();
+            cx.notify();
+        }
+    }
+
+    fn expand_selected(&mut self, cx: &mut Context<Self>) {
+        let path = self.selected_path.clone();
+        let Some(node) = self.node_mut(&path) else {
+            return;
+        };
+
+        if !node.has_children() {
+            return;
+        }
+
+        if !node.is_expanded {
+            self.toggle_node(path, cx);
+            return;
+        }
+
+        if let DebuggerHoverChildren::Loaded(children) = &node.children
+            && !children.is_empty()
+        {
+            let mut child_path = path;
+            child_path.push(0);
+            self.selected_path = child_path;
+            cx.notify();
+        }
+    }
+
+    fn collapse_selected(&mut self, cx: &mut Context<Self>) {
+        let path = self.selected_path.clone();
+        let Some(node) = self.node_mut(&path) else {
+            return;
+        };
+
+        if node.is_expanded {
+            self.toggle_node(path, cx);
+            return;
+        }
+
+        if !self.selected_path.is_empty() {
+            self.selected_path.pop();
+            cx.notify();
+        }
+    }
+
+    fn selected_row_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.row_bounds.borrow().get(&self.selected_path).copied()
+    }
+
+    fn render_entries(
+        &self,
+        node: &DebuggerHoverNode,
+        depth: usize,
+        path: &[usize],
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut entries = vec![self.render_node(node, depth, path, cx)];
+
+        if node.is_expanded {
+            match &node.children {
+                DebuggerHoverChildren::Loaded(children) => {
+                    for (index, child) in children.iter().enumerate() {
+                        let mut child_path = path.to_vec();
+                        child_path.push(index);
+                        entries.extend(self.render_entries(child, depth + 1, &child_path, cx));
+                    }
+                }
+                DebuggerHoverChildren::Loading => {
+                    entries.push(self.render_status_row("Loading…", depth + 1, cx));
+                }
+                DebuggerHoverChildren::Failed(error) => {
+                    entries.push(self.render_status_row(error, depth + 1, cx));
+                }
+                DebuggerHoverChildren::Unsupported | DebuggerHoverChildren::Unloaded => {}
+            }
+        }
+
+        entries
+    }
+
+    fn render_status_row(&self, message: &str, depth: usize, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .w_full()
+            .min_h_5()
+            .pl(px(depth as f32 * 14.0 + 18.0))
+            .pr_1()
+            .flex()
+            .items_center()
+            .text_ui_sm(cx)
+            .font_buffer(cx)
+            .child(
+                Label::new(message.to_string())
+                    .single_line()
+                    .truncate()
+                    .color(Color::Muted),
+            )
+            .into_any_element()
+    }
+
+    fn render_node(
+        &self,
+        node: &DebuggerHoverNode,
+        depth: usize,
+        path: &[usize],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let path = path.to_vec();
+        let row_selector = debugger_hover_row_selector(&path);
+        let toggle_selector = debugger_hover_toggle_selector(&path);
+        let is_expandable = node.has_children();
+        let is_selected = self.selected_path == path;
+        let variable_colors = debugger_hover_variable_colors(cx);
+        let row_bounds = self.row_bounds.clone();
+        let row_bounds_path = path.clone();
+
+        div()
+            .w_full()
+            .debug_selector(|| row_selector.clone())
+            .rounded_sm()
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        row_bounds
+                            .borrow_mut()
+                            .insert(row_bounds_path.clone(), bounds);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .when(!is_expandable, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener({
+                        let path = path.clone();
+                        move |this, _: &MouseDownEvent, _window, cx| {
+                            this.select_path(path.clone(), cx);
+                        }
+                    }),
+                )
+            })
+            .when(is_expandable, |this| {
+                this.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener({
+                        let path = path.clone();
+                        move |this, _: &MouseDownEvent, window, cx| {
+                            window.prevent_default();
+                            this.select_path(path.clone(), cx);
+                            this.toggle_node(path.clone(), cx)
+                        }
+                    }),
+                )
+            })
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_h_5()
+                    .items_center()
+                    .gap_1()
+                    .rounded_sm()
+                    .px_1()
+                    .when(is_selected, |this| {
+                        this.bg(cx.theme().colors().ghost_element_selected)
+                    })
+                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .pl(px(depth as f32 * 14.0))
+                    .child(if is_expandable {
+                        div()
+                            .debug_selector(|| toggle_selector.clone())
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(
+                                Disclosure::new(toggle_selector.clone(), node.is_expanded)
+                                    .on_click(cx.listener({
+                                        let path = path.clone();
+                                        move |this, _, window, cx| {
+                                            window.prevent_default();
+                                            this.toggle_node(path.clone(), cx)
+                                        }
+                                    })),
+                            )
+                            .into_any_element()
+                    } else {
+                        div().w_4().flex_none().into_any_element()
+                    })
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_0p5()
+                            .text_ui_sm(cx)
+                            .font_buffer(cx)
+                            .child(
+                                div()
+                                    .id(format!("{row_selector}-name"))
+                                    .min_w_0()
+                                    .flex_grow_1()
+                                    .flex_shrink_1()
+                                    .flex_basis(gpui::relative(DEBUGGER_HOVER_NAME_FLEX_BASIS))
+                                    .overflow_hidden()
+                                    .tooltip(Tooltip::text(node.variable.name.clone()))
+                                    .child(
+                                        Label::new(node.variable.name.clone())
+                                            .single_line()
+                                            .truncate()
+                                            .when_some(variable_colors.name, |this, color| {
+                                                this.color(Color::from(color))
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .flex_shrink_1()
+                                    .overflow_hidden()
+                                    .gap_0p5()
+                                    .child(Label::new("=").single_line().color(Color::Muted))
+                                    .child(
+                                        div()
+                                            .id(format!("{row_selector}-value"))
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .tooltip(Tooltip::text(node.variable.value.clone()))
+                                            .child(
+                                                Label::new(node.variable.value.clone())
+                                                    .single_line()
+                                                    .truncate()
+                                                    .color(Color::Muted)
+                                                    .when_some(
+                                                        variable_colors.value,
+                                                        |this, color| {
+                                                            this.color(Color::from(color))
+                                                        },
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            .children(
+                                debugger_hover_type_suffix(
+                                    depth,
+                                    node.variable.type_name.as_deref(),
+                                )
+                                .map(|type_name| {
+                                    div()
+                                        .min_w_0()
+                                        .max_w(DEBUGGER_HOVER_ROOT_TYPE_MAX_WIDTH)
+                                        .flex_shrink_1()
+                                        .overflow_hidden()
+                                        .child(
+                                            Label::new(type_name)
+                                                .single_line()
+                                                .truncate_start()
+                                                .color(Color::Muted)
+                                                .when_some(
+                                                    variable_colors.type_name,
+                                                    |this, color| this.color(Color::from(color)),
+                                                ),
+                                        )
+                                }),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+fn debugger_hover_variable_colors(cx: &App) -> DebuggerHoverVariableColors {
+    let syntax = cx.theme().syntax();
+    let colors = cx.theme().colors();
+    let syntax_color_for = |name| syntax.style_for_name(name).and_then(|style| style.color);
+
+    DebuggerHoverVariableColors {
+        name: syntax_color_for("variable").or(Some(colors.text)),
+        value: syntax_color_for("variable.special").or(Some(colors.text_accent)),
+        type_name: syntax_color_for("type").or(Some(colors.text_muted)),
+    }
+}
+
+fn debugger_hover_type_suffix(depth: usize, type_name: Option<&str>) -> Option<String> {
+    if depth > 0 {
+        return None;
+    }
+
+    type_name
+        .filter(|type_name| !type_name.is_empty())
+        .map(|type_name| format!(": {type_name}"))
+}
+
+impl Render for DebuggerHoverView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.row_bounds.borrow_mut().clear();
+        let rows = self.render_entries(&self.root, 0, &[], cx);
+        v_flex()
+            .id("debugger-hover-view")
+            .w_full()
+            .gap_0()
+            .children(rows)
+    }
+}
+
+fn debugger_hover_row_selector(path: &[usize]) -> String {
+    if path.is_empty() {
+        "debugger-hover-node-root".to_string()
+    } else {
+        format!(
+            "debugger-hover-node-{}",
+            path.iter().map(|index| index.to_string()).join("-")
+        )
+    }
+}
+
+fn debugger_hover_toggle_selector(path: &[usize]) -> String {
+    if path.is_empty() {
+        "debugger-hover-toggle-root".to_string()
+    } else {
+        format!(
+            "debugger-hover-toggle-{}",
+            path.iter().map(|index| index.to_string()).join("-")
+        )
+    }
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -884,11 +1473,40 @@ pub struct HoverState {
     pub info_task: Option<Task<Option<()>>>,
     pub closest_mouse_distance: Option<Pixels>,
     pub hiding_delay_task: Option<Task<()>>,
+    pub stable_debugger_hover_origin: Option<gpui::Point<Pixels>>,
 }
 
 impl HoverState {
     pub fn visible(&self) -> bool {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
+    }
+
+    pub fn is_single_debugger_hover(&self) -> bool {
+        let [info_popover] = self.info_popovers.as_slice() else {
+            return false;
+        };
+
+        self.diagnostic_popover.is_none()
+            && info_popover.debugger_hover.is_some()
+            && info_popover.parsed_content.is_none()
+    }
+
+    pub fn stable_debugger_hover_origin(&self) -> Option<gpui::Point<Pixels>> {
+        self.is_single_debugger_hover()
+            .then_some(self.stable_debugger_hover_origin)
+            .flatten()
+    }
+
+    fn keyboard_debugger_hover(&self) -> Option<Entity<DebuggerHoverView>> {
+        self.info_popovers.iter().find_map(|info_popover| {
+            (*info_popover.keyboard_grace.borrow())
+                .then_some(info_popover.debugger_hover.clone())
+                .flatten()
+        })
+    }
+
+    pub fn keyboard_debugger_hover_active(&self) -> bool {
+        self.keyboard_debugger_hover().is_some()
     }
 
     pub fn is_mouse_getting_closer(&mut self, mouse_position: gpui::Point<Pixels>) -> bool {
@@ -1041,14 +1659,103 @@ impl HoverState {
     }
 }
 
+impl Editor {
+    fn ensure_debugger_hover_selection_visible(&mut self, cx: &mut Context<Self>) {
+        let Some((debugger_hover, scroll_handle)) =
+            self.hover_state
+                .info_popovers
+                .iter()
+                .find_map(|info_popover| {
+                    if !*info_popover.keyboard_grace.borrow() {
+                        return None;
+                    }
+
+                    info_popover
+                        .debugger_hover
+                        .clone()
+                        .map(|debugger_hover| (debugger_hover, info_popover.scroll_handle.clone()))
+                })
+        else {
+            return;
+        };
+
+        let Some(selected_bounds) = debugger_hover.read(cx).selected_row_bounds() else {
+            return;
+        };
+        let viewport_bounds = scroll_handle.bounds();
+        let mut scroll_offset = scroll_handle.offset();
+        let initial_offset = scroll_offset;
+
+        if selected_bounds.top() < viewport_bounds.top() {
+            scroll_offset.y += viewport_bounds.top() - selected_bounds.top();
+        } else if selected_bounds.bottom() > viewport_bounds.bottom() {
+            scroll_offset.y += viewport_bounds.bottom() - selected_bounds.bottom();
+        }
+
+        if scroll_offset != initial_offset {
+            scroll_handle.set_offset(scroll_offset);
+            cx.notify();
+        }
+    }
+
+    pub fn debugger_hover_expand_selected(
+        &mut self,
+        _: &crate::actions::DebuggerHoverExpandSelected,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(debugger_hover) = self.hover_state.keyboard_debugger_hover() {
+            debugger_hover.update(cx, |debugger_hover, cx| debugger_hover.expand_selected(cx));
+        }
+    }
+
+    pub fn debugger_hover_collapse_selected(
+        &mut self,
+        _: &crate::actions::DebuggerHoverCollapseSelected,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(debugger_hover) = self.hover_state.keyboard_debugger_hover() {
+            debugger_hover.update(cx, |debugger_hover, cx| {
+                debugger_hover.collapse_selected(cx)
+            });
+        }
+    }
+
+    pub fn debugger_hover_select_next(
+        &mut self,
+        _: &crate::actions::DebuggerHoverSelectNext,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(debugger_hover) = self.hover_state.keyboard_debugger_hover() {
+            debugger_hover.update(cx, |debugger_hover, cx| debugger_hover.select_next(cx));
+            self.ensure_debugger_hover_selection_visible(cx);
+        }
+    }
+
+    pub fn debugger_hover_select_previous(
+        &mut self,
+        _: &crate::actions::DebuggerHoverSelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(debugger_hover) = self.hover_state.keyboard_debugger_hover() {
+            debugger_hover.update(cx, |debugger_hover, cx| debugger_hover.select_previous(cx));
+            self.ensure_debugger_hover_selection_visible(cx);
+        }
+    }
+}
+
 pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: Option<Entity<Markdown>>,
+    debugger_hover: Option<Entity<DebuggerHoverView>>,
     pub scroll_handle: ScrollHandle,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Option<Anchor>,
     pub last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    _subscription: Option<Subscription>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl InfoPopover {
@@ -1062,6 +1769,9 @@ impl InfoPopover {
         let this = cx.entity().downgrade();
         let this2 = this.clone();
         let bounds_cell = self.last_bounds.clone();
+        let parsed_content = self.parsed_content.clone();
+        let debugger_hover = self.debugger_hover.clone();
+        let debugger_hover_only = debugger_hover.is_some() && parsed_content.is_none();
         div()
             .id("info_popover")
             .occlude()
@@ -1095,43 +1805,67 @@ impl InfoPopover {
                 *keyboard_grace = false;
                 cx.stop_propagation();
             })
-            .when_some(self.parsed_content.clone(), |this, markdown| {
-                this.child(
-                    div()
-                        .id("info-md-container")
-                        .overflow_y_scroll()
-                        .max_w(max_size.width)
-                        .max_h(max_size.height)
-                        .track_scroll(&self.scroll_handle)
-                        .child(
-                            MarkdownElement::new(markdown, hover_markdown_style(window, cx))
-                                .scroll_handle(self.scroll_handle.clone())
-                                .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
-                                    border: false,
-                                })
-                                .on_url_click(move |link, window, cx| {
-                                    open_markdown_url(
-                                        this2
-                                            .read_with(cx, |editor, _| editor.workspace())
-                                            .ok()
-                                            .flatten(),
-                                        link,
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .p_2(),
-                        ),
-                )
-                .custom_scrollbars(
-                    Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
-                        .tracked_scroll_handle(&self.scroll_handle),
-                    window,
-                    cx,
-                )
-            })
+            .when(
+                parsed_content.is_some() || debugger_hover.is_some(),
+                |this| {
+                    this.child(
+                        div()
+                            .id("info-content-container")
+                            .overflow_y_scroll()
+                            .max_w(max_size.width)
+                            .max_h(max_size.height)
+                            .track_scroll(&self.scroll_handle)
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .when(debugger_hover_only, |this| this.gap_0().p_1())
+                                    .when(!debugger_hover_only, |this| this.gap_2().p_2())
+                                    .when_some(debugger_hover, |this, debugger_hover| {
+                                        this.child(debugger_hover)
+                                    })
+                                    .when_some(parsed_content, |this, markdown| {
+                                        this.child(
+                                            MarkdownElement::new(
+                                                markdown,
+                                                hover_markdown_style(window, cx),
+                                            )
+                                            .scroll_handle(self.scroll_handle.clone())
+                                            .code_block_renderer(
+                                                markdown::CodeBlockRenderer::Default {
+                                                    copy_button_visibility:
+                                                        CopyButtonVisibility::Hidden,
+                                                    wrap_button_visibility:
+                                                        markdown::WrapButtonVisibility::Hidden,
+                                                    border: false,
+                                                },
+                                            )
+                                            .on_url_click(move |link, window, cx| {
+                                                open_markdown_url(
+                                                    this2
+                                                        .read_with(cx, |editor, _| {
+                                                            editor.workspace()
+                                                        })
+                                                        .ok()
+                                                        .flatten(),
+                                                    link,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        )
+                                    }),
+                            )
+                            .when(!debugger_hover_only, |this| {
+                                this.custom_scrollbars(
+                                    Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                                        .tracked_scroll_handle(&self.scroll_handle),
+                                    window,
+                                    cx,
+                                )
+                            }),
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -1272,19 +2006,29 @@ mod tests {
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
-        test::editor_lsp_test_context::EditorLspTestContext,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
     };
-    use collections::BTreeSet;
+    use collections::{BTreeSet, HashMap, HashSet};
+    use futures::future::Shared;
     use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
+    use language::{Buffer, BufferRow};
     use markdown::parser::MarkdownEvent;
-    use project::InlayId;
+    use project::{
+        DocumentHighlight, Hover as ProjectHover, InlayHint, InlayId, InvalidationStrategy,
+        LocationLink, ProjectTransaction,
+        lsp_store::{BufferSemanticTokens, CacheInlayHints, RefreshForServer},
+    };
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
+    use std::{ops::Range, rc::Rc, sync::Arc};
     use text::Bias;
+    use text::BufferId;
 
     fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
         cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay.0 })
@@ -1328,6 +2072,109 @@ mod tests {
         assert!(!rendered.contains('\t'));
         // And the full rendering matches the source exactly.
         assert_eq!(rendered, text);
+    }
+
+    #[derive(Clone)]
+    struct TestHoverSemanticsProvider {
+        hover_response: Vec<ProjectHover>,
+    }
+
+    impl crate::SemanticsProvider for TestHoverSemanticsProvider {
+        fn hover(
+            &self,
+            _buffer: &Entity<Buffer>,
+            _position: text::Anchor,
+            _cx: &mut App,
+        ) -> Option<Task<Option<Vec<ProjectHover>>>> {
+            Some(Task::ready(Some(self.hover_response.clone())))
+        }
+
+        fn inline_values(
+            &self,
+            _buffer_handle: Entity<Buffer>,
+            _range: Range<text::Anchor>,
+            _cx: &mut App,
+        ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
+            None
+        }
+
+        fn applicable_inlay_chunks(
+            &self,
+            _buffer: &Entity<Buffer>,
+            _ranges: &[Range<text::Anchor>],
+            _cx: &mut App,
+        ) -> Vec<Range<BufferRow>> {
+            Vec::new()
+        }
+
+        fn invalidate_inlay_hints(&self, _for_buffers: &HashSet<BufferId>, _cx: &mut App) {}
+
+        fn inlay_hints(
+            &self,
+            _invalidate: InvalidationStrategy,
+            _buffer: Entity<Buffer>,
+            _ranges: Vec<Range<text::Anchor>>,
+            _known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
+            _cx: &mut App,
+        ) -> Option<HashMap<Range<BufferRow>, Task<anyhow::Result<CacheInlayHints>>>> {
+            None
+        }
+
+        fn semantic_tokens(
+            &self,
+            _buffer: Entity<Buffer>,
+            _refresh: Option<RefreshForServer>,
+            _cx: &mut App,
+        ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>>
+        {
+            None
+        }
+
+        fn supports_inlay_hints(&self, _buffer: &Entity<Buffer>, _cx: &mut App) -> bool {
+            false
+        }
+
+        fn supports_semantic_tokens(&self, _buffer: &Entity<Buffer>, _cx: &mut App) -> bool {
+            false
+        }
+
+        fn document_highlights(
+            &self,
+            _buffer: &Entity<Buffer>,
+            _position: text::Anchor,
+            _cx: &mut App,
+        ) -> Option<Task<anyhow::Result<Vec<DocumentHighlight>>>> {
+            None
+        }
+
+        fn definitions(
+            &self,
+            _buffer: &Entity<Buffer>,
+            _position: text::Anchor,
+            _kind: crate::GotoDefinitionKind,
+            _cx: &mut App,
+        ) -> Option<Task<anyhow::Result<Option<Vec<LocationLink>>>>> {
+            None
+        }
+
+        fn range_for_rename(
+            &self,
+            _buffer: &Entity<Buffer>,
+            _position: text::Anchor,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<Option<Range<text::Anchor>>>> {
+            Task::ready(Ok(None))
+        }
+
+        fn perform_rename(
+            &self,
+            _buffer: &Entity<Buffer>,
+            _position: text::Anchor,
+            _new_name: String,
+            _cx: &mut App,
+        ) -> Option<Task<anyhow::Result<ProjectTransaction>>> {
+            None
+        }
     }
 
     impl InfoPopover {
@@ -1522,6 +2369,92 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(!editor.hover_state.visible());
         });
+    }
+
+    #[gpui::test]
+    async fn test_debugger_hover_hides_lsp_markdown_content(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut editor_cx = EditorTestContext::new(cx).await;
+        editor_cx.set_state("let value = ˇpoint.x;\n");
+
+        editor_cx.update_editor(|editor, _, _| {
+            editor.set_semantics_provider(Some(Rc::new(TestHoverSemanticsProvider {
+                hover_response: vec![
+                    ProjectHover {
+                        contents: vec![HoverBlock {
+                            text: "Other hover content that should be removed".to_string(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        range: None,
+                        language: None,
+                        debugger_value: None,
+                    },
+                    ProjectHover {
+                        contents: vec![HoverBlock {
+                            text: "Constructor documentation that should stay hidden".to_string(),
+                            kind: HoverBlockKind::Markdown,
+                        }],
+                        range: None,
+                        language: None,
+                        debugger_value: Some(DebuggerHoverData {
+                            session_id: SessionId(1),
+                            root: DebuggerHoverVariable {
+                                name: "point".to_string(),
+                                value: "Point { x: 42 }".to_string(),
+                                type_name: Some("Point".to_string()),
+                                variables_reference: 0,
+                            },
+                        }),
+                    },
+                ],
+            })));
+        });
+
+        editor_cx.update_editor(|editor, window, cx| hover(editor, &Hover, window, cx));
+        editor_cx.run_until_parked();
+
+        editor_cx.update_editor(|editor, _, _| {
+            assert_eq!(editor.hover_state.info_popovers.len(), 1);
+            let popover = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .expect("expected debugger hover popover");
+
+            assert!(popover.debugger_hover.is_some());
+            assert!(
+                popover.parsed_content.is_none(),
+                "expected debugger hover to suppress markdown content"
+            );
+        });
+    }
+
+    #[test]
+    fn test_debugger_hover_type_suffix_is_inline() {
+        assert_eq!(debugger_hover_type_suffix(0, None), None);
+        assert_eq!(
+            debugger_hover_type_suffix(0, Some("Point")),
+            Some(": Point".to_string())
+        );
+        assert_eq!(debugger_hover_type_suffix(1, Some("Point")), None);
+    }
+
+    #[gpui::test]
+    fn test_debugger_hover_variable_colors_use_theme_syntax(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let colors = cx.read(|cx: &App| debugger_hover_variable_colors(cx));
+
+        assert!(colors.name.is_some());
+        assert!(colors.value.is_some());
+        assert!(colors.type_name.is_some());
+    }
+
+    #[test]
+    fn test_debugger_hover_name_basis_stays_compact() {
+        assert!(DEBUGGER_HOVER_NAME_FLEX_BASIS > 0.25);
+        assert!(DEBUGGER_HOVER_NAME_FLEX_BASIS < 0.5);
     }
 
     #[gpui::test]
