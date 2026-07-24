@@ -1981,6 +1981,11 @@
       // Example: `echo -e "\e]2;New Title\007";`
       "breadcrumbs": false,
     },
+    // Whether a terminal tab should be titled by the program running inside it,
+    // using the title that program emits via the OSC 0/2 escape sequence
+    // (e.g. tmux, a shell PROMPT_COMMAND, or a TUI like Claude Code). A manual
+    // rename or a running task's label still takes precedence.
+    "tab_title_from_program": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the terminal.

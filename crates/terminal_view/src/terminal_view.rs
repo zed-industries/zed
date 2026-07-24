@@ -47,7 +47,7 @@ use ui::{
     prelude::*,
     scrollbars::{self, ScrollbarVisibility},
 };
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
     CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
     ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
@@ -415,6 +415,43 @@ impl TerminalView {
 
     pub fn custom_title(&self) -> Option<&str> {
         self.custom_title.as_deref()
+    }
+
+    /// Maximum length of a program-provided (OSC) tab title before it is
+    /// truncated. Mirrors the per-segment limit used by `Terminal::title`.
+    const PROGRAM_TAB_TITLE_MAX_CHARS: usize = 25;
+
+    /// Computes the text shown on this terminal's tab.
+    ///
+    /// Precedence: a manual rename always wins; then, when
+    /// `terminal.tab_title_from_program` is enabled and the terminal is not
+    /// running a task, the title the program emitted via OSC 0/2 (stored as the
+    /// breadcrumb text) is used — this intentionally wins over a shell
+    /// `title_override` as well. Otherwise it falls back to `Terminal::title`
+    /// (a running task's label, a `title_override`, or the automatic
+    /// `<directory> — <program>` title).
+    fn tab_title(&self, truncate: bool, cx: &App) -> SharedString {
+        if let Some(custom_title) = self
+            .custom_title
+            .as_ref()
+            .filter(|title| !title.trim().is_empty())
+        {
+            return custom_title.clone().into();
+        }
+
+        let terminal = self.terminal().read(cx);
+        if TerminalSettings::get_global(cx).tab_title_from_program && terminal.task().is_none() {
+            let program_title = terminal.breadcrumb_text.trim();
+            if !program_title.is_empty() {
+                return if truncate {
+                    truncate_and_trailoff(program_title, Self::PROGRAM_TAB_TITLE_MAX_CHARS).into()
+                } else {
+                    program_title.to_string().into()
+                };
+            }
+        }
+
+        terminal.title(truncate).into()
     }
 
     pub fn set_custom_title(&mut self, label: Option<String>, cx: &mut Context<Self>) {
@@ -1221,7 +1258,17 @@ fn subscribe_for_terminal_events(
                         cx,
                     ),
                 },
-                Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
+                Event::BreadcrumbsChanged => {
+                    cx.emit(ItemEvent::UpdateBreadcrumbs);
+                    // The program-emitted (OSC) title also drives the tab title when
+                    // `tab_title_from_program` is enabled, so refresh the tab too.
+                    // When the feature is off the tab title can't depend on the OSC
+                    // title, so skip the emit to avoid re-rendering the tab on every
+                    // prompt for everyone else.
+                    if TerminalSettings::get_global(cx).tab_title_from_program {
+                        cx.emit(ItemEvent::UpdateTab);
+                    }
+                }
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
@@ -1457,12 +1504,7 @@ impl Item for TerminalView {
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
-        let title = self
-            .custom_title
-            .as_ref()
-            .filter(|title| !title.trim().is_empty())
-            .cloned()
-            .unwrap_or_else(|| terminal.title(true));
+        let title = self.tab_title(true, cx);
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
@@ -1559,11 +1601,7 @@ impl Item for TerminalView {
     }
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
-        if let Some(custom_title) = self.custom_title.as_ref().filter(|l| !l.trim().is_empty()) {
-            return custom_title.clone().into();
-        }
-        let terminal = self.terminal().read(cx);
-        terminal.title(detail == 0).into()
+        self.tab_title(detail == 0, cx)
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -2980,6 +3018,82 @@ mod tests {
 
             view.set_custom_title(Some("  ".to_string()), cx);
             assert!(view.custom_title().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tab_title_from_program(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        // Simulate the program running in the terminal setting its own title via
+        // an OSC 0/2 escape sequence (the value Zed stores as breadcrumb text).
+        terminal_view.update(cx, |view, cx| {
+            view.terminal().update(cx, |terminal, _| {
+                terminal.breadcrumb_text = "claude".to_string();
+            });
+        });
+
+        // Disabled by default: the tab keeps its automatic title, not the OSC one.
+        terminal_view.update(cx, |view, cx| {
+            let automatic_title = view.terminal().read(cx).title(true);
+            assert_eq!(view.tab_title(true, cx).to_string(), automatic_title);
+            assert_ne!(automatic_title, "claude");
+        });
+
+        // Enabling the setting surfaces the program-provided title on the tab.
+        cx.update_global(|store: &mut settings::SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .terminal
+                    .get_or_insert_default()
+                    .tab_title_from_program = Some(true);
+            });
+        });
+        terminal_view.update(cx, |view, cx| {
+            assert_eq!(view.tab_title(true, cx).to_string(), "claude");
+        });
+
+        // A long program title is truncated for the tab, but not for the
+        // untruncated form used by `tab_content_text(detail > 0)`.
+        terminal_view.update(cx, |view, cx| {
+            let long_title = "a-very-long-program-provided-title-that-overflows";
+            view.terminal().update(cx, |terminal, _| {
+                terminal.breadcrumb_text = long_title.to_string();
+            });
+            let truncated = view.tab_title(true, cx).to_string();
+            assert!(
+                truncated.ends_with('…'),
+                "expected truncation, got {truncated:?}"
+            );
+            assert!(truncated.chars().count() <= 26);
+            assert_eq!(view.tab_title(false, cx).to_string(), long_title);
+        });
+
+        // A manual rename always wins over the program-provided title.
+        terminal_view.update(cx, |view, cx| {
+            view.set_custom_title(Some("frontend".to_string()), cx);
+            assert_eq!(view.tab_title(true, cx).to_string(), "frontend");
         });
     }
 

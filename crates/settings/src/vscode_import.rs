@@ -940,6 +940,7 @@ impl VsCodeSettings {
             project: self.project_terminal_settings_content(),
             scrollbar: None,
             scroll_multiplier: None,
+            tab_title_from_program: None,
             toolbar: None,
             show_count_badge: None,
             flexible: None,
