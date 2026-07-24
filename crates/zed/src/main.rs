@@ -1187,14 +1187,17 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     cx,
                 );
                 cx.spawn(async move |cx| {
-                    let paths_with_position =
+                    let (paths_with_position, workspace_file_source) =
                         derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
                     let (workspace, _results) = open_paths_with_positions(
                         &paths_with_position,
                         &[],
                         false,
                         app_state,
-                        base_open_options,
+                        workspace::OpenOptions {
+                            workspace_file_source,
+                            ..base_open_options
+                        },
                         cx,
                     )
                     .await?;
@@ -1257,7 +1260,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             cx,
         );
         task = Some(cx.spawn(async move |cx| {
-            let paths_with_position =
+            let (paths_with_position, workspace_file_source) =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
@@ -1265,6 +1268,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 request.diff_all,
                 app_state,
                 workspace::OpenOptions {
+                    workspace_file_source,
                     open_in_dev_container: dev_container,
                     ..base_open_options
                 },
@@ -1403,7 +1407,8 @@ pub(crate) async fn restore_or_create_workspace(
         let mut error_count = 0;
         for multi_workspace in multi_workspaces {
             let result = match &multi_workspace.active_workspace.location {
-                SerializedWorkspaceLocation::Local => {
+                SerializedWorkspaceLocation::Local
+                | SerializedWorkspaceLocation::LocalFromFile { .. } => {
                     restore_multiworkspace(multi_workspace, app_state.clone(), cx)
                         .await
                         .map(|_| ())

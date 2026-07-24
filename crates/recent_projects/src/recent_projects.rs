@@ -5,6 +5,7 @@ mod remote_servers;
 pub mod sidebar_recent_projects;
 mod ssh_config;
 
+use anyhow::Context as _;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -1479,7 +1480,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let location = &workspace.location;
                 let raw_paths = &workspace.paths;
                 let identity_paths = &workspace.identity_paths;
-                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
+                let is_local = matches!(
+                    location,
+                    SerializedWorkspaceLocation::Local
+                        | SerializedWorkspaceLocation::LocalFromFile { .. }
+                );
                 let paths_to_add = raw_paths.paths().to_vec();
                 let ordered_paths: Vec<_> = identity_paths
                     .ordered_paths()
@@ -1621,7 +1626,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .into_any_element();
 
                 let icon = icon_for_remote_connection(match location {
-                    SerializedWorkspaceLocation::Local => None,
+                    SerializedWorkspaceLocation::Local
+                    | SerializedWorkspaceLocation::LocalFromFile { .. } => None,
                     SerializedWorkspaceLocation::Remote(options) => Some(options),
                 });
                 let show_icon = self.filtered_entries_include_remote_project();
@@ -2188,6 +2194,49 @@ impl RecentProjectsDelegate {
                             );
                     }
                 }
+                SerializedWorkspaceLocation::LocalFromFile {
+                    workspace_file_path,
+                    workspace_file_kind,
+                } => {
+                    let app_state = workspace.app_state().clone();
+                    let replace_window = if replace_current_window {
+                        window.window_handle().downcast::<MultiWorkspace>()
+                    } else {
+                        None
+                    };
+                    cx.spawn_in(window, async move |_, cx| {
+                        let workspace_source = workspace::WorkspaceFileSource {
+                            path: workspace_file_path.clone(),
+                            kind: workspace_file_kind
+                                .parse()
+                                .unwrap_or(workspace::WorkspaceFileKind::CodeWorkspace),
+                        };
+                        let content = app_state
+                            .fs
+                            .load(&workspace_file_path)
+                            .await
+                            .context("Failed to read workspace file")?;
+                        let parsed = workspace_source
+                            .parse(&content)
+                            .context("Failed to parse workspace file")?;
+                        let paths: Vec<PathBuf> = parsed.folders;
+                        cx.update(|_, cx| {
+                            workspace::open_paths(
+                                &paths,
+                                app_state,
+                                workspace::OpenOptions {
+                                    requesting_window: replace_window,
+                                    workspace_file_source: Some(workspace_source),
+                                    ..Default::default()
+                                },
+                                cx,
+                            )
+                        })?
+                        .await?;
+                        Ok(())
+                    })
+                    .detach_and_prompt_err("Failed to open project", window, cx, |_, _, _| None);
+                }
                 SerializedWorkspaceLocation::Remote(mut connection) => {
                     let app_state = workspace.app_state().clone();
                     let replace_window = if replace_current_window {
@@ -2458,7 +2507,8 @@ impl RecentProjectsDelegate {
         }
 
         let workspace_host = match &workspace.location {
-            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Local
+            | SerializedWorkspaceLocation::LocalFromFile { .. } => None,
             SerializedWorkspaceLocation::Remote(options) => Some(options),
         };
 

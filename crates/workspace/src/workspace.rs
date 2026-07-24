@@ -27,6 +27,7 @@ mod toast_layer;
 mod toolbar;
 pub mod welcome;
 pub mod workspace_error;
+pub mod workspace_file;
 mod workspace_settings;
 
 pub use dock::Panel;
@@ -42,6 +43,7 @@ pub use remote::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
 };
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
+pub use workspace_file::{WorkspaceFileContent, WorkspaceFileKind, WorkspaceFileSource};
 
 use anyhow::{Context as _, Result, anyhow};
 use client::{
@@ -1425,6 +1427,7 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    workspace_file_source: Option<WorkspaceFileSource>,
     open_in_dev_container: bool,
     _dev_container_task: Option<Task<Result<()>>>,
     _panels_task: Option<Task<Result<()>>>,
@@ -1885,6 +1888,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            workspace_file_source: None,
             sidebar_focus_handle: None,
             multi_workspace,
             active_workspace_id: None,
@@ -6952,6 +6956,14 @@ impl Workspace {
         self.session_id.clone()
     }
 
+    pub fn workspace_file_source(&self) -> Option<&WorkspaceFileSource> {
+        self.workspace_file_source.as_ref()
+    }
+
+    pub fn set_workspace_file_source(&mut self, source: Option<WorkspaceFileSource>) {
+        self.workspace_file_source = source;
+    }
+
     fn save_window_bounds(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(display) = window.display(cx) else {
             return Task::ready(());
@@ -7234,7 +7246,16 @@ impl Workspace {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
             if !paths.is_empty() || self.has_any_items_open(cx) {
-                WorkspaceLocation::Location(SerializedWorkspaceLocation::Local, paths)
+                // Use LocalFromFile if this workspace was opened from a workspace file
+                let location = if let Some(source) = &self.workspace_file_source {
+                    SerializedWorkspaceLocation::LocalFromFile {
+                        workspace_file_path: source.path.clone(),
+                        workspace_file_kind: source.kind.as_str().to_string(),
+                    }
+                } else {
+                    SerializedWorkspaceLocation::Local
+                };
+                WorkspaceLocation::Location(location, paths)
             } else {
                 WorkspaceLocation::DetachFromSession
             }
@@ -10306,6 +10327,7 @@ pub struct OpenOptions {
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
     pub env: Option<HashMap<String, String>>,
+    pub workspace_file_source: Option<WorkspaceFileSource>,
     pub open_in_dev_container: bool,
 }
 
@@ -10320,6 +10342,7 @@ impl Default for OpenOptions {
             requesting_window: None,
             open_mode: OpenMode::default(),
             env: None,
+            workspace_file_source: None,
             open_in_dev_container: false,
         }
     }
@@ -10590,6 +10613,7 @@ pub fn open_paths(
 
             Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
         } else {
+            let workspace_file_source = open_options.workspace_file_source.clone();
             let init = if open_in_dev_container {
                 Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
                     workspace.set_open_in_dev_container(true);
@@ -10617,6 +10641,16 @@ pub fn open_paths(
                         window.activate_window();
                     })
                     .log_err();
+                if let Some(source) = workspace_file_source {
+                    result
+                        .window
+                        .update(cx, |multi_workspace, _window, cx| {
+                            multi_workspace.workspace().update(cx, |workspace, _cx| {
+                                workspace.set_workspace_file_source(Some(source));
+                            });
+                        })
+                        .log_err();
+                }
             }
 
             result
