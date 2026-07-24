@@ -987,6 +987,22 @@ fn now_ms() -> u64 {
         })
 }
 
+fn friendly_sign_in_error(error: &anyhow::Error) -> SharedString {
+    let details = format!("{error:#}");
+    if details.contains("unsupported_country_region_territory") {
+        return "OpenAI rejected this login because the current country or region is not supported. This restriction is enforced by OpenAI and cannot be bypassed by Vela. You can configure an OpenAI API key or use another provider instead."
+            .into();
+    }
+    if details.contains("OAuth state mismatch") {
+        return "ChatGPT sign-in could not be verified. Close the browser tab and try again."
+            .into();
+    }
+    if details.contains("callback was cancelled") {
+        return "ChatGPT sign-in was cancelled or timed out. Please try again.".into();
+    }
+    format!("ChatGPT sign-in failed: {error}").into()
+}
+
 fn do_sign_in(state: &Entity<State>, http_client: &Arc<dyn HttpClient>, cx: &mut App) {
     if state.read(cx).is_signing_in() {
         return;
@@ -1037,10 +1053,11 @@ fn do_sign_in(state: &Entity<State>, http_client: &Arc<dyn HttpClient>, cx: &mut
             }
             Err(err) => {
                 log::error!("ChatGPT subscription sign-in failed: {err:?}");
+                let message = friendly_sign_in_error(&err);
                 weak_state
                     .update(cx, |s, cx| {
                         s.sign_in_task = None;
-                        s.last_auth_error = Some("Sign-in failed. Please try again.".into());
+                        s.last_auth_error = Some(message);
                         cx.notify();
                     })
                     .log_err();
@@ -1166,6 +1183,15 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn test_friendly_sign_in_error_explains_unsupported_region() {
+        let error =
+            anyhow!("Token exchange failed (HTTP 403): unsupported_country_region_territory");
+        let message = friendly_sign_in_error(&error);
+        assert!(message.contains("not supported"));
+        assert!(message.contains("cannot be bypassed by Vela"));
+    }
 
     struct FakeCredentialsProvider {
         storage: Mutex<Option<(String, Vec<u8>)>>,
