@@ -27,7 +27,9 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, TaskExt, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
+use http_client::{
+    HttpClient, HttpClientWithUrl, http, read_proxy_from_env, read_proxy_from_system,
+};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -147,6 +149,7 @@ impl ProxySettings {
                     .ok()
             })
             .or_else(read_proxy_from_env)
+            .or_else(read_proxy_from_system)
     }
 }
 

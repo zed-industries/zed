@@ -38,6 +38,9 @@ serde_json.workspace = true
 serde_urlencoded.workspace = true
 url.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration.workspace = true
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 util = { workspace = true, optional = true }
 async-fs = { workspace = true, optional = true }

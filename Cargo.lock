@@ -8605,6 +8605,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2",
+ "system-configuration 0.6.1",
  "tempfile",
  "url",
  "util",

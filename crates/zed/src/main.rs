@@ -499,12 +499,20 @@ fn main() {
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
         let user_agent = format!(
-            "Zed/{} ({}; {})",
+            "Vela/{} ({}; {})",
             AppVersion::global(cx),
             std::env::consts::OS,
             std::env::consts::ARCH
         );
         let proxy_url = ProxySettings::get_global(cx).proxy_url();
+        if let Some(proxy) = &proxy_url {
+            log::info!(
+                "using outbound proxy: {}://{}:{}",
+                proxy.scheme(),
+                proxy.host_str().unwrap_or("<unknown>"),
+                proxy.port_or_known_default().unwrap_or(0),
+            );
+        }
         let http = {
             let _guard = Tokio::handle(cx).enter();
 

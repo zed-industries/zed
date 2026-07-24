@@ -16,6 +16,21 @@ use serde::Serialize;
 use std::sync::Arc;
 #[cfg(feature = "test-support")]
 use std::{any::type_name, fmt};
+#[cfg(target_os = "macos")]
+use system_configuration::{
+    core_foundation::{
+        base::CFType,
+        dictionary::CFDictionary,
+        number::CFNumber,
+        string::{CFString, CFStringRef},
+    },
+    dynamic_store::SCDynamicStoreBuilder,
+    sys::schema_definitions::{
+        kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
+        kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
+        kSCPropNetProxiesSOCKSEnable, kSCPropNetProxiesSOCKSPort, kSCPropNetProxiesSOCKSProxy,
+    },
+};
 pub use url::{Host, Url};
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -357,6 +372,76 @@ pub fn read_proxy_from_env() -> Option<Url> {
         .iter()
         .find_map(|var| std::env::var(var).ok())
         .and_then(|env| env.parse().ok())
+}
+
+/// Read the active macOS proxy directly from SystemConfiguration.
+///
+/// HTTPS and HTTP entries are HTTP CONNECT proxies even when they carry HTTPS traffic, so their
+/// URL scheme is `http`. SOCKS is used only when neither HTTP proxy is enabled.
+#[cfg(target_os = "macos")]
+pub fn read_proxy_from_system() -> Option<Url> {
+    fn setting(
+        proxies: &CFDictionary<CFString, CFType>,
+        enabled_key: CFStringRef,
+        host_key: CFStringRef,
+        port_key: CFStringRef,
+        scheme: &str,
+    ) -> Option<Url> {
+        let enabled = proxies
+            .find(enabled_key)
+            .and_then(|value| value.downcast::<CFNumber>())
+            .and_then(|value| value.to_i32())
+            == Some(1);
+        if !enabled {
+            return None;
+        }
+        let host = proxies
+            .find(host_key)
+            .and_then(|value| value.downcast::<CFString>())?
+            .to_string();
+        let port = proxies
+            .find(port_key)
+            .and_then(|value| value.downcast::<CFNumber>())
+            .and_then(|value| value.to_i32());
+        let address = match port {
+            Some(port) => format!("{scheme}://{host}:{port}"),
+            None => format!("{scheme}://{host}"),
+        };
+        address.parse().ok()
+    }
+
+    let store = SCDynamicStoreBuilder::new("Vela").build();
+    let proxies = store.get_proxies()?;
+    setting(
+        &proxies,
+        unsafe { kSCPropNetProxiesHTTPSEnable },
+        unsafe { kSCPropNetProxiesHTTPSProxy },
+        unsafe { kSCPropNetProxiesHTTPSPort },
+        "http",
+    )
+    .or_else(|| {
+        setting(
+            &proxies,
+            unsafe { kSCPropNetProxiesHTTPEnable },
+            unsafe { kSCPropNetProxiesHTTPProxy },
+            unsafe { kSCPropNetProxiesHTTPPort },
+            "http",
+        )
+    })
+    .or_else(|| {
+        setting(
+            &proxies,
+            unsafe { kSCPropNetProxiesSOCKSEnable },
+            unsafe { kSCPropNetProxiesSOCKSProxy },
+            unsafe { kSCPropNetProxiesSOCKSPort },
+            "socks5h",
+        )
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read_proxy_from_system() -> Option<Url> {
+    None
 }
 
 pub fn read_no_proxy_from_env() -> Option<String> {
