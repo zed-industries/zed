@@ -2179,6 +2179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "betlang"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f89b0929539eaee70109704ae4e345df438be6ab02e4dc8ac060e05098ad1b7"
+dependencies = [
+ "fearless_simd",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5764,6 +5773,7 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "language_detection",
  "languages",
  "linkify",
  "log",
@@ -6553,6 +6563,12 @@ checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
 ]
+
+[[package]]
+name = "fearless_simd"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "feature_flags"
@@ -9770,6 +9786,15 @@ dependencies = [
  "serde_json",
  "toml 0.8.23",
  "tree-sitter",
+]
+
+[[package]]
+name = "language_detection"
+version = "0.1.0"
+dependencies = [
+ "betlang",
+ "gpui",
+ "language",
 ]
 
 [[package]]

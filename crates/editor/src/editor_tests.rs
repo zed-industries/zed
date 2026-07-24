@@ -36,8 +36,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
-use languages::markdown_lang;
-use languages::rust_lang;
+use languages::{language, markdown_lang, rust_lang};
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
@@ -9602,6 +9601,122 @@ async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut Tes
     cx.set_state("aˇ bˇ");
     cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
     cx.assert_editor_state("aone\nˇ bone\nˇ");
+}
+
+#[gpui::test]
+async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let go_language = language("go", tree_sitter_go::LANGUAGE.into());
+    project.read_with(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().add(go_language.clone());
+    });
+    let buffer = project
+        .update(cx, |project, cx| project.create_buffer(None, true, cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| {
+        buffer.set_content_language_detection_enabled(true);
+    });
+    let window = cx.add_window(|window, cx| {
+        let editor = Editor::for_buffer(buffer.clone(), None, window, cx);
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    let editor = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.insert("fn main() {}", window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.insert(" ", window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        rust_lang().name()
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.backspace(&Backspace, window, cx);
+    });
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }".to_string(),
+        ));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        rust_lang().name()
+    );
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        go_language.name()
+    );
+
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, PLAIN_TEXT.clone(), cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+
+    cx.run_until_parked();
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
 }
 
 #[gpui::test]

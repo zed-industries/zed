@@ -112,6 +112,7 @@ pub struct Buffer {
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
+    content_language_detection_enabled: bool,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
@@ -1187,6 +1188,7 @@ impl Buffer {
             wait_for_autoindent_txs: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
+            content_language_detection_enabled: false,
             remote_selections: Default::default(),
             diagnostics: Default::default(),
             diagnostics_timestamp: Lamport::MIN,
@@ -1336,6 +1338,7 @@ impl Buffer {
                     merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
+                content_language_detection_enabled: self.content_language_detection_enabled,
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
@@ -1517,6 +1520,14 @@ impl Buffer {
     /// Sets whether the buffer has a Byte Order Mark.
     pub fn set_has_bom(&mut self, has_bom: bool) {
         self.has_bom = has_bom;
+    }
+
+    pub fn set_content_language_detection_enabled(&mut self, enabled: bool) {
+        self.content_language_detection_enabled = enabled;
+    }
+
+    pub fn content_language_detection_enabled(&self) -> bool {
+        self.content_language_detection_enabled
     }
 
     /// Assign a language to the buffer.
