@@ -239,7 +239,7 @@ impl DebugPanel {
             let session = session.clone();
             async move |this, cx| {
                 let debug_session =
-                    Self::register_session(this.clone(), session.clone(), true, cx).await?;
+                    Self::register_session(this.clone(), session.clone(), true, true, cx).await?;
                 let definition = debug_session
                     .update_in(cx, |debug_session, window, cx| {
                         debug_session.running_state().update(cx, |running, cx| {
@@ -348,20 +348,23 @@ impl DebugPanel {
         this: WeakEntity<Self>,
         session: Entity<Session>,
         focus: bool,
+        activate_session: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<Entity<DebugSession>> {
         let debug_session = register_session_inner(&this, session, cx).await?;
 
         let workspace = this.update_in(cx, |this, window, cx| {
-            if focus {
-                this.activate_session(debug_session.clone(), window, cx);
+            if activate_session {
+                this.activate_session(debug_session.clone(), window, focus, cx);
             }
 
             this.workspace.clone()
         })?;
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.focus_panel::<Self>(window, cx);
-        })?;
+        if focus {
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.focus_panel::<Self>(window, cx);
+            })?;
+        }
         Ok(debug_session)
     }
 
@@ -405,7 +408,7 @@ impl DebugPanel {
                 });
                 (session, task)
             });
-            Self::register_session(this.clone(), session.clone(), true, cx).await?;
+            Self::register_session(this.clone(), session.clone(), true, true, cx).await?;
 
             if let Err(error) = task.await {
                 session
@@ -470,7 +473,7 @@ impl DebugPanel {
             // Focus child sessions if the parent has never emitted a stopped event;
             // this improves our JavaScript experience, as it always spawns a "main" session that then spawns subsessions.
             let parent_ever_stopped = parent_session.update(cx, |this, _| this.has_ever_stopped());
-            Self::register_session(this, session, !parent_ever_stopped, cx).await?;
+            Self::register_session(this, session, false, !parent_ever_stopped, cx).await?;
             task.await
         })
         .detach_and_log_err(cx);
@@ -1040,7 +1043,7 @@ impl DebugPanel {
             .keys()
             .find(|session| session.read(cx).session_id(cx) == session_id)
         {
-            self.activate_session(session.clone(), window, cx);
+            self.activate_session(session.clone(), window, true, cx);
         }
     }
 
@@ -1048,10 +1051,13 @@ impl DebugPanel {
         &mut self,
         session_item: Entity<DebugSession>,
         window: &mut Window,
+        focus: bool,
         cx: &mut Context<Self>,
     ) {
         debug_assert!(self.sessions_with_children.contains_key(&session_item));
-        session_item.focus_handle(cx).focus(window, cx);
+        if focus {
+            session_item.focus_handle(cx).focus(window, cx);
+        }
         session_item.update(cx, |this, cx| {
             this.running_state().update(cx, |this, cx| {
                 this.go_to_selected_stack_frame(window, cx);
