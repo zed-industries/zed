@@ -988,6 +988,7 @@ mod tests {
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
+            collapsed_model_groups: vec![],
             default_profile: AgentProfileId::default(),
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),

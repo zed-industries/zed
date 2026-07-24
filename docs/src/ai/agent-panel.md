@@ -171,6 +171,10 @@ You can mark specific models as favorites either through the model selector, by 
 
 Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector.
 
+### Collapsing Provider Groups
+
+Models in the model selector are grouped by provider, and you can collapse or expand a group by clicking its header, or by moving the selection to the header and pressing {#kb menu::Confirm}. Collapsed groups persist across restarts via the `agent.collapsed_model_groups` settings key, and searching always surfaces matches from every group, including collapsed ones.
+
 ## Using Tools and Profiles {#using-tools}
 
 The Agent Panel supports tool calling, which enables agentic editing. Zed includes [built-in tools](./tools.md) for searching your codebase, editing files, running terminal commands, and more.

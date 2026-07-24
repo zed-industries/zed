@@ -60,6 +60,7 @@ impl AgentModelSelector {
                             );
                         }
                     },
+                    fs.clone(),
                     true, // Use popover styles for picker
                     focus_handle.clone(),
                     window,

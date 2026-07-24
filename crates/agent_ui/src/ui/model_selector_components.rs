@@ -14,6 +14,13 @@ enum ModelIcon {
 pub struct ModelSelectorHeader {
     title: SharedString,
     has_border: bool,
+    collapsible: Option<CollapsibleHeader>,
+}
+
+struct CollapsibleHeader {
+    index: usize,
+    collapsed: bool,
+    on_toggle: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 }
 
 impl ModelSelectorHeader {
@@ -21,7 +28,22 @@ impl ModelSelectorHeader {
         Self {
             title: title.into(),
             has_border,
+            collapsible: None,
         }
+    }
+
+    pub fn collapsible(
+        mut self,
+        index: usize,
+        collapsed: bool,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.collapsible = Some(CollapsibleHeader {
+            index,
+            collapsed,
+            on_toggle: Box::new(on_toggle),
+        });
+        self
     }
 }
 
@@ -36,11 +58,45 @@ impl RenderOnce for ModelSelectorHeader {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
             })
-            .child(
-                Label::new(self.title)
+            .map(|this| {
+                let label = Label::new(self.title)
                     .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
+                    .color(Color::Muted);
+
+                match self.collapsible {
+                    Some(collapsible) => {
+                        let chevron = if collapsible.collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        };
+                        let on_toggle = collapsible.on_toggle;
+
+                        this.child(
+                            h_flex()
+                                .id(("model-selector-group-header", collapsible.index))
+                                .w_full()
+                                .gap_0p5()
+                                .pr_2()
+                                .justify_between()
+                                .cursor_pointer()
+                                .child(label)
+                                .child(
+                                    Icon::new(chevron)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .tooltip(Tooltip::text(if collapsible.collapsed {
+                                    "Expand Section"
+                                } else {
+                                    "Collapse Section"
+                                }))
+                                .on_click(move |event, window, cx| on_toggle(event, window, cx)),
+                        )
+                    }
+                    None => this.child(label),
+                }
+            })
     }
 }
 

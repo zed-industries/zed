@@ -4,8 +4,10 @@ use acp_thread::{
     AgentModelIcon, AgentModelId, AgentModelInfo, AgentModelList, AgentModelSelector,
 };
 
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
+use fs::Fs;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
@@ -15,7 +17,7 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{DocumentationAside, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
@@ -28,11 +30,12 @@ pub type ModelSelector = Picker<ModelPickerDelegate>;
 
 pub fn acp_model_selector(
     selector: Rc<dyn AgentModelSelector>,
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut Context<ModelSelector>,
 ) -> ModelSelector {
-    let delegate = ModelPickerDelegate::new(selector, focus_handle, window, cx);
+    let delegate = ModelPickerDelegate::new(selector, fs, focus_handle, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .initial_width(rems(20.))
@@ -40,17 +43,23 @@ pub fn acp_model_selector(
 
 enum ModelPickerEntry {
     Separator(SharedString),
+    GroupHeader {
+        title: SharedString,
+        collapsed: bool,
+    },
     Model(AgentModelInfo, bool),
 }
 
 pub struct ModelPickerDelegate {
     selector: Rc<dyn AgentModelSelector>,
+    fs: Arc<dyn Fs>,
     filtered_entries: Vec<ModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
     selected_description: Option<(usize, SharedString)>,
     selected_model: Option<AgentModelInfo>,
     favorites: HashSet<AgentModelId>,
+    collapsed_groups: HashSet<SharedString>,
     _refresh_models_task: Task<()>,
     _settings_subscription: Subscription,
     focus_handle: FocusHandle,
@@ -59,6 +68,7 @@ pub struct ModelPickerDelegate {
 impl ModelPickerDelegate {
     fn new(
         selector: Rc<dyn AgentModelSelector>,
+        fs: Arc<dyn Fs>,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<ModelSelector>,
@@ -101,28 +111,52 @@ impl ModelPickerDelegate {
         let selector_for_subscription = selector.clone();
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |picker, window, cx| {
-                // Only refresh if the favorites actually changed to avoid redundant work
-                // when other settings are modified (e.g., user editing settings.json)
+                // Only refresh if the favorites or collapsed groups actually changed to avoid
+                // redundant work when other settings are modified (e.g., user editing settings.json)
                 let new_favorites = selector_for_subscription.favorite_model_ids(cx);
-                if new_favorites != picker.delegate.favorites {
+                let new_collapsed_groups =
+                    AgentSettings::get_global(cx).collapsed_model_group_names();
+                if new_favorites != picker.delegate.favorites
+                    || new_collapsed_groups != picker.delegate.collapsed_groups
+                {
                     picker.delegate.favorites = new_favorites;
+                    picker.delegate.collapsed_groups = new_collapsed_groups;
                     picker.refresh(window, cx);
                 }
             });
         let favorites = selector.favorite_model_ids(cx);
+        let collapsed_groups = AgentSettings::get_global(cx).collapsed_model_group_names();
 
         Self {
             selector,
+            fs,
             filtered_entries: Vec::new(),
             models: None,
             selected_model: None,
             selected_index: 0,
             selected_description: None,
             favorites,
+            collapsed_groups,
             _refresh_models_task: refresh_models_task,
             _settings_subscription: settings_subscription,
             focus_handle,
         }
+    }
+
+    fn toggle_group_collapsed(&mut self, group: SharedString, cx: &mut Context<Picker<Self>>) {
+        let collapsed = !self.collapsed_groups.contains(&group);
+        if collapsed {
+            self.collapsed_groups.insert(group.clone());
+        } else {
+            self.collapsed_groups.remove(&group);
+        }
+
+        update_settings_file(self.fs.clone(), cx, move |settings, _cx| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_model_group_collapsed(&group, collapsed);
+        });
     }
 
     pub fn active_model(&self) -> Option<&AgentModelInfo> {
@@ -211,7 +245,9 @@ impl PickerDelegate for ModelPickerDelegate {
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(ModelPickerEntry::Model(_, _)) => true,
-            Some(ModelPickerEntry::Separator(_)) | None => false,
+            Some(ModelPickerEntry::Separator(_))
+            | Some(ModelPickerEntry::GroupHeader { .. })
+            | None => false,
         }
     }
 
@@ -226,6 +262,7 @@ impl PickerDelegate for ModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let favorites = self.favorites.clone();
+        let collapsed_groups = query.is_empty().then(|| self.collapsed_groups.clone());
 
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = match this
@@ -242,8 +279,11 @@ impl PickerDelegate for ModelPickerDelegate {
             };
 
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_entries =
-                    info_list_to_picker_entries(filtered_models, &favorites);
+                this.delegate.filtered_entries = info_list_to_picker_entries(
+                    filtered_models,
+                    &favorites,
+                    collapsed_groups.as_ref(),
+                );
                 // Finds the currently selected model in the list
                 let new_index = this
                     .delegate
@@ -298,6 +338,19 @@ impl PickerDelegate for ModelPickerDelegate {
         match self.filtered_entries.get(ix)? {
             ModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
+            }
+            ModelPickerEntry::GroupHeader { title, collapsed } => {
+                let group = title.clone();
+                let on_toggle = cx.listener(move |picker, _, window, cx| {
+                    picker.delegate.toggle_group_collapsed(group.clone(), cx);
+                    picker.refresh(window, cx);
+                });
+
+                Some(
+                    ModelSelectorHeader::new(title.clone(), ix > 1)
+                        .collapsible(ix, *collapsed, on_toggle)
+                        .into_any_element(),
+                )
             }
             ModelPickerEntry::Model(model_info, is_favorite) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
@@ -385,9 +438,12 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 }
 
+/// `collapsed_groups` is `None` while searching, so that matches surface
+/// from every group and headers render as plain, non-collapsible separators.
 fn info_list_to_picker_entries(
     model_list: AgentModelList,
     favorites: &HashSet<AgentModelId>,
+    collapsed_groups: Option<&HashSet<SharedString>>,
 ) -> Vec<ModelPickerEntry> {
     let mut entries = Vec::new();
 
@@ -422,7 +478,21 @@ fn info_list_to_picker_entries(
         }
         AgentModelList::Grouped(index_map) => {
             for (group_name, models) in index_map {
-                entries.push(ModelPickerEntry::Separator(group_name.0));
+                match collapsed_groups {
+                    Some(collapsed_groups) => {
+                        let collapsed = collapsed_groups.contains(&group_name.0);
+                        entries.push(ModelPickerEntry::GroupHeader {
+                            title: group_name.0,
+                            collapsed,
+                        });
+                        if collapsed {
+                            continue;
+                        }
+                    }
+                    None => {
+                        entries.push(ModelPickerEntry::Separator(group_name.0));
+                    }
+                }
                 for model in models {
                     let is_favorite = favorites.contains(&model.id);
                     entries.push(ModelPickerEntry::Model(model, is_favorite));
@@ -570,6 +640,10 @@ mod tests {
             .collect()
     }
 
+    fn no_collapsed_groups() -> HashSet<SharedString> {
+        HashSet::default()
+    }
+
     #[gpui::test]
     fn confirming_model_selects_model(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -579,13 +653,14 @@ mod tests {
             editor::init(cx);
         });
 
+        let fs = fs::FakeFs::new(cx.executor());
         let model_selector = Rc::new(TestModelSelector::new());
 
         let window_handle = cx.add_window({
             let model_selector = model_selector.clone();
             move |window, cx| {
                 let selector: Rc<dyn AgentModelSelector> = model_selector;
-                acp_model_selector(selector, cx.focus_handle(), window, cx)
+                acp_model_selector(selector, fs, cx.focus_handle(), window, cx)
             }
         });
         cx.run_until_parked();
@@ -665,6 +740,7 @@ mod tests {
             .map(|entry| match entry {
                 ModelPickerEntry::Model(info, _) => info.id.as_ref(),
                 ModelPickerEntry::Separator(s) => &s,
+                ModelPickerEntry::GroupHeader { title, .. } => &title,
             })
             .collect()
     }
@@ -708,7 +784,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
 
         assert!(matches!(
             entries.first(),
@@ -724,12 +800,74 @@ mod tests {
         let models = create_model_list(vec![("zed", vec!["zed/claude", "zed/gemini"])]);
         let favorites = create_favorites(vec![]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
 
         assert!(matches!(
             entries.first(),
-            Some(ModelPickerEntry::Separator(s)) if s == "zed"
+            Some(ModelPickerEntry::GroupHeader { title, .. }) if title == "zed"
         ));
+    }
+
+    #[gpui::test]
+    fn test_collapsed_group_hides_its_models(_cx: &mut TestAppContext) {
+        let models = create_model_list(vec![
+            ("openrouter", vec!["openrouter/a", "openrouter/b"]),
+            ("zed", vec!["zed/claude"]),
+        ]);
+        let favorites = create_favorites(vec![]);
+        let collapsed_groups: HashSet<SharedString> =
+            [SharedString::from("openrouter")].into_iter().collect();
+
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&collapsed_groups));
+        let labels = get_entry_labels(&entries);
+
+        // The collapsed group keeps its header but hides its models.
+        assert_eq!(labels, vec!["openrouter", "zed", "zed/claude"]);
+        assert!(matches!(
+            entries.first(),
+            Some(ModelPickerEntry::GroupHeader {
+                collapsed: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            entries.get(1),
+            Some(ModelPickerEntry::GroupHeader {
+                collapsed: false,
+                ..
+            })
+        ));
+    }
+
+    #[gpui::test]
+    fn test_search_entries_ignore_collapsed_groups(_cx: &mut TestAppContext) {
+        let models = create_model_list(vec![
+            ("openrouter", vec!["openrouter/a", "openrouter/b"]),
+            ("zed", vec!["zed/claude"]),
+        ]);
+        let favorites = create_favorites(vec![]);
+
+        // While searching, entries are built with no collapsed set, so models
+        // surface from every group and headers are plain separators.
+        let entries = info_list_to_picker_entries(models, &favorites, None);
+
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !matches!(entry, ModelPickerEntry::GroupHeader { .. }))
+        );
+
+        let labels = get_entry_labels(&entries);
+        assert_eq!(
+            labels,
+            vec![
+                "openrouter",
+                "openrouter/a",
+                "openrouter/b",
+                "zed",
+                "zed/claude"
+            ]
+        );
     }
 
     #[gpui::test]
@@ -740,7 +878,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/claude"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
 
         for entry in &entries {
             if let ModelPickerEntry::Model(info, is_favorite) = entry {
@@ -761,7 +899,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini", "openai/gpt-5"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
         let model_ids = get_entry_model_ids(&entries);
 
         assert_eq!(model_ids[0], "zed/gemini");
@@ -782,7 +920,7 @@ mod tests {
 
         let favorites = create_favorites(vec!["zed/claude"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
         let labels = get_entry_labels(&entries);
 
         assert_eq!(
@@ -828,7 +966,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
 
         assert!(matches!(
             entries.first(),
@@ -880,7 +1018,7 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["favorite-model"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let entries = info_list_to_picker_entries(models, &favorites, Some(&no_collapsed_groups()));
 
         for entry in &entries {
             if let ModelPickerEntry::Model(info, is_favorite) = entry {
