@@ -2390,44 +2390,42 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet =
-                                if let Some((task_range, MarkdownEvent::TaskListMarker(checked))) =
-                                    parsed_markdown.events.get(index.saturating_add(1))
-                                {
-                                    let source = &parsed_markdown.source()[range.clone()];
-                                    let checked = *checked;
-                                    let toggle_state = if checked {
-                                        ToggleState::Selected
-                                    } else {
-                                        ToggleState::Unselected
-                                    };
-
-                                    let checkbox = Checkbox::new(
-                                        ElementId::Name(source.to_string().into()),
-                                        toggle_state,
-                                    )
-                                    .fill();
-
-                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
-                                        let task_source_range = task_range.clone();
-                                        checkbox
-                                            .on_click(move |_state, window, cx| {
-                                                on_toggle(
-                                                    task_source_range.clone(),
-                                                    !checked,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        checkbox.visualization_only(true).into_any_element()
-                                    }
-                                } else if let Some(bullet_index) = builder.next_bullet_index() {
-                                    div().child(format!("{}.", bullet_index)).into_any_element()
+                            let bullet = if let Some((task_range, checked)) =
+                                task_list_marker_for_item(&parsed_markdown.events, index)
+                            {
+                                let source = &parsed_markdown.source()[range.clone()];
+                                let toggle_state = if checked {
+                                    ToggleState::Selected
                                 } else {
-                                    div().child("•").into_any_element()
+                                    ToggleState::Unselected
                                 };
+
+                                let checkbox = Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    toggle_state,
+                                )
+                                .fill();
+
+                                if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                    let task_source_range = task_range.clone();
+                                    checkbox
+                                        .on_click(move |_state, window, cx| {
+                                            on_toggle(
+                                                task_source_range.clone(),
+                                                !checked,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .into_any_element()
+                                } else {
+                                    checkbox.visualization_only(true).into_any_element()
+                                }
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
+                            } else {
+                                div().child("•").into_any_element()
+                            };
                             self.push_markdown_list_item(&mut builder, bullet, range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
@@ -3154,6 +3152,26 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Center => Some(TextAlign::Center),
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
+    }
+}
+
+fn task_list_marker_for_item(
+    events: &[(Range<usize>, MarkdownEvent)],
+    item_index: usize,
+) -> Option<(Range<usize>, bool)> {
+    let next_index = item_index.checked_add(1)?;
+    match events.get(next_index)? {
+        (range, MarkdownEvent::TaskListMarker(checked)) => Some((range.clone(), *checked)),
+        (_, MarkdownEvent::Start(MarkdownTag::Paragraph)) => {
+            let marker_index = next_index.checked_add(1)?;
+            let (range, event) = events.get(marker_index)?;
+            if let MarkdownEvent::TaskListMarker(checked) = event {
+                Some((range.clone(), *checked))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -4795,6 +4813,39 @@ mod tests {
     fn test_table_state_current_cell_alignment_outside_table() {
         let table = TableState::default();
         assert_eq!(table.current_cell_alignment(), None);
+    }
+
+    #[test]
+    fn test_task_marker_lookup_handles_loose_and_nested_lists() {
+        let markdown = "- [ ] top task\n\n- [x] done task\n\n  - [x] nested done\n";
+        let events =
+            crate::parser::parse_markdown_with_options(markdown, false, false, false).events;
+        let item_indices = events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, event))| {
+                matches!(event, MarkdownEvent::Start(MarkdownTag::Item)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(item_indices.len(), 3);
+        let marker_ranges = item_indices
+            .into_iter()
+            .map(|item_index| {
+                let (range, checked) =
+                    task_list_marker_for_item(&events, item_index).expect("task marker");
+                (markdown[range.clone()].to_string(), checked)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            marker_ranges,
+            vec![
+                ("[ ]".to_string(), false),
+                ("[x]".to_string(), true),
+                ("[x]".to_string(), true),
+            ]
+        );
     }
 
     #[test]
