@@ -1851,6 +1851,7 @@ While other options may be changed at a runtime and should be placed under `sett
   "global_lsp_settings": {
     "button": true,
     "request_timeout": 120,
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -1864,6 +1865,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 - `button`: Whether to show the LSP status button in the status bar
 - `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds. A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed). Default: `120`
+- `max_buffer_line_length`: The maximum line length a buffer may contain before Zed disables all language server features for that entire buffer. If any line exceeds this value, Zed does not open the buffer with language servers or send them buffer-specific requests. Default: `20000`
 - `notifications`: Notification-related settings.
   - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
@@ -2001,6 +2003,8 @@ Similar to `modifications`, but behaves like `on` when range formatting cannot b
   }
 }
 ```
+
+Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 

@@ -12,6 +12,9 @@ name: PR Issue Labeler
 on:
   issues:
     types: [opened]
+  # zizmor: ignore[dangerous-triggers]
+  # Fork PRs must be labeled, but this workflow only passes GitHub-provided event
+  # metadata to a pinned action; it never checks out or executes PR code.
   pull_request_target:
     types: [opened]
 
@@ -30,6 +33,10 @@ jobs:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
+          repositories: zed
+          permission-issues: write
+          permission-members: read
+          permission-pull-requests: write
 
       - id: apply-authorship-label
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1

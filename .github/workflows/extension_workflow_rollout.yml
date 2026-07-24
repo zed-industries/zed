@@ -72,7 +72,7 @@ jobs:
               .filter(repo => !repo.archived)
               .map(repo => repo.name);
 
-          const filterInput = `${{ inputs.filter-repos }}`.trim();
+          const filterInput = process.env.FILTER_REPOS.trim();
           if (filterInput.length > 0) {
               const allowedNames = filterInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
               filteredRepos = filteredRepos.filter(name => allowedNames.includes(name));
@@ -82,6 +82,8 @@ jobs:
           console.log(`Found ${filteredRepos.length} extension repos`);
           return filteredRepos;
         result-encoding: json
+      env:
+        FILTER_REPOS: ${{ inputs.filter-repos }}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -215,6 +217,8 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
         permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

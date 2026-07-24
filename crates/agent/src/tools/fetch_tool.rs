@@ -281,7 +281,14 @@ impl AgentTool for FetchTool {
             // fetch to a host the user never approved. We disable the HTTP
             // client's own redirect following and re-run the grant for each hop
             // before requesting it.
-            let unsandboxed = cx.update(|cx| event_stream.unsandboxed_access_granted(cx));
+            //
+            // When the sandboxing feature flag is off the terminal isn't
+            // sandboxed either, so gating fetch by host would provide no
+            // isolation; skip it entirely (the pre-sandboxing behavior).
+            let unsandboxed = cx.update(|cx| {
+                !crate::sandboxing::sandboxing_enabled(cx)
+                    || event_stream.unsandboxed_access_granted(cx)
+            });
 
             let mut current_url = input.url.clone();
             let mut redirects = 0;
