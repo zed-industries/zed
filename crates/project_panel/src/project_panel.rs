@@ -681,6 +681,7 @@ impl ProjectPanel {
                 |this, _, event, window, cx| match event {
                     GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
                     | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::DiffBaseChanged
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();

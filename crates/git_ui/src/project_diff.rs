@@ -1,4 +1,5 @@
 use crate::{
+    branch_diff::BranchDiff,
     diff_multibuffer::DiffMultibuffer,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     staged_diff::StagedDiff,
@@ -23,9 +24,11 @@ use project::{
         Repository,
         diff_buffer_list::{self, DiffBase},
     },
+    project_settings::ProjectSettings,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::{GitDiffBaseSetting, Settings as _, update_settings_file};
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use ui::{DiffStat, Divider, Tooltip, prelude::*};
@@ -42,6 +45,8 @@ actions!(
     [
         /// Shows the diff between the working directory and the index.
         Diff,
+        /// Shows working changes relative to HEAD.
+        HeadDiff,
         /// Adds files to the git staging area.
         Add,
         /// Opens a new agent thread with the branch diff for review.
@@ -49,6 +54,8 @@ actions!(
         LeaderAndFollower,
         /// Compare with a specific branch
         CompareWithBranch,
+        /// Toggles file indicators and diffs between HEAD and the default branch's merge base.
+        ToggleMergeBase,
     ]
 );
 
@@ -68,6 +75,9 @@ pub struct ProjectDiff {
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(|workspace, _: &HeadDiff, window, cx| {
+            Self::deploy_at(workspace, None, window, cx);
+        });
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
                 Self::deploy_at(workspace, None, window, cx);
@@ -84,7 +94,18 @@ impl ProjectDiff {
             },
         );
         workspace.register_action(|workspace, _: &Add, window, cx| {
-            Self::deploy(workspace, &Diff, window, cx);
+            Self::deploy_at(workspace, None, window, cx);
+        });
+        workspace.register_action(|workspace, _: &ToggleMergeBase, _window, cx| {
+            let diff_base = ProjectSettings::get_global(cx).git.diff_base;
+            let diff_base = match diff_base {
+                GitDiffBaseSetting::Head => GitDiffBaseSetting::MergeBase,
+                GitDiffBaseSetting::MergeBase => GitDiffBaseSetting::Head,
+            };
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file(fs, cx, move |settings, _| {
+                settings.git.get_or_insert_default().diff_base = Some(diff_base);
+            });
         });
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
@@ -95,6 +116,25 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let project = workspace.project().clone();
+        let merge_base = project
+            .read(cx)
+            .active_repository(cx)
+            .and_then(|repository| {
+                let repository_id = repository.read(cx).id;
+                let base_ref = project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .merge_base_ref_for_repo(repository_id)?;
+                Some((repository, base_ref))
+            });
+        if let Some((repository, base_ref)) = merge_base {
+            BranchDiff::deploy_branch_diff_with_base_ref(
+                workspace, project, repository, base_ref, window, cx,
+            );
+            return;
+        }
         Self::deploy_at(workspace, None, window, cx)
     }
 
@@ -1067,6 +1107,78 @@ mod tests {
                 (2, "BranchDiff".to_string())
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_diff_action_follows_diff_base_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "committed.txt": "head\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("committed.txt", "head\n".into())],
+        );
+        fs.set_merge_base_content_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("committed.txt", "base\n".into())],
+        );
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.focus(&workspace);
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleMergeBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert_eq!(
+                ProjectSettings::get_global(cx).git.diff_base,
+                GitDiffBaseSetting::MergeBase
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<BranchDiff>(cx).is_some());
+            assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(HeadDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<ProjectDiff>(cx).is_some());
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleMergeBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert_eq!(
+                ProjectSettings::get_global(cx).git.diff_base,
+                GitDiffBaseSetting::Head
+            );
+        });
     }
 
     #[gpui::test]
