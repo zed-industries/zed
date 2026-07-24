@@ -1,0 +1,12 @@
+<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="fold" x1="10" y1="12" x2="72" y2="86" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#FFEDD5"/><stop offset="0.4" stop-color="#FDBA74"/><stop offset="1" stop-color="#F43F5E"/>
+  </linearGradient>
+</defs>
+<path d="M8 10H33L48 61L63 10H88L57 86H39L8 10Z" fill="url(#fold)"/>
+<path d="M33 10L48 61L39 86L20 46L33 10Z" fill="#FDBA74" fill-opacity="0.45"/>
+<path d="M63 10L48 61L57 86L76 46L63 10Z" fill="#E11D48" fill-opacity="0.30"/>
+<path d="M8 10L20 46L33 10H8Z" fill="#FFEDD5"/>
+<path d="M63 10L76 46L88 10H63Z" fill="#FDA4AF"/>
+</svg>

@@ -1,0 +1,43 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="background" x1="176" y1="104" x2="850" y2="934" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#4338A3"/>
+    <stop offset="0.52" stop-color="#312E81"/>
+    <stop offset="1" stop-color="#17112F"/>
+  </linearGradient>
+  <linearGradient id="fold" x1="206" y1="246" x2="664" y2="814" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#FFEDD5"/>
+    <stop offset="0.38" stop-color="#FDBA74"/>
+    <stop offset="0.72" stop-color="#F58F7C"/>
+    <stop offset="1" stop-color="#F43F5E"/>
+  </linearGradient>
+  <linearGradient id="edge" x1="128" y1="90" x2="896" y2="938" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#FFFFFF" stop-opacity="0.22"/>
+    <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
+    <stop offset="1" stop-color="#000000" stop-opacity="0.2"/>
+  </linearGradient>
+  <filter id="shadow" x="8" y="16" width="1008" height="1008" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#020617" flood-opacity="0.55"/>
+  </filter>
+  <filter id="markShadow" x="150" y="188" width="724" height="694" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#020617" flood-opacity="0.34"/>
+  </filter>
+</defs>
+<g filter="url(#shadow)">
+  <rect x="64" y="52" width="896" height="896" rx="218" fill="url(#background)"/>
+  <rect x="65.5" y="53.5" width="893" height="893" rx="216.5" stroke="url(#edge)" stroke-width="3"/>
+  <path d="M174 176C240 105 326 86 438 86H586C702 86 788 111 850 180" stroke="#FFFFFF" stroke-opacity="0.11" stroke-width="18" stroke-linecap="round"/>
+</g>
+<g filter="url(#markShadow)">
+  <path d="M206 246H390L512 660L634 246H818L576 814H448L206 246Z" fill="url(#fold)"/>
+  <path d="M390 246L512 660L448 814L302 512L390 246Z" fill="#FDBA74" fill-opacity="0.42"/>
+  <path d="M634 246L512 660L576 814L722 510L634 246Z" fill="#E11D48" fill-opacity="0.28"/>
+  <path d="M206 246L302 512L390 246H206Z" fill="#FFEDD5"/>
+  <path d="M634 246L722 510L818 246H634Z" fill="#FDA4AF"/>
+  <path d="M448 814L512 660L576 814L556 856H468L448 814Z" fill="#FED7AA" fill-opacity="0.92"/>
+</g>
+
+  <circle cx="824" cy="824" r="74" fill="#17112F" opacity="0.92"/>
+  <circle cx="824" cy="824" r="50" fill="#22D3EE"/>
+  <circle cx="808" cy="808" r="14" fill="#FFFFFF" opacity="0.5"/>
+</svg>

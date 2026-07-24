@@ -347,7 +347,7 @@ impl Render for Onboarding {
                                     .child(
                                         h_flex()
                                             .gap_4()
-                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                            .child(Vector::square(VectorName::VelaLogo, rems(2.5)))
                                             .child(
                                                 v_flex()
                                                     .child(
