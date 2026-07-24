@@ -164,10 +164,10 @@ if (user) {
 }
 
 let buildArgs = ["build"];
-let zedBinary = "target/debug/zed";
+let zedBinary = "target/debug/vela";
 if (isReleaseMode) {
   buildArgs.push("--release");
-  zedBinary = "target/release/zed";
+  zedBinary = "target/release/vela";
 }
 
 try {
