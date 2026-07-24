@@ -2876,26 +2876,22 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
-                let git = git?;
-                git.run(&[
-                    "restore",
-                    "--source",
-                    &checkpoint.commit_sha.to_string(),
-                    "--worktree",
-                    ".",
-                ])
-                .await?;
+                let mut git = git?;
+                let checkpoint_sha = checkpoint.commit_sha.to_string();
+                if git.restore_supports_pathspec_files().await? {
+                    let paths_to_restore = git.worktree_paths_to_restore(&checkpoint_sha).await?;
+                    git.restore_worktree_paths(&checkpoint_sha, paths_to_restore)
+                        .await?;
+                } else {
+                    // Pathspec files were added after git-restore, so retain the previous behavior
+                    // on older Git versions instead of making checkpoint restore unavailable.
+                    git.run(&["restore", "--source", &checkpoint_sha, "--worktree", "."])
+                        .await?;
+                }
 
                 // TODO: We don't track binary and large files anymore,
-                //       so the following call would delete them.
-                //       Implement an alternative way to track files added by agent.
-                //
-                // git.with_temp_index(async move |git| {
-                //     git.run(&["read-tree", &checkpoint.commit_sha.to_string()])
-                //         .await?;
-                //     git.run(&["clean", "-d", "--force"]).await
-                // })
-                // .await?;
+                //       so cleaning would delete them. Implement an alternative way to track
+                //       files added by agent.
 
                 Ok(())
             })
@@ -3652,6 +3648,88 @@ impl GitBinary {
         Ok(result)
     }
 
+    async fn worktree_paths_to_restore(&mut self, checkpoint_sha: &str) -> Result<Vec<u8>> {
+        let mut paths = self
+            .with_temp_index(async |git| {
+                git.run(&["read-tree", "--reset", "-i", checkpoint_sha])
+                    .await?;
+                // Refresh the temporary index so stat-only differences do not cause
+                // content-identical files to be restored.
+                git.run(&["update-index", "-q", "--really-refresh"]).await?;
+                git.run_bytes(&["diff-files", "--name-only", "-z", "--"])
+                    .await
+            })
+            .await?;
+        paths.extend(
+            self.run_bytes(&[
+                "diff-index",
+                "--cached",
+                "--no-ext-diff",
+                "--no-renames",
+                "--diff-filter=AU",
+                "--name-only",
+                "-z",
+                checkpoint_sha,
+                "--",
+            ])
+            .await?,
+        );
+        Ok(paths)
+    }
+
+    async fn restore_worktree_paths(&self, checkpoint_sha: &str, paths: Vec<u8>) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        // The path list is exact, so ignoring skip-worktree bits only allows indexed additions
+        // outside a sparse checkout to be removed without broadening the restore.
+        let mut restore = self
+            .build_command(&[
+                "--literal-pathspecs",
+                "restore",
+                "--source",
+                checkpoint_sha,
+                "--worktree",
+                "--ignore-skip-worktree-bits",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("starting git restore")?;
+        let mut stdin = restore
+            .stdin
+            .take()
+            .context("git restore process has no stdin")?;
+        let write_paths = async move {
+            stdin.write_all(&paths).await?;
+            stdin.flush().await?;
+            drop(stdin);
+            std::io::Result::Ok(())
+        };
+        let (write_paths, restore) = futures::join!(write_paths, restore.output());
+        let restore = restore?;
+        anyhow::ensure!(
+            restore.status.success(),
+            "git restore failed: {}",
+            String::from_utf8_lossy(&restore.stderr)
+        );
+        write_paths?;
+
+        Ok(())
+    }
+
+    async fn restore_supports_pathspec_files(&self) -> Result<bool> {
+        let output = self.build_command(&["restore", "-h"]).output().await?;
+        let option = b"--pathspec-from-file";
+        Ok([output.stdout.as_slice(), output.stderr.as_slice()]
+            .into_iter()
+            .any(|output| output.windows(option.len()).any(|window| window == option)))
+    }
+
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
         let path = self.git_directory.join("info").join("exclude");
 
@@ -3678,6 +3756,13 @@ impl GitBinary {
     where
         S: AsRef<OsStr>,
     {
+        Ok(String::from_utf8(self.run_bytes(args).await?)?)
+    }
+
+    async fn run_bytes<S>(&self, args: &[S]) -> Result<Vec<u8>>
+    where
+        S: AsRef<OsStr>,
+    {
         let mut command = self.build_command(args);
         let output = command.output().await?;
         anyhow::ensure!(
@@ -3688,7 +3773,7 @@ impl GitBinary {
                 status: output.status,
             }
         );
-        Ok(String::from_utf8(output.stdout)?)
+        Ok(output.stdout)
     }
 
     #[allow(clippy::disallowed_methods)]
@@ -4933,6 +5018,17 @@ mod tests {
         smol::fs::write(repo_dir.path().join("new_file_after_checkpoint"), "2")
             .await
             .unwrap();
+        let new_tracked_file_after_checkpoint =
+            repo_dir.path().join("new_tracked_file_after_checkpoint");
+        smol::fs::write(&new_tracked_file_after_checkpoint, "3")
+            .await
+            .unwrap();
+        repo.stage_paths(
+            vec![repo_path("new_tracked_file_after_checkpoint")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
 
         // Ensure checkpoint stays alive even after a Git GC.
         repo.gc().await.unwrap();
@@ -4948,6 +5044,7 @@ mod tests {
                 .unwrap(),
             "1"
         );
+        assert!(!new_tracked_file_after_checkpoint.exists());
         // See TODO above
         // assert_eq!(
         //     smol::fs::read_to_string(repo_dir.path().join("new_file_after_checkpoint"))
@@ -4955,6 +5052,132 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[gpui::test]
+    async fn test_restore_checkpoint_preserves_unchanged_file_mtimes(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        // Exercise the restore path with a filename containing Git pathspec metacharacters.
+        let changed_path = repo_dir.path().join("[changed]");
+        let unchanged_path = repo_dir.path().join("unchanged");
+        let checkpoint_only_path = repo_dir.path().join("checkpoint_only");
+        fs::write(&changed_path, "initial").unwrap();
+        fs::write(&unchanged_path, "unchanged").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(
+            vec![repo_path("[changed]"), repo_path("unchanged")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        fs::write(&checkpoint_only_path, "checkpoint only").unwrap();
+        // Backdate the tracked file after committing so the real index has stale stat data.
+        let old_modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        let old_file_times = fs::FileTimes::new().set_modified(old_modified);
+        for path in [&unchanged_path, &checkpoint_only_path] {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(old_file_times)
+                .unwrap();
+        }
+
+        let checkpoint = repo.checkpoint().await.unwrap();
+        let unchanged_mtime = fs::metadata(&unchanged_path).unwrap().modified().unwrap();
+        let checkpoint_only_mtime = fs::metadata(&checkpoint_only_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        fs::write(&changed_path, "modified after checkpoint").unwrap();
+        repo.restore_checkpoint(checkpoint).await.unwrap();
+
+        assert_eq!(fs::read_to_string(&changed_path).unwrap(), "initial");
+        assert_eq!(
+            fs::metadata(&unchanged_path).unwrap().modified().unwrap(),
+            unchanged_mtime
+        );
+        assert_eq!(
+            fs::metadata(&checkpoint_only_path)
+                .unwrap()
+                .modified()
+                .unwrap(),
+            checkpoint_only_mtime
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_checkpoint_respects_sparse_checkout(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let included_path = repo_dir.path().join("included/file");
+        let excluded_path = repo_dir.path().join("excluded/file");
+        fs::create_dir_all(repo_dir.path().join("included")).unwrap();
+        fs::create_dir_all(repo_dir.path().join("excluded")).unwrap();
+        fs::write(&included_path, "initial").unwrap();
+        fs::write(&excluded_path, "excluded").unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.stage_paths(
+            vec![repo_path("included/file"), repo_path("excluded/file")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        git_command(repo_dir.path(), ["sparse-checkout", "init", "--cone"]);
+        git_command(repo_dir.path(), ["sparse-checkout", "set", "included"]);
+        assert!(!excluded_path.exists());
+
+        let checkpoint = repo.checkpoint().await.unwrap();
+        fs::write(&included_path, "modified after checkpoint").unwrap();
+        repo.restore_checkpoint(checkpoint).await.unwrap();
+
+        assert_eq!(fs::read_to_string(included_path).unwrap(), "initial");
+        assert!(!excluded_path.exists());
     }
 
     #[cfg(unix)]
