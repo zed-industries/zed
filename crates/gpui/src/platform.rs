@@ -852,6 +852,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_edited(&mut self, _edited: bool) {}
     fn set_document_path(&self, _path: Option<&std::path::Path>) {}
+    fn toggle_simple_fullscreen(&self) {}
+    fn is_simple_fullscreen(&self) -> bool {
+        false
+    }
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}

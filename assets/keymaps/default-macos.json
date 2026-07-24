@@ -40,6 +40,7 @@
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
+      "ctrl-cmd-shift-f": "zed::ToggleSimpleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RatePredictions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",

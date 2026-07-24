@@ -857,7 +857,7 @@ impl ThreadsArchiveView {
             settings::SidebarSide::Left
         );
         let sidebar_on_right = !sidebar_on_left;
-        let not_fullscreen = !window.is_fullscreen();
+        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
         let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =
