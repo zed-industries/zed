@@ -4564,6 +4564,155 @@ async fn test_drag_including_worktree_root_only_reorders(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+async fn test_external_paths_for_dragged_selection_filters_missing_paths(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root_path = temp_dir.path();
+    let existing_a = root_path.join("existing_a.txt");
+    let existing_b = root_path.join("existing_b.txt");
+    let deleted = root_path.join("deleted.txt");
+    std::fs::write(&existing_a, "a").unwrap();
+    std::fs::write(&existing_b, "b").unwrap();
+    std::fs::write(&deleted, "deleted").unwrap();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(root_path, root_path).await;
+    std::fs::remove_file(&deleted).unwrap();
+
+    let project = Project::test(fs.clone(), [root_path], cx).await;
+    let (worktree_id, existing_a_id, existing_b_id, deleted_id) = cx.update(|cx| {
+        let project = project.read(cx);
+        let worktree = project.worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+        (
+            worktree.id(),
+            worktree
+                .entry_for_path(rel_path("existing_a.txt"))
+                .unwrap()
+                .id,
+            worktree
+                .entry_for_path(rel_path("existing_b.txt"))
+                .unwrap()
+                .id,
+            worktree.entry_for_path(rel_path("deleted.txt")).unwrap().id,
+        )
+    });
+
+    let dragged_selection = DraggedSelection {
+        active_selection: SelectedEntry {
+            worktree_id,
+            entry_id: existing_a_id,
+        },
+        marked_selections: Arc::from(vec![
+            SelectedEntry {
+                worktree_id,
+                entry_id: existing_a_id,
+            },
+            SelectedEntry {
+                worktree_id,
+                entry_id: existing_b_id,
+            },
+            SelectedEntry {
+                worktree_id,
+                entry_id: deleted_id,
+            },
+        ]),
+    };
+
+    let paths = cx
+        .update(|cx| {
+            ProjectPanel::external_paths_for_dragged_selection(&project, &dragged_selection, cx)
+        })
+        .unwrap();
+
+    assert_eq!(paths.paths(), &[existing_a, existing_b]);
+}
+
+#[gpui::test]
+async fn test_external_paths_for_dragged_selection_uses_active_selection_unless_marked(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root_path = temp_dir.path();
+    let active_path = root_path.join("active.txt");
+    let marked_path = root_path.join("marked.txt");
+    std::fs::write(&active_path, "active").unwrap();
+    std::fs::write(&marked_path, "marked").unwrap();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(root_path, root_path).await;
+
+    let project = Project::test(fs.clone(), [root_path], cx).await;
+    let (worktree_id, active_id, marked_id) = cx.update(|cx| {
+        let project = project.read(cx);
+        let worktree = project.worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+        (
+            worktree.id(),
+            worktree.entry_for_path(rel_path("active.txt")).unwrap().id,
+            worktree.entry_for_path(rel_path("marked.txt")).unwrap().id,
+        )
+    });
+
+    let dragged_selection = DraggedSelection {
+        active_selection: SelectedEntry {
+            worktree_id,
+            entry_id: active_id,
+        },
+        marked_selections: Arc::from(vec![SelectedEntry {
+            worktree_id,
+            entry_id: marked_id,
+        }]),
+    };
+
+    let paths = cx
+        .update(|cx| {
+            ProjectPanel::external_paths_for_dragged_selection(&project, &dragged_selection, cx)
+        })
+        .unwrap();
+
+    assert_eq!(paths.paths(), &[active_path]);
+}
+
+#[gpui::test]
+async fn test_external_paths_for_dragged_selection_skips_remote_worktrees(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/local", json!({})).await;
+    let project = Project::test(fs.clone(), ["/local".as_ref()], cx).await;
+
+    let remote_worktree = project.update(cx, |project, cx| {
+        project.add_test_remote_worktree("/remote/project", cx)
+    });
+    let remote_worktree_id = remote_worktree.read_with(cx, |worktree, _| worktree.id());
+
+    let dragged_selection = DraggedSelection {
+        active_selection: SelectedEntry {
+            worktree_id: remote_worktree_id,
+            entry_id: ProjectEntryId::from_usize(1),
+        },
+        marked_selections: Arc::from(vec![SelectedEntry {
+            worktree_id: remote_worktree_id,
+            entry_id: ProjectEntryId::from_usize(1),
+        }]),
+    };
+
+    let paths = cx.update(|cx| {
+        ProjectPanel::external_paths_for_dragged_selection(&project, &dragged_selection, cx)
+    });
+
+    assert!(paths.is_none());
+}
+
+#[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     let fs = FakeFs::new(cx.executor());

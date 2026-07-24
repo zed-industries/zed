@@ -10,7 +10,7 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard,
+        NSColor, NSEvent, NSEventModifierFlags, NSEventType, NSFilenamesPboardType, NSPasteboard,
         NSRequestUserAttentionType, NSScreen, NSView, NSViewHeightSizable, NSViewWidthSizable,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
@@ -50,7 +50,7 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
-use objc2::rc::Retained;
+use objc2::{rc::Retained, runtime::AnyObject as Objc2Object};
 use objc2_app_kit::{
     NSBeep, NSButton as Objc2NSButton, NSView as Objc2NSView, NSWindow as Objc2NSWindow,
     NSWindowButton as Objc2NSWindowButton,
@@ -61,9 +61,10 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    ffi::{CStr, c_void},
+    ffi::{CStr, CString, c_void},
     mem,
     ops::Range,
+    os::unix::ffi::OsStrExt,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -109,6 +110,10 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+#[allow(non_upper_case_globals)]
+const NSDragOperationMove: NSDragOperation = 16;
+const NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION: NSInteger = 0;
+const NSDRAGGING_CONTEXT_WITHIN_APPLICATION: NSInteger = 1;
 #[derive(PartialEq)]
 pub enum UserTabbingPreference {
     Never,
@@ -440,6 +445,17 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             conclude_drag_operation as extern "C" fn(&Object, Sel, id),
         );
 
+        decl.add_protocol(Protocol::get("NSDraggingSource").unwrap());
+        decl.add_method(
+            sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+            dragging_session_source_operation_mask
+                as extern "C" fn(&Object, Sel, id, NSInteger) -> NSDragOperation,
+        );
+        decl.add_method(
+            sel!(draggingSession:endedAtPoint:operation:),
+            dragging_session_ended as extern "C" fn(&Object, Sel, id, NSPoint, NSDragOperation),
+        );
+
         decl.add_method(
             sel!(addTitlebarAccessoryViewController:),
             add_titlebar_accessory_view_controller as extern "C" fn(&Object, Sel, id),
@@ -509,6 +525,7 @@ struct MacWindowState {
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
+    last_left_mouse_down_event: Option<Retained<Objc2Object>>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     traffic_light_frames: Option<TrafficLightFrames>,
@@ -910,6 +927,7 @@ impl MacWindow {
                 appearance_changed_callback: None,
                 input_handler: None,
                 last_key_equivalent: None,
+                last_left_mouse_down_event: None,
                 synthetic_drag_counter: 0,
                 traffic_light_position: titlebar
                     .as_ref()
@@ -1849,6 +1867,103 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn start_file_drag(&self, paths: &ExternalPaths) -> bool {
+        if paths.paths().is_empty() {
+            log::warn!("start_file_drag declined: no paths");
+            return false;
+        }
+
+        let (native_view, native_window, last_left_mouse_down_event) = {
+            let state = self.0.lock();
+            (
+                state.native_view.as_ptr(),
+                state.native_window,
+                state.last_left_mouse_down_event.clone(),
+            )
+        };
+
+        let Some(last_left_mouse_down_event) = last_left_mouse_down_event else {
+            log::warn!("start_file_drag declined: no retained left mouse down event");
+            return false;
+        };
+
+        // SAFETY: This method runs on the AppKit/foreground path during drag initiation. The
+        // native view/window are retained by MacWindowState, copied out under a short lock above,
+        // and Objective-C results that may be nil are checked before use.
+        unsafe {
+            let event: id = Retained::as_ptr(&last_left_mouse_down_event)
+                .cast_mut()
+                .cast();
+            let dragging_items: id = msg_send![class!(NSMutableArray), array];
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+            // AppKit keeps this frame's distance from the event's location as the drag image's
+            // offset from the cursor, so it has to stay anchored on `event`.
+            let location: NSPoint = msg_send![event, locationInWindow];
+            let frame = NSRect::new(
+                NSPoint::new(location.x - 16., location.y - 16.),
+                NSSize::new(32., 32.),
+            );
+
+            for path in paths.paths() {
+                // Preserve non-UTF-8 paths
+                let Ok(path_bytes) = CString::new(path.as_os_str().as_bytes()) else {
+                    log::warn!("start_file_drag skipped path containing an interior nul byte");
+                    continue;
+                };
+
+                let is_directory: BOOL = if path.is_dir() {YES } else { NO };
+                let url: id = msg_send![
+                    class!(NSURL),
+                    fileURLWithFileSystemRepresentation: path_bytes.as_ptr()
+                    isDirectory: is_directory
+                    relativeToURL: nil
+                ];
+
+                if url.is_null() {
+                    log::warn!("start_file_drag skipped path with nil NSURL");
+                    continue;
+                }
+
+                let item: id = msg_send![class!(NSDraggingItem), alloc];
+                let item: id = msg_send![item, initWithPasteboardWriter: url];
+                if item.is_null() {
+                    log::warn!("start_file_drag declined: NSDraggingItem allocation failed");
+                    continue;
+                }
+
+                let url_path: id = msg_send![url, path];
+                let icon: id = msg_send![workspace, iconForFile: url_path];
+                let _: () = msg_send![item, setDraggingFrame: frame contents: icon];
+                let _: () = msg_send![dragging_items, addObject: item];
+                let _: () = msg_send![item, release];
+            }
+
+            let count: NSUInteger = msg_send![dragging_items, count];
+            if count == 0 {
+                log::warn!("start_file_drag declined: no dragging items");
+                return false;
+            }
+
+            let session: id = msg_send![
+                native_view,
+                beginDraggingSessionWithItems: dragging_items
+                event: event
+                source: native_window
+            ];
+
+            let started = !session.is_null();
+            if started {
+                self.0.lock().synthetic_drag_counter += 1;
+            }
+            log::debug!(
+                "start_file_drag completed: started={}, item_count={}",
+                started,
+                count
+            );
+            started
+        }
+    }
+
     fn play_system_bell(&self) {
         NSBeep()
     }
@@ -2264,6 +2379,19 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
     let window_height = lock.content_size().height;
+    let native_event_type = unsafe { native_event.eventType() };
+    match native_event_type {
+        NSEventType::NSLeftMouseDown => {
+            // AppKit owns `native_event` for the callback; retain it so the drag session can still
+            // be started later, once the pointer leaves the window.
+            lock.last_left_mouse_down_event =
+                unsafe { Retained::retain(native_event.cast::<Objc2Object>()) };
+        }
+        NSEventType::NSLeftMouseUp => {
+            lock.last_left_mouse_down_event = None;
+        }
+        _ => {}
+    }
     let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
@@ -2928,7 +3056,17 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     point(px(window_x as f32), px(window_y as f32))
 }
 
+/// AppKit delivers a drag back to the window it started from, where accepting it would drop the
+/// files onto themselves. `draggingSource` is nil only for drags from another application.
+fn is_self_originated_drag(dragging_info: id) -> bool {
+    let source: id = unsafe { msg_send![dragging_info, draggingSource] };
+    !source.is_null()
+}
+
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    if is_self_originated_drag(dragging_info) {
+        return NSDragOperationNone;
+    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
@@ -2941,6 +3079,9 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
+    if is_self_originated_drag(dragging_info) {
+        return NSDragOperationNone;
+    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
@@ -2950,12 +3091,18 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
     }
 }
 
-extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
+extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
+    if is_self_originated_drag(dragging_info) {
+        return;
+    }
     let window_state = unsafe { get_window_state(this) };
     send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
+    if is_self_originated_drag(dragging_info) {
+        return NO;
+    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
@@ -2981,6 +3128,41 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     send_file_drop_event(window_state, FileDropEvent::Exited);
+}
+
+extern "C" fn dragging_session_source_operation_mask(
+    _: &Object,
+    _: Sel,
+    _: id,
+    context: NSInteger,
+) -> NSDragOperation {
+    let operation = match context {
+        NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION => NSDragOperationCopy | NSDragOperationMove,
+        NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationNone,
+        _ => NSDragOperationNone,
+    };
+    log::debug!(
+        "dragging_session_source_operation_mask: context={}, operation={}",
+        context,
+        operation
+    );
+    operation
+}
+
+extern "C" fn dragging_session_ended(
+    this: &Object,
+    _: Sel,
+    _: id,
+    _: NSPoint,
+    operation: NSDragOperation,
+) {
+    log::debug!("dragging_session_ended operation={operation}");
+    // SAFETY: AppKit invokes this selector on the GPUIWindow instance registered in build_classes,
+    // which always has WINDOW_STATE_IVAR initialized to the owning MacWindowState.
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.lock();
+    lock.synthetic_drag_counter += 1;
+    lock.last_left_mouse_down_event = None;
 }
 
 async fn synthetic_drag(

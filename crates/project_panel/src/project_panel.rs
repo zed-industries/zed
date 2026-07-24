@@ -4751,6 +4751,27 @@ impl ProjectPanel {
             || cfg!(not(target_os = "macos")) && modifiers.control
     }
 
+    fn external_paths_for_dragged_selection(
+        project: &Entity<Project>,
+        selections: &DraggedSelection,
+        cx: &App,
+    ) -> Option<ExternalPaths> {
+        let project = project.read(cx);
+        let paths = selections
+            .items()
+            .filter_map(|selection| {
+                let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                if !worktree.is_local() {
+                    return None;
+                }
+                let project_path = project.path_for_entry(selection.entry_id, cx)?.path;
+                Some(worktree.absolutize(&project_path))
+            })
+            .collect::<SmallVec<[_; 2]>>();
+
+        (!paths.is_empty()).then_some(ExternalPaths(paths))
+    }
+
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
@@ -5915,24 +5936,33 @@ impl ProjectPanel {
                                 }));
                         },
                     ))
-                    .on_drag(dragged_selection, {
-                        let active_component =
-                            self.state.ancestors.get(&entry_id).and_then(|ancestors| {
-                                ancestors.active_component(&details.filename)
-                            });
-                        move |selection, click_offset, _window, cx| {
-                            let filename = active_component
-                                .as_ref()
-                                .unwrap_or_else(|| &details.filename);
-                            cx.new(|_| DraggedProjectEntryView {
-                                icon: details.icon.clone(),
-                                filename: filename.clone(),
-                                click_offset,
-                                selection: selection.active_selection,
-                                selections: selection.marked_selections.clone(),
-                            })
-                        }
-                    })
+                    .on_drag_with_external_paths(
+                        dragged_selection,
+                        {
+                            let project = self.project.clone();
+                            move |selection, _window, cx| {
+                                Self::external_paths_for_dragged_selection(&project, selection, cx)
+                            }
+                        },
+                        {
+                            let active_component =
+                                self.state.ancestors.get(&entry_id).and_then(|ancestors| {
+                                    ancestors.active_component(&details.filename)
+                                });
+                            move |selection, click_offset, _window, cx| {
+                                let filename = active_component
+                                    .as_ref()
+                                    .unwrap_or_else(|| &details.filename);
+                                cx.new(|_| DraggedProjectEntryView {
+                                    icon: details.icon.clone(),
+                                    filename: filename.clone(),
+                                    click_offset,
+                                    selection: selection.active_selection,
+                                    selections: selection.marked_selections.clone(),
+                                })
+                            }
+                        },
+                    )
                     .on_drop(cx.listener(
                         move |this, selections: &DraggedSelection, window, cx| {
                             this.clear_drag_state(cx);
