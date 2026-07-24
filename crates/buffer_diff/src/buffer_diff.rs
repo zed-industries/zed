@@ -19,6 +19,10 @@ use util::{ResultExt, debug_panic};
 
 pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
+// Unequal hunks can mix modified lines with unrelated additions and deletions. A conservative
+// similarity threshold prevents those unmatched lines from receiving misleading word highlights.
+const MIN_MODIFIED_LINE_SIMILARITY: f64 = 0.5;
+
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     base_text_buffer: Entity<language::Buffer>,
@@ -1278,9 +1282,10 @@ impl HunkSink<'_> {
         let buffer_line_count = new_end - new_start;
 
         let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = self.diff_options
-            && !buffer_row_range.is_empty()
-            && base_line_count == buffer_line_count
-            && diff_options.max_word_diff_line_count >= base_line_count
+            && base_line_count > 0
+            && buffer_line_count > 0
+            && base_line_count <= diff_options.max_word_diff_line_count
+            && buffer_line_count <= diff_options.max_word_diff_line_count
         {
             let base_text: String = self
                 .diff_base_rope
@@ -1288,14 +1293,19 @@ impl HunkSink<'_> {
                 .collect();
             let buffer_text: String = self.buffer.text_for_range(buffer_range.clone()).collect();
 
-            let (base_word_diffs, buffer_word_diffs_relative) = word_diff_ranges(
-                &base_text,
-                &buffer_text,
-                DiffOptions {
-                    language_scope: diff_options.language_scope.clone(),
-                    ..*diff_options
-                },
-            );
+            let (base_word_diffs, buffer_word_diffs_relative) =
+                if base_line_count == buffer_line_count {
+                    word_diff_ranges(
+                        &base_text,
+                        &buffer_text,
+                        DiffOptions {
+                            language_scope: diff_options.language_scope.clone(),
+                            ..*diff_options
+                        },
+                    )
+                } else {
+                    word_diff_ranges_for_unequal_lines(&base_text, &buffer_text, diff_options)
+                };
 
             let buffer_start_offset = buffer_range.start.to_offset(self.buffer);
             let buffer_word_diffs = buffer_word_diffs_relative
@@ -1329,6 +1339,117 @@ impl HunkSink<'_> {
     fn finish(self) -> Vec<InternalDiffHunk> {
         self.hunks
     }
+}
+
+#[derive(Clone, Copy)]
+enum LineAlignmentStep {
+    SkipBase,
+    SkipBuffer,
+    Pair,
+}
+
+#[derive(Clone, Copy)]
+struct HunkLine<'a> {
+    offset: usize,
+    text: &'a str,
+}
+
+fn lines_with_offsets(text: &str) -> Vec<HunkLine<'_>> {
+    text.split_inclusive('\n')
+        .scan(0, |offset, text| {
+            let line = HunkLine {
+                offset: *offset,
+                text,
+            };
+            *offset += text.len();
+            Some(line)
+        })
+        .collect()
+}
+
+fn paired_lines(base_lines: &[HunkLine<'_>], buffer_lines: &[HunkLine<'_>]) -> Vec<(usize, usize)> {
+    let mut scores = vec![vec![0.; buffer_lines.len() + 1]; base_lines.len() + 1];
+    let mut steps = vec![vec![LineAlignmentStep::SkipBase; buffer_lines.len()]; base_lines.len()];
+
+    for base_ix in (0..base_lines.len()).rev() {
+        for buffer_ix in (0..buffer_lines.len()).rev() {
+            let skip_base_score = scores[base_ix + 1][buffer_ix];
+            let skip_buffer_score = scores[base_ix][buffer_ix + 1];
+            let (mut best_score, mut best_step) = if skip_base_score >= skip_buffer_score {
+                (skip_base_score, LineAlignmentStep::SkipBase)
+            } else {
+                (skip_buffer_score, LineAlignmentStep::SkipBuffer)
+            };
+
+            let similarity = strsim::normalized_levenshtein(
+                base_lines[base_ix].text.trim(),
+                buffer_lines[buffer_ix].text.trim(),
+            );
+            if similarity >= MIN_MODIFIED_LINE_SIMILARITY {
+                let pair_score = similarity + scores[base_ix + 1][buffer_ix + 1];
+                if pair_score > best_score {
+                    best_score = pair_score;
+                    best_step = LineAlignmentStep::Pair;
+                }
+            }
+
+            scores[base_ix][buffer_ix] = best_score;
+            steps[base_ix][buffer_ix] = best_step;
+        }
+    }
+
+    let mut pairs = Vec::new();
+    let mut base_ix = 0;
+    let mut buffer_ix = 0;
+    while base_ix < base_lines.len() && buffer_ix < buffer_lines.len() {
+        match steps[base_ix][buffer_ix] {
+            LineAlignmentStep::SkipBase => base_ix += 1,
+            LineAlignmentStep::SkipBuffer => buffer_ix += 1,
+            LineAlignmentStep::Pair => {
+                pairs.push((base_ix, buffer_ix));
+                base_ix += 1;
+                buffer_ix += 1;
+            }
+        }
+    }
+    pairs
+}
+
+fn word_diff_ranges_for_unequal_lines(
+    base_text: &str,
+    buffer_text: &str,
+    diff_options: &DiffOptions,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let base_lines = lines_with_offsets(base_text);
+    let buffer_lines = lines_with_offsets(buffer_text);
+
+    let mut base_word_diffs = Vec::new();
+    let mut buffer_word_diffs = Vec::new();
+    for (base_ix, buffer_ix) in paired_lines(&base_lines, &buffer_lines) {
+        let base_line = base_lines[base_ix];
+        let buffer_line = buffer_lines[buffer_ix];
+        let (base_line_word_diffs, buffer_line_word_diffs) = word_diff_ranges(
+            base_line.text,
+            buffer_line.text,
+            DiffOptions {
+                language_scope: diff_options.language_scope.clone(),
+                ..*diff_options
+            },
+        );
+
+        base_word_diffs.extend(
+            base_line_word_diffs
+                .into_iter()
+                .map(|range| base_line.offset + range.start..base_line.offset + range.end),
+        );
+        buffer_word_diffs.extend(
+            buffer_line_word_diffs
+                .into_iter()
+                .map(|range| buffer_line.offset + range.start..buffer_line.offset + range.end),
+        );
+    }
+
+    (base_word_diffs, buffer_word_diffs)
 }
 
 fn compare_hunks(
