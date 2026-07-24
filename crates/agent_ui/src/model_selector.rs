@@ -17,11 +17,12 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{Settings, SettingsStore};
 use ui::{DocumentationAside, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
+use crate::model_picker_sections::{self, PreviousSelection, SectionedEntry};
 use crate::ui::{
     ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, documentation_aside_side,
 };
@@ -50,37 +51,22 @@ enum ModelPickerEntry {
     Model(AgentModelInfo, bool),
 }
 
-enum PreviousSelection {
-    Header(SharedString),
-    Model {
-        id: AgentModelId,
-        section: Option<SharedString>,
-    },
-}
-
-/// The title of the section header (separator or group header) preceding `ix`.
-/// Favorited models appear both under "Favorite" and under their provider
-/// group; the section disambiguates which copy the cursor is on.
-fn section_title_of(entries: &[ModelPickerEntry], ix: usize) -> Option<&SharedString> {
-    entries
-        .iter()
-        .take(ix + 1)
-        .rev()
-        .find_map(|entry| match entry {
+impl SectionedEntry for ModelPickerEntry {
+    fn section_title(&self) -> Option<&SharedString> {
+        match self {
             ModelPickerEntry::Separator(title) | ModelPickerEntry::GroupHeader { title, .. } => {
                 Some(title)
             }
             ModelPickerEntry::Model(_, _) => None,
-        })
-}
-
-fn position_of_section(entries: &[ModelPickerEntry], section: &SharedString) -> Option<usize> {
-    entries.iter().position(|entry| match entry {
-        ModelPickerEntry::Separator(title) | ModelPickerEntry::GroupHeader { title, .. } => {
-            title == section
         }
-        ModelPickerEntry::Model(_, _) => false,
-    })
+    }
+
+    fn group_header_title(&self) -> Option<&SharedString> {
+        match self {
+            ModelPickerEntry::GroupHeader { title, .. } => Some(title),
+            ModelPickerEntry::Separator(_) | ModelPickerEntry::Model(_, _) => None,
+        }
+    }
 }
 
 pub struct ModelPickerDelegate {
@@ -177,19 +163,12 @@ impl ModelPickerDelegate {
     }
 
     fn toggle_group_collapsed(&mut self, group: SharedString, cx: &mut Context<Picker<Self>>) {
-        let collapsed = !self.collapsed_groups.contains(&group);
-        if collapsed {
-            self.collapsed_groups.insert(group.clone());
-        } else {
-            self.collapsed_groups.remove(&group);
-        }
-
-        update_settings_file(self.fs.clone(), cx, move |settings, _cx| {
-            settings
-                .agent
-                .get_or_insert_default()
-                .set_model_group_collapsed(&group, collapsed);
-        });
+        model_picker_sections::toggle_group_collapsed(
+            &mut self.collapsed_groups,
+            group,
+            self.fs.clone(),
+            cx,
+        );
     }
 
     pub fn active_model(&self) -> Option<&AgentModelInfo> {
@@ -316,20 +295,16 @@ impl PickerDelegate for ModelPickerDelegate {
                 // The cursor falls back to the selected model when the captured entry is gone.
                 let previous_selection = browsing
                     .then(|| {
-                        let ix = this.delegate.selected_index;
-                        match this.delegate.filtered_entries.get(ix)? {
-                            ModelPickerEntry::GroupHeader { title, .. } => {
-                                Some(PreviousSelection::Header(title.clone()))
-                            }
-                            ModelPickerEntry::Model(model_info, _) => {
-                                Some(PreviousSelection::Model {
-                                    id: model_info.id.clone(),
-                                    section: section_title_of(&this.delegate.filtered_entries, ix)
-                                        .cloned(),
-                                })
-                            }
-                            ModelPickerEntry::Separator(_) => None,
-                        }
+                        PreviousSelection::capture(
+                            &this.delegate.filtered_entries,
+                            this.delegate.selected_index,
+                            |entry| match entry {
+                                ModelPickerEntry::Model(model_info, _) => {
+                                    Some(model_info.id.clone())
+                                }
+                                _ => None,
+                            },
+                        )
                     })
                     .flatten();
 
@@ -338,40 +313,15 @@ impl PickerDelegate for ModelPickerDelegate {
                     &favorites,
                     collapsed_groups.as_ref(),
                 );
-                let position_of_model = |entries: &[ModelPickerEntry], id: &AgentModelId| {
-                    entries.iter().position(|entry| {
-                        matches!(entry, ModelPickerEntry::Model(model_info, _) if model_info.id == *id)
-                    })
+                let is_model = |entry: &ModelPickerEntry, id: &AgentModelId| {
+                    matches!(entry, ModelPickerEntry::Model(model_info, _) if model_info.id == *id)
                 };
                 let entries = &this.delegate.filtered_entries;
-                // Restore order: the same model in the same section, the same
-                // model in another section (it moved, e.g. was unfavorited),
-                // the section's own header (the model is gone but its section
-                // remains, e.g. the group collapsed under the cursor), and
-                // finally the selected model.
                 let new_index = previous_selection
-                    .and_then(|previous| match previous {
-                        PreviousSelection::Header(section) => {
-                            position_of_section(entries, &section)
-                        }
-                        PreviousSelection::Model { id, section } => entries
-                            .iter()
-                            .enumerate()
-                            .find_map(|(ix, entry)| {
-                                (matches!(entry, ModelPickerEntry::Model(model_info, _) if model_info.id == id)
-                                    && section_title_of(entries, ix) == section.as_ref())
-                                .then_some(ix)
-                            })
-                            .or_else(|| position_of_model(entries, &id))
-                            .or_else(|| {
-                                section
-                                    .as_ref()
-                                    .and_then(|section| position_of_section(entries, section))
-                            }),
-                    })
+                    .and_then(|previous| previous.restore(entries, is_model))
                     .or_else(|| {
                         this.delegate.selected_model.as_ref().and_then(|selected| {
-                            position_of_model(&this.delegate.filtered_entries, &selected.id)
+                            entries.iter().position(|entry| is_model(entry, &selected.id))
                         })
                     })
                     .unwrap_or(0);
