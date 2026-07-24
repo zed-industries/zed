@@ -67,8 +67,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             cx.subscribe_in(&cx.entity(), window, {
                 let active_call_handle = active_call_handle.clone();
                 move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
-                    if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
-                        && window.is_window_active()
+                    if !(matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
+                        && window.is_window_active())
                     {
                         return;
                     }
