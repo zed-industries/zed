@@ -7,8 +7,8 @@ use crate::{
 };
 use anyhow::Result;
 use edit_prediction_types::{
-    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
-    EditPredictionRequestTrigger, interpolate_edits,
+    DelayMs, EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason,
+    EditPredictionIconSet, EditPredictionRequestTrigger, interpolate_edits,
 };
 use gpui::{App, Context, Entity, Task, TaskExt};
 use icons::IconName;
@@ -76,14 +76,16 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         _debounce: bool,
-        debounce_duration: Option<Duration>,
+        debounce_duration: Option<DelayMs>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            if let Some(debounce_duration) = debounce_duration.filter(|d| !d.is_zero()) {
-                cx.background_executor().timer(debounce_duration).await;
+            if let Some(debounce_duration) = debounce_duration.filter(|delay| delay.0 != 0) {
+                cx.background_executor()
+                    .timer(Duration::from_millis(debounce_duration.0))
+                    .await;
             }
 
             let completions = copilot
@@ -253,6 +255,8 @@ mod tests {
         path,
         test::{TextRangeMarker, marked_text_ranges_by},
     };
+
+    const COPILOT_TEST_DEBOUNCE: Duration = Duration::from_millis(75);
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -1156,8 +1160,6 @@ mod tests {
         }
     }
 
-    const COPILOT_TEST_DEBOUNCE: Duration = Duration::from_millis(75);
-
     fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsContent)) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -1172,7 +1174,8 @@ mod tests {
                         .get_or_insert_default()
                         .copilot
                         .get_or_insert_default()
-                        .prediction_debounce = Some(DelayMs(75));
+                        .prediction_debounce =
+                        Some(DelayMs(COPILOT_TEST_DEBOUNCE.as_millis() as u64));
                     f(&mut settings.project.all_languages);
                 });
             });

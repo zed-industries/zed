@@ -1,9 +1,9 @@
-use std::{cmp, sync::Arc, time::Duration};
+use std::{cmp, sync::Arc};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{
-    DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
+    DataCollectionState, DelayMs, EditPredictionDelegate, EditPredictionDiscardReason,
     EditPredictionIconSet, EditPredictionRequestTrigger, SuggestionDisplayType,
 };
 use feature_flags::FeatureFlagAppExt;
@@ -143,7 +143,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        debounce_duration: Option<Duration>,
+        debounce_duration: Option<DelayMs>,
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {

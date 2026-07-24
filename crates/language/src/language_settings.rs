@@ -13,7 +13,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::Itertools;
-use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
+use settings::{DelayMs, DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, ConfiguredLanguageServer,
@@ -24,7 +24,7 @@ pub use settings::{
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
-use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc, time::Duration};
+use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use text::ToOffset;
 
 /// Returns the settings for all languages from the provided file.
@@ -505,7 +505,7 @@ impl EditPredictionSettings {
     }
 
     /// Returns the configured debounce delay for the given provider, if any.
-    pub fn debounce_for(&self, provider: settings::EditPredictionProvider) -> Option<Duration> {
+    pub fn debounce_for(&self, provider: settings::EditPredictionProvider) -> Option<DelayMs> {
         match provider {
             settings::EditPredictionProvider::Copilot => self.copilot.prediction_debounce,
             settings::EditPredictionProvider::Codestral => self.codestral.prediction_debounce,
@@ -527,7 +527,7 @@ impl EditPredictionSettings {
     /// The Zed edit-prediction delegate handles multiple settings providers
     /// (Zed, Mercury, Ollama, OpenAI-compatible), so it is identified by name
     /// and then uses the currently configured provider to resolve the delay.
-    pub fn debounce_for_delegate(&self, delegate_name: &str) -> Option<Duration> {
+    pub fn debounce_for_delegate(&self, delegate_name: &str) -> Option<DelayMs> {
         match delegate_name {
             "copilot" => self.copilot.prediction_debounce,
             "codestral" => self.codestral.prediction_debounce,
@@ -554,7 +554,7 @@ pub struct CopilotSettings {
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     pub enable_next_edit_suggestions: Option<bool>,
     /// Optional override for the automatic prediction debounce delay.
-    pub prediction_debounce: Option<Duration>,
+    pub prediction_debounce: Option<DelayMs>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -566,21 +566,20 @@ pub struct CodestralSettings {
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
     /// Optional override for the automatic prediction debounce delay.
-    pub prediction_debounce: Option<Duration>,
+    pub prediction_debounce: Option<DelayMs>,
 }
 
-/// Settings specific to Zed's Edit Predictions provider.
 #[derive(Clone, Debug, Default)]
 pub struct ZedEditPredictionSettings {
     /// Optional override for the automatic prediction debounce delay.
-    pub prediction_debounce: Option<Duration>,
+    pub prediction_debounce: Option<DelayMs>,
 }
 
 /// Settings specific to the Mercury Edit Predictions provider.
 #[derive(Clone, Debug, Default)]
 pub struct MercuryEditPredictionSettings {
     /// Optional override for the automatic prediction debounce delay.
-    pub prediction_debounce: Option<Duration>,
+    pub prediction_debounce: Option<DelayMs>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -595,7 +594,7 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
     /// Optional override for the automatic prediction debounce delay.
-    pub prediction_debounce: Option<Duration>,
+    pub prediction_debounce: Option<DelayMs>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -905,9 +904,7 @@ impl settings::Settings for AllLanguageSettings {
             proxy_no_verify: copilot.proxy_no_verify,
             enterprise_uri: copilot.enterprise_uri,
             enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
-            prediction_debounce: copilot
-                .prediction_debounce
-                .map(|debounce_duration| Duration::from_millis(debounce_duration.0)),
+            prediction_debounce: copilot.prediction_debounce,
         };
 
         let codestral = edit_predictions.codestral.unwrap();
@@ -915,9 +912,7 @@ impl settings::Settings for AllLanguageSettings {
             model: codestral.model,
             max_tokens: codestral.max_tokens,
             api_url: codestral.api_url,
-            prediction_debounce: codestral
-                .prediction_debounce
-                .map(|debounce_duration| Duration::from_millis(debounce_duration.0)),
+            prediction_debounce: codestral.prediction_debounce,
         };
 
         let ollama = edit_predictions.ollama.unwrap();
@@ -929,9 +924,7 @@ impl settings::Settings for AllLanguageSettings {
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
                 prompt_format: ollama.prompt_format.unwrap().into(),
-                prediction_debounce: ollama
-                    .prediction_debounce
-                    .map(|debounce_duration| Duration::from_millis(debounce_duration.0)),
+                prediction_debounce: ollama.prediction_debounce,
             });
         let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
         let openai_compatible_settings = openai_compatible_settings
@@ -947,9 +940,7 @@ impl settings::Settings for AllLanguageSettings {
                 max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
                 api_url: api_url.into(),
                 prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
-                prediction_debounce: openai_compatible_settings
-                    .prediction_debounce
-                    .map(|debounce_duration| Duration::from_millis(debounce_duration.0)),
+                prediction_debounce: openai_compatible_settings.prediction_debounce,
             });
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -995,14 +986,12 @@ impl settings::Settings for AllLanguageSettings {
                 zed: ZedEditPredictionSettings {
                     prediction_debounce: edit_predictions
                         .zed
-                        .and_then(|zed| zed.prediction_debounce)
-                        .map(|debounce_duration| Duration::from_millis(debounce_duration.0)),
+                        .and_then(|zed| zed.prediction_debounce),
                 },
                 mercury: MercuryEditPredictionSettings {
                     prediction_debounce: edit_predictions
                         .mercury
-                        .and_then(|mercury| mercury.prediction_debounce)
-                        .map(|debounce_duration| Duration::from_millis(debounce_duration.0)),
+                        .and_then(|mercury| mercury.prediction_debounce),
                 },
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },

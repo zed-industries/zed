@@ -5693,6 +5693,7 @@ dependencies = [
  "gpui",
  "icons",
  "language",
+ "settings_content",
  "text",
 ]
 

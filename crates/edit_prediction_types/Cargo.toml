@@ -16,4 +16,5 @@ client.workspace = true
 gpui.workspace = true
 icons.workspace = true
 language.workspace = true
+settings_content.workspace = true
 text.workspace = true
