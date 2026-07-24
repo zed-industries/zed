@@ -212,6 +212,11 @@ impl Client {
         request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
+        // The same transport can outlive a client generation (the store
+        // restarts servers over a retained HTTP transport): discard whatever
+        // the previous generation left behind before this one attaches.
+        transport.reset();
+
         let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
@@ -448,7 +453,11 @@ impl Client {
         // stdio; the HTTP transport translates it into closing the request's
         // response stream on modern servers.
         let mut cancel_guard = CancelOnDrop {
-            client: Some((self.outbound_tx.clone(), self.response_handlers.clone())),
+            client: Some((
+                self.outbound_tx.clone(),
+                self.response_handlers.clone(),
+                self.transport.clone(),
+            )),
             request_id: RequestId::Int(id),
         };
 
@@ -548,6 +557,7 @@ struct CancelOnDrop {
     client: Option<(
         async_channel::Sender<String>,
         Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        Arc<dyn Transport>,
     )>,
     request_id: RequestId,
 }
@@ -560,11 +570,18 @@ impl CancelOnDrop {
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
-        let Some((outbound_tx, response_handlers)) = self.client.take() else {
+        let Some((outbound_tx, response_handlers, transport)) = self.client.take() else {
             return;
         };
         if let Some(handlers) = response_handlers.lock().as_mut() {
             handlers.remove(&self.request_id);
+        }
+        // Abort out-of-band first: the queued notification below cannot be
+        // delivered while an earlier send is still awaiting its response,
+        // and on modern HTTP closing the request's stream — not the
+        // notification — is the cancellation signal.
+        if let Ok(request_id) = serde_json::to_value(&self.request_id) {
+            transport.cancel_request(&request_id);
         }
         let notification = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
