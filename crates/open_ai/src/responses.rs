@@ -550,17 +550,21 @@ pub async fn stream_response(
     client: &dyn HttpClient,
     provider_name: &str,
     api_url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
     let is_streaming = request.stream;
-    let request = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .header("Content-Type", "application/json");
+    if let Some(api_key) = api_key {
+        request_builder =
+            request_builder.header("Authorization", format!("Bearer {}", api_key.trim()));
+    }
+    let request = request_builder
         .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,

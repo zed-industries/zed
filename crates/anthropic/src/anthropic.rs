@@ -227,7 +227,7 @@ impl Model {
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     request: Request,
     beta_headers: Option<String>,
     extra_headers: &CustomHeaders,
@@ -325,7 +325,7 @@ pub async fn non_streaming_completion(
     let (mut response, rate_limits) = send_request(
         client,
         api_url,
-        api_key,
+        Some(api_key),
         &request,
         beta_headers,
         extra_headers,
@@ -349,7 +349,7 @@ pub async fn non_streaming_completion(
 async fn send_request(
     client: &dyn HttpClient,
     api_url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     request: impl Serialize,
     beta_headers: Option<String>,
     extra_headers: &CustomHeaders,
@@ -360,8 +360,10 @@ async fn send_request(
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("X-Api-Key", api_key.trim());
+    }
 
     if let Some(beta_headers) = beta_headers {
         request_builder = request_builder.header("Anthropic-Beta", beta_headers);
@@ -507,7 +509,7 @@ fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> 
 pub async fn stream_completion_with_rate_limit_info(
     client: &dyn HttpClient,
     api_url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     request: Request,
     beta_headers: Option<String>,
     extra_headers: &CustomHeaders,

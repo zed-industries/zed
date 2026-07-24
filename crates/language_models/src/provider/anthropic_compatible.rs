@@ -179,8 +179,11 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
+    fn is_authenticated(&self, _cx: &App) -> bool {
+        // An API key is not required: the provider may point at a local or
+        // self-hosted endpoint that doesn't authenticate requests. When a key
+        // is configured it is picked up in `stream_completion`.
+        true
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
@@ -250,16 +253,12 @@ impl AnthropicCompatibleLanguageModel {
         let beta_headers = self.model.beta_headers();
 
         async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: provider_name,
-                });
-            };
-
+            // The API key is optional: custom providers often point at local
+            // or self-hosted endpoints that don't authenticate requests.
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,
-                &api_key,
+                api_key.as_deref(),
                 request,
                 beta_headers,
                 &extra_headers,

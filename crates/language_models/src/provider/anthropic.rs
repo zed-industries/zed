@@ -487,7 +487,7 @@ impl AnthropicModel {
             let request = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,
-                &api_key,
+                Some(&api_key),
                 request,
                 beta_headers,
                 &extra_headers,

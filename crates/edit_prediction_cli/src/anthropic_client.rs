@@ -104,7 +104,7 @@ impl PlainLlmClient {
         let mut stream = stream_completion(
             self.http_client.as_ref(),
             ANTHROPIC_API_URL,
-            &self.api_key,
+            Some(&self.api_key),
             request,
             None,
             &http_client::CustomHeaders::default(),

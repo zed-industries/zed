@@ -136,8 +136,11 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
+    fn is_authenticated(&self, _cx: &App) -> bool {
+        // An API key is not required: the provider may point at a local or
+        // self-hosted endpoint that doesn't authenticate requests. When a key
+        // is configured it is picked up in `stream_completion`.
+        true
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
@@ -203,14 +206,13 @@ impl OpenAiCompatibleLanguageModel {
 
         let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
+            // The API key is optional: custom providers often point at local
+            // or self-hosted endpoints that don't authenticate requests.
             let request = stream_completion(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
-                &api_key,
+                api_key.as_deref(),
                 request,
                 &extra_headers,
             );
@@ -240,14 +242,11 @@ impl OpenAiCompatibleLanguageModel {
 
         let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey { provider });
-            };
             let request = stream_response(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
-                &api_key,
+                api_key.as_deref(),
                 request,
                 &extra_headers,
             );
