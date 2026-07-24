@@ -257,7 +257,7 @@ pub async fn start_dev_container_with_config(
     config: Option<DevContainerConfig>,
     environment: HashMap<String, String>,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
-    check_for_docker(context.use_podman).await?;
+    check_for_docker(context.resolved_docker_cli()).await?;
 
     let Some(actual_config) = config.clone() else {
         return Err(DevContainerError::NotInValidProject);
@@ -291,6 +291,7 @@ pub async fn start_dev_container_with_config(
                 name: project_name,
                 container_id,
                 use_podman: context.use_podman,
+                container_binary: context.container_binary.clone(),
                 remote_user,
                 extension_ids,
                 remote_env: remote_env.into_iter().collect(),
@@ -306,18 +307,14 @@ pub async fn start_dev_container_with_config(
     }
 }
 
-async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
-    let mut command = if use_podman {
-        util::command::new_command("podman")
-    } else {
-        util::command::new_command("docker")
-    };
+async fn check_for_docker(docker_cli: &str) -> Result<(), DevContainerError> {
+    let mut command = util::command::new_command(docker_cli);
     command.arg("--version");
 
     match command.output().await {
         Ok(_) => Ok(()),
         Err(e) => {
-            log::error!("Unable to find docker in $PATH: {:?}", e);
+            log::error!("Unable to find {} in $PATH: {:?}", docker_cli, e);
             Err(DevContainerError::DockerNotAvailable)
         }
     }

@@ -203,7 +203,7 @@ impl DockerInspect {
 
 impl Docker {
     pub(crate) async fn new(docker_cli: &str, use_buildkit: Option<bool>) -> Self {
-        let has_buildx = if docker_cli == "podman" {
+        let has_buildx = if is_podman_binary(docker_cli) {
             false
         } else if let Some(use_buildkit) = use_buildkit {
             // Honor the explicit `dev_container_use_buildkit` setting. Setting it
@@ -221,7 +221,7 @@ impl Docker {
                 .await;
             output.map(|o| o.status.success()).unwrap_or(false)
         };
-        if !has_buildx && docker_cli != "podman" {
+        if !has_buildx && !is_podman_binary(docker_cli) {
             log::info!(
                 "Using the classic Docker builder for dev container builds (BuildKit unavailable or disabled)"
             );
@@ -233,7 +233,7 @@ impl Docker {
     }
 
     fn is_podman(&self) -> bool {
-        self.docker_cli == "podman"
+        is_podman_binary(&self.docker_cli)
     }
 
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
@@ -455,6 +455,18 @@ impl DockerClient for Docker {
     fn supports_compose_buildkit(&self) -> bool {
         self.has_buildx
     }
+
+    fn is_podman(&self) -> bool {
+        is_podman_binary(&self.docker_cli)
+    }
+}
+
+fn is_podman_binary(cli: &str) -> bool {
+    std::path::Path::new(cli)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|name| name.starts_with("podman"))
+        .unwrap_or(false)
 }
 
 /// Parses output of `docker ps -a --format={{ json . }}`. When a single
@@ -511,6 +523,7 @@ pub(crate) trait DockerClient {
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError>;
     fn supports_compose_buildkit(&self) -> bool;
+    fn is_podman(&self) -> bool;
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
     fn docker_cli(&self) -> String;
@@ -790,6 +803,82 @@ mod test {
         // podman never supports the BuildKit/buildx path, regardless of the setting.
         let podman = futures::executor::block_on(Docker::new("podman", Some(true)));
         assert!(!podman.supports_compose_buildkit());
+    }
+
+    #[test]
+    fn is_podman_binary_detects_podman_variants() {
+        use super::is_podman_binary;
+
+        assert!(is_podman_binary("podman"), "bare 'podman' should be detected");
+        assert!(
+            is_podman_binary("podman-remote"),
+            "'podman-remote' should be detected"
+        );
+        assert!(
+            is_podman_binary("/usr/bin/podman"),
+            "full path to 'podman' should be detected"
+        );
+        assert!(
+            is_podman_binary("/usr/bin/podman-remote"),
+            "full path to 'podman-remote' should be detected"
+        );
+        assert!(
+            !is_podman_binary("docker"),
+            "'docker' should not be detected as podman"
+        );
+        assert!(
+            !is_podman_binary("/usr/bin/docker"),
+            "full path to 'docker' should not be detected as podman"
+        );
+    }
+
+    #[test]
+    fn podman_remote_is_treated_as_podman_for_buildkit() {
+        // podman-remote, like podman, must never use BuildKit.
+        let podman_remote =
+            futures::executor::block_on(Docker::new("podman-remote", Some(true)));
+        assert!(
+            !podman_remote.supports_compose_buildkit(),
+            "podman-remote must not use BuildKit even when use_buildkit=true"
+        );
+        assert!(
+            podman_remote.is_podman(),
+            "podman-remote must be recognized as podman"
+        );
+    }
+
+    #[test]
+    fn resolved_docker_cli_logic() {
+        // Mirrors the three branches of DevContainerContext::resolved_docker_cli.
+        // container_binary takes priority.
+        assert_eq!(
+            resolve_docker_cli(Some("podman-remote"), false),
+            "podman-remote"
+        );
+        // Full-path override also works.
+        assert_eq!(
+            resolve_docker_cli(Some("/usr/bin/podman-remote"), false),
+            "/usr/bin/podman-remote"
+        );
+        // Explicit binary wins even over use_podman.
+        assert_eq!(
+            resolve_docker_cli(Some("custom-docker"), true),
+            "custom-docker"
+        );
+        // No override + use_podman → "podman".
+        assert_eq!(resolve_docker_cli(None, true), "podman");
+        // No override + no use_podman → "docker".
+        assert_eq!(resolve_docker_cli(None, false), "docker");
+    }
+
+    fn resolve_docker_cli(container_binary: Option<&str>, use_podman: bool) -> &str {
+        if let Some(binary) = container_binary {
+            binary
+        } else if use_podman {
+            "podman"
+        } else {
+            "docker"
+        }
     }
 
     #[test]

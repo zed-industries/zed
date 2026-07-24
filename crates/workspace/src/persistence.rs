@@ -1051,6 +1051,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN container_binary TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1706,9 +1709,11 @@ impl WorkspaceDb {
             }
         }
 
+        let mut container_binary: Option<String> = None;
         if let RemoteConnectionOptions::Docker(options) = options {
             use_podman = Some(options.use_podman);
             remote_env = serde_json::to_string(&options.remote_env).ok();
+            container_binary = options.container_binary.clone();
         }
 
         Self::get_or_create_remote_connection_query(
@@ -1722,6 +1727,7 @@ impl WorkspaceDb {
             container_id,
             use_podman,
             remote_env,
+            container_binary,
         )
     }
 
@@ -1736,6 +1742,7 @@ impl WorkspaceDb {
         container_id: Option<String>,
         use_podman: Option<bool>,
         remote_env: Option<String>,
+        container_binary: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1770,8 +1777,9 @@ impl WorkspaceDb {
                     name,
                     container_id,
                     use_podman,
-                    remote_env
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    remote_env,
+                    container_binary
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1783,6 +1791,7 @@ impl WorkspaceDb {
                 container_id,
                 use_podman,
                 remote_env,
+                container_binary,
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1904,13 +1913,13 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env
+                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env, container_binary
             FROM
                 remote_connections
         ))?()?
         .into_iter()
         .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env)| {
+            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env, container_binary)| {
                 Some((
                     RemoteConnectionId(id),
                     Self::remote_connection_from_row(
@@ -1923,6 +1932,7 @@ impl WorkspaceDb {
                         name,
                         use_podman,
                         remote_env,
+                        container_binary,
                     )?,
                 ))
             },
@@ -1934,9 +1944,9 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env) =
+        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env, container_binary) =
             self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env
+                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env, container_binary
                 FROM remote_connections
                 WHERE id = ?
             ))?(id.0)?
@@ -1951,6 +1961,7 @@ impl WorkspaceDb {
             name,
             use_podman,
             remote_env,
+            container_binary,
         )
         .context("invalid remote_connection row")
     }
@@ -1965,6 +1976,7 @@ impl WorkspaceDb {
         name: Option<String>,
         use_podman: Option<bool>,
         remote_env: Option<String>,
+        container_binary: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1986,6 +1998,7 @@ impl WorkspaceDb {
                     remote_user: user?,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
+                    container_binary,
                     remote_env,
                 }))
             }
