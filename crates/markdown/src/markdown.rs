@@ -5537,6 +5537,92 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_markdown_font_families_match_surface_settings(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_family = Some("UI Font".to_string().into());
+                    settings.theme.buffer_font_family = Some("Buffer Font".to_string().into());
+                    settings.theme.ui_font_size = Some(14.0.into());
+                    settings.theme.buffer_font_size = Some(12.0.into());
+                    settings.theme.agent_ui_font_size = Some(15.0.into());
+                    settings.theme.agent_buffer_font_size = Some(12.0.into());
+                    settings.theme.markdown_prose_font_family = Some(".ZedSans".to_string().into());
+                    settings.theme.markdown_inline_code_font_family =
+                        Some(".ZedMono".to_string().into());
+                    settings.theme.markdown_preview_font_family =
+                        Some(".ZedSans".to_string().into());
+                    settings.theme.markdown_preview_code_font_family =
+                        Some("Preview Code Font".to_string().into());
+                    settings.theme.markdown_preview_font_size = Some(15.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let agent_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+            assert_eq!(agent_style.base_text_style.font_family.as_ref(), ".ZedSans");
+            assert_eq!(
+                agent_style
+                    .base_text_style
+                    .font_size
+                    .to_pixels(window.rem_size()),
+                px(15.0)
+            );
+            assert_eq!(
+                agent_style
+                    .base_text_style
+                    .line_height
+                    .to_pixels(agent_style.base_text_style.font_size, window.rem_size()),
+                px(21.0)
+            );
+            assert_eq!(
+                agent_style.code_block.text.font_family.as_deref(),
+                Some("Buffer Font")
+            );
+            assert_eq!(
+                agent_style
+                    .code_block
+                    .text
+                    .font_size
+                    .map(|size| size.to_pixels(window.rem_size())),
+                Some(px(12.0))
+            );
+            assert_eq!(
+                agent_style.inline_code.font_family.as_deref(),
+                Some(".ZedMono")
+            );
+            assert_eq!(agent_style.inline_code.font_size, None);
+
+            let preview_style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+            assert_eq!(
+                preview_style.base_text_style.font_family.as_ref(),
+                ".ZedSans"
+            );
+            assert_eq!(
+                preview_style.code_block.text.font_family.as_deref(),
+                Some("Preview Code Font")
+            );
+            assert_eq!(
+                preview_style
+                    .code_block
+                    .text
+                    .font_size
+                    .map(|size| size.to_pixels(window.rem_size())),
+                Some(px(15.0))
+            );
+            assert_eq!(
+                preview_style.inline_code.font_family.as_deref(),
+                Some("Preview Code Font")
+            );
+            assert_eq!(preview_style.inline_code.font_size, None);
+        });
+    }
+
     fn failing_image_source() -> ImageSource {
         ImageSource::Custom(Arc::new(|_, _| {
             Some(Err(gpui::ImageCacheError::Asset(

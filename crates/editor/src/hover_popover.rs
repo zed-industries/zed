@@ -1288,7 +1288,7 @@ mod tests {
     };
     use collections::BTreeSet;
     use futures::stream::StreamExt;
-    use gpui::App;
+    use gpui::{App, UpdateGlobal};
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
     use project::InlayId;
@@ -1340,6 +1340,62 @@ mod tests {
         assert!(!rendered.contains('\t'));
         // And the full rendering matches the source exactly.
         assert_eq!(rendered, text);
+    }
+
+    #[gpui::test]
+    fn test_hover_markdown_uses_configured_prose_and_code_fonts(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_family = Some("Buffer Font".to_string().into());
+                    settings.theme.buffer_font_size = Some(12.0.into());
+                    settings.theme.markdown_prose_font_family = Some(".ZedSans".to_string().into());
+                    settings.theme.markdown_inline_code_font_family =
+                        Some(".ZedMono".to_string().into());
+                    settings.theme.hover_popover_font_size = Some(13.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            let style = hover_markdown_style(window, cx);
+            assert_eq!(style.base_text_style.font_family.as_ref(), ".ZedSans");
+            assert_eq!(
+                style.base_text_style.font_size.to_pixels(window.rem_size()),
+                px(13.0)
+            );
+            assert_eq!(
+                style
+                    .container_style
+                    .text
+                    .font_size
+                    .map(|font_size| { font_size.to_pixels(window.rem_size()) }),
+                Some(px(13.0))
+            );
+            assert_eq!(
+                style.code_block.text.font_family.as_deref(),
+                Some("Buffer Font")
+            );
+            assert_eq!(
+                style
+                    .code_block
+                    .text
+                    .font_size
+                    .map(|font_size| font_size.to_pixels(window.rem_size())),
+                Some(px(12.0))
+            );
+            assert_eq!(
+                style.code_block.text.line_height.map(|line_height| {
+                    line_height.to_pixels(px(12.0).into(), window.rem_size())
+                }),
+                Some(px(21.0))
+            );
+            assert_eq!(style.inline_code.font_family.as_deref(), Some(".ZedMono"));
+            assert_eq!(style.inline_code.font_size, None);
+        });
     }
 
     impl InfoPopover {
