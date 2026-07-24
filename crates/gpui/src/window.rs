@@ -1609,23 +1609,24 @@ impl Window {
                     {
                         // Don't lose a pending forced render to throttling.
                         deferred_force_render |= force_render;
+                        // Deferred by throttling: ask demand-driven platforms to retry.
                         // Must still complete the frame on platforms that require it.
                         // On Wayland, `surface.frame()` was already called to request the
                         // next frame callback, so we must call `surface.commit()` (via
                         // `complete_frame`) or the compositor won't send another callback.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .update(&mut cx, |_, window, _| window.complete_frame(true))
                             .log_err();
                         return;
                     }
                 }
                 last_frame_time.set(Some(now));
 
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
+                let current_frame_callbacks = next_frame_callbacks.take();
+                if !current_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
+                            for callback in current_frame_callbacks {
                                 callback(window, cx);
                             }
                         })
@@ -1660,9 +1661,11 @@ impl Window {
                         .log_err();
                 }
 
+                let request_next_frame =
+                    invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty();
                 handle
                     .update(&mut cx, |_, window, _| {
-                        window.complete_frame();
+                        window.complete_frame(request_next_frame);
                     })
                     .log_err();
             }
@@ -2325,6 +2328,9 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        if self.invalidator.not_drawing() {
+            self.platform_window.schedule_frame();
+        }
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -2789,8 +2795,19 @@ impl Window {
         self.capslock
     }
 
-    fn complete_frame(&self) {
-        self.platform_window.completed_frame();
+    pub(crate) fn schedule_pending_platform_frame(&self) {
+        // A clean window may still have a scene to present or callbacks that
+        // were queued while its previous frame was running.
+        if self.invalidator.is_dirty()
+            || self.needs_present.get()
+            || !self.next_frame_callbacks.borrow().is_empty()
+        {
+            self.platform_window.schedule_frame();
+        }
+    }
+
+    fn complete_frame(&self, request_next_frame: bool) {
+        self.platform_window.completed_frame(request_next_frame);
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -6612,7 +6629,7 @@ mod tests {
     use std::{cell::Cell, rc::Rc};
 
     use crate::{
-        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        AppContext as _, Bounds, Context, Empty, FocusHandle, InteractiveElement as _, IntoElement,
         ParentElement, Pixels, Render, Styled, TestAppContext, Window, WindowOptions, canvas, div,
         px, size,
     };
@@ -6696,6 +6713,50 @@ mod tests {
                 root
             }
         }
+    }
+
+    #[gpui::test]
+    fn parked_window_wakes_for_pending_work(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        assert!(test_window.simulate_scheduled_frame());
+        cx.update_window(window.into(), |_, _, _| {}).unwrap();
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx)
+        })
+            .unwrap();
+        assert!(test_window.frame_scheduled());
+        assert!(test_window.simulate_scheduled_frame());
+
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        assert!(test_window.frame_scheduled());
+    }
+
+    #[gpui::test]
+    fn callback_queued_during_a_frame_requests_a_follow_up(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+        assert!(test_window.simulate_scheduled_frame());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update_window(window.into(), |_, window, _| {
+            window.active.set(true);
+            let callback_ran = callback_ran.clone();
+            window.on_next_frame(move |window, _| {
+                window.on_next_frame(move |_, _| callback_ran.set(true));
+            });
+        })
+        .unwrap();
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!callback_ran.get());
+        assert!(test_window.frame_scheduled());
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(callback_ran.get());
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use calloop::ping::Ping;
 use collections::{FxHashMap, HashMap};
 use futures::channel::oneshot::Receiver;
 
@@ -14,7 +15,7 @@ use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{
     Proxy,
-    protocol::{wl_output, wl_seat, wl_surface},
+    protocol::{wl_callback, wl_output, wl_seat, wl_surface},
 };
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
@@ -95,7 +96,6 @@ struct InProgressConfigure {
 
 pub struct WaylandWindowState {
     surface_state: WaylandSurfaceState,
-    acknowledged_first_configure: bool,
     parent: Option<WaylandWindowStatePtr>,
     /// Child surfaces mapped to whether they block this window's input (dialogs
     /// block, popups don't). Children are closed before this window closes.
@@ -122,8 +122,9 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
-    pub(crate) force_render_after_recovery: bool,
-    renderer_presented: bool,
+    redraw_requested: bool,
+    presentation: PresentationState,
+    pending_frame_callback: Option<wl_callback::WlCallback>,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -536,6 +537,8 @@ impl WaylandSurfaceState {
 pub struct WaylandWindowStatePtr {
     state: Rc<RefCell<WaylandWindowState>>,
     callbacks: Rc<RefCell<Callbacks>>,
+    frame_loop: Rc<Cell<FrameLoop>>,
+    frame_ping: Ping,
 }
 
 impl WaylandWindowState {
@@ -593,7 +596,6 @@ impl WaylandWindowState {
 
         Ok(Self {
             surface_state,
-            acknowledged_first_configure: false,
             parent,
             children: FxHashMap::default(),
             surface,
@@ -620,8 +622,9 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
-            force_render_after_recovery: false,
-            renderer_presented: false,
+            redraw_requested: false,
+            presentation: PresentationState::Unpresented,
+            pending_frame_callback: None,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -669,6 +672,41 @@ impl WaylandWindowState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentationState {
+    Unpresented,
+    Presented,
+    RetryBeforeFirstPresent,
+    RetryAfterPresent,
+}
+
+impl PresentationState {
+    fn requires_presentation(self) -> bool {
+        matches!(
+            self,
+            Self::RetryBeforeFirstPresent | Self::RetryAfterPresent
+        )
+    }
+
+    fn failed(self) -> Self {
+        match self {
+            Self::Unpresented | Self::RetryBeforeFirstPresent => Self::RetryBeforeFirstPresent,
+            Self::Presented | Self::RetryAfterPresent => Self::RetryAfterPresent,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameLoop {
+    Unconfigured,
+    Ticking,
+    PresentationFailed,
+    AwaitingCallback,
+    Scheduled,
+    RetryScheduled,
+    Parked,
+}
+
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
 pub enum ImeInput {
     InsertText(String),
@@ -679,8 +717,11 @@ pub enum ImeInput {
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
+        self.0.frame_loop.set(FrameLoop::Parked);
+
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
+
         if let Some(parent) = state.parent.as_ref() {
             parent.state.borrow_mut().children.remove(&surface_id);
         }
@@ -766,6 +807,7 @@ impl WaylandWindow {
             .as_ref()
             .map(|viewporter| viewporter.get_viewport(&surface, &globals.qh, ()));
 
+        let frame_ping = globals.frame_ping.clone();
         let this = Self(WaylandWindowStatePtr {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
                 handle,
@@ -781,6 +823,8 @@ impl WaylandWindow {
                 parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
+            frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),
+            frame_ping,
         });
 
         // Kick things off
@@ -839,21 +883,64 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn frame(&self) {
+        self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
-        state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
-        let force_render = state.force_render_after_recovery;
-        state.force_render_after_recovery = false;
+        // GPUI may throttle this tick without calling draw, so leave the request
+        // latched until a draw actually reaches the renderer.
+        let force_render = state.redraw_requested;
+        let require_presentation = state.presentation.requires_presentation();
         drop(state);
 
-        let mut cb = self.callbacks.borrow_mut();
-        if let Some(fun) = cb.request_frame.as_mut() {
-            fun(RequestFrameOptions {
-                force_render,
-                ..Default::default()
-            });
-            self.update_ime_enabled();
+        let mut callbacks = self.callbacks.borrow_mut();
+        let Some(request_frame) = callbacks.request_frame.as_mut() else {
+            self.frame_loop.set(FrameLoop::Parked);
+            return;
+        };
+        request_frame(RequestFrameOptions {
+            force_render,
+            require_presentation,
+        });
+        self.update_ime_enabled();
+    }
+
+    pub fn frame_callback_fired(&self) {
+        // Another wl_surface commit may have carried this callback while a retry
+        // timer owned the render-loop wakeup.
+        self.state.borrow_mut().pending_frame_callback = None;
+        if self.frame_loop.get() == FrameLoop::AwaitingCallback {
+            self.frame();
         }
+    }
+
+    pub fn scheduled_frame_fired(&self) {
+        if self.frame_loop.get() == FrameLoop::Scheduled {
+            self.frame();
+        }
+    }
+
+    pub fn retry_timer_fired(&self) {
+        if self.frame_loop.get() == FrameLoop::RetryScheduled {
+            self.frame();
+        }
+    }
+
+    pub fn is_configured(&self) -> bool {
+        self.frame_loop.get() != FrameLoop::Unconfigured
+    }
+
+    /// Re-arm a parked render loop because the window has work again.
+    pub fn schedule_frame(&self) {
+        if self.frame_loop.get() != FrameLoop::Parked {
+            return;
+        }
+        self.frame_loop.set(FrameLoop::Scheduled);
+        self.frame_ping.ping();
+    }
+
+    fn request_redraw(&self) {
+        self.state.borrow_mut().redraw_requested = true;
+        self.schedule_frame();
     }
 
     fn update_ime_enabled(&self) {
@@ -862,12 +949,15 @@ impl WaylandWindowStatePtr {
             return;
         }
         let client = state.client.clone();
-        let ime_enabled = state
-            .input_handler
-            .as_mut()
-            .map(|input_handler| input_handler.query_accepts_text_input())
-            .unwrap_or(true);
-        drop(state);
+        let ime_enabled = if let Some(mut input_handler) = state.input_handler.take() {
+            drop(state);
+            let accepts_text_input = input_handler.query_accepts_text_input();
+            self.state.borrow_mut().input_handler = Some(input_handler);
+            accepts_text_input
+        } else {
+            drop(state);
+            true
+        };
         if Some(ime_enabled) == client.ime_enabled() {
             return;
         }
@@ -927,7 +1017,7 @@ impl WaylandWindowStatePtr {
                     }
                 }
             }
-            let mut state = self.state.borrow_mut();
+            let state = self.state.borrow_mut();
             state.surface_state.ack_configure(serial);
 
             let window_geometry = inset_by_tiling(
@@ -945,11 +1035,12 @@ impl WaylandWindowStatePtr {
                 window_geometry.size.height,
             );
 
-            let request_frame_callback = !state.acknowledged_first_configure;
-            if request_frame_callback {
-                state.acknowledged_first_configure = true;
-                drop(state);
+            let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
+            drop(state);
+            if initial_configure {
                 self.frame();
+            } else {
+                self.request_redraw();
             }
         }
     }
@@ -976,17 +1067,22 @@ impl WaylandWindowStatePtr {
                 }
                 WEnum::Value(_) => {
                     log::warn!("Unknown decoration mode");
+                    return;
                 }
                 WEnum::Unknown(v) => {
                     log::warn!("Unknown decoration mode: {}", v);
+                    return;
                 }
             }
+            update_window(self.state.borrow_mut());
+            self.request_redraw();
         }
     }
 
     pub fn handle_fractional_scale_event(&self, event: wp_fractional_scale_v1::Event) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
             self.rescale(scale as f32 / 120.0);
+            self.request_redraw();
         }
     }
 
@@ -1193,7 +1289,10 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
+                } else {
+                    drop(state);
                 }
+                self.request_redraw();
             }
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
@@ -1206,7 +1305,10 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(scale);
                     drop(state);
                     self.rescale(scale as f32);
+                } else {
+                    drop(state);
                 }
+                self.request_redraw();
             }
             wl_surface::Event::PreferredBufferScale { factor } => {
                 // We use `WpFractionalScale` instead to set the scale if it's available
@@ -1214,6 +1316,7 @@ impl WaylandWindowStatePtr {
                     state.surface.set_buffer_scale(factor);
                     drop(state);
                     self.rescale(factor as f32);
+                    self.request_redraw();
                 }
             }
             _ => {}
@@ -1473,7 +1576,7 @@ impl PlatformWindow for WaylandWindow {
         // configure reply drives the buffer resize. Before the first configure the popup is
         // unmapped and cannot reposition, but the initial positioner already carries the size.
         if matches!(state.surface_state, WaylandSurfaceState::Popup(_)) {
-            if state.acknowledged_first_configure {
+            if self.0.is_configured() {
                 let parent_geometry = state
                     .parent
                     .as_ref()
@@ -1611,8 +1714,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut state = self.borrow_mut();
+        if state.background_appearance == background_appearance {
+            return;
+        }
         state.background_appearance = background_appearance;
         update_window(state);
+        self.0.request_redraw();
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
@@ -1725,27 +1832,74 @@ impl PlatformWindow for WaylandWindow {
                 }
             }
 
-            state.force_render_after_recovery = true;
+            state.redraw_requested = true;
             return;
         }
 
-        state.renderer_presented = state.renderer.draw(scene);
+        // Surface state changed during this GPUI tick is included in this presentation.
+        state.redraw_requested = false;
+        if state.pending_frame_callback.is_none() {
+            let callback = state.surface.frame(&state.globals.qh, state.surface.id());
+            state.pending_frame_callback = Some(callback);
+        }
+        if state.renderer.draw(scene) {
+            state.presentation = PresentationState::Presented;
+            self.0.frame_loop.set(FrameLoop::AwaitingCallback);
+        } else {
+            state.presentation = state.presentation.failed();
+            self.0.frame_loop.set(FrameLoop::PresentationFailed);
+        }
 
         if state.renderer.needs_redraw() {
-            state.force_render_after_recovery = true;
+            state.redraw_requested = true;
         }
     }
 
-    fn completed_frame(&self) {
+    fn schedule_frame(&self) {
+        self.0.schedule_frame();
+    }
+
+    fn completed_frame(&self, request_next_frame: bool) {
         let mut state = self.borrow_mut();
 
-        // Work around a bug in old versions of wlroots where committing without a buffer attached
-        // can cause invalid synchronization that leads to graphical corruption.
-        if !state.renderer_presented {
-            state.surface.commit();
+        let frame_loop = self.0.frame_loop.get();
+        if frame_loop == FrameLoop::AwaitingCallback {
+            return;
         }
 
-        state.renderer_presented = false;
+        if state.presentation.requires_presentation() {
+            // Before the first present, or when throttling skipped draw, a
+            // callback may never arrive. Otherwise let the compositor pace
+            // retries so an occluded window does not keep polling.
+            if frame_loop == FrameLoop::PresentationFailed
+                && state.presentation == PresentationState::RetryAfterPresent
+            {
+                if state.pending_frame_callback.is_none() {
+                    let callback = state.surface.frame(&state.globals.qh, state.surface.id());
+                    state.pending_frame_callback = Some(callback);
+                }
+                state.surface.commit();
+                self.0.frame_loop.set(FrameLoop::AwaitingCallback);
+                return;
+            }
+
+            self.0.frame_loop.set(FrameLoop::RetryScheduled);
+            let surface_id = state.surface.id();
+            let client = state.client.clone();
+            drop(state);
+            client.schedule_frame_retry(&surface_id);
+            return;
+        }
+
+        if request_next_frame || state.redraw_requested {
+            self.0.frame_loop.set(FrameLoop::RetryScheduled);
+            let surface_id = state.surface.id();
+            let client = state.client.clone();
+            drop(state);
+            client.schedule_frame_retry(&surface_id);
+        } else {
+            self.0.frame_loop.set(FrameLoop::Parked);
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1866,6 +2020,7 @@ impl PlatformWindow for WaylandWindow {
                 update_window(state);
             }
         }
+        self.0.request_redraw();
     }
 
     fn window_controls(&self) -> WindowControls {
@@ -1877,6 +2032,7 @@ impl PlatformWindow for WaylandWindow {
         if Some(inset) != state.client_inset {
             state.client_inset = Some(inset);
             update_window(state);
+            self.0.request_redraw();
         }
     }
 
