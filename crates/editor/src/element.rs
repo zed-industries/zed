@@ -1497,6 +1497,16 @@ impl EditorElement {
         window.with_absolute_element_offset(extended_bounds.origin, |window| {
             minimap.prepaint(window, cx)
         });
+        self.layout_minimap_hover_preview(
+            snapshot,
+            layout.hitbox.bounds,
+            minimap_scroll_top,
+            minimap_line_height,
+            glyph_grid_cell.width,
+            &minimap_settings,
+            window,
+            cx,
+        );
 
         Some(MinimapLayout {
             minimap,
@@ -1506,6 +1516,188 @@ impl EditorElement {
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
         })
+    }
+
+    fn layout_minimap_hover_preview(
+        &self,
+        snapshot: &EditorSnapshot,
+        minimap_bounds: Bounds<Pixels>,
+        minimap_scroll_top: ScrollOffset,
+        minimap_line_height: Pixels,
+        glyph_width: Pixels,
+        minimap_settings: &Minimap,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        const PREVIEW_GAP: Pixels = px(8.);
+
+        if !minimap_settings.hover_preview {
+            return;
+        }
+        if self.editor.read(cx).scroll_manager.is_dragging_minimap() {
+            return;
+        }
+
+        let mouse_position = window.mouse_position();
+        if !minimap_bounds.contains(&mouse_position) {
+            return;
+        }
+
+        let click_position = mouse_position.relative_to(&minimap_bounds.origin).y;
+        let hovered_row = DisplayRow(
+            (minimap_scroll_top + ScrollPixelOffset::from(click_position / minimap_line_height))
+                .clamp(
+                    0.,
+                    snapshot.display_snapshot.max_point().row().0 as ScrollOffset,
+                ) as u32,
+        );
+        let max_row = snapshot.display_snapshot.max_point().row().0 + 1;
+        let preview_line_count = minimap_settings.hover_preview_lines.get().min(max_row);
+        let lines_before = preview_line_count / 2;
+        let mut start_row = hovered_row.0.saturating_sub(lines_before);
+        let end_row = (start_row + preview_line_count).min(max_row);
+        start_row = end_row.saturating_sub(preview_line_count);
+        let start_row = DisplayRow(start_row);
+        let end_row = DisplayRow(end_row);
+        let line_number_width = end_row.0.to_string().len();
+        let preview_width_columns = minimap_settings.hover_preview_width_columns.get();
+        let max_line_chars = preview_width_columns as usize;
+        let viewport_size = window.viewport_size();
+        let preview_width = (glyph_width * preview_width_columns as f32)
+            .min((viewport_size.width - px(16.)).max(px(0.)));
+        let mut preview_text_style = self.style.text.clone();
+        preview_text_style.font_size = gpui::rems(0.75).into();
+        let rows = (start_row.0..end_row.0)
+            .map(|row| {
+                let display_row = DisplayRow(row);
+                let line = self.minimap_hover_preview_line(
+                    snapshot,
+                    display_row,
+                    max_line_chars,
+                    &preview_text_style,
+                    cx,
+                );
+
+                h_flex()
+                    .min_w_0()
+                    .gap_2()
+                    .px_1()
+                    .py_0p5()
+                    .rounded_sm()
+                    .when(display_row == hovered_row, |this| {
+                        this.bg(cx.theme().colors().editor_active_line_background)
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .font(self.style.text.font())
+                            .text_color(cx.theme().colors().text_muted)
+                            .child(format!("{:>line_number_width$}", row + 1)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(line),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let mut preview = div()
+            .occlude()
+            .elevation_2(cx)
+            .p_1()
+            .w(preview_width)
+            .overflow_x_hidden()
+            .child(v_flex().gap_0p5().children(rows))
+            .into_any_element();
+        let size = preview.layout_as_root(AvailableSpace::min_size(), window, cx);
+        let origin = point(
+            (minimap_bounds.left() - size.width - PREVIEW_GAP).max(px(0.)),
+            (mouse_position.y - size.height / 2.)
+                .max(px(0.))
+                .min((viewport_size.height - size.height).max(px(0.))),
+        );
+
+        window.defer_draw(preview, origin, 3, None);
+    }
+
+    fn minimap_hover_preview_line(
+        &self,
+        snapshot: &EditorSnapshot,
+        display_row: DisplayRow,
+        max_chars: usize,
+        text_style: &gpui::TextStyle,
+        cx: &mut App,
+    ) -> StyledText {
+        let use_tree_sitter = !snapshot.semantic_tokens_enabled
+            || snapshot.use_tree_sitter_for_syntax(display_row, cx);
+        let language_aware = LanguageAwareStyling {
+            tree_sitter: use_tree_sitter,
+            diagnostics: true,
+        };
+        let chunks = snapshot.highlighted_chunks(
+            display_row..display_row + DisplayRow(1),
+            language_aware,
+            &self.style,
+        );
+        let mut text = String::new();
+        let mut highlights = Vec::new();
+        let mut chars_remaining = max_chars;
+        let mut truncated = false;
+
+        for chunk in chunks {
+            if chars_remaining == 0 {
+                truncated = true;
+                break;
+            }
+
+            let chunk_text = chunk.text.split('\n').next().unwrap_or(chunk.text);
+            if chunk_text.len() != chunk.text.len() {
+                truncated = true;
+            }
+            if chunk_text.is_empty() {
+                if truncated {
+                    break;
+                }
+                continue;
+            }
+
+            let chunk_char_count = chunk_text.chars().count();
+            let take_char_count = chunk_char_count.min(chars_remaining);
+            let take_byte_count = chunk_text
+                .char_indices()
+                .nth(take_char_count)
+                .map(|(index, _)| index)
+                .unwrap_or(chunk_text.len());
+            let chunk_text = &chunk_text[..take_byte_count];
+            let start = text.len();
+            text.push_str(chunk_text);
+            let end = text.len();
+
+            if let Some(style) = chunk.style {
+                highlights.push((start..end, style));
+            }
+
+            chars_remaining -= take_char_count;
+            if take_char_count < chunk_char_count {
+                truncated = true;
+                break;
+            }
+            if truncated {
+                break;
+            }
+        }
+
+        if truncated {
+            text.push('…');
+        }
+
+        StyledText::new(text).with_default_highlights(text_style, highlights)
     }
 
     fn get_minimap_line_height(
@@ -6316,8 +6508,8 @@ impl EditorElement {
         }
     }
 
-    fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        if let Some(mut layout) = layout.minimap.take() {
+    fn paint_minimap(&self, editor_layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        if let Some(mut layout) = editor_layout.minimap.take() {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
             let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
 
@@ -6429,6 +6621,7 @@ impl EditorElement {
                             // Stop hover events from propagating to the
                             // underlying editor if the minimap hitbox is hovered
                             if !event.dragging() {
+                                cx.notify();
                                 cx.stop_propagation();
                             }
                         } else {

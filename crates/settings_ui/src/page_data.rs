@@ -2545,7 +2545,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn minimap_section() -> [SettingsPageItem; 7] {
+    fn minimap_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Minimap"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2679,6 +2679,81 @@ fn editor_page() -> SettingsPage {
                             .minimap
                             .get_or_insert_default()
                             .max_width_columns = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hover Preview",
+                description: "Show a code preview when hovering over the minimap.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("minimap.hover_preview"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .hover_preview
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .hover_preview = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hover Preview Lines",
+                description: "Number of lines to show in the minimap hover preview.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("minimap.hover_preview_lines"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .hover_preview_lines
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .hover_preview_lines = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hover Preview Width Columns",
+                description: "Width of the minimap hover preview in columns.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("minimap.hover_preview_width_columns"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .as_ref()?
+                            .hover_preview_width_columns
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .minimap
+                            .get_or_insert_default()
+                            .hover_preview_width_columns = value;
                     },
                 }),
                 metadata: None,
