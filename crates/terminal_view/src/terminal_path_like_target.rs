@@ -59,17 +59,20 @@ fn possible_hover_target(
     cx.spawn(async move |terminal_view, cx| {
         let file_to_open = file_to_open_task.await;
         terminal_view
-            .update(cx, |terminal_view, _| match file_to_open {
-                Some(OpenTarget::Path(path, ..) | OpenTarget::Worktree(path, ..)) => {
-                    terminal_view.hover = Some(HoverTarget {
-                        tooltip: path
-                            .to_string(&|path: &PathBuf| path.to_string_lossy().into_owned()),
-                        hovered_word,
-                    });
-                }
-                None => {
-                    terminal_view.hover = None;
-                }
+            .update(cx, |terminal_view, cx| {
+                match file_to_open {
+                    Some(OpenTarget::Path(path, ..) | OpenTarget::Worktree(path, ..)) => {
+                        terminal_view.hover = Some(HoverTarget {
+                            tooltip: path
+                                .to_string(&|path: &PathBuf| path.to_string_lossy().into_owned()),
+                            hovered_word,
+                        });
+                    }
+                    None => {
+                        terminal_view.hover = None;
+                    }
+                };
+                cx.notify();
             })
             .ok();
     })
