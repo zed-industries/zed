@@ -105,7 +105,12 @@ impl TextDiffView {
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
         let mut clipboard_text = diff_data.clipboard_text.clone();
 
-        if !clipboard_text.ends_with("\n") {
+        // Only append a newline to the clipboard text if the expanded selection
+        // ends at a line boundary (column 0). When the selection includes the
+        // last line of a file without a trailing newline, the selection can't be
+        // extended to the next line, so we shouldn't add a newline to the
+        // clipboard content either — otherwise the diff will never be clean.
+        if expanded_selection_range.end.column == 0 && !clipboard_text.ends_with("\n") {
             clipboard_text.push_str("\n");
         }
 
@@ -653,6 +658,24 @@ mod tests {
             ),
             "Clipboard ↔ text.txt @ L1:1-7",
             &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_no_trailing_newline_full_buffer(cx: &mut TestAppContext) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "hello world",
+            "hello worldˇ",
+            &unindent(
+                "
+                  ˇhello world",
+            ),
+            "Clipboard ↔ text.txt @ L1:1-12",
+            &format!("Clipboard ↔ {} @ L1:1-12", path!("test/text.txt")),
             cx,
         )
         .await;
