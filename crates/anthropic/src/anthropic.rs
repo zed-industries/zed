@@ -22,7 +22,22 @@ pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 pub fn supports_fast_mode(model_id: &str) -> bool {
-    matches!(model_id, "claude-opus-4-8")
+    matches!(model_id, "claude-opus-5" | "claude-opus-4-8")
+}
+
+/// Model IDs where adaptive thinking runs by default when a request omits the
+/// `thinking` field, and where thinking must instead be turned off with an
+/// explicit `thinking: {"type": "disabled"}`.
+///
+/// On earlier Opus models omitting `thinking` means thinking is off; Claude
+/// Opus 5 flipped that default. Claude Fable 5 and Claude Mythos 5 also think
+/// by default, but they reject `{"type": "disabled"}` with a 400 error, so
+/// they are deliberately excluded here (thinking cannot be turned off for
+/// them at all).
+///
+/// <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
+pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
+    matches!(model_id, "claude-opus-5")
 }
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
@@ -168,6 +183,7 @@ impl Model {
             "claude-fable-5"
                 | "claude-mythos-5"
                 | "claude-mythos-preview"
+                | "claude-opus-5"
                 | "claude-opus-4-8"
                 | "claude-opus-4-7"
                 | "claude-opus-4-6"
@@ -732,6 +748,10 @@ pub enum Thinking {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
     },
+    /// Explicitly turns thinking off. Required by models where thinking runs
+    /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
+    /// at effort `high` or below.
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1209,18 +1229,17 @@ mod tests {
     }
 
     #[test]
-    fn from_listed_enables_fast_mode_for_opus_4_8() {
-        let model = Model::from_listed(listed_entry(
-            "claude-opus-4-8",
-            ModelCapabilities::default(),
-        ));
+    fn from_listed_enables_fast_mode_and_compaction_for_supported_opus_models() {
+        for model_id in ["claude-opus-5", "claude-opus-4-8"] {
+            let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
 
-        assert!(model.supports_speed);
-        let beta_headers = model
-            .beta_headers()
-            .expect("model should have beta headers");
-        assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
-        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+            assert!(model.supports_speed);
+            let beta_headers = model
+                .beta_headers()
+                .expect("model should have beta headers");
+            assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
+            assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        }
     }
 
     #[test]
