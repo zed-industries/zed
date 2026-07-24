@@ -30,6 +30,32 @@ pub(crate) struct ParsedMarkdownMermaidDiagramContents {
     pub(crate) scale: u32,
 }
 
+impl ParsedMarkdownMermaidDiagramContents {
+    fn get_frontmatter_and_diagram_code(&self) -> (Option<SharedString>, SharedString) {
+        // Extract any YAML frontmatter. Any mermaid formatting specified in frontmatter
+        // is currently not supported. We just store it for future use when we implement custom,
+        // diagram defined styling.
+        if self.contents.trim_start().starts_with("---") {
+            let rest = self.contents.trim_start().strip_prefix("---").unwrap();
+            if let Some(end_index) = rest.find("\n---") {
+                let frontmatter = rest[..end_index].trim();
+                let remaining = rest[end_index + 4..].trim_start();
+                (Some(frontmatter.into()), remaining.into())
+            } else {
+                (None, self.contents.clone())
+            }
+        } else {
+            (None, self.contents.clone())
+        }
+    }
+
+    pub(crate) fn get_diagram_code(&self) -> SharedString {
+        let (_, diagram_content) = self.get_frontmatter_and_diagram_code();
+        diagram_content
+    }
+
+}
+
 #[derive(Default, Clone)]
 pub(crate) struct MermaidState {
     cache: MermaidDiagramCache,
@@ -260,6 +286,22 @@ fn is_supported_diagram_type(source: &str) -> bool {
         .any(|prefix| first_token.eq_ignore_ascii_case(prefix))
 }
 
+fn parse_mermaid_diagram_contents(
+    contents: &str,
+    scale: u32,
+) -> Option<ParsedMarkdownMermaidDiagramContents> {
+    let diagram_contents = ParsedMarkdownMermaidDiagramContents {
+        contents: contents.into(),
+        scale,
+    };
+
+    if !is_supported_diagram_type(&diagram_contents.get_diagram_code()) {
+        return None;
+    };
+
+    diagram_contents.into()
+}
+
 pub(crate) fn extract_mermaid_diagrams(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
@@ -292,17 +334,15 @@ pub(crate) fn extract_mermaid_diagrams(
             .strip_suffix('\n')
             .unwrap_or(&source[metadata.content_range.clone()])
             .to_string();
-        if !is_supported_diagram_type(&contents) {
-            continue;
-        }
+        let parsed_diagram = match parse_mermaid_diagram_contents(&contents, scale) {
+            Some(diagram) => diagram,
+            None => continue,
+        };
         mermaid_diagrams.insert(
             source_range.start,
             ParsedMarkdownMermaidDiagram {
                 content_range: metadata.content_range.clone(),
-                contents: ParsedMarkdownMermaidDiagramContents {
-                    contents: contents.into(),
-                    scale,
-                },
+                contents: parsed_diagram,
             },
         );
     }
@@ -554,7 +594,7 @@ mod tests {
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
-        MarkdownStyle, WrapButtonVisibility,
+        MarkdownStyle, WrapButtonVisibility, mermaid::parse_mermaid_diagram_contents,
     };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
@@ -678,6 +718,29 @@ mod tests {
         assert_eq!(parse_mermaid_info("mermaid 5"), Some(10));
         assert_eq!(parse_mermaid_info("mermaid 999"), Some(500));
         assert_eq!(parse_mermaid_info("rust"), None);
+    }
+
+    #[test]
+    fn test_parse_mermaid_diagram_contents_with_frontmatter() {
+        let code_block_content =
+            "---\ntitle: frontmatter example\ndisplayMode: compact\n---graph TD;";
+        let parsed_contents = parse_mermaid_diagram_contents(code_block_content, 100).unwrap();
+        assert_eq!(parsed_contents.scale, 100);
+        assert!(parsed_contents.frontmatter.is_some());
+        assert_eq!(
+            parsed_contents.frontmatter.unwrap(),
+            "title: frontmatter example\ndisplayMode: compact"
+        );
+        assert_eq!(parsed_contents.contents, "graph TD;");
+    }
+
+    #[test]
+    fn test_parse_mermaid_diagram_contents_without_frontmatter() {
+        let code_block_content = "graph TD;";
+        let parsed_contents = parse_mermaid_diagram_contents(code_block_content, 100).unwrap();
+        assert_eq!(parsed_contents.scale, 100);
+        assert!(parsed_contents.frontmatter.is_none());
+        assert_eq!(parsed_contents.contents, "graph TD;");
     }
 
     #[test]
