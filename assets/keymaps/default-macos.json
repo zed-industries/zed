@@ -1604,6 +1604,18 @@
     },
   },
   {
+    "context": "SvgPreview",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-=": "svg::ZoomIn",
+      "cmd-+": "svg::ZoomIn",
+      "cmd--": "svg::ZoomOut",
+      "cmd-0": "svg::ResetZoom",
+      "cmd-1": "svg::ZoomToActualSize",
+      "cmd-shift-0": "svg::FitToView",
+    },
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "cmd-1": "new_process_modal::ActivateTaskTab",
