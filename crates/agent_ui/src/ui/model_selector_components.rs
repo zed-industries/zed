@@ -20,7 +20,7 @@ pub struct ModelSelectorHeader {
 struct CollapsibleHeader {
     index: usize,
     collapsed: bool,
-    on_toggle: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    focused: bool,
 }
 
 impl ModelSelectorHeader {
@@ -32,16 +32,11 @@ impl ModelSelectorHeader {
         }
     }
 
-    pub fn collapsible(
-        mut self,
-        index: usize,
-        collapsed: bool,
-        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
+    pub fn collapsible(mut self, index: usize, collapsed: bool, focused: bool) -> Self {
         self.collapsible = Some(CollapsibleHeader {
             index,
             collapsed,
-            on_toggle: Box::new(on_toggle),
+            focused,
         });
         self
     }
@@ -70,8 +65,11 @@ impl RenderOnce for ModelSelectorHeader {
                         } else {
                             IconName::ChevronDown
                         };
-                        let on_toggle = collapsible.on_toggle;
 
+                        // Click handling is left to the picker's own per-entry
+                        // click handler, which routes through `confirm` — the
+                        // same path keyboard toggling uses. A handler here
+                        // would fire in addition to it and toggle twice.
                         this.child(
                             h_flex()
                                 .id(("model-selector-group-header", collapsible.index))
@@ -79,6 +77,10 @@ impl RenderOnce for ModelSelectorHeader {
                                 .gap_0p5()
                                 .pr_2()
                                 .justify_between()
+                                .rounded_sm()
+                                .when(collapsible.focused, |this| {
+                                    this.bg(cx.theme().colors().ghost_element_selected)
+                                })
                                 .cursor_pointer()
                                 .child(label)
                                 .child(
@@ -90,8 +92,7 @@ impl RenderOnce for ModelSelectorHeader {
                                     "Expand Section"
                                 } else {
                                     "Collapse Section"
-                                }))
-                                .on_click(move |event, window, cx| on_toggle(event, window, cx)),
+                                })),
                         )
                     }
                     None => this.child(label),

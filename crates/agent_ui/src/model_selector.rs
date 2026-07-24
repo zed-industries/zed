@@ -244,10 +244,10 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(ModelPickerEntry::Model(_, _)) => true,
-            Some(ModelPickerEntry::Separator(_))
-            | Some(ModelPickerEntry::GroupHeader { .. })
-            | None => false,
+            Some(ModelPickerEntry::Model(_, _)) | Some(ModelPickerEntry::GroupHeader { .. }) => {
+                true
+            }
+            Some(ModelPickerEntry::Separator(_)) | None => false,
         }
     }
 
@@ -307,18 +307,25 @@ impl PickerDelegate for ModelPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(ModelPickerEntry::Model(model_info, _)) =
-            self.filtered_entries.get(self.selected_index)
-            && model_info.disabled.is_none()
-        {
-            self.selector
-                .select_model(model_info.id.clone(), cx)
-                .detach_and_log_err(cx);
-            self.selected_model = Some(model_info.clone());
-            let current_index = self.selected_index;
-            self.set_selected_index(current_index, window, cx);
+        match self.filtered_entries.get(self.selected_index) {
+            Some(ModelPickerEntry::Model(model_info, _)) if model_info.disabled.is_none() => {
+                self.selector
+                    .select_model(model_info.id.clone(), cx)
+                    .detach_and_log_err(cx);
+                self.selected_model = Some(model_info.clone());
+                let current_index = self.selected_index;
+                self.set_selected_index(current_index, window, cx);
 
-            cx.emit(DismissEvent);
+                cx.emit(DismissEvent);
+            }
+            Some(ModelPickerEntry::GroupHeader { title, .. }) => {
+                let group = title.clone();
+                self.toggle_group_collapsed(group, cx);
+                cx.defer_in(window, |picker, window, cx| {
+                    picker.refresh(window, cx);
+                });
+            }
+            _ => {}
         }
     }
 
@@ -339,19 +346,11 @@ impl PickerDelegate for ModelPickerDelegate {
             ModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
             }
-            ModelPickerEntry::GroupHeader { title, collapsed } => {
-                let group = title.clone();
-                let on_toggle = cx.listener(move |picker, _, window, cx| {
-                    picker.delegate.toggle_group_collapsed(group.clone(), cx);
-                    picker.refresh(window, cx);
-                });
-
-                Some(
-                    ModelSelectorHeader::new(title.clone(), ix > 1)
-                        .collapsible(ix, *collapsed, on_toggle)
-                        .into_any_element(),
-                )
-            }
+            ModelPickerEntry::GroupHeader { title, collapsed } => Some(
+                ModelSelectorHeader::new(title.clone(), ix > 1)
+                    .collapsible(ix, *collapsed, selected)
+                    .into_any_element(),
+            ),
             ModelPickerEntry::Model(model_info, is_favorite) => {
                 let is_selected = Some(model_info) == self.selected_model.as_ref();
 
@@ -679,13 +678,98 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn confirming_group_header_toggles_collapse(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let model_selector = Rc::new(TestModelSelector::with_list(create_model_list(vec![
+            ("alpha", vec!["alpha/one", "alpha/two"]),
+            ("beta", vec!["beta/one"]),
+        ])));
+
+        let window_handle = cx.add_window({
+            let model_selector = model_selector.clone();
+            move |window, cx| {
+                let selector: Rc<dyn AgentModelSelector> = model_selector;
+                acp_model_selector(selector, fs, cx.focus_handle(), window, cx)
+            }
+        });
+        cx.run_until_parked();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                let labels = get_entry_labels(&picker.delegate.filtered_entries);
+                assert_eq!(
+                    labels,
+                    vec!["alpha", "alpha/one", "alpha/two", "beta", "beta/one"]
+                );
+
+                picker.delegate.set_selected_index(0, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                let labels = get_entry_labels(&picker.delegate.filtered_entries);
+                assert_eq!(labels, vec!["alpha", "beta", "beta/one"]);
+
+                // Confirming the collapsed header again expands the group.
+                picker.delegate.confirm(false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window_handle
+            .update(&mut cx, |picker, _window, _cx| {
+                let labels = get_entry_labels(&picker.delegate.filtered_entries);
+                assert_eq!(
+                    labels,
+                    vec!["alpha", "alpha/one", "alpha/two", "beta", "beta/one"]
+                );
+
+                // No model was selected by confirming headers.
+                assert!(model_selector.selected_models.borrow().is_empty());
+            })
+            .unwrap();
+    }
+
     struct TestModelSelector {
+        list: AgentModelList,
         models: Vec<AgentModelInfo>,
         selected_model: RefCell<AgentModelInfo>,
         selected_models: RefCell<Vec<AgentModelId>>,
     }
 
     impl TestModelSelector {
+        fn with_list(list: AgentModelList) -> Self {
+            let models = match &list {
+                AgentModelList::Flat(models) => models.clone(),
+                AgentModelList::Grouped(groups) => {
+                    groups.values().flatten().cloned().collect::<Vec<_>>()
+                }
+            };
+            let selected_model = models
+                .first()
+                .expect("test model list must not be empty")
+                .clone();
+
+            Self {
+                list,
+                models,
+                selected_model: RefCell::new(selected_model),
+                selected_models: RefCell::new(Vec::new()),
+            }
+        }
+
         fn new() -> Self {
             let models = vec![
                 AgentModelInfo {
@@ -708,17 +792,13 @@ mod tests {
                 },
             ];
 
-            Self {
-                selected_model: RefCell::new(models[0].clone()),
-                models,
-                selected_models: RefCell::new(Vec::new()),
-            }
+            Self::with_list(AgentModelList::Flat(models))
         }
     }
 
     impl AgentModelSelector for TestModelSelector {
         fn list_models(&self, _cx: &mut App) -> Task<Result<AgentModelList>> {
-            Task::ready(Ok(AgentModelList::Flat(self.models.clone())))
+            Task::ready(Ok(self.list.clone()))
         }
 
         fn select_model(&self, model_id: AgentModelId, _cx: &mut App) -> Task<Result<()>> {

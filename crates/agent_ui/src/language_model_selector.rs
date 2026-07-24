@@ -471,10 +471,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
-            Some(LanguageModelPickerEntry::Model(_)) => true,
-            Some(LanguageModelPickerEntry::Separator(_))
-            | Some(LanguageModelPickerEntry::GroupHeader { .. })
-            | None => false,
+            Some(LanguageModelPickerEntry::Model(_))
+            | Some(LanguageModelPickerEntry::GroupHeader { .. }) => true,
+            Some(LanguageModelPickerEntry::Separator(_)) | None => false,
         }
     }
 
@@ -548,16 +547,24 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(LanguageModelPickerEntry::Model(model_info)) =
-            self.filtered_entries.get(self.selected_index)
-        {
-            let model = model_info.model.clone();
-            (self.on_model_changed)(model.clone(), cx);
+        match self.filtered_entries.get(self.selected_index) {
+            Some(LanguageModelPickerEntry::Model(model_info)) => {
+                let model = model_info.model.clone();
+                (self.on_model_changed)(model.clone(), cx);
 
-            let current_index = self.selected_index;
-            self.set_selected_index(current_index, window, cx);
+                let current_index = self.selected_index;
+                self.set_selected_index(current_index, window, cx);
 
-            cx.emit(DismissEvent);
+                cx.emit(DismissEvent);
+            }
+            Some(LanguageModelPickerEntry::GroupHeader { title, .. }) => {
+                let group = title.clone();
+                self.toggle_group_collapsed(group, cx);
+                cx.defer_in(window, |picker, window, cx| {
+                    picker.refresh(window, cx);
+                });
+            }
+            _ => {}
         }
     }
 
@@ -576,19 +583,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             LanguageModelPickerEntry::Separator(title) => {
                 Some(ModelSelectorHeader::new(title, ix > 1).into_any_element())
             }
-            LanguageModelPickerEntry::GroupHeader { title, collapsed } => {
-                let group = title.clone();
-                let on_toggle = cx.listener(move |picker, _, window, cx| {
-                    picker.delegate.toggle_group_collapsed(group.clone(), cx);
-                    picker.refresh(window, cx);
-                });
-
-                Some(
-                    ModelSelectorHeader::new(title.clone(), ix > 1)
-                        .collapsible(ix, *collapsed, on_toggle)
-                        .into_any_element(),
-                )
-            }
+            LanguageModelPickerEntry::GroupHeader { title, collapsed } => Some(
+                ModelSelectorHeader::new(title.clone(), ix > 1)
+                    .collapsible(ix, *collapsed, selected)
+                    .into_any_element(),
+            ),
             LanguageModelPickerEntry::Model(model_info) => {
                 let active_model = (self.get_active_model)(cx);
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
