@@ -341,6 +341,29 @@ pub fn into_anthropic(
         last_tool.cache_control = Some(cache_control);
     }
 
+    let thinking = if request.thinking_allowed {
+        match mode {
+            AnthropicModelMode::Thinking { budget_tokens } => {
+                Some(Thinking::Enabled { budget_tokens })
+            }
+            AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
+                display: Some(AdaptiveThinkingDisplay::Summarized),
+            }),
+            AnthropicModelMode::Default => None,
+        }
+    } else if crate::requires_explicit_thinking_opt_out(&model) {
+        // On Claude Opus 5, omitting the `thinking` field no longer means
+        // "off": the model runs adaptive thinking by default, so features
+        // that suppress thinking (e.g. inline assist) must opt out
+        // explicitly. `disabled` is only accepted at effort `high` or below;
+        // that holds here because `output_config` is never sent when thinking
+        // is disallowed, and the server-side default effort is `high`.
+        // <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
+        Some(Thinking::Disabled)
+    } else {
+        None
+    };
+
     Ok(crate::Request {
         model,
         messages: new_messages,
@@ -356,19 +379,7 @@ pub fn into_anthropic(
                 cache_type: CacheControlType::Ephemeral,
                 ttl: None,
             }),
-        thinking: if request.thinking_allowed {
-            match mode {
-                AnthropicModelMode::Thinking { budget_tokens } => {
-                    Some(Thinking::Enabled { budget_tokens })
-                }
-                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
-                    display: Some(AdaptiveThinkingDisplay::Summarized),
-                }),
-                AnthropicModelMode::Default => None,
-            }
-        } else {
-            None
-        },
+        thinking,
         tools,
         tool_choice: request.tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
@@ -950,6 +961,69 @@ mod tests {
                 .and_then(|config| config.effort),
             Some(crate::Effort::XHigh)
         );
+    }
+
+    #[test]
+    fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() {
+        // (model, expects_explicit_opt_out): Claude Opus 5 thinks by default
+        // when the `thinking` field is omitted, so suppressing thinking
+        // requires sending `{"type": "disabled"}`. Earlier Opus models treat
+        // omission as "off", and Fable rejects `disabled` outright, so both
+        // must keep omitting the field.
+        for (model, expects_explicit_opt_out) in [
+            ("claude-opus-5", true),
+            ("claude-opus-4-8", false),
+            ("claude-fable-5", false),
+        ] {
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hi".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                thread_id: None,
+                prompt_id: None,
+                intent: None,
+                stop: vec![],
+                temperature: None,
+                tools: vec![],
+                tool_choice: None,
+                thinking_allowed: false,
+                thinking_effort: None,
+                speed: None,
+                compact_at_tokens: None,
+            };
+
+            let anthropic_request = into_anthropic(
+                request,
+                model.to_string(),
+                1.0,
+                128_000,
+                AnthropicModelMode::AdaptiveThinking,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap();
+
+            if expects_explicit_opt_out {
+                assert!(
+                    matches!(anthropic_request.thinking, Some(Thinking::Disabled)),
+                    "{model} should send an explicit thinking opt-out"
+                );
+                // `disabled` combined with effort `xhigh`/`max` is a 400, so
+                // no effort may accompany the opt-out.
+                assert!(
+                    anthropic_request.output_config.is_none(),
+                    "{model} must not send output_config with thinking disabled"
+                );
+            } else {
+                assert!(
+                    anthropic_request.thinking.is_none(),
+                    "{model} should omit the thinking field entirely"
+                );
+            }
+        }
     }
 
     #[test]
