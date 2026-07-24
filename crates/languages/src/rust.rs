@@ -720,23 +720,30 @@ impl LspAdapter for RustLspAdapter {
         Ok(original)
     }
 
-    fn client_command(
+    async fn client_command(
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
-    ) -> Option<ClientCommand> {
-        match command_name {
-            "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
+    ) -> Result<Option<ClientCommand>> {
+        Ok(match command_name {
+            "rust-analyzer.showReferences" => {
+                Some(ClientCommand::ShowLocations(arguments.to_vec()))
+            }
             "rust-analyzer.runSingle" => {
-                let first_arg = arguments.first()?;
-                let runnable =
-                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone()).ok()?;
+                let Some(first_arg) = arguments.first() else {
+                    return Ok(None);
+                };
+                let Ok(runnable) =
+                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone())
+                else {
+                    return Ok(None);
+                };
                 let template =
                     lsp_ext_command::runnable_to_task_template(runnable.label, runnable.args);
                 Some(ClientCommand::ScheduleTask(template))
             }
             _ => None,
-        }
+        })
     }
 }
 

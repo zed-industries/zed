@@ -69,8 +69,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
-    Subscription, Task, TaskExt, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, FutureExt as _, PromptLevel,
+    SharedString, Subscription, Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -4436,6 +4436,41 @@ fn should_log_lsp_request_failure(message: &str) -> bool {
     !(message.ends_with("content modified") || message.ends_with("server cancelled the request"))
 }
 
+fn resolve_client_command(
+    command_name: &str,
+    arguments: &[Value],
+    extension_client_command: Result<Option<language::ClientCommand>>,
+) -> Result<Option<language::ClientCommand>> {
+    match extension_client_command {
+        Ok(Some(client_command)) => Ok(Some(client_command)),
+        Ok(None) => Ok(builtin_client_command(command_name, arguments)),
+        Err(error) if is_builtin_client_command(command_name) => {
+            log::warn!(
+                "failed to resolve extension client command '{command_name}': {error}; falling back to built-in handling"
+            );
+            Ok(builtin_client_command(command_name, arguments))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn builtin_client_command(
+    command_name: &str,
+    arguments: &[Value],
+) -> Option<language::ClientCommand> {
+    is_builtin_client_command(command_name)
+        .then(|| language::ClientCommand::ShowLocations(arguments.to_vec()))
+}
+
+fn is_builtin_client_command(command_name: &str) -> bool {
+    matches!(
+        command_name,
+        "editor.action.showReferences"
+            | "editor.action.goToLocations"
+            | "editor.action.peekLocations"
+    )
+}
+
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
@@ -5852,10 +5887,22 @@ impl LspStore {
     pub fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,
-        mut action: CodeAction,
+        action: CodeAction,
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<ProjectTransaction>> {
+        let task =
+            self.apply_code_action_with_client_command(buffer_handle, action, push_to_history, cx);
+        cx.spawn(async move |_, _| task.await.map(|(transaction, _)| transaction))
+    }
+
+    pub fn apply_code_action_with_client_command(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        mut action: CodeAction,
+        push_to_history: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(ProjectTransaction, Option<language::ClientCommand>)>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = proto::ApplyCodeAction {
                 project_id,
@@ -5864,49 +5911,92 @@ impl LspStore {
             };
             let buffer_store = self.buffer_store();
             cx.spawn(async move |_, cx| {
-                let response = upstream_client
-                    .request(request)
-                    .await?
-                    .transaction
-                    .context("missing transaction")?;
+                let response = upstream_client.request(request).await?;
+                let client_command = response
+                    .client_command
+                    .and_then(language::ClientCommand::from_proto);
+                let response = response.transaction.context("missing transaction")?;
 
-                buffer_store
+                let transaction = buffer_store
                     .update(cx, |buffer_store, cx| {
                         buffer_store.deserialize_project_transaction(response, push_to_history, cx)
                     })
-                    .await
+                    .await?;
+
+                Ok((transaction, client_command))
             })
         } else if self.mode.is_local() {
-            let Some((_, lang_server, request_timeout)) = buffer_handle.update(cx, |buffer, cx| {
-                let request_timeout = ProjectSettings::get_global(cx)
-                    .global_lsp_settings
-                    .get_request_timeout();
-                self.language_server_for_local_buffer(buffer, action.server_id, cx)
-                    .map(|(adapter, server)| (adapter.clone(), server.clone(), request_timeout))
-            }) else {
-                return Task::ready(Ok(ProjectTransaction::default()));
+            let Some((adapter, lang_server, request_timeout)) =
+                buffer_handle.update(cx, |buffer, cx| {
+                    let request_timeout = ProjectSettings::get_global(cx)
+                        .global_lsp_settings
+                        .get_request_timeout();
+                    self.language_server_for_local_buffer(buffer, action.server_id, cx)
+                        .map(|(adapter, server)| (adapter.clone(), server.clone(), request_timeout))
+                })
+            else {
+                return Task::ready(Ok((ProjectTransaction::default(), None)));
             };
 
             cx.spawn(async move |this, cx| {
                 LocalLspStore::try_resolve_code_action(&lang_server, &mut action, request_timeout)
                     .await
                     .context("resolving a code action")?;
-                if let Some(edit) = action.lsp_action.edit()
+                let command = action.lsp_action.command().cloned();
+                let client_command = if let Some(command) = command.as_ref() {
+                    let arguments = command.arguments.as_deref().unwrap_or_default();
+                    let extension_client_command = if adapter.adapter.is_extension()
+                        && request_timeout != Duration::ZERO
+                        && request_timeout != Duration::MAX
+                    {
+                        let background_executor = cx.background_executor();
+                        adapter
+                            .adapter
+                            .client_command(&command.command, arguments)
+                            .with_timeout(request_timeout, &background_executor)
+                            .await
+                            .map_err(|_| {
+                                anyhow!(
+                                    "timed out resolving client command '{}' after {request_timeout:?}",
+                                    command.command
+                                )
+                            })
+                            .and_then(|result| result)
+                    } else {
+                        adapter.adapter.client_command(&command.command, arguments).await
+                    };
+
+                    resolve_client_command(
+                        &command.command,
+                        arguments,
+                        extension_client_command,
+                    )?
+                } else {
+                    None
+                };
+
+                let mut transaction = if let Some(edit) = action.lsp_action.edit()
                     && (edit.changes.is_some() || edit.document_changes.is_some())
                 {
-                    return LocalLspStore::deserialize_workspace_edit(
+                    LocalLspStore::deserialize_workspace_edit(
                         this.upgrade().context("no app present")?,
                         edit.clone(),
                         push_to_history,
                         lang_server.clone(),
                         cx,
                     )
-                    .await;
-                }
-
-                let Some(command) = action.lsp_action.command() else {
-                    return Ok(ProjectTransaction::default());
+                    .await?
+                } else {
+                    ProjectTransaction::default()
                 };
+
+                let Some(command) = command else {
+                    return Ok((transaction, None));
+                };
+
+                if let Some(client_command) = client_command {
+                    return Ok((transaction, Some(client_command)));
+                }
 
                 let server_capabilities = lang_server.capabilities();
                 let available_commands = server_capabilities
@@ -5920,7 +6010,7 @@ impl LspStore {
                         "Skipping executeCommand for {}, not listed in language server capabilities",
                         command.command
                     );
-                    return Ok(ProjectTransaction::default());
+                    return Ok((transaction, None));
                 }
 
                 let request_timeout = cx.update(|app| {
@@ -5949,13 +6039,23 @@ impl LspStore {
                     .into_response()
                     .context("execute command")?;
 
-                return this.update(cx, |this, _| {
+                let command_transaction = this.update(cx, |this, _| {
                     this.as_local_mut()
                         .unwrap()
                         .last_workspace_edits_by_language_server
                         .remove(&lang_server.server_id())
                         .unwrap_or_default()
-                });
+                })?;
+
+                for (buffer, command_buffer_transaction) in command_transaction.0 {
+                    if let Some(buffer_transaction) = transaction.0.get_mut(&buffer) {
+                        buffer_transaction.merge_in(command_buffer_transaction);
+                    } else {
+                        transaction.0.insert(buffer, command_buffer_transaction);
+                    }
+                }
+
+                Ok((transaction, None))
             })
         } else {
             Task::ready(Err(anyhow!("no upstream client and not local")))
@@ -9992,10 +10092,10 @@ impl LspStore {
         let apply_code_action = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
-            anyhow::Ok(this.apply_code_action(buffer, action, false, cx))
+            anyhow::Ok(this.apply_code_action_with_client_command(buffer, action, false, cx))
         })?;
 
-        let project_transaction = apply_code_action.await?;
+        let (project_transaction, client_command) = apply_code_action.await?;
         let project_transaction = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.serialize_project_transaction_for_peer(
@@ -10007,6 +10107,7 @@ impl LspStore {
         });
         Ok(proto::ApplyCodeActionResponse {
             transaction: Some(project_transaction),
+            client_command: client_command.map(language::ClientCommand::into_proto),
         })
     }
 
@@ -15028,6 +15129,49 @@ fn extend_formatting_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_client_command_falls_back_after_extension_error() {
+        let arguments = vec![Value::String("source".into())];
+        let client_command = resolve_client_command(
+            "editor.action.showReferences",
+            &arguments,
+            Err(anyhow!("extension failed")),
+        )
+        .expect("built-in command should fall back after extension errors");
+
+        assert!(matches!(
+            client_command,
+            Some(language::ClientCommand::ShowLocations(arguments))
+                if arguments == vec![Value::String("source".into())]
+        ));
+    }
+
+    #[test]
+    fn custom_client_command_errors_are_propagated() {
+        let result =
+            resolve_client_command("extension.command", &[], Err(anyhow!("extension failed")));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extension_client_command_overrides_builtin_command() {
+        let extension_command =
+            language::ClientCommand::ShowLocations(vec![Value::String("extension".into())]);
+        let client_command = resolve_client_command(
+            "editor.action.showReferences",
+            &[],
+            Ok(Some(extension_command)),
+        )
+        .expect("extension command should resolve");
+
+        assert!(matches!(
+            client_command,
+            Some(language::ClientCommand::ShowLocations(arguments))
+                if arguments == vec![Value::String("extension".into())]
+        ));
+    }
 
     #[test]
     fn should_log_lsp_request_failure_suppresses_known_noise() {

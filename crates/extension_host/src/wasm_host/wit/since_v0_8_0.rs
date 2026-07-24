@@ -88,6 +88,26 @@ impl From<Command> for extension::Command {
     }
 }
 
+impl From<ClientCommand> for extension::ClientCommand {
+    fn from(value: ClientCommand) -> Self {
+        match value {
+            ClientCommand::ShowLocations => Self::ShowLocations,
+            ClientCommand::ScheduleTask(task_template) => Self::ScheduleTask(task_template.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_locations_client_command_converts_from_wit() {
+        let command = extension::ClientCommand::from(ClientCommand::ShowLocations);
+        assert!(matches!(command, extension::ClientCommand::ShowLocations));
+    }
+}
+
 impl From<StartDebuggingRequestArgumentsRequest>
     for extension::StartDebuggingRequestArgumentsRequest
 {

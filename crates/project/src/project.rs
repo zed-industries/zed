@@ -4566,6 +4566,23 @@ impl Project {
         })
     }
 
+    pub fn apply_code_action_with_client_command(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        action: CodeAction,
+        push_to_history: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(ProjectTransaction, Option<language::ClientCommand>)>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.apply_code_action_with_client_command(
+                buffer_handle,
+                action,
+                push_to_history,
+                cx,
+            )
+        })
+    }
+
     pub fn apply_code_action_kind(
         &self,
         buffers: HashSet<Entity<Buffer>>,

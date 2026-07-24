@@ -1007,14 +1007,37 @@ impl Editor {
             let additional_edits_tx = apply_edits.await?;
 
             if let Some((lsp_store, command)) = lsp_store.zip(command) {
+                let client_command_action = command.clone();
                 let title = command.lsp_action.title().to_owned();
-                let project_transaction = lsp_store
+                let (project_transaction, client_command) = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
+                        lsp_store.apply_code_action_with_client_command(
+                            buffer_handle,
+                            command,
+                            false,
+                            cx,
+                        )
                     })
                     .await
                     .context("applying post-completion command")?;
-                if let Some(workspace) = editor.read_with(cx, |editor, _| editor.workspace())? {
+
+                let workspace = editor.read_with(cx, |editor, _| editor.workspace())?;
+                if let Some(client_command) = client_command
+                    && let Some(workspace) = workspace.as_ref()
+                {
+                    editor.update_in(cx, |editor, window, cx| {
+                        code_lens::handle_client_command(
+                            client_command,
+                            &client_command_action,
+                            editor,
+                            workspace,
+                            window,
+                            cx,
+                        )
+                    })?;
+                }
+
+                if let Some(workspace) = workspace {
                     Self::open_project_transaction(
                         &editor,
                         workspace.downgrade(),

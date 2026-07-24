@@ -31,7 +31,8 @@ use wasmtime::{
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    CodeLabel, CodeLabelSpan, Command, DebugAdapterBinary, ExtensionProject, Range, SlashCommand,
+    ClientCommand, CodeLabel, CodeLabelSpan, Command, DebugAdapterBinary, ExtensionProject, Range,
+    SlashCommand,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
@@ -613,6 +614,35 @@ impl Extension {
                 .await
             }
             Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(Ok(None)),
+        }
+    }
+
+    pub async fn call_language_server_client_command(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        command: &str,
+        arguments: &str,
+    ) -> Result<Result<Option<ClientCommand>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_client_command(
+                    store,
+                    &language_server_id.0,
+                    command,
+                    arguments,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
             | Extension::V0_2_0(_)
             | Extension::V0_1_0(_)
             | Extension::V0_0_6(_)

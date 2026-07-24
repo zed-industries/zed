@@ -5712,7 +5712,10 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                     },
                 )),
                 execute_command_provider: Some(lsp::ExecuteCommandOptions {
-                    commands: vec!["_the/command".to_string()],
+                    commands: vec![
+                        "_the/command".to_string(),
+                        "editor.action.showReferences".to_string(),
+                    ],
                     ..lsp::ExecuteCommandOptions::default()
                 }),
                 ..lsp::ServerCapabilities::default()
@@ -5731,7 +5734,6 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_language_servers.next().await.unwrap();
     cx.executor().run_until_parked();
 
-    // Language server returns code actions that contain commands, and not edits.
     let actions = project.update(cx, |project, cx| {
         project.code_actions(&buffer, 0..0, None, cx)
     });
@@ -5747,6 +5749,63 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                 }),
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "two".into(),
+                    command: Some(lsp::Command {
+                        title: "Show references".into(),
+                        command: "editor.action.showReferences".into(),
+                        arguments: Some(vec![json!("source"), json!("/dir/a.ts"), json!([])]),
+                    }),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                lsp::Uri::from_file_path(path!("/dir/a.ts")).unwrap(),
+                                vec![lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 0),
+                                    ),
+                                    new_text: "Y".into(),
+                                }],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..lsp::CodeAction::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "show references".into(),
+                    command: Some(lsp::Command {
+                        title: "Show references".into(),
+                        command: "editor.action.showReferences".into(),
+                        arguments: Some(vec![json!("source"), json!("/dir/a.ts"), json!([])]),
+                    }),
+                    ..lsp::CodeAction::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "mixed server command".into(),
+                    command: Some(lsp::Command {
+                        title: "The command".into(),
+                        command: "_the/command".into(),
+                        arguments: Some(vec![json!("the-argument")]),
+                    }),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                lsp::Uri::from_file_path(path!("/dir/a.ts")).unwrap(),
+                                vec![lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 0),
+                                    ),
+                                    new_text: "Z".into(),
+                                }],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
                     ..lsp::CodeAction::default()
                 }),
             ]))
@@ -5754,7 +5813,33 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let action = actions.await.unwrap().unwrap()[0].clone();
+    let actions = match actions.await {
+        Ok(Some(actions)) => actions,
+        Ok(None) => {
+            assert!(false, "expected code actions");
+            return;
+        }
+        Err(error) => {
+            assert!(false, "failed to fetch code actions: {error}");
+            return;
+        }
+    };
+    let Some(action) = actions.first().cloned() else {
+        assert!(false, "expected a command code action");
+        return;
+    };
+    let Some(mixed_action) = actions.get(1).cloned() else {
+        assert!(false, "expected a mixed code action");
+        return;
+    };
+    let Some(client_command_action) = actions.get(2).cloned() else {
+        assert!(false, "expected a client command code action");
+        return;
+    };
+    let Some(mixed_server_command_action) = actions.get(3).cloned() else {
+        assert!(false, "expected a mixed server command code action");
+        return;
+    };
     let apply = project.update(cx, |project, cx| {
         project.apply_code_action(buffer.clone(), action, true, cx)
     });
@@ -5826,6 +5911,85 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         buffer.undo(cx);
         assert_eq!(buffer.text(), "a");
     });
+
+    let apply = project.update(cx, |project, cx| {
+        project.apply_code_action_with_client_command(buffer.clone(), mixed_action, true, cx)
+    });
+    let (transaction, client_command) = match apply.await {
+        Ok(result) => result,
+        Err(error) => {
+            assert!(false, "failed to apply mixed code action: {error}");
+            return;
+        }
+    };
+    assert!(transaction.0.contains_key(&buffer));
+    let Some(client_command) = client_command else {
+        assert!(false, "expected a client command");
+        return;
+    };
+    assert_matches!(
+        &client_command,
+        language::ClientCommand::ShowLocations(arguments)
+            if arguments == &vec![json!("source"), json!("/dir/a.ts"), json!([])]
+    );
+    let round_tripped = language::ClientCommand::from_proto(client_command.into_proto());
+    assert_matches!(
+        round_tripped,
+        Some(language::ClientCommand::ShowLocations(arguments))
+            if arguments == vec![json!("source"), json!("/dir/a.ts"), json!([])]
+    );
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "Ya");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "a");
+    });
+
+    let apply = project.update(cx, |project, cx| {
+        project.apply_code_action_with_client_command(
+            buffer.clone(),
+            client_command_action,
+            true,
+            cx,
+        )
+    });
+    let (transaction, client_command) = match apply.await {
+        Ok(result) => result,
+        Err(error) => {
+            assert!(false, "failed to apply client command code action: {error}");
+            return;
+        }
+    };
+    assert!(transaction.0.is_empty());
+    assert_matches!(
+        client_command,
+        Some(language::ClientCommand::ShowLocations(arguments))
+            if arguments == vec![json!("source"), json!("/dir/a.ts"), json!([])]
+    );
+
+    let apply = project.update(cx, |project, cx| {
+        project.apply_code_action_with_client_command(
+            buffer.clone(),
+            mixed_server_command_action,
+            true,
+            cx,
+        )
+    });
+    let (transaction, client_command) = match apply.await {
+        Ok(result) => result,
+        Err(error) => {
+            assert!(
+                false,
+                "failed to apply mixed server command code action: {error}"
+            );
+            return;
+        }
+    };
+    assert!(client_command.is_none());
+    let Some(buffer_transaction) = transaction.0.get(&buffer) else {
+        assert!(false, "expected mixed action transaction");
+        return;
+    };
+    assert_eq!(buffer_transaction.edit_ids.len(), 2);
 }
 
 #[gpui::test]
