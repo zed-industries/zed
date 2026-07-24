@@ -2180,9 +2180,9 @@ dependencies = [
 
 [[package]]
 name = "betlang"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9a5811a1a59386e19785588e5bb2384b7d543b4870acedd1c7a1cb177b13b7d"
+checksum = "5f89b0929539eaee70109704ae4e345df438be6ab02e4dc8ac060e05098ad1b7"
 dependencies = [
  "fearless_simd",
 ]
