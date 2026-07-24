@@ -18,6 +18,11 @@ Extensions can provide:
 - [Snippets](./snippets.md)
 - [MCP Servers](./mcp-extensions.md)
 
+## Extension Categories
+
+Zed will automatically assign categories to your extension based on what it
+provides upon publishing. An extension can appear in more than one category.
+
 ## Developing an Extension Locally
 
 Before starting to develop an extension for Zed, be sure to [install Rust via rustup](https://www.rust-lang.org/tools/install).
