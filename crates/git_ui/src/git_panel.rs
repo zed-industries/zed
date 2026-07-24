@@ -2021,10 +2021,19 @@ impl GitPanel {
             let prompt = if skip_prompt {
                 Task::ready(Ok(0))
             } else {
+                let (message, confirm_text) = if entry.status.is_deleted() {
+                    ("Are you sure you want to restore ", "Restore File")
+                } else {
+                    (
+                        "Are you sure you want to discard changes to ",
+                        "Discard Changes",
+                    )
+                };
                 let prompt = window.prompt(
                     PromptLevel::Warning,
                     &format!(
-                        "Are you sure you want to discard changes to {}?",
+                        "{}{}?",
+                        message,
                         MarkdownInlineCode(
                             entry
                                 .repo_path
@@ -2033,7 +2042,7 @@ impl GitPanel {
                         ),
                     ),
                     None,
-                    &["Discard Changes", "Cancel"],
+                    &[confirm_text, "Cancel"],
                     cx,
                 );
                 cx.background_spawn(prompt)
@@ -7223,6 +7232,8 @@ impl GitPanel {
         };
         let restore_title = if entry.status.is_created() {
             "Trash File"
+        } else if entry.status.is_deleted() {
+            "Restore File"
         } else {
             "Discard Changes"
         };
