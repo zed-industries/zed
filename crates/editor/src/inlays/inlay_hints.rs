@@ -1008,6 +1008,7 @@ pub mod tests {
     use crate::scroll::ScrollAmount;
     use crate::{Editor, SelectionEffects};
     use collections::HashSet;
+    use futures::channel::oneshot;
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
@@ -1215,6 +1216,94 @@ pub mod tests {
             .update(cx, |editor, _window, cx| {
                 let expected_hints = vec!["2".to_string()];
                 assert_eq!(expected_hints, cached_hint_labels(editor, cx), "Despite multiple simultaneous refreshes, only one inlay hint query should be issued");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_no_hint_duplication_when_refresh_races_with_fetch(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+        let (first_request_unblock, first_request_gate) = oneshot::channel::<()>();
+        let first_request_gate = Arc::new(Mutex::new(Some(first_request_gate)));
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let (_, editor, fake_server) = prepare_test_objects(cx, {
+            let first_request_gate = first_request_gate.clone();
+            let lsp_request_count = lsp_request_count.clone();
+            move |fake_server, file_with_hints| {
+                let lsp_request_count = lsp_request_count.clone();
+                let first_request_gate = first_request_gate.clone();
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let first_request_gate = first_request_gate.lock().take();
+                        let i = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
+                        async move {
+                            if let Some(first_request_gate) = first_request_gate {
+                                first_request_gate.await.ok();
+                            }
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                            );
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 1),
+                                label: lsp::InlayHintLabel::String(i.to_string()),
+                                kind: Some(lsp::InlayHintKind::TYPE),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        }
+                    },
+                );
+            }
+        })
+        .await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert!(
+                    cached_hint_labels(editor, cx).is_empty(),
+                    "The initial hint fetch is blocked and should not have populated the cache yet"
+                );
+            })
+            .unwrap();
+
+        // Emulate a server refresh request arriving while the initial fetch is still running.
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        first_request_unblock.send(()).unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            2,
+            lsp_request_count.load(Ordering::Acquire),
+            "The refresh should have re-queried the server"
+        );
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let expected_hints = vec!["2".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "A refresh racing with an in-flight fetch should replace its hints, not duplicate them"
+                );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
