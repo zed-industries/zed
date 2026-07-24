@@ -11,7 +11,7 @@ use editor::{
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{App, Context, Font, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
+use gpui::{App, Context, Font, FontId, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
@@ -1072,7 +1072,8 @@ impl Vim {
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
         self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
+            let (snapshot, font, font_size, label_color) =
+                Self::jump_ui_context(editor, window, cx);
             let display_snapshot = &snapshot.display_snapshot;
             let buffer_snapshot = display_snapshot.buffer_snapshot();
             let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
@@ -1092,11 +1093,6 @@ impl Vim {
                 .map(|s| buffer_snapshot.point_to_offset(s.head()))
                 .unwrap_or(start_offset);
 
-            let style = editor.style(cx);
-            let font = style.text.font();
-            let font_size = style.text.font_size.to_pixels(window.rem_size());
-            let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
-
             Self::build_helix_jump_ui_data(
                 buffer_snapshot,
                 start_offset,
@@ -1111,7 +1107,7 @@ impl Vim {
         })
     }
 
-    fn visible_jump_range(
+    pub(crate) fn visible_jump_range(
         editor: &Editor,
         snapshot: &editor::EditorSnapshot,
         display_snapshot: &DisplaySnapshot,
@@ -1136,6 +1132,19 @@ impl Vim {
 
         display_snapshot.display_point_to_point(start_display_point, Bias::Left)
             ..display_snapshot.display_point_to_point(end_display_point, Bias::Right)
+    }
+
+    pub(crate) fn jump_ui_context(
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> (editor::EditorSnapshot, Font, Pixels, Hsla) {
+        let snapshot = editor.snapshot(window, cx);
+        let style = editor.style(cx);
+        let font = style.text.font();
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
+        (snapshot, font, font_size, label_color)
     }
 
     fn build_helix_jump_ui_data(
@@ -1183,7 +1192,8 @@ impl Vim {
             text_system.layout_line(text, font_size, &[run], None).width
         };
 
-        let is_monospace = Self::is_monospace_jump_font(text_system, &font, font_size);
+        let is_monospace =
+            Self::is_monospace_jump_font(text_system, text_system.resolve_font(&font), font_size);
 
         for (label_index, candidate) in ordered_candidates.into_iter().enumerate() {
             let start_anchor = buffer.anchor_after(candidate.word_start);
@@ -1417,18 +1427,24 @@ impl Vim {
         ]
     }
 
-    fn is_monospace_jump_font(
+    pub(crate) fn jump_font_char_width(
         text_system: &WindowTextSystem,
-        font: &Font,
+        font_id: FontId,
+        font_size: Pixels,
+        ch: char,
+    ) -> Pixels {
+        text_system
+            .advance(font_id, font_size, ch)
+            .map(|size| size.width)
+            .unwrap_or_else(|_| text_system.layout_width(font_id, font_size, ch))
+    }
+
+    pub(crate) fn is_monospace_jump_font(
+        text_system: &WindowTextSystem,
+        font_id: FontId,
         font_size: Pixels,
     ) -> bool {
-        let font_id = text_system.resolve_font(font);
-        let width_of_char = |ch| {
-            text_system
-                .advance(font_id, font_size, ch)
-                .map(|size| size.width)
-                .unwrap_or_else(|_| text_system.layout_width(font_id, font_size, ch))
-        };
+        let width_of_char = |ch| Self::jump_font_char_width(text_system, font_id, font_size, ch);
 
         let a = width_of_char('i');
         let b = width_of_char('w');

@@ -170,11 +170,22 @@ pub enum Operator {
         first_char: Option<char>,
         labels: Vec<HelixJumpLabel>,
     },
+    FlashJump {
+        pattern: String,
+        labels: Vec<FlashJumpLabel>,
+        target: Option<Range<Anchor>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HelixJumpLabel {
     pub label: [char; 2],
+    pub range: Range<Anchor>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlashJumpLabel {
+    pub label: char,
     pub range: Range<Anchor>,
 }
 
@@ -1115,6 +1126,7 @@ impl Operator {
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
             Operator::HelixJump { .. } => "gw",
+            Operator::FlashJump { .. } => "flash",
             Operator::HelixSurroundAdd => "helix_ms",
             Operator::HelixSurroundReplace { .. } => "helix_mr",
             Operator::HelixSurroundDelete => "helix_md",
@@ -1143,6 +1155,7 @@ impl Operator {
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
             Operator::HelixJump { .. } => "gw".to_string(),
+            Operator::FlashJump { pattern, .. } => format!("flash:{pattern}"),
             Operator::HelixSurroundAdd => "ms".to_string(),
             Operator::HelixSurroundReplace {
                 replaced_char: None,
@@ -1174,7 +1187,8 @@ impl Operator {
                 target: Some(_), ..
             }
             | Operator::DeleteSurrounds
-            | Operator::HelixJump { .. } => true,
+            | Operator::HelixJump { .. }
+            | Operator::FlashJump { .. } => true,
             Operator::Change
             | Operator::Delete
             | Operator::Yank
@@ -1246,7 +1260,8 @@ impl Operator {
             | Operator::RecordRegister
             | Operator::ReplayRegister
             | Operator::HelixMatch
-            | Operator::HelixJump { .. } => false,
+            | Operator::HelixJump { .. }
+            | Operator::FlashJump { .. } => false,
         }
     }
 }

@@ -551,6 +551,32 @@ The Helix-style jump-to-word action shows jump labels at visible word starts. It
 }
 ```
 
+The [flash.nvim](https://github.com/folke/flash.nvim)-style jump lets you navigate by typing a search pattern: matches in the visible area are highlighted and tagged with single-character labels, and pressing a label jumps to that match. While flash is active you can keep typing to narrow the matches, press `enter` to jump to the next match after the cursor (wrapping to the first visible match), `backspace` to edit the pattern, or `escape` to cancel. It also works as a target for operators: for example `d s {pattern} {label}` deletes from the cursor through the start of the chosen match (inclusive).
+
+Flash matching follows the `use_smartcase_find` setting: it is case-sensitive by default, so a lowercase pattern only matches lowercase text. Enable `use_smartcase_find` to get smartcase matching, where an all-lowercase pattern matches any case and typing an uppercase character makes the whole pattern case-sensitive again. This mirrors flash.nvim, which inherits Neovim's `ignorecase`/`smartcase` options rather than forcing smartcase on.
+
+There is no default binding; you can enable it by adding a keybinding to your keymap. This example uses `s` to match flash.nvim's default, which overrides Vim mode's `s` (`vim::Substitute`) binding:
+
+```json [keymap]
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "s": "vim::PushFlash"
+  }
+}
+```
+
+To also use it in operator-pending mode (after `d`, `c`, `y`, etc.), add the following. Note that this overrides the default `c s` (`vim::PushChangeSurrounds`) and `d s` (`vim::PushDeleteSurrounds`) bindings, so only add it if you prefer flash over surround edits on `s`:
+
+```json [keymap]
+{
+  "context": "vim_mode == operator",
+  "bindings": {
+    "s": "vim::PushFlash"
+  }
+}
+```
+
 The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not have a default binding for visual mode, as the `shift-x` binding conflicts with the default `shift-x` binding for visual mode (`vim::VisualDeleteLine`). To assign the default vim-exchange binding, add the following keybinding to your keymap:
 
 ```json [keymap]

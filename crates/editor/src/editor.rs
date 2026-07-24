@@ -3830,7 +3830,10 @@ impl Editor {
 
         visible_start.to_point(display_snapshot)
             ..display_snapshot
-                .clip_point(target_end, Bias::Right)
+             // vim's clip-at-line-ends is a cursor positioning rule
+             // applying it to the viewport extent would exclude
+             // the last character of the final visible line.
+                .clip_ignoring_line_ends(target_end, Bias::Right)
                 .to_point(display_snapshot)
     }
 
