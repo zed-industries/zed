@@ -680,7 +680,7 @@ impl DirectWriteState {
             glyphAdvances: advance.as_ptr(),
             glyphOffsets: offset.as_ptr(),
             isSideways: BOOL(0),
-            bidiLevel: 0,
+            bidiLevel: 1,
         };
         let transform = DWRITE_MATRIX {
             m11: params.scale_factor,
@@ -1483,6 +1483,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         if glyph_count == 0 {
             return Ok(());
         }
+
+        // Detect RTL runs via bidi level (odd = RTL)
+        let is_rtl = (glyphrun.bidiLevel & 1) == 1;
+
         let desc = unsafe { &*glyphrundescription };
         let context = unsafe { &mut *(clientdrawingcontext.cast::<RendererContext>().cast_mut()) };
         let Some(font_face) = glyphrun.fontFace.as_ref() else {
@@ -1503,8 +1507,6 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             .font_info_cache
             .get(&font_face_key)
             .copied()
-            // in some circumstances, we might be getting served a FontFace that we did not create ourselves
-            // so create a new font from it and cache it accordingly. The usual culprit here seems to be Segoe UI Symbol
             .map_or_else(
                 || {
                     let font = font_face_to_font(font_face, &self.locale)
@@ -1559,7 +1561,21 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
         let mut utf16_idx = desc.textPosition as usize;
         let mut glyph_idx = 0;
-        let mut glyphs = Vec::with_capacity(glyph_count);
+
+        // Temporary storage: collect glyph data first, assign positions after.
+        // This allows us to reverse glyph order for RTL runs.
+        struct TempGlyph {
+            id: GlyphId,
+            index: usize,
+            is_emoji: bool,
+            advance: f32,
+            advance_offset: f32,
+            ascender_offset: f32,
+        }
+
+        let mut temp_glyphs: Vec<TempGlyph> = Vec::with_capacity(glyph_count);
+        let run_start_x = context.width;
+
         for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
             context.index_converter.advance_to_utf16_ix(utf16_idx);
             utf16_idx += cluster_utf16_len;
@@ -1572,23 +1588,51 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 let is_emoji =
                     color_font && is_color_glyph(font_face, id, &context.components.factory);
                 let this_glyph_idx = glyph_idx + cluster_glyph_idx;
-                glyphs.push(ShapedGlyph {
+                temp_glyphs.push(TempGlyph {
                     id,
-                    position: point(
-                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
-                    ),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
+                    advance: glyph_advances[this_glyph_idx],
+                    advance_offset: glyph_offsets[this_glyph_idx].advanceOffset,
+                    ascender_offset: glyph_offsets[this_glyph_idx].ascenderOffset,
                 });
                 context.width += glyph_advances[this_glyph_idx];
             }
             glyph_idx += cluster_glyph_count;
         }
+
+        // For RTL runs, DirectWrite returns glyphs in logical order.
+        // Reverse to get visual order so left-to-right placement is correct.
+        if is_rtl {
+            temp_glyphs.reverse();
+        }
+
+        // Assign final positions, placing glyphs left-to-right
+        let mut x = run_start_x;
+        let glyphs: Vec<ShapedGlyph> = temp_glyphs
+            .into_iter()
+            .map(|t| {
+                // For RTL, negate advance_offset: the original offset was along
+                // the RTL advance direction (leftward), but after reversal we
+                // place glyphs leftward-to-rightward, so the offset must flip.
+                let offset_x = if is_rtl { -t.advance_offset } else { t.advance_offset };
+                let glyph = ShapedGlyph {
+                    id: t.id,
+                    position: point(
+                        px(x + offset_x),
+                        px(-t.ascender_offset),
+                    ),
+                    index: t.index,
+                    is_emoji: t.is_emoji,
+                };
+                x += t.advance;
+                glyph
+            })
+            .collect();
+
         context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
-
     fn DrawUnderline(
         &self,
         _clientdrawingcontext: *const ::core::ffi::c_void,
