@@ -370,6 +370,42 @@ enum LanguageModelPickerEntry {
     },
 }
 
+enum PreviousSelection {
+    Header(SharedString),
+    Model {
+        provider_id: LanguageModelProviderId,
+        model_id: LanguageModelId,
+        section: Option<SharedString>,
+    },
+}
+
+/// The title of the section header (separator or group header) preceding `ix`.
+/// Favorited models appear under "Favorite" (and possibly "Recommended") as
+/// well as under their provider group; the section disambiguates which copy
+/// the cursor is on.
+fn section_title_of(entries: &[LanguageModelPickerEntry], ix: usize) -> Option<&SharedString> {
+    entries
+        .iter()
+        .take(ix + 1)
+        .rev()
+        .find_map(|entry| match entry {
+            LanguageModelPickerEntry::Separator(title)
+            | LanguageModelPickerEntry::GroupHeader { title, .. } => Some(title),
+            LanguageModelPickerEntry::Model(_) => None,
+        })
+}
+
+fn position_of_section(
+    entries: &[LanguageModelPickerEntry],
+    section: &SharedString,
+) -> Option<usize> {
+    entries.iter().position(|entry| match entry {
+        LanguageModelPickerEntry::Separator(title)
+        | LanguageModelPickerEntry::GroupHeader { title, .. } => title == section,
+        LanguageModelPickerEntry::Model(_) => false,
+    })
+}
+
 struct ModelMatcher {
     models: Vec<ModelInfo>,
     fg_executor: ForegroundExecutor,
@@ -531,14 +567,71 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let filtered_models = GroupedModels::new(all, recommended);
 
-        let collapsed_groups = query.is_empty().then(|| self.collapsed_groups.clone());
+        let browsing = query.is_empty();
+        let collapsed_groups = browsing.then(|| self.collapsed_groups.clone());
 
         cx.spawn_in(window, async move |this, cx| {
             this.update_in(cx, |this, window, cx| {
+                // The cursor falls back to the active model when the captured entry is gone.
+                let previous_selection = browsing
+                    .then(|| {
+                        let ix = this.delegate.selected_index;
+                        match this.delegate.filtered_entries.get(ix)? {
+                            LanguageModelPickerEntry::GroupHeader { title, .. } => {
+                                Some(PreviousSelection::Header(title.clone()))
+                            }
+                            LanguageModelPickerEntry::Model(model_info) => {
+                                Some(PreviousSelection::Model {
+                                    provider_id: model_info.model.provider_id(),
+                                    model_id: model_info.model.id(),
+                                    section: section_title_of(&this.delegate.filtered_entries, ix)
+                                        .cloned(),
+                                })
+                            }
+                            LanguageModelPickerEntry::Separator(_) => None,
+                        }
+                    })
+                    .flatten();
+
                 this.delegate.filtered_entries = filtered_models.entries(collapsed_groups.as_ref());
-                // Finds the currently selected model in the list
-                let new_index =
-                    Self::get_active_model_index(&this.delegate.filtered_entries, active_model);
+                let entries = &this.delegate.filtered_entries;
+                // Restore order: the same model in the same section, the same
+                // model in another section (it moved, e.g. was unfavorited),
+                // the section's own header (the model is gone but its section
+                // remains, e.g. the group collapsed under the cursor), and
+                // finally the active model.
+                let new_index = previous_selection
+                    .and_then(|previous| match previous {
+                        PreviousSelection::Header(section) => {
+                            position_of_section(entries, &section)
+                        }
+                        PreviousSelection::Model {
+                            provider_id,
+                            model_id,
+                            section,
+                        } => {
+                            let matches_model = |entry: &LanguageModelPickerEntry| {
+                                matches!(entry, LanguageModelPickerEntry::Model(model_info)
+                                    if model_info.model.provider_id() == provider_id
+                                        && model_info.model.id() == model_id)
+                            };
+                            entries
+                                .iter()
+                                .enumerate()
+                                .find_map(|(ix, entry)| {
+                                    (matches_model(entry)
+                                        && section_title_of(entries, ix) == section.as_ref())
+                                    .then_some(ix)
+                                })
+                                .or_else(|| entries.iter().position(|entry| matches_model(entry)))
+                                .or_else(|| {
+                                    section
+                                        .as_ref()
+                                        .and_then(|section| position_of_section(entries, section))
+                                })
+                        }
+                    })
+                    .unwrap_or_else(|| Self::get_active_model_index(entries, active_model));
                 this.set_selected_index(new_index, Some(picker::Direction::Down), true, window, cx);
                 cx.notify();
             })
