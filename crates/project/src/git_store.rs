@@ -602,7 +602,6 @@ pub enum RepositoryEvent {
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
-    GitDirectoryChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -2544,7 +2543,6 @@ impl GitStore {
                         || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
-                    cx.emit(RepositoryEvent::GitDirectoryChanged);
                 }
             });
         }
