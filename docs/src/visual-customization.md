@@ -73,14 +73,31 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
+  // Controls the font family for prose in markdown-rendered surfaces
+  // (hover popups, the agent panel, the markdown preview).
+  // If not specified, it falls back to the UI font family.
+  // Diagnostic messages continue to use the UI font family.
+  "markdown_prose_font_family": null,
+  // Controls the font family for inline code in markdown-rendered surfaces.
+  // If not specified, it falls back to the editor font family.
+  // Diagnostic messages continue to use the editor font family.
+  "markdown_inline_code_font_family": null,
+
+  // Controls the font size for prose in symbol hover popups and other
+  // documentation tooltips.
+  // If not specified, it inherits the surrounding text size.
+  "hover_popover_font_size": null,
+
   // Controls the font size for the markdown preview.
-  // If not specified, it falls back to the editor font size.
+  // If not specified, it falls back to the UI font size.
   "markdown_preview_font_size": null,
   // Controls the font family for the markdown preview.
-  // If not specified, it falls back to the UI font family.
+  // If not specified, it falls back to "markdown_prose_font_family",
+  // then the UI font family.
   "markdown_preview_font_family": null,
-  // Controls the font family for code blocks in the markdown preview.
-  // If not specified, it falls back to the editor font family.
+  // Controls the font family for code blocks and inline code in the markdown preview.
+  // If not specified, code blocks use the editor font family and inline code
+  // uses "markdown_inline_code_font_family".
   "markdown_preview_code_font_family": null
 ```
 
@@ -522,6 +539,9 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
   "agent_buffer_font_size": 12
 }
 ```
+
+The agent panel's response text also follows the `markdown_prose_font_family`
+and `markdown_inline_code_font_family` settings described in [Fonts](#fonts).
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
 

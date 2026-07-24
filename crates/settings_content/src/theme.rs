@@ -150,14 +150,27 @@ pub struct ThemeSettingsContent {
     /// The font size for user messages in the agent panel.
     pub agent_buffer_font_size: Option<FontSize>,
     pub git_commit_buffer_font_size: Option<FontSize>,
+    /// The name of a font to use for prose in markdown-rendered surfaces
+    /// (hover popups, the agent panel, the markdown preview).
+    /// Falls back to the UI font if unset. Diagnostic messages continue to use
+    /// the UI font.
+    pub markdown_prose_font_family: Option<FontFamilyName>,
+    /// The name of a font to use for inline code in markdown-rendered
+    /// surfaces. Falls back to the buffer font if unset. Diagnostic messages
+    /// continue to use the buffer font.
+    pub markdown_inline_code_font_family: Option<FontFamilyName>,
+    /// The font size for prose in symbol hover popups and other documentation
+    /// tooltips. Inherits the surrounding text size if unset.
+    pub hover_popover_font_size: Option<FontSize>,
     /// The name of a font to use for rendering in the markdown preview.
-    /// Falls back to the UI font if unset.
+    /// Falls back to the markdown prose font, then the UI font.
     pub markdown_preview_font_family: Option<FontFamilyName>,
     /// The name of a font to use for code (code blocks and inline code) in the
-    /// markdown preview. Falls back to the buffer font if unset.
+    /// markdown preview. When unset, code blocks use the buffer font and inline
+    /// code uses `markdown_inline_code_font_family`.
     pub markdown_preview_code_font_family: Option<FontFamilyName>,
     /// The font size to use for rendering in the markdown preview.
-    /// Falls back to the UI font size if unset.
+    /// Falls back to the UI font size.
     pub markdown_preview_font_size: Option<FontSize>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.

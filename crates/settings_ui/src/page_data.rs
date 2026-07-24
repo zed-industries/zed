@@ -1176,17 +1176,94 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn markdown_font_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Markdown Fonts"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prose Font Family",
+                description: "Font family for prose in markdown-rendered surfaces (hover popups, the agent panel, the markdown preview). Falls back to the UI font family. Diagnostic messages continue to use the UI font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_prose_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .markdown_prose_font_family
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.markdown_prose_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Inline Code Font Family",
+                description: "Font family for inline code in markdown-rendered surfaces. Falls back to the editor font family. Diagnostic messages continue to use the editor font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_inline_code_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .markdown_inline_code_font_family
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.markdown_inline_code_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn hover_popover_font_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Hover Popup Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Size",
+                description: "Font size for prose in symbol hover popups and other documentation tooltips. Inherits the surrounding text size when unset.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("hover_popover_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .hover_popover_font_size
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_size.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.hover_popover_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn markdown_preview_font_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Markdown Preview Font"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Font Family",
-                description: "Font family for the markdown preview. Falls back to the UI font family.",
+                description: "Font family for the markdown preview. Falls back to the markdown prose font family.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("markdown_preview_font_family"),
                     pick: |settings_content| {
-                        settings_content.theme.markdown_preview_font_family.as_ref()
+                        settings_content
+                            .theme
+                            .markdown_preview_font_family
+                            .as_ref()
+                            .or(settings_content.theme.markdown_prose_font_family.as_ref())
+                            .or(settings_content.theme.ui_font_family.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content.theme.markdown_preview_font_family = value;
@@ -1197,7 +1274,7 @@ fn appearance_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Code Font Family",
-                description: "Font family for code blocks in the markdown preview. Falls back to the editor font family.",
+                description: "Font family for code in the markdown preview. When unset, code blocks use the editor font family and inline code uses the markdown inline code font family.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("markdown_preview_code_font_family"),
@@ -1206,6 +1283,7 @@ fn appearance_page() -> SettingsPage {
                             .theme
                             .markdown_preview_code_font_family
                             .as_ref()
+                            .or(settings_content.theme.buffer_font_family.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content.theme.markdown_preview_code_font_family = value;
@@ -1216,7 +1294,7 @@ fn appearance_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Font Size",
-                description: "Font size for the markdown preview. Falls back to the editor font size.",
+                description: "Font size for the markdown preview. Falls back to the UI font size.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("markdown_preview_font_size"),
@@ -1225,7 +1303,7 @@ fn appearance_page() -> SettingsPage {
                             .theme
                             .markdown_preview_font_size
                             .as_ref()
-                            .or(settings_content.theme.buffer_font_size.as_ref())
+                            .or(settings_content.theme.ui_font_size.as_ref())
                     },
                     write: |settings_content, value, _| {
                         settings_content.theme.markdown_preview_font_size = value;
@@ -1478,7 +1556,9 @@ fn appearance_page() -> SettingsPage {
         theme_section(),
         buffer_font_section(),
         ui_font_section(),
+        markdown_font_section(),
         agent_panel_font_section(),
+        hover_popover_font_section(),
         markdown_preview_font_section(),
         text_rendering_section(),
         cursor_section(),

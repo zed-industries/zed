@@ -685,32 +685,44 @@ fn parse_blocks(
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
-    let ui_font_family = settings.ui_font.family.clone();
+    let prose_font_family = settings.markdown_prose_font_family().clone();
+    let inline_code_font_family = settings.markdown_inline_code_font_family().clone();
     let ui_font_features = settings.ui_font.features.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
     let buffer_font_family = settings.buffer_font.family.clone();
     let buffer_font_features = settings.buffer_font.features.clone();
     let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
     let buffer_font_weight = settings.buffer_font.weight;
+    let buffer_font_size = settings.buffer_font_size(cx);
+    let hover_popover_font_size = settings.hover_popover_font_size();
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family),
+        font_family: Some(prose_font_family),
         font_features: Some(ui_font_features),
         font_fallbacks: ui_font_fallbacks,
+        font_size: hover_popover_font_size.map(Into::into),
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
     });
+    // Rendered text takes its size from the inherited text style rather than
+    // `base_text_style`, so the font size must also be set on the container.
+    let mut container_style = StyleRefinement::default();
+    container_style.text.font_size = hover_popover_font_size.map(Into::into);
+    let code_block = StyleRefinement::default()
+        .my(rems(1.))
+        .font_family(buffer_font_family)
+        .font_features(buffer_font_features.clone())
+        .font_weight(buffer_font_weight)
+        .text_size(buffer_font_size)
+        .line_height(buffer_font_size * 1.75);
     MarkdownStyle {
+        container_style,
         base_text_style,
-        code_block: StyleRefinement::default()
-            .my(rems(1.))
-            .font_buffer(cx)
-            .font_features(buffer_font_features.clone())
-            .font_weight(buffer_font_weight),
+        code_block,
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
-            font_family: Some(buffer_font_family),
+            font_family: Some(inline_code_font_family),
             font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
             font_weight: Some(buffer_font_weight),
@@ -1276,7 +1288,7 @@ mod tests {
     };
     use collections::BTreeSet;
     use futures::stream::StreamExt;
-    use gpui::App;
+    use gpui::{App, UpdateGlobal};
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
     use project::InlayId;
@@ -1328,6 +1340,95 @@ mod tests {
         assert!(!rendered.contains('\t'));
         // And the full rendering matches the source exactly.
         assert_eq!(rendered, text);
+    }
+
+    #[gpui::test]
+    fn test_hover_markdown_uses_configured_prose_and_code_fonts(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_family = Some("Buffer Font".to_string().into());
+                    settings.theme.buffer_font_size = Some(12.0.into());
+                    settings.theme.markdown_prose_font_family = Some(".ZedSans".to_string().into());
+                    settings.theme.markdown_inline_code_font_family =
+                        Some(".ZedMono".to_string().into());
+                    settings.theme.hover_popover_font_size = Some(13.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            let style = hover_markdown_style(window, cx);
+            assert_eq!(style.base_text_style.font_family.as_ref(), ".ZedSans");
+            assert_eq!(
+                style.base_text_style.font_size.to_pixels(window.rem_size()),
+                px(13.0)
+            );
+            assert_eq!(
+                style
+                    .container_style
+                    .text
+                    .font_size
+                    .map(|font_size| { font_size.to_pixels(window.rem_size()) }),
+                Some(px(13.0))
+            );
+            assert_eq!(
+                style.code_block.text.font_family.as_deref(),
+                Some("Buffer Font")
+            );
+            assert_eq!(
+                style
+                    .code_block
+                    .text
+                    .font_size
+                    .map(|font_size| font_size.to_pixels(window.rem_size())),
+                Some(px(12.0))
+            );
+            assert_eq!(
+                style.code_block.text.line_height.map(|line_height| {
+                    line_height.to_pixels(px(12.0).into(), window.rem_size())
+                }),
+                Some(px(21.0))
+            );
+            assert_eq!(style.inline_code.font_family.as_deref(), Some(".ZedMono"));
+            assert_eq!(style.inline_code.font_size, None);
+        });
+    }
+
+    #[gpui::test]
+    fn test_diagnostic_markdown_keeps_ui_and_buffer_fonts(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_family = Some("UI Font".to_string().into());
+                    settings.theme.buffer_font_family = Some("Buffer Font".to_string().into());
+                    settings.theme.markdown_prose_font_family = Some(".ZedSans".to_string().into());
+                    settings.theme.markdown_inline_code_font_family =
+                        Some(".ZedMono".to_string().into());
+                    settings.theme.hover_popover_font_size = Some(13.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            let style = diagnostics_markdown_style(window, cx);
+            assert_eq!(style.base_text_style.font_family.as_ref(), "UI Font");
+            assert_eq!(
+                style.code_block.text.font_family.as_deref(),
+                Some("Buffer Font")
+            );
+            assert_eq!(
+                style.inline_code.font_family.as_deref(),
+                Some("Buffer Font")
+            );
+            assert_eq!(style.container_style.text.font_size, None);
+        });
     }
 
     impl InfoPopover {
