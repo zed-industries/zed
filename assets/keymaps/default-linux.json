@@ -118,7 +118,7 @@
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
-      "ctrl-i": "editor::ShowSignatureHelp",
+      // Signature help: ctrl-shift-space (VS Code). ctrl-i is reserved for inline assist.
       "alt-g b": "git::Blame",
       "alt-g m": "git::OpenModifiedFiles",
       "alt-g r": "git::ReviewDiff",
@@ -589,7 +589,8 @@
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
-      "ctrl-shift-space": "editor::ShowWordCompletions",
+      // Match VS Code: parameter hints on ctrl-shift-space. (ctrl-i is used for inline assist.)
+      "ctrl-shift-space": "editor::ShowSignatureHelp",
       "ctrl-.": "editor::ToggleCodeActions",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
@@ -908,7 +909,8 @@
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPreviousHunk",
-      "ctrl-enter": "assistant::InlineAssist",
+      // Use ctrl-i (VS Code inline chat) so ctrl-enter can insert a line below.
+      "ctrl-i": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints",
     },
   },
@@ -1243,7 +1245,8 @@
       "paste": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
-      "ctrl-enter": "assistant::InlineAssist",
+      // Match editor: ctrl-i for inline assist (VS Code), leaving ctrl-enter free for the shell.
+      "ctrl-i": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
