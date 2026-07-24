@@ -1655,6 +1655,24 @@ impl AgentPanel {
         }
     }
 
+    fn agent_is_available(&self, agent: &Agent, cx: &App) -> bool {
+        match agent {
+            Agent::NativeAgent => true,
+            Agent::Custom { id } => {
+                self.connection_store.read(cx).entry(agent).is_some()
+                    || self
+                        .project
+                        .read(cx)
+                        .agent_server_store()
+                        .read(cx)
+                        .external_agents
+                        .contains_key(id)
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            Agent::Stub => true,
+        }
+    }
+
     pub fn open_thread(
         &mut self,
         session_id: acp::SessionId,
@@ -4536,6 +4554,11 @@ impl AgentPanel {
         let thread_id = resume_thread_id.unwrap_or_else(ThreadId::new);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
+        let agent = if server_override.is_some() || self.agent_is_available(&agent, cx) {
+            agent
+        } else {
+            Agent::NativeAgent
+        };
 
         self.set_selected_agent_and_persist(agent.clone(), cx);
 
@@ -7021,6 +7044,23 @@ mod tests {
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+
+    fn make_agent_available(
+        panel: &Entity<AgentPanel>,
+        agent: Agent,
+        cx: &mut VisualTestContext,
+    ) {
+        panel.update(cx, |panel, cx| {
+            panel.connection_store.update(cx, |store, cx| {
+                store.request_connection(
+                    agent,
+                    Rc::new(StubAgentServer::default_response()),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
     }
 
     #[gpui::test]
@@ -11331,6 +11371,63 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_new_thread_falls_back_to_native_when_global_last_used_agent_is_unregistered(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            cx.set_global(db::AppDatabase::test_new());
+        });
+
+        let deleted_agent = Agent::Custom {
+            id: "deleted-agent".into(),
+        };
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        write_global_last_used_agent(kvp, deleted_agent.clone()).await;
+
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(panel.selected_agent, deleted_agent);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(panel.selected_agent, Agent::NativeAgent);
+            let active = panel
+                .active_conversation_view()
+                .expect("new thread should be created");
+            assert_eq!(*active.read(cx).agent_key(), Agent::NativeAgent);
+        });
+    }
+
+    #[gpui::test]
     async fn test_select_agent_action_updates_visible_draft(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -11361,14 +11458,15 @@ mod tests {
             panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
         });
 
+        let expected_agent = Agent::Custom {
+            id: "my-configured-agent".into(),
+        };
+        make_agent_available(&panel, expected_agent.clone(), cx);
+
         cx.dispatch_action(SelectAgent {
             agent: "my-configured-agent".to_string(),
         });
         cx.run_until_parked();
-
-        let expected_agent = Agent::Custom {
-            id: "my-configured-agent".into(),
-        };
 
         panel.read_with(cx, |panel, cx| {
             let draft = panel.draft_thread.as_ref().expect("draft should exist");
@@ -11512,6 +11610,7 @@ mod tests {
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
+        make_agent_available(&panel, custom_agent.clone(), cx);
 
         // Set selected_agent to a custom agent
         panel.update(cx, |panel, _cx| {
@@ -11588,6 +11687,7 @@ mod tests {
         let custom_agent = Agent::Custom {
             id: "my-custom-agent".into(),
         };
+        make_agent_available(&panel, custom_agent.clone(), cx);
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = custom_agent.clone();
             panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
@@ -13368,6 +13468,7 @@ mod tests {
         let override_agent = Agent::Custom {
             id: "override-agent".into(),
         };
+        make_agent_available(&panel, override_agent.clone(), &mut cx);
         let override_id = panel.update_in(&mut cx, |panel, window, cx| {
             panel.create_thread_with_options(
                 CreateThreadOptions {
