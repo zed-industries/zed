@@ -26,8 +26,11 @@ impl Editor {
             let language_scope = buffer.language_scope_at(selection.head());
 
             let indent_and_prefix_for_row =
-                |row: u32| -> (IndentSize, Option<CommentFormat>, Option<String>) {
+                |row: u32| -> (String, Option<CommentFormat>, Option<String>) {
                     let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                    let indent_prefix = buffer
+                        .text_for_range(Point::new(row, 0)..Point::new(row, indent.len))
+                        .collect::<String>();
                     let (comment_prefix, rewrap_prefix) = if let Some(language_scope) =
                         &language_scope
                     {
@@ -96,7 +99,7 @@ impl Editor {
                     } else {
                         (None, None)
                     };
-                    (indent, comment_prefix, rewrap_prefix)
+                    (indent_prefix, comment_prefix, rewrap_prefix)
                 };
 
             let mut start_row = selection.start.row;
@@ -105,7 +108,7 @@ impl Editor {
             if selection.is_empty() {
                 let cursor_row = selection.start.row;
 
-                let (mut indent_size, comment_prefix, _) = indent_and_prefix_for_row(cursor_row);
+                let (mut indent_prefix, comment_prefix, _) = indent_and_prefix_for_row(cursor_row);
                 let line_prefix = match &comment_prefix {
                     Some(CommentFormat::Line(prefix) | CommentFormat::BlockLine(prefix)) => {
                         Some(prefix.as_str())
@@ -119,12 +122,11 @@ impl Editor {
                         prefix,
                         tab_size,
                     })) => {
-                        indent_size.len += tab_size;
+                        indent_prefix.push_str(&" ".repeat(*tab_size as usize));
                         Some(prefix.as_ref())
                     }
                     None => None,
                 };
-                let indent_prefix = indent_size.chars().collect::<String>();
                 let line_prefix = format!("{indent_prefix}{}", line_prefix.unwrap_or(""));
 
                 'expand_upwards: while start_row > 0 {
@@ -217,7 +219,7 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        for (language_settings, wrap_range, mut indent_size, comment_prefix, rewrap_prefix) in
+        for (language_settings, wrap_range, mut indent_prefix, comment_prefix, rewrap_prefix) in
             wrap_ranges
         {
             let start_row = wrap_range.start.row;
@@ -232,8 +234,9 @@ impl Editor {
                 continue;
             }
 
-            let tab_size = language_settings.tab_size;
+            let tab_width = language_settings.indentation().tab_width();
 
+            let base_indent_prefix = indent_prefix.clone();
             let (line_prefix, inside_comment) = match &comment_prefix {
                 Some(CommentFormat::Line(prefix) | CommentFormat::BlockLine(prefix)) => {
                     (Some(prefix.as_str()), true)
@@ -247,12 +250,11 @@ impl Editor {
                     prefix,
                     tab_size,
                 })) => {
-                    indent_size.len += tab_size;
+                    indent_prefix.push_str(&" ".repeat(*tab_size as usize));
                     (Some(prefix.as_ref()), true)
                 }
                 None => (None, false),
             };
-            let indent_prefix = indent_size.chars().collect::<String>();
             let line_prefix = format!("{indent_prefix}{}", line_prefix.unwrap_or(""));
 
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
@@ -286,23 +288,20 @@ impl Editor {
                             start,
                             prefix,
                             end,
-                            tab_size,
+                            tab_size: _,
                         })
                         | CommentFormat::BlockCommentWithEnd(BlockCommentConfig {
                             start,
                             prefix,
                             end,
-                            tab_size,
+                            tab_size: _,
                         }),
                     ) = &comment_prefix
                     {
                         let line_trimmed = line_trimmed
                             .strip_prefix(start.as_ref())
                             .map(|s| {
-                                let mut indent_size = indent_size;
-                                indent_size.len -= tab_size;
-                                let indent_prefix: String = indent_size.chars().collect();
-                                first_line_delimiter = Some((indent_prefix, start));
+                                first_line_delimiter = Some((base_indent_prefix.clone(), start));
                                 s.trim_start()
                             })
                             .unwrap_or(line_trimmed);
@@ -353,7 +352,7 @@ impl Editor {
                     subsequent_lines_prefix,
                     lines_without_prefixes.join("\n"),
                     wrap_column,
-                    tab_size,
+                    tab_width,
                     options.preserve_existing_whitespace,
                 );
 

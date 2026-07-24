@@ -455,11 +455,15 @@ impl<'de> Deserialize<'de> for ConfiguredLanguageServer {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageSettingsContent {
-    /// How many columns a tab should occupy.
+    /// How many columns each indentation level should occupy.
     ///
     /// Default: 4
     #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
+    /// How many columns a literal tab character should occupy. If unset, this
+    /// defaults to `tab_size`.
+    #[schemars(range(min = 1, max = 128))]
+    pub tab_width: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     ///

@@ -621,6 +621,7 @@ impl VsCodeSettings {
             tab_size: self
                 .read_u32("editor.tabSize")
                 .and_then(|n| NonZeroU32::new(n)),
+            tab_width: None,
             tasks: None,
             use_auto_surround: self.read_enum("editor.autoSurround", |s| match s {
                 "languageDefined" | "quotes" | "brackets" => Some(true),

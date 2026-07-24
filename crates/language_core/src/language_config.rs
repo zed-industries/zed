@@ -115,7 +115,7 @@ pub struct LanguageConfig {
     /// spaces.
     #[serde(default)]
     pub hard_tabs: Option<bool>,
-    /// How many columns a tab should occupy.
+    /// How many columns each indentation level should occupy.
     #[serde(default)]
     #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,

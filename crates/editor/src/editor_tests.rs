@@ -30,8 +30,8 @@ use language::{
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
     LanguageToolchainStore, Override, PLAIN_TEXT, Point,
     language_settings::{
-        CompletionSettingsContent, FormatOnSave, FormatterList, LanguageSettingsContent,
-        LspInsertMode,
+        CompletionSettingsContent, FormatOnSave, FormatterList, IndentationSettings,
+        LanguageSettingsContent, LspInsertMode,
     },
     tree_sitter_python,
 };
@@ -5556,6 +5556,155 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
             ],
         );
     });
+}
+
+#[gpui::test]
+async fn test_mixed_indentation_prefixes_are_preserved(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+        settings.defaults.auto_indent = Some(language_settings::AutoIndentMode::PreserveIndent);
+        settings.defaults.allow_rewrap = Some(language_settings::RewrapBehavior::Anywhere);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("\t  ˇline");
+    cx.update_editor(|editor, window, cx| editor.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("\tˇline");
+
+    cx.set_state("  ˇ\tline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("\t\tˇline");
+
+    cx.set_state("  \tlineˇ");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("  \tline\n  \tˇ");
+
+    cx.set_state("  \tlineˇ");
+    cx.update_editor(|editor, _, cx| editor.rewrap(RewrapOptions::default(), cx));
+    cx.assert_editor_state("  \tlineˇ");
+
+    cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        assert_eq!(
+            snapshot.indent_and_comment_for_line(MultiBufferRow(0), cx),
+            "  \t"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_modeline_separates_indent_size_and_tab_width(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(2);
+        settings.defaults.tab_width = NonZeroU32::new(8);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_modeline(Some(language::ModelineSettings {
+            tab_size: NonZeroU32::new(8),
+            indent_size: NonZeroU32::new(4),
+            hard_tabs: Some(true),
+            ..Default::default()
+        }));
+
+        let settings = language::language_settings::LanguageSettings::for_buffer(buffer, cx);
+        assert_eq!(settings.tab_size.get(), 4);
+        assert_eq!(settings.tab_width.get(), 8);
+        assert!(settings.hard_tabs);
+
+        buffer.set_modeline(Some(language::ModelineSettings {
+            indent_size: NonZeroU32::new(4),
+            ..Default::default()
+        }));
+        let settings = language::language_settings::LanguageSettings::for_buffer(buffer, cx);
+        assert_eq!(settings.tab_size.get(), 4);
+        assert_eq!(settings.tab_width.get(), 8);
+    });
+}
+
+#[gpui::test]
+async fn test_split_width_indentation_edge_cases(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.tab_width = NonZeroU32::new(8);
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("\tˇline");
+    cx.update_editor(|editor, window, cx| editor.backspace(&Backspace, window, cx));
+    cx.assert_editor_state("    ˇline");
+
+    cx.update_buffer(|buffer, _| {
+        buffer.set_modeline(Some(language::ModelineSettings {
+            auto_indent: Some(false),
+            ..Default::default()
+        }));
+    });
+    cx.set_state("  ˇ  line");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("    ˇline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("\tˇline");
+}
+
+#[gpui::test]
+async fn test_hard_tab_indentation_does_not_overshoot_tab_stops(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3);
+        settings.defaults.tab_width = NonZeroU32::new(8);
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("   ˇline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("      ˇline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("\t ˇline");
+}
+
+#[gpui::test]
+async fn test_indentation_width_can_differ_from_tab_width(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.tab_width = NonZeroU32::new(8);
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("ˇline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("    ˇline");
+    cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
+    cx.assert_editor_state("\tˇline");
+    cx.update_editor(|editor, window, cx| editor.outdent(&Outdent, window, cx));
+    cx.assert_editor_state("    ˇline");
+
+    cx.set_state("fn main() {ˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("fn main() {\n    ˇ\n}");
+
+    cx.set_state("fn main() {\n    if true {ˇ\n    }\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("fn main() {\n    if true {\n\tˇ\n    }\n}");
 }
 
 #[gpui::test]
@@ -15095,7 +15244,9 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.defaults.tab_width = NonZeroU32::new(8);
+    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_file(path!("/file.rs"), Default::default()).await;
@@ -27937,12 +28088,32 @@ fn assert_indent_guides(
 }
 
 fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -> IndentGuide {
+    indent_guide_with_indentation(
+        buffer_id,
+        start_row,
+        end_row,
+        depth,
+        IndentationSettings::new(
+            NonZeroU32::new(4).unwrap(),
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+    )
+}
+
+fn indent_guide_with_indentation(
+    buffer_id: BufferId,
+    start_row: u32,
+    end_row: u32,
+    depth: u32,
+    indentation: IndentationSettings,
+) -> IndentGuide {
     IndentGuide {
         buffer_id,
         start_row: MultiBufferRow(start_row),
         end_row: MultiBufferRow(end_row),
         depth,
-        tab_size: 4,
+        indentation,
         settings: IndentGuideSettings {
             enabled: true,
             line_width: 1,
@@ -28367,6 +28538,40 @@ async fn test_indent_guide_tabs(cx: &mut TestAppContext) {
         vec![
             indent_guide(buffer_id, 1, 5, 0),
             indent_guide(buffer_id, 3, 4, 1),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guides_use_logical_indentation_width(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.tab_width = NonZeroU32::new(8);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let buffer_id = cx.update_editor(|editor, window, cx| {
+        editor.set_text("root\n\tchild\nroot", window, cx);
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .remote_id()
+    });
+    let indentation = IndentationSettings::new(
+        NonZeroU32::new(4).unwrap(),
+        NonZeroU32::new(8).unwrap(),
+        false,
+    );
+
+    assert_indent_guides(
+        0..3,
+        vec![
+            indent_guide_with_indentation(buffer_id, 1, 1, 0, indentation),
+            indent_guide_with_indentation(buffer_id, 1, 1, 1, indentation),
         ],
         None,
         &mut cx,
@@ -39046,6 +39251,18 @@ async fn test_newline_unordered_list_continuation(cx: &mut TestAppContext) {
         .replace("$", " ")
         .as_str(),
     );
+
+    update_test_language_settings(&mut cx, &|settings| {
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+        settings.defaults.tab_width = Some(8.try_into().unwrap());
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    // Case 11: A literal tab can span multiple logical indentation levels.
+    cx.set_state("\t- ˇ");
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
+    cx.assert_editor_state("    - ˇ");
 }
 
 #[gpui::test]

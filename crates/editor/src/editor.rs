@@ -4952,6 +4952,53 @@ impl Editor {
 
             let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = this.selections.all::<MultiBufferPoint>(&display_map);
+            let snapshot = display_map.buffer_snapshot();
+
+            // Buffer columns count indentation characters, while indentation stops are
+            // measured in display columns. Replace the prefix when every cursor is in
+            // leading whitespace so backspace performs one logical outdent even for a
+            // mixed prefix. Require distinct rows because each edit replaces its row's
+            // entire prefix.
+            if selections.iter().all(|selection| {
+                let head = selection.head();
+                selection.is_empty()
+                    && head.column > 0
+                    && head.column <= snapshot.indent_size_for_line(MultiBufferRow(head.row)).len
+            }) && selections
+                .windows(2)
+                .all(|pair| pair[0].head().row != pair[1].head().row)
+            {
+                let mut edits = Vec::with_capacity(selections.len());
+
+                for selection in &mut selections {
+                    let old_head = selection.head();
+                    let indentation = snapshot.language_settings_at(old_head, cx).indentation();
+                    let current_column = indentation.column_for_prefix(
+                        snapshot
+                            .text_for_range(Point::new(old_head.row, 0)..old_head)
+                            .flat_map(str::chars),
+                    );
+                    let target_column = indentation.previous_indent_stop(current_column);
+                    let replacement = indentation.indentation_for_column(target_column);
+                    let new_head = MultiBufferPoint::new(old_head.row, replacement.len() as u32);
+                    edits.push((Point::new(old_head.row, 0)..old_head, replacement));
+                    selection.collapse_to(new_head, SelectionGoal::None);
+                }
+
+                this.edit(edits, cx);
+                this.change_selections(Default::default(), window, cx, |s| s.select(selections));
+                linked_edits.apply_with_left_expansion(cx);
+                this.refresh_edit_prediction(
+                    true,
+                    false,
+                    EditPredictionRequestTrigger::BufferEdit,
+                    window,
+                    cx,
+                );
+                refresh_linked_ranges(this, window, cx);
+                return;
+            }
+
             for selection in &mut selections {
                 if selection.is_empty() {
                     let old_head = selection.head();
@@ -5103,7 +5150,7 @@ impl Editor {
 
         let mut edits = Vec::new();
         let mut prev_edited_row = 0;
-        let mut row_delta = 0;
+        let mut row_delta: i32 = 0;
         for selection in &mut selections {
             if selection.start.row != prev_edited_row {
                 row_delta = 0;
@@ -5139,70 +5186,102 @@ impl Editor {
 
             let cursor = selection.head();
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+            let settings = buffer.language_settings_at(cursor, cx);
+            let indentation = settings.indentation();
+            let current_indent_column =
+                snapshot.indentation_column_for_line(MultiBufferRow(cursor.row), indentation);
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
+                let suggested_indent_text =
+                    indentation.indentation_for_column(suggested_indent.len);
+                let suggested_indent_len = suggested_indent_text.len() as u32;
                 // Don't do anything if already at suggested indent
                 // and there is any other cursor which is not
                 if has_some_cursor_in_whitespace
                     && cursor.column == current_indent.len
-                    && current_indent.len == suggested_indent.len
+                    && current_indent_column == suggested_indent.len
                 {
                     continue;
                 }
 
                 // Adjust line and move cursor to suggested indent
                 // if cursor is not at suggested indent
-                if cursor.column < suggested_indent.len
+                if cursor.column < suggested_indent_len
                     && cursor.column <= current_indent.len
-                    && current_indent.len <= suggested_indent.len
+                    && current_indent_column <= suggested_indent.len
                 {
-                    selection.start = Point::new(cursor.row, suggested_indent.len);
+                    selection.start = Point::new(cursor.row, suggested_indent_len);
                     selection.end = selection.start;
                     if row_delta == 0 {
-                        edits.extend(Buffer::edit_for_indent_size_adjustment(
-                            cursor.row,
-                            current_indent,
-                            suggested_indent,
+                        edits.push((
+                            Point::new(cursor.row, 0)..Point::new(cursor.row, current_indent.len),
+                            suggested_indent_text,
                         ));
-                        row_delta = suggested_indent.len - current_indent.len;
+                        row_delta = suggested_indent_len as i32 - current_indent.len as i32;
                     }
                     continue;
                 }
 
                 // If current indent is more than suggested indent
                 // only move cursor to current indent and skip indent
-                if cursor.column < current_indent.len && current_indent.len > suggested_indent.len {
+                if cursor.column < current_indent.len
+                    && current_indent_column > suggested_indent.len
+                {
                     selection.start = Point::new(cursor.row, current_indent.len);
                     selection.end = selection.start;
                     continue;
                 }
             }
 
-            // Otherwise, insert a hard or soft tab.
-            let settings = buffer.language_settings_at(cursor, cx);
-            let tab_size = if settings.hard_tabs {
-                IndentSize::tab()
-            } else {
-                let tab_size = settings.tab_size.get();
-                let indent_remainder = snapshot
-                    .text_for_range(Point::new(cursor.row, 0)..cursor)
-                    .flat_map(str::chars)
-                    .fold(row_delta % tab_size, |counter: u32, c| {
-                        if c == '\t' {
-                            0
-                        } else {
-                            (counter + 1) % tab_size
-                        }
-                    });
+            // Otherwise, insert a hard or soft tab. Rebuild hard-tab indentation
+            // from its display column because a mixed prefix's character count does
+            // not identify its indentation column.
+            let (edit_range, text) =
+                if indentation.hard_tabs() && cursor.column <= current_indent.len {
+                    let target_column = indentation.next_indent_stop(current_indent_column);
+                    (
+                        Point::new(cursor.row, 0)..Point::new(cursor.row, current_indent.len),
+                        indentation.indentation_for_column(target_column),
+                    )
+                } else if indentation.hard_tabs() {
+                    (cursor..cursor, "\t".to_owned())
+                } else {
+                    let current_column = indentation
+                        .column_for_text(
+                            snapshot
+                                .text_for_range(Point::new(cursor.row, 0)..cursor)
+                                .flat_map(str::chars),
+                        )
+                        .saturating_add_signed(row_delta);
 
-                let chars_to_next_tab_stop = tab_size - indent_remainder;
-                IndentSize::spaces(chars_to_next_tab_stop)
-            };
-            selection.start = Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
+                    let chars_to_next_indent_stop =
+                        indentation.next_indent_stop(current_column) - current_column;
+                    (
+                        cursor..cursor,
+                        " ".repeat(chars_to_next_indent_stop as usize),
+                    )
+                };
+            let replaced_len = edit_range.end.column - edit_range.start.column;
+            let edit_delta = text.len() as i32 - replaced_len as i32;
+            let replacement_end = edit_range.start.column + text.chars().count() as u32;
+            selection.start = Point::new(
+                cursor.row,
+                // Applying the edit delta is only valid for points after the replaced
+                // range. A cursor inside a rewritten indentation prefix belongs at the
+                // end of the canonical replacement.
+                if edit_range.start.column == 0 && cursor.column <= edit_range.end.column {
+                    replacement_end
+                } else {
+                    cursor
+                        .column
+                        .saturating_add_signed(row_delta)
+                        .saturating_add_signed(edit_delta)
+                },
+            );
             selection.end = selection.start;
-            edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
-            row_delta += tab_size.len;
+            edits.push((edit_range, text));
+            row_delta += edit_delta;
         }
 
         self.transact(window, cx, |this, window, cx| {
@@ -5229,7 +5308,7 @@ impl Editor {
 
         let mut selections = self.selections.all::<Point>(&self.display_snapshot(cx));
         let mut prev_edited_row = 0;
-        let mut row_delta = 0;
+        let mut row_delta: i32 = 0;
         let mut edits = Vec::new();
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
@@ -5254,16 +5333,11 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
         selection: &mut Selection<Point>,
         edits: &mut Vec<(Range<Point>, String)>,
-        delta_for_start_row: u32,
+        delta_for_start_row: i32,
         cx: &App,
-    ) -> u32 {
+    ) -> i32 {
         let settings = buffer.language_settings_at(selection.start, cx);
-        let tab_size = settings.tab_size.get();
-        let indent_kind = if settings.hard_tabs {
-            IndentKind::Tab
-        } else {
-            IndentKind::Space
-        };
+        let indentation = settings.indentation();
         let mut start_row = selection.start.row;
         let mut end_row = selection.end.row + 1;
 
@@ -5276,45 +5350,42 @@ impl Editor {
         // Avoid re-indenting a row that has already been indented by a
         // previous selection, but still update this selection's column
         // to reflect that indentation.
-        if delta_for_start_row > 0 {
+        if delta_for_start_row != 0 {
             start_row += 1;
-            selection.start.column += delta_for_start_row;
+            selection.start.column = selection
+                .start
+                .column
+                .saturating_add_signed(delta_for_start_row);
             if selection.end.row == selection.start.row {
-                selection.end.column += delta_for_start_row;
+                selection.end.column = selection
+                    .end
+                    .column
+                    .saturating_add_signed(delta_for_start_row);
             }
         }
 
-        let mut delta_for_end_row = 0;
-        let has_multiple_rows = start_row + 1 != end_row;
+        let mut delta_for_end_row: i32 = 0;
         for row in start_row..end_row {
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
-            let indent_delta = match (current_indent.kind, indent_kind) {
-                (IndentKind::Space, IndentKind::Space) => {
-                    let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
-                    IndentSize::spaces(columns_to_next_tab_stop)
-                }
-                (IndentKind::Tab, IndentKind::Space) => IndentSize::spaces(tab_size),
-                (_, IndentKind::Tab) => IndentSize::tab(),
-            };
-
-            let start = if has_multiple_rows || current_indent.len < selection.start.column {
-                0
-            } else {
-                selection.start.column
-            };
-            let row_start = Point::new(row, start);
+            let current_column =
+                snapshot.indentation_column_for_line(MultiBufferRow(row), indentation);
+            let target_column = indentation.next_indent_stop(current_column);
+            // Replacing the complete prefix keeps the edit column-correct when the
+            // canonical representation has a different number of characters.
+            let replacement = indentation.indentation_for_column(target_column);
+            let edit_delta = replacement.len() as i32 - current_indent.len as i32;
             edits.push((
-                row_start..row_start,
-                indent_delta.chars().collect::<String>(),
+                Point::new(row, 0)..Point::new(row, current_indent.len),
+                replacement,
             ));
 
             // Update this selection's endpoints to reflect the indentation.
             if row == selection.start.row {
-                selection.start.column += indent_delta.len;
+                selection.start.column = selection.start.column.saturating_add_signed(edit_delta);
             }
             if row == selection.end.row {
-                selection.end.column += indent_delta.len;
-                delta_for_end_row = indent_delta.len;
+                selection.end.column = selection.end.column.saturating_add_signed(edit_delta);
+                delta_for_end_row = edit_delta;
             }
         }
 
@@ -5336,14 +5407,14 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
-        let mut deletion_ranges = Vec::new();
+        let mut edits = Vec::new();
         let mut last_outdent = None;
         {
             let buffer = self.buffer.read(cx);
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
                 let settings = buffer.language_settings_at(selection.start, cx);
-                let tab_size = settings.tab_size;
+                let indentation = settings.indentation();
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -5353,22 +5424,17 @@ impl Editor {
                 {
                     rows.start = rows.start.next_row();
                 }
-                let has_multiple_rows = rows.len() > 1;
                 for row in rows.iter_rows() {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
-                        let deletion_len = indent_size.outdent_len(tab_size);
-                        let start = if has_multiple_rows
-                            || deletion_len > selection.start.column
-                            || indent_size.len < selection.start.column
-                        {
-                            0
-                        } else {
-                            selection.start.column - deletion_len
-                        };
-                        deletion_ranges.push(
-                            Point::new(row.0, start)..Point::new(row.0, start + deletion_len),
-                        );
+                        let current_column = snapshot.indentation_column_for_line(row, indentation);
+                        let target_column = indentation.previous_indent_stop(current_column);
+                        // A partial character deletion cannot reliably reach a display-column
+                        // stop when the existing prefix mixes tabs and spaces.
+                        edits.push((
+                            Point::new(row.0, 0)..Point::new(row.0, indent_size.len),
+                            indentation.indentation_for_column(target_column),
+                        ));
                         last_outdent = Some(row);
                     }
                 }
@@ -5377,14 +5443,7 @@ impl Editor {
 
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |buffer, cx| {
-                let empty_str: Arc<str> = Arc::default();
-                buffer.edit(
-                    deletion_ranges
-                        .into_iter()
-                        .map(|range| (range, empty_str.clone())),
-                    None,
-                    cx,
-                );
+                buffer.edit(edits, None, cx);
             });
             let selections = this
                 .selections
@@ -6758,7 +6817,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let settings = self.buffer.read(cx).language_settings(cx);
-        let tab_size = settings.tab_size.get() as usize;
+        let tab_size = settings.indentation().tab_width().get() as usize;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized scratch buffer once for the whole loop
@@ -6813,7 +6872,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let settings = self.buffer.read(cx).language_settings(cx);
-        let tab_size = settings.tab_size.get() as usize;
+        let tab_size = settings.indentation().tab_width().get() as usize;
 
         self.manipulate_mutable_lines(window, cx, |lines| {
             // Allocates a reasonably sized buffer once for the whole loop

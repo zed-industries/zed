@@ -1531,8 +1531,11 @@
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,
-  // How many columns a tab should occupy.
+  // How many columns each indentation level should occupy.
   "tab_size": 4,
+  // How many columns a literal tab character should occupy. When omitted, this
+  // uses tab_size.
+  // "tab_width": 4,
   // Number of lines to search for modelines at the beginning and end of files.
   // Modelines contain editor directives (e.g., vim/emacs settings) that configure
   // the editor behavior for specific files.

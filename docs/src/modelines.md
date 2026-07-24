@@ -29,7 +29,9 @@ Example:
 | Variable                   | Description                    | Zed Setting                                                                                |
 | -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
 | `mode`                     | Major mode/language            | Language detection                                                                         |
-| `tab-width`                | Tab display width              | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
+| `tab-width`                | Tab display width              | [`tab_width`](./reference/all-settings.md#tab-width)                                       |
+| `c-basic-offset`           | C indentation width            | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
+| `python-indent-offset`     | Python indentation width       | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
 | `fill-column`              | Line wrap column               | [`preferred_line_length`](./reference/all-settings.md#preferred-line-length)               |
 | `indent-tabs-mode`         | `nil` for spaces, `t` for tabs | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                                       |
 | `electric-indent-mode`     | Auto-indentation               | [`auto_indent`](./reference/all-settings.md#auto-indent)                                   |
@@ -51,7 +53,8 @@ Example:
 | Option         | Aliases | Description                       | Zed Setting                                                                                |
 | -------------- | ------- | --------------------------------- | ------------------------------------------------------------------------------------------ |
 | `filetype`     | `ft`    | File type/language                | Language detection                                                                         |
-| `tabstop`      | `ts`    | Number of spaces a tab counts for | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
+| `tabstop`      | `ts`    | Number of spaces a tab counts for | [`tab_width`](./reference/all-settings.md#tab-width)                                       |
+| `shiftwidth`   | `sw`    | Number of columns per indent      | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
 | `textwidth`    | `tw`    | Maximum line width                | [`preferred_line_length`](./reference/all-settings.md#preferred-line-length)               |
 | `expandtab`    | `et`    | Use spaces instead of tabs        | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                                       |
 | `noexpandtab`  | `noet`  | Use tabs instead of spaces        | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                                       |
