@@ -1410,10 +1410,10 @@ impl Sidebar {
         let resolve_agent_icon = |agent_id: &AgentId| -> (IconName, Option<SharedString>) {
             let agent = Agent::from(agent_id.clone());
             let icon = match agent {
-                Agent::NativeAgent => IconName::ZedAgent,
+                Agent::NativeAgent => IconName::Vela,
                 Agent::Custom { .. } => IconName::Terminal,
 
-                _ => IconName::ZedAgent,
+                _ => IconName::Vela,
             };
             let icon_from_external_svg = agent_server_store
                 .as_ref()

@@ -71,7 +71,7 @@ impl Render for ToolbarControls {
             })
             .when(is_agent_enabled, |this| {
                 this.child(
-                    IconButton::new("inline_assist", IconName::ZedAssistant)
+                    IconButton::new("inline_assist", IconName::Vela)
                         .icon_size(IconSize::Small)
                         .tooltip(Tooltip::for_action_title(
                             "Inline Assist",

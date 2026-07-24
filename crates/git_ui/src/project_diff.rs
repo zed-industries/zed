@@ -959,7 +959,7 @@ pub(crate) fn render_send_review_to_agent_button(
         format!("Send Review to Agent ({})", review_count),
     )
     .start_icon(
-        Icon::new(IconName::ZedAssistant)
+        Icon::new(IconName::Vela)
             .size(IconSize::Small)
             .color(Color::Muted),
     )

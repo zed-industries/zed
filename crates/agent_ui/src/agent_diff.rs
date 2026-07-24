@@ -506,7 +506,7 @@ impl Item for AgentDiffPane {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::ZedAssistant).color(Color::Muted))
+        Some(Icon::new(IconName::Vela).color(Color::Muted))
     }
 
     fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {

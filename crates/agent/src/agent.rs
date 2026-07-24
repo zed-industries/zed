@@ -5590,9 +5590,7 @@ mod internal_tests {
                     id: AgentModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
-                    icon: Some(acp_thread::AgentModelIcon::Named(
-                        ui::IconName::ZedAssistant
-                    )),
+                    icon: Some(acp_thread::AgentModelIcon::Named(ui::IconName::Vela)),
                     is_latest: false,
                     disabled: None,
                     cost: None,

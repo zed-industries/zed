@@ -638,7 +638,7 @@ fn render_zed_agent_button(user_store: &Entity<UserStore>, cx: &mut App) -> impl
 
     AgentSetupButton::new("zed-agent-onboarding")
         .icon(
-            Icon::new(IconName::ZedAgent)
+            Icon::new(IconName::Vela)
                 .size(IconSize::XSmall)
                 .color(Color::Muted),
         )
