@@ -6563,6 +6563,7 @@ dependencies = [
  "fs",
  "gpui",
  "inventory",
+ "release_channel",
  "schemars 1.0.4",
  "serde_json",
  "settings",
