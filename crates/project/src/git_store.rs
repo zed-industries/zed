@@ -124,7 +124,7 @@ struct DiffBaseState {
 struct RepoDiffBase {
     /// Resolved default branch ref (e.g. `origin/main`). `None` means the
     /// default branch could not be resolved; the repository falls back to
-    /// HEAD-relative behavior.
+    /// HEAD-relative behavior for that repository.
     resolved_ref: Option<SharedString>,
     /// HEAD sha the current `tree_diff` was computed against.
     head_sha: Option<SharedString>,
