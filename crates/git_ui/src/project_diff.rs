@@ -45,6 +45,8 @@ actions!(
     [
         /// Shows the diff between the working directory and the index.
         Diff,
+        /// Shows working changes relative to HEAD.
+        HeadDiff,
         /// Adds files to the git staging area.
         Add,
         /// Opens a new agent thread with the branch diff for review.
@@ -73,6 +75,9 @@ pub struct ProjectDiff {
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(|workspace, _: &HeadDiff, window, cx| {
+            Self::deploy_at(workspace, None, window, cx);
+        });
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
                 Self::deploy_at(workspace, None, window, cx);
@@ -1154,6 +1159,14 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_item_as::<BranchDiff>(cx).is_some());
             assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(HeadDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<ProjectDiff>(cx).is_some());
         });
 
         cx.update(|window, cx| {
