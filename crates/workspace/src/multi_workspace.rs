@@ -908,15 +908,17 @@ impl MultiWorkspace {
         key: &ProjectGroupKey,
         cx: &App,
     ) -> Option<Vec<Entity<Workspace>>> {
+        // Use `workspaces()` rather than `retained_workspaces` directly: the
+        // active workspace is not always retained (e.g. when the sidebar has
+        // never been opened), and omitting it here makes `remove_project_group`
+        // find nothing to close, so `Close Project` silently no-ops (zed#61316).
         let has_group = self.project_groups.iter().any(|group| group.key == *key)
             || self
-                .retained_workspaces
-                .iter()
+                .workspaces()
                 .any(|workspace| workspace.read(cx).project_group_key(cx) == *key);
 
         has_group.then(|| {
-            self.retained_workspaces
-                .iter()
+            self.workspaces()
                 .filter(|workspace| workspace.read(cx).project_group_key(cx) == *key)
                 .cloned()
                 .collect()
@@ -2013,7 +2015,30 @@ impl MultiWorkspace {
                     }
                 }
 
-                if removed_any {
+                // A workspace that was not retained when removal began can be
+                // re-retained by `activate()` during fallback, which also
+                // re-creates its project group. Now that these workspaces are
+                // detached, drop any project group whose key is no longer
+                // backed by a retained workspace, so closing a project does not
+                // leave stale, serializable group metadata (zed#61316).
+                let mut pruned_group = false;
+                for workspace in &workspaces {
+                    let key = workspace.read(cx).project_group_key(cx);
+                    let still_backed = this
+                        .retained_workspaces
+                        .iter()
+                        .any(|retained| retained.read(cx).project_group_key(cx) == key);
+                    if !still_backed {
+                        let before = this.project_groups.len();
+                        this.project_groups.retain(|group| group.key != key);
+                        pruned_group |= this.project_groups.len() != before;
+                    }
+                }
+                if pruned_group {
+                    cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+                }
+
+                if removed_any || pruned_group {
                     this.serialize(cx);
                     cx.notify();
                 }
