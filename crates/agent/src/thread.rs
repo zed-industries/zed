@@ -7344,14 +7344,18 @@ mod tests {
                 thread.set_model(thread_model.clone(), cx);
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "old user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
             set_registry_compaction_model(cx, Some(compaction_model.clone()));
         });
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -7396,7 +7400,7 @@ mod tests {
                 thread.set_model(thread_model.clone(), cx);
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "old user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
             // Settings say "configured"; registry says "couldn't resolve".
@@ -7413,7 +7417,11 @@ mod tests {
         });
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -7446,7 +7454,7 @@ mod tests {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let thread_model = Arc::new(FakeLanguageModel::default());
         let compaction_model = Arc::new(FakeLanguageModel::default());
-        let old_user_message_id = UserMessageId::new();
+        let old_user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7479,7 +7487,7 @@ mod tests {
         let _events = cx
             .update(|cx| {
                 thread.update(cx, |thread, cx| {
-                    thread.send(UserMessageId::new(), vec!["new prompt"], cx)
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
                 })
             })
             .unwrap();
