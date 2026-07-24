@@ -18,7 +18,7 @@ use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
-use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
+use multi_buffer::{MultiBufferOffset, MultiBufferSnapshot, ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{
@@ -27,6 +27,7 @@ use std::{
 };
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
+use text::Bias;
 use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
@@ -37,6 +38,7 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
+const ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS: usize = 4;
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
@@ -301,7 +303,6 @@ fn show_hover(
             || same_diagnostic_hover(editor, &snapshot, anchor)
             || editor.hover_state.diagnostic_popover.is_some()
         {
-            // Hover triggered from same location as last time. Don't show again.
             return None;
         } else {
             hide_hover(editor, cx);
@@ -618,22 +619,25 @@ fn show_hover(
 }
 
 fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
-    editor
-        .hover_state
-        .info_popovers
-        .iter()
-        .any(|InfoPopover { symbol_range, .. }| {
+    editor.hover_state.info_popovers.iter().any(
+        |InfoPopover {
+             symbol_range,
+             anchor: hover_anchor,
+             ..
+         }| {
             symbol_range
                 .as_text_range()
                 .map(|range| {
-                    let hover_range = range.to_offset(&snapshot.buffer_snapshot());
-                    let offset = anchor.to_offset(&snapshot.buffer_snapshot());
-                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
-                    // use an inclusive range here to check if we should dismiss the popover
-                    (hover_range.start..=hover_range.end).contains(&offset)
+                    hover_range_contains_anchor(
+                        snapshot,
+                        &range,
+                        hover_anchor.unwrap_or(range.start),
+                        anchor,
+                    )
                 })
                 .unwrap_or(false)
-        })
+        },
+    )
 }
 
 fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
@@ -642,16 +646,86 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
         .diagnostic_popover
         .as_ref()
         .map(|diagnostic| {
-            let hover_range = diagnostic
-                .local_diagnostic
-                .range
-                .to_offset(&snapshot.buffer_snapshot());
-            let offset = anchor.to_offset(&snapshot.buffer_snapshot());
-
-            // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
-            (hover_range.start..=hover_range.end).contains(&offset)
+            hover_range_contains_anchor(
+                snapshot,
+                &diagnostic.local_diagnostic.range,
+                diagnostic.anchor,
+                anchor,
+            )
         })
         .unwrap_or(false)
+}
+
+fn hover_range_contains_anchor(
+    snapshot: &EditorSnapshot,
+    hover_range: &Range<Anchor>,
+    hover_anchor: Anchor,
+    anchor: Anchor,
+) -> bool {
+    let multibuffer = snapshot.buffer_snapshot();
+    let hover_offsets = hover_range.to_offset(&multibuffer);
+    let anchor_offset = anchor.to_offset(&multibuffer);
+    if hover_offsets.start != hover_offsets.end {
+        // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+        // use an inclusive range here to check if we should dismiss the popover.
+        return (hover_offsets.start..=hover_offsets.end).contains(&anchor_offset);
+    }
+
+    let Some((_, anchor_buffer)) = multibuffer.anchor_to_buffer_anchor(anchor) else {
+        return false;
+    };
+    let Some((_, hover_buffer)) = multibuffer.anchor_to_buffer_anchor(hover_anchor) else {
+        return false;
+    };
+    if anchor_buffer.remote_id() != hover_buffer.remote_id() {
+        return false;
+    }
+
+    let Some(hover_excerpt_range) =
+        excerpt_multibuffer_range_containing_anchor(&multibuffer, hover_anchor)
+    else {
+        return false;
+    };
+
+    if !hover_excerpt_range.contains(&hover_offsets.start) {
+        return false;
+    }
+
+    let expanded_start = hover_offsets
+        .start
+        .saturating_sub_usize(ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS)
+        .max(hover_excerpt_range.start);
+    let expanded_end = MultiBufferOffset(
+        hover_offsets
+            .end
+            .0
+            .saturating_add(ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS),
+    )
+    .min(hover_excerpt_range.end);
+
+    (expanded_start..=expanded_end).contains(&anchor_offset)
+}
+
+fn excerpt_multibuffer_range_containing_anchor(
+    multibuffer: &MultiBufferSnapshot,
+    anchor: Anchor,
+) -> Option<Range<MultiBufferOffset>> {
+    let offset = anchor.to_offset(multibuffer);
+    // A left-biased anchor at an excerpt boundary belongs to the preceding excerpt,
+    // so probe one offset back to land in the correct one.
+    let lookup_range = if anchor.bias() == Bias::Left && offset > MultiBufferOffset(0) {
+        offset.saturating_sub_usize(1)..offset
+    } else {
+        offset..offset
+    };
+
+    multibuffer
+        .map_excerpt_ranges(lookup_range, |_, excerpt_range, _| {
+            vec![(excerpt_range.context, ())]
+        })?
+        .into_iter()
+        .next()
+        .map(|(range, ())| range)
 }
 
 fn parse_blocks(
@@ -1272,13 +1346,16 @@ mod tests {
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
+        test::build_editor,
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
     use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
+    use language::{Buffer, Capability::ReadWrite, Point};
     use markdown::parser::MarkdownEvent;
+    use multi_buffer::{MultiBuffer, PathKey};
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
@@ -2759,6 +2836,62 @@ mod tests {
                 editor.hover_state.info_task.is_none(),
                 "No hover info task should be scheduled when hover is disabled"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_zero_width_hover_padding_clipped_to_excerpt(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        // One buffer surfaced as two excerpts so they share a `remote_id`, forcing the
+        // excerpt-clipping path rather than the buffer-mismatch early-out.
+        let buffer = cx.new(|cx| Buffer::local("aaaa\nbbbb\ncccc\ndddd\n", cx));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                [
+                    Point::new(0, 0)..Point::new(0, 4),
+                    Point::new(2, 0)..Point::new(2, 4),
+                ],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+
+        cx.add_window(|window, cx| {
+            let editor = build_editor(multibuffer, window, cx);
+            let snapshot = editor.snapshot(window, cx);
+            let multibuffer = snapshot.buffer_snapshot();
+            // First excerpt "aaaa" is offsets 0..4, second excerpt "cccc" starts at 5.
+            assert_eq!(multibuffer.text(), "aaaa\ncccc");
+
+            // Zero-width hover inside the first excerpt.
+            let hover_anchor = multibuffer.anchor_before(MultiBufferOffset(3));
+            let hover_range = hover_anchor..hover_anchor;
+
+            // Same excerpt and within the ±4 padding: treated as the same hover.
+            let same_excerpt = multibuffer.anchor_before(MultiBufferOffset(1));
+            assert!(hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                hover_anchor,
+                same_excerpt,
+            ));
+
+            // The next excerpt is only 2 offsets away and would fall inside the raw
+            // padding, but the clipped range must not bleed across the boundary.
+            let other_excerpt = multibuffer.anchor_before(MultiBufferOffset(5));
+            assert!(!hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                hover_anchor,
+                other_excerpt,
+            ));
+
+            editor
         });
     }
 
