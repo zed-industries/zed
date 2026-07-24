@@ -1,8 +1,8 @@
 use anyhow::Result;
 use edit_prediction::cursor_excerpt;
 use edit_prediction_types::{
-    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
-    EditPredictionRequestTrigger,
+    DelayMs, EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason,
+    EditPredictionIconSet, EditPredictionRequestTrigger,
 };
 use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
@@ -223,7 +223,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         _debounce: bool,
-        debounce_duration: Option<Duration>,
+        debounce_duration: Option<DelayMs>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
@@ -260,7 +260,8 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         let api_url = codestral_api_url(cx).to_string();
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
-            if let Some(debounce_duration) = debounce_duration.filter(|d| !d.is_zero()) {
+            if let Some(debounce_duration) = debounce_duration.filter(|delay| delay.0 != 0) {
+                let debounce_duration = Duration::from_millis(debounce_duration.0);
                 log::debug!("Codestral: Debouncing for {:?}", debounce_duration);
                 cx.background_executor().timer(debounce_duration).await;
             }

@@ -16,7 +16,7 @@ use cloud_llm_client::{
     predict_edits_v4::{PredictEditsV4Request, PredictEditsV4Response},
 };
 use db::AppDatabase;
-use edit_prediction_types::EditPredictionRequestTrigger;
+use edit_prediction_types::{DelayMs, EditPredictionRequestTrigger};
 use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings};
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
@@ -165,7 +165,7 @@ async fn test_refresh_prediction_from_buffer_honors_debounce_duration(cx: &mut T
             project.clone(),
             buffer.clone(),
             position,
-            Some(Duration::from_millis(100)),
+            Some(DelayMs(100)),
             EditPredictionRequestTrigger::Other,
             cx,
         );
