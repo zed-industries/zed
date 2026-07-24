@@ -3066,9 +3066,17 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
         let buffered_event_count = fs.as_fake().buffered_event_count();
         if buffered_event_count > 0 && rng.random_bool(0.3) {
-            let len = rng.random_range(0..=buffered_event_count);
-            log::info!("flushing {} events", len);
-            fs.as_fake().flush_events(len);
+            if rng.random_bool(0.2) {
+                log::info!(
+                    "simulating watcher overflow, losing {} events",
+                    buffered_event_count
+                );
+                fs.as_fake().simulate_watcher_overflow(root_dir);
+            } else {
+                let len = rng.random_range(0..=buffered_event_count);
+                log::info!("flushing {} events", len);
+                fs.as_fake().flush_events(len);
+            }
         } else {
             randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng).await;
             mutations_len -= 1;
@@ -3153,6 +3161,120 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         }
         entry
     }
+}
+
+#[gpui::test(iterations = 100)]
+async fn test_random_git_updates_with_watcher_overflows(cx: &mut TestAppContext, mut rng: StdRng) {
+    // Property: every git state change is eventually signaled via
+    // `UpdatedGitRepositories`, no matter how the events reporting it are
+    // batched, delayed, or lost to watcher overflows.
+    init_test(cx);
+    let operations = env::var("OPERATIONS")
+        .map(|o| o.parse().unwrap())
+        .unwrap_or(40);
+
+    let root_dir = Path::new(path!("/test"));
+    let dot_git = root_dir.join(".git");
+    // Random fs mutations are confined to this subdirectory so that they
+    // cannot rename or delete `.git` itself.
+    let src_dir = root_dir.join("src");
+    let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
+    fs.as_fake()
+        .insert_tree(
+            root_dir,
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+
+    let worktree = Worktree::local(
+        root_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    // Set when the fake repository's state is mutated, cleared when the
+    // worktree signals a git update. A signal observed after a mutation
+    // prompts downstream consumers (the GitStore) to re-read the repository,
+    // at which point they see that mutation's state, so clearing on any
+    // subsequent signal is sound.
+    let pending_git_update: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    worktree.update(cx, {
+        let pending_git_update = pending_git_update.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedGitRepositories(_)) {
+                    pending_git_update.set(false);
+                }
+            })
+            .detach();
+        }
+    });
+
+    fs.as_fake().pause_events();
+    let mut commit_count = 0;
+    for _ in 0..operations {
+        match rng.random_range(0_u32..100) {
+            // Change the repository's git state, e.g. a commit moving HEAD.
+            0..25 => {
+                commit_count += 1;
+                log::info!("setting HEAD to commit {commit_count}");
+                fs.as_fake().set_head_for_repo(
+                    &dot_git,
+                    &[("src/main.rs", format!("fn main() {{}} // {commit_count}"))],
+                    format!("sha-{commit_count}"),
+                );
+                pending_git_update.set(true);
+            }
+            // The watch queue overflows: all undelivered events are lost and
+            // only a rescan for the root is reported.
+            25..40 => {
+                log::info!(
+                    "simulating watcher overflow, losing {} events",
+                    fs.as_fake().buffered_event_count()
+                );
+                fs.as_fake().simulate_watcher_overflow(root_dir);
+            }
+            // Deliver a prefix of the queued events.
+            40..65 => {
+                let buffered_event_count = fs.as_fake().buffered_event_count();
+                let len = rng.random_range(0..=buffered_event_count);
+                log::info!("flushing {len} of {buffered_event_count} events");
+                fs.as_fake().flush_events(len);
+            }
+            // Unrelated churn in the working tree.
+            _ => {
+                randomly_mutate_fs(&fs, &src_dir, 1.0, &mut rng).await;
+            }
+        }
+        cx.executor().run_until_parked();
+    }
+
+    log::info!("quiescing");
+    fs.as_fake().unpause_events_and_flush();
+    cx.executor().run_until_parked();
+
+    worktree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true)
+    });
+    assert!(
+        !pending_git_update.get(),
+        "a git state change was never signaled via UpdatedGitRepositories"
+    );
 }
 
 // The worktree's `UpdatedEntries` event can be used to follow along with
@@ -4562,6 +4684,137 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
             "event for {path} should emit UpdatedGitRepositories"
         );
     }
+}
+
+#[gpui::test]
+async fn test_watcher_overflow_rescan_reloads_git_state(cx: &mut TestAppContext) {
+    // When the OS watch queue overflows, pending events are dropped and the
+    // watcher reports only a `Rescan` event for the worktree root. The dropped
+    // events may have included changes inside `.git`, so the rescan must
+    // trigger a git state reload even though no `.git` event is ever seen.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let repo_update_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    tree.update(cx, {
+        let repo_update_count = repo_update_count.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedGitRepositories(_)) {
+                    repo_update_count.set(repo_update_count.get() + 1);
+                }
+            })
+            .detach();
+        }
+    });
+
+    // A git state change occurs while events are queued but undelivered, and
+    // is then lost to a watcher overflow: the only event the worktree ever
+    // receives is the root rescan.
+    fs.pause_events();
+    fs.set_head_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("file.txt", "content".into())],
+        "sha-after-overflow",
+    );
+    fs.simulate_watcher_overflow(path!("/root"));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    assert!(
+        repo_update_count.get() > 0,
+        "a watcher overflow rescan should reload git state, since the dropped \
+         events may have included .git changes"
+    );
+}
+
+#[gpui::test]
+async fn test_git_update_in_same_batch_as_rescan_is_not_lost(cx: &mut TestAppContext) {
+    // When a `.git` event and a watcher rescan arrive in the same batch,
+    // `update_git_repositories` stamps the repository's `git_dir_scan_id`, but
+    // the rescan then re-inserts the repository entry. If the re-insertion
+    // resets `git_dir_scan_id`, the stamp is lost before the snapshot diff can
+    // observe it. The git update must still be signaled via
+    // `UpdatedGitRepositories`.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let repo_update_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    tree.update(cx, {
+        let repo_update_count = repo_update_count.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedGitRepositories(_)) {
+                    repo_update_count.set(repo_update_count.get() + 1);
+                }
+            })
+            .detach();
+        }
+    });
+
+    // Deliver the git change and the rescan in a single batch, as happens when
+    // a rescan arrives while other events are still queued.
+    fs.pause_events();
+    fs.set_head_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("file.txt", "content".into())],
+        "sha-with-rescan",
+    );
+    fs.emit_fs_event(path!("/root"), Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    assert!(
+        repo_update_count.get() > 0,
+        "a git update processed in the same batch as a rescan should still be \
+         signaled via UpdatedGitRepositories"
+    );
 }
 
 #[gpui::test]

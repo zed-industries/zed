@@ -1325,7 +1325,7 @@ struct MantleResponseEventMapper {
 impl MantleResponseEventMapper {
     fn new() -> Self {
         Self {
-            open_ai_mapper: OpenAiResponseEventMapper::new(),
+            open_ai_mapper: OpenAiResponseEventMapper::new(PROVIDER_ID),
             current_message: None,
             previous_message: None,
             pending_message_events: Vec::new(),
@@ -1898,7 +1898,7 @@ impl LanguageModel for BedrockMantleModel {
 
         match self.model.protocol() {
             MantleProtocol::Responses => {
-                let request = into_open_ai_response(
+                let request = match into_open_ai_response(
                     request,
                     &model_id,
                     self.model.supports_tools(),
@@ -1906,7 +1906,11 @@ impl LanguageModel for BedrockMantleModel {
                     max_output_tokens,
                     mantle_default_reasoning_effort(&self.model),
                     self.model.supports_thinking(),
-                );
+                    &PROVIDER_ID,
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let completions = self.stream_response(request, cx);
                 async move {
                     let mapper = MantleResponseEventMapper::new();
@@ -3653,7 +3657,9 @@ mod tests {
             Some(MantleModel::Grok4_3.max_output_tokens()),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
             MantleModel::Grok4_3.supports_thinking(),
-        );
+            &PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&request).unwrap()["reasoning"],
@@ -3704,7 +3710,9 @@ mod tests {
             Some(128_000),
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &PROVIDER_ID,
+        )
+        .unwrap();
 
         assert!(request.context_management.is_some());
         strip_unsupported_mantle_response_fields(&mut request);
