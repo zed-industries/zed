@@ -162,7 +162,16 @@ impl WgpuContext {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("gpui_device"),
                 required_features,
-                required_limits: wgpu::Limits::downlevel_defaults()
+                required_limits: wgpu::Limits {
+                        max_compute_workgroup_storage_size: 0,
+                        max_compute_invocations_per_workgroup: 0,
+                        max_compute_workgroup_size_x: 0,
+                        max_compute_workgroup_size_y: 0,
+                        max_compute_workgroup_size_z: 0,
+                        max_compute_workgroups_per_dimension: 0,
+                        max_storage_textures_per_shader_stage: 0,
+                        ..wgpu::Limits::downlevel_defaults()
+                    }
                     .using_resolution(adapter.limits())
                     .using_alignment(adapter.limits()),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
