@@ -1,0 +1,62 @@
+<svg width="1440" height="420" viewBox="0 0 1440 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="page" x1="0" y1="0" x2="1440" y2="420" gradientUnits="userSpaceOnUse"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#E2E8F0"/></linearGradient>
+  <linearGradient id="sailBg" x1="40" y1="30" x2="330" y2="340" gradientUnits="userSpaceOnUse"><stop stop-color="#172554"/><stop offset="1" stop-color="#07111F"/></linearGradient>
+  <linearGradient id="cyan" x1="90" y1="95" x2="190" y2="300" gradientUnits="userSpaceOnUse"><stop stop-color="#67E8F9"/><stop offset="1" stop-color="#2298F5"/></linearGradient>
+  <linearGradient id="violet" x1="275" y1="95" x2="185" y2="300" gradientUnits="userSpaceOnUse"><stop stop-color="#C4B5FD"/><stop offset="1" stop-color="#7157F5"/></linearGradient>
+  <linearGradient id="compassBg" x1="390" y1="40" x2="680" y2="330" gradientUnits="userSpaceOnUse"><stop stop-color="#064E3B"/><stop offset="1" stop-color="#022C22"/></linearGradient>
+  <linearGradient id="foldBg" x1="740" y1="40" x2="1030" y2="330" gradientUnits="userSpaceOnUse"><stop stop-color="#292524"/><stop offset="1" stop-color="#0C0A09"/></linearGradient>
+  <linearGradient id="warm" x1="810" y1="100" x2="970" y2="295" gradientUnits="userSpaceOnUse"><stop stop-color="#FDBA74"/><stop offset="0.48" stop-color="#F97316"/><stop offset="1" stop-color="#E11D48"/></linearGradient>
+  <linearGradient id="orbitBg" x1="1090" y1="40" x2="1380" y2="330" gradientUnits="userSpaceOnUse"><stop stop-color="#164E63"/><stop offset="1" stop-color="#081525"/></linearGradient>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#0F172A" flood-opacity="0.22"/></filter>
+</defs>
+<rect width="1440" height="420" fill="url(#page)"/>
+
+<!-- Sail -->
+<g transform="translate(30 26)" filter="url(#shadow)">
+  <rect width="310" height="310" rx="72" fill="url(#sailBg)"/>
+  <rect x="1.5" y="1.5" width="307" height="307" rx="70.5" stroke="white" stroke-opacity="0.14" stroke-width="3"/>
+  <path d="M49 70H108L155 218L132 270L49 70Z" fill="url(#cyan)"/>
+  <path d="M202 70H261L178 270L155 218L202 70Z" fill="url(#violet)"/>
+  <path d="M132 270L155 218L178 270L168 286H142L132 270Z" fill="#E0F2FE"/>
+</g>
+<text x="185" y="376" text-anchor="middle" fill="#0F172A" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="24" font-weight="700">01 · Sail</text>
+<text x="185" y="404" text-anchor="middle" fill="#64748B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15">双帆 · 清晰 · 产品感</text>
+
+<!-- Compass -->
+<g transform="translate(390 26)" filter="url(#shadow)">
+  <rect width="310" height="310" rx="72" fill="url(#compassBg)"/>
+  <circle cx="155" cy="155" r="104" stroke="#6EE7B7" stroke-opacity="0.26" stroke-width="3"/>
+  <circle cx="155" cy="155" r="84" stroke="#ECFDF5" stroke-opacity="0.1" stroke-width="2" stroke-dasharray="8 12"/>
+  <path d="M80 92L155 250L230 92H192L155 180L118 92H80Z" fill="#ECFDF5"/>
+  <path d="M155 60L171 100H139L155 60Z" fill="#34D399"/>
+  <circle cx="155" cy="180" r="9" fill="#34D399"/>
+</g>
+<text x="545" y="376" text-anchor="middle" fill="#0F172A" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="24" font-weight="700">02 · Compass</text>
+<text x="545" y="404" text-anchor="middle" fill="#64748B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15">导航 · Agent · 稳重</text>
+
+<!-- Fold -->
+<g transform="translate(750 26)" filter="url(#shadow)">
+  <rect width="310" height="310" rx="72" fill="url(#foldBg)"/>
+  <path d="M57 78H111L155 200L199 78H253L180 258H130L57 78Z" fill="url(#warm)"/>
+  <path d="M111 78L155 200L130 258L87 151L111 78Z" fill="#FDBA74" fill-opacity="0.42"/>
+  <path d="M199 78L155 200L180 258L224 150L199 78Z" fill="#BE123C" fill-opacity="0.34"/>
+  <path d="M57 78L87 151L111 78H57Z" fill="#FED7AA"/>
+  <path d="M199 78L224 150L253 78H199Z" fill="#FB7185"/>
+</g>
+<text x="905" y="376" text-anchor="middle" fill="#0F172A" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="24" font-weight="700">03 · Fold</text>
+<text x="905" y="404" text-anchor="middle" fill="#64748B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15">折叠 · Diff · 工程感</text>
+
+<!-- Orbit -->
+<g transform="translate(1110 26)" filter="url(#shadow)">
+  <rect width="310" height="310" rx="72" fill="url(#orbitBg)"/>
+  <ellipse cx="155" cy="157" rx="116" ry="65" transform="rotate(-23 155 157)" stroke="#67E8F9" stroke-opacity="0.7" stroke-width="5"/>
+  <ellipse cx="155" cy="157" rx="112" ry="60" transform="rotate(28 155 157)" stroke="#A78BFA" stroke-opacity="0.38" stroke-width="3"/>
+  <path d="M76 78H121L155 186L189 78H234L178 236H132L76 78Z" fill="white"/>
+  <path d="M132 236L155 186L178 236L168 252H142L132 236Z" fill="#67E8F9"/>
+  <circle cx="257" cy="115" r="12" fill="#A78BFA" stroke="#F5F3FF" stroke-width="4"/>
+  <circle cx="64" cy="203" r="9" fill="#22D3EE"/>
+</g>
+<text x="1265" y="376" text-anchor="middle" fill="#0F172A" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="24" font-weight="700">04 · Orbit</text>
+<text x="1265" y="404" text-anchor="middle" fill="#64748B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15">上下文 · 多 Agent · 动感</text>
+</svg>
