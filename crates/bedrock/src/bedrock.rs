@@ -43,30 +43,8 @@ pub async fn stream_completion(
 
     let mut additional_fields: HashMap<String, Document> = HashMap::new();
 
-    match request.thinking {
-        Some(Thinking::Enabled {
-            budget_tokens: Some(budget_tokens),
-        }) => {
-            let thinking_config = HashMap::from([
-                ("type".to_string(), Document::String("enabled".to_string())),
-                (
-                    "budget_tokens".to_string(),
-                    Document::Number(AwsNumber::PosInt(budget_tokens)),
-                ),
-            ]);
-            additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
-        }
-        Some(Thinking::Adaptive { effort: _ }) => {
-            let thinking_config = HashMap::from([
-                ("type".to_string(), Document::String("adaptive".to_string())),
-                (
-                    "display".to_string(),
-                    Document::String("summarized".to_string()),
-                ),
-            ]);
-            additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
-        }
-        _ => {}
+    if let Some(thinking) = &request.thinking {
+        additional_fields.extend(thinking_request_fields(thinking));
     }
 
     if !additional_fields.is_empty() {
@@ -212,6 +190,64 @@ pub enum Thinking {
     Adaptive {
         effort: BedrockAdaptiveThinkingEffort,
     },
+    /// Explicitly turns thinking off. Required by Claude Opus 5, where
+    /// adaptive thinking runs by default when the `thinking` field is
+    /// omitted; only accepted at effort `high` or below.
+    ///
+    /// <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+    Disabled,
+}
+
+/// Converts the request's thinking configuration into the
+/// `additionalModelRequestFields` entries understood by Anthropic models on
+/// the Converse API.
+fn thinking_request_fields(thinking: &Thinking) -> HashMap<String, Document> {
+    let mut fields = HashMap::new();
+    match thinking {
+        Thinking::Enabled {
+            budget_tokens: Some(budget_tokens),
+        } => {
+            fields.insert(
+                "thinking".to_string(),
+                Document::from(HashMap::from([
+                    ("type".to_string(), Document::String("enabled".to_string())),
+                    (
+                        "budget_tokens".to_string(),
+                        Document::Number(AwsNumber::PosInt(*budget_tokens)),
+                    ),
+                ])),
+            );
+        }
+        Thinking::Enabled {
+            budget_tokens: None,
+        } => {}
+        Thinking::Adaptive { effort: _ } => {
+            fields.insert(
+                "thinking".to_string(),
+                Document::from(HashMap::from([
+                    ("type".to_string(), Document::String("adaptive".to_string())),
+                    (
+                        "display".to_string(),
+                        Document::String("summarized".to_string()),
+                    ),
+                ])),
+            );
+        }
+        Thinking::Disabled => {
+            // On Claude Opus 5 omitting the `thinking` field means adaptive
+            // thinking runs by default, so turning it off requires this
+            // explicit opt-out. No effort is attached: `disabled` combined
+            // with effort `xhigh`/`max` is rejected with a 400.
+            fields.insert(
+                "thinking".to_string(),
+                Document::from(HashMap::from([(
+                    "type".to_string(),
+                    Document::String("disabled".to_string()),
+                )])),
+            );
+        }
+    }
+    fields
 }
 
 #[derive(Debug)]
@@ -254,4 +290,52 @@ pub enum BedrockError {
     InternalServer(String),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string_field<'a>(document: &'a Document, key: &str) -> Option<&'a str> {
+        match document {
+            Document::Object(map) => match map.get(key) {
+                Some(Document::String(value)) => Some(value.as_str()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_disabled_thinking_serializes_opt_out_without_effort() {
+        let fields = thinking_request_fields(&Thinking::Disabled);
+
+        let thinking = fields.get("thinking").expect("thinking field");
+        assert_eq!(string_field(thinking, "type"), Some("disabled"));
+        // `disabled` combined with an effort of `xhigh`/`max` is a 400, so no
+        // output_config may accompany the opt-out.
+        assert!(!fields.contains_key("output_config"));
+    }
+
+    #[test]
+    fn test_enabled_thinking_serializes_budget_tokens() {
+        let fields = thinking_request_fields(&Thinking::Enabled {
+            budget_tokens: Some(4_096),
+        });
+
+        let thinking = fields.get("thinking").expect("thinking field");
+        assert_eq!(string_field(thinking, "type"), Some("enabled"));
+        match thinking {
+            Document::Object(map) => assert_eq!(
+                map.get("budget_tokens"),
+                Some(&Document::Number(AwsNumber::PosInt(4_096)))
+            ),
+            _ => panic!("thinking field should be an object"),
+        }
+
+        let fields = thinking_request_fields(&Thinking::Enabled {
+            budget_tokens: None,
+        });
+        assert!(fields.is_empty());
+    }
 }

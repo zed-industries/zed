@@ -1133,6 +1133,13 @@
     },
   },
   {
+    "context": "CommitEditor > Editor && VimControl && !menu",
+    "bindings": {
+      "tab": "git_panel::FocusChanges",
+      "shift-tab": "git_panel::FocusChanges",
+    },
+  },
+  {
     "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
