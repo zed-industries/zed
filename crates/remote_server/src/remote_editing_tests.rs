@@ -547,7 +547,10 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     cx.update_global(|settings_store: &mut SettingsStore, cx| {
         settings_store.set_user_settings(
-            r#"{"languages":{"Rust":{"language_servers":["from-local-settings"]}}}"#,
+            r#"{
+                "languages": {"Rust": {"language_servers": ["from-local-settings"]}},
+                "terminal": {"shell": {"program": "client-shell"}}
+            }"#,
             cx,
         )
     })
@@ -568,7 +571,10 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx
         .update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store.set_server_settings(
-                r#"{"languages":{"Rust":{"language_servers":["from-server-settings"]}}}"#,
+                r#"{
+                    "languages": {"Rust": {"language_servers": ["from-server-settings"]}},
+                    "terminal": {"shell": {"program": "remote-shell"}}
+                }"#,
                 cx,
             )
         })
@@ -585,6 +591,30 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             "Server language settings should take precedence over the user settings"
         )
     });
+
+    let remote_client = project.read_with(cx, |project, _| project.remote_client());
+    let remote_shell = if let Some(remote_client) = remote_client {
+        remote_client
+            .read_with(cx, |remote_client, _| {
+                remote_client
+                    .proto_client()
+                    .request(proto::GetTerminalShell {
+                        project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                        worktree_id: None,
+                    })
+            })
+            .await
+            .ok()
+            .and_then(|response| response.shell)
+            .and_then(|shell| task::shell_from_proto(shell).ok())
+    } else {
+        None
+    };
+    assert_eq!(
+        remote_shell,
+        Some(task::Shell::Program("remote-shell".to_string())),
+        "Server terminal shell settings should take precedence over user settings"
+    );
 
     fs.insert_tree(
         "/code/project1/.zed",

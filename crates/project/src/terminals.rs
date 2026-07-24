@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
@@ -7,6 +7,7 @@ use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
 use remote::{Interactive, RemoteClient};
+use rpc::proto;
 use settings::{Settings, SettingsLocation};
 use std::{
     borrow::Cow,
@@ -359,6 +360,16 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
+        let remote_shell_request = remote_client.as_ref().map(|remote_client| {
+            remote_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetTerminalShell {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: settings_location
+                        .map(|settings_location| settings_location.worktree_id.to_proto()),
+                })
+        });
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -379,7 +390,22 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell, path_style.is_windows());
+            let remote_shell = if let Some(remote_shell_request) = remote_shell_request {
+                let response = remote_shell_request
+                    .await
+                    .context("failed to get terminal shell settings from remote server")?;
+                let shell = response
+                    .shell
+                    .context("remote server returned no terminal shell")?;
+                let shell = task::shell_from_proto(shell)
+                    .context("remote server returned an invalid terminal shell")?;
+                log::debug!("Using remote terminal shell setting: {shell:?}");
+                Some(shell)
+            } else {
+                None
+            };
+            let shell_program = remote_shell.as_ref().map(Shell::program).unwrap_or(shell);
+            let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
@@ -407,7 +433,15 @@ impl Project {
                     let (shell, env) = {
                         match remote_client {
                             Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
+                                let empty_args = Vec::new();
+                                let spawn_command = match remote_shell.as_ref() {
+                                    Some(Shell::System) | None => None,
+                                    Some(Shell::Program(program)) => Some((program, &empty_args)),
+                                    Some(Shell::WithArguments { program, args, .. }) => {
+                                        Some((program, args))
+                                    }
+                                };
+                                create_remote_shell(spawn_command, env, path, remote_client, cx)?
                             }
                             None => (settings.shell, env),
                         }
@@ -625,6 +659,11 @@ fn create_remote_shell(
         Some((program, args)) => (Some(program.clone()), args),
         None => (None, &Vec::new()),
     };
+
+    log::debug!(
+        "Creating remote shell command: program={program:?}, argument_count={}, working_directory={working_directory:?}",
+        args.len()
+    );
 
     let command = remote_client.read(cx).build_command(
         program,
