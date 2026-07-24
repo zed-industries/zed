@@ -11,13 +11,16 @@
 //! client sends on it cannot escape the policy decision. Per-TCP-connection
 //! event granularity, by design.
 
+use crate::pinned_host::{PinnedHost, PinnedHostError};
 use crate::proxy::{
     DenyReason, ProxyEvent, RequestMethod, RequestOutcome, RuntimeState, UpstreamProxy,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs as _};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs as _};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -52,11 +55,82 @@ const UPSTREAM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Top-level entry from the listener thread. Owns the client connection
 /// and the runtime state; emits events; never returns errors that escape
 /// the connection (those are logged at the listener level).
-pub(crate) fn handle(client: TcpStream, state: Arc<RuntimeState>) -> Result<()> {
-    // Performance baseline: TCP_NODELAY eliminates the Nagle delay that
-    // otherwise stalls small interactive payloads (git protocol negotiation,
-    // npm metadata pings, etc.).
-    if let Err(error) = client.set_nodelay(true) {
+pub(crate) enum ClientStream {
+    Tcp(TcpStream),
+    #[cfg(unix)]
+    Unix(UnixStream),
+}
+
+impl ClientStream {
+    fn try_clone(&self) -> std::io::Result<Self> {
+        match self {
+            Self::Tcp(stream) => stream.try_clone().map(Self::Tcp),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.try_clone().map(Self::Unix),
+        }
+    }
+
+    fn set_read_timeout(&self, duration: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.set_read_timeout(duration),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.set_read_timeout(duration),
+        }
+    }
+}
+
+impl Read for ClientStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.read(buf),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for ClientStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write(buf),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.flush(),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.flush(),
+        }
+    }
+}
+
+trait StreamIo: Read + Write + Send + 'static {
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()>;
+}
+
+impl StreamIo for ClientStream {
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.shutdown(how),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.shutdown(how),
+        }
+    }
+}
+
+impl StreamIo for TcpStream {
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
+        TcpStream::shutdown(self, how)
+    }
+}
+
+pub(crate) fn handle(client: ClientStream, state: Arc<RuntimeState>) -> Result<()> {
+    if let ClientStream::Tcp(stream) = &client
+        && let Err(error) = stream.set_nodelay(true)
+    {
         log::debug!("[http_proxy] failed to set TCP_NODELAY on client socket: {error}");
     }
 
@@ -106,7 +180,7 @@ pub(crate) fn handle(client: TcpStream, state: Arc<RuntimeState>) -> Result<()> 
 /// Reads request headers (until `\r\n\r\n`) from the client. Returns the
 /// full buffer (which may include some bytes after the headers) and the
 /// offset where the headers ended. Capped at [`MAX_HEADER_BYTES`].
-fn read_request_headers(client: &mut TcpStream) -> Result<(Vec<u8>, usize)> {
+fn read_request_headers(client: &mut ClientStream) -> Result<(Vec<u8>, usize)> {
     let mut buf = Vec::with_capacity(4096);
     let mut tmp = [0u8; 4096];
     let mut searched = 0usize;
@@ -355,8 +429,9 @@ fn policy_denial(host: &str, port: u16, state: &RuntimeState) -> Option<DenyReas
 
 /// How an approved request will reach its destination.
 enum Route {
-    /// Connect directly to one of these resolved-and-vetted addresses.
-    Direct(Vec<SocketAddr>),
+    /// Connect directly to one of the addresses pinned when the host was
+    /// resolved and vetted.
+    Direct(PinnedHost),
     /// Tunnel through the upstream proxy with a CONNECT handshake.
     ViaUpstream(UpstreamProxy),
 }
@@ -387,68 +462,19 @@ fn plan_route(host: &str, port: u16, state: &RuntimeState) -> Result<Route, Rout
         return Ok(Route::ViaUpstream(upstream.clone()));
     }
 
-    let resolved: Vec<SocketAddr> = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| RouteFailure::Error(anyhow!("resolving {host}:{port}: {error}")))?
-        .collect();
-    if resolved.is_empty() {
-        return Err(RouteFailure::Error(anyhow!(
-            "{host}:{port} did not resolve to any address"
-        )));
-    }
-
-    let vetted: Vec<SocketAddr> = if state.allowlist.allows_any() {
-        resolved
-    } else {
-        resolved
-            .into_iter()
-            .filter(|addr| !is_forbidden_ip(addr.ip()))
-            .collect()
-    };
-    if vetted.is_empty() {
-        return Err(RouteFailure::Denied(DenyReason::ResolvedToForbiddenIp {
-            host: host.to_string(),
-        }));
-    }
-    Ok(Route::Direct(vetted))
-}
-
-/// Whether a resolved address is in loopback / private / link-local space —
-/// destinations a hostname allowlist must never reach. The Seatbelt rule
-/// already blocks them for direct connections from the sandbox; the proxy
-/// (which runs outside the sandbox) must not reopen them.
-fn is_forbidden_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_forbidden_ipv4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_forbidden_ipv4(v4);
-            }
-            v6.is_loopback()
-                || v6.is_unspecified()
-                // Link-local (fe80::/10) and unique-local (fc00::/7); the
-                // dedicated `is_unicast_link_local` / `is_unique_local`
-                // methods are not yet stable.
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
+    match PinnedHost::resolve_for_allowlist(host, port, &state.allowlist) {
+        Ok(pinned) => Ok(Route::Direct(pinned)),
+        Err(PinnedHostError::AllAddressesForbidden { host }) => {
+            Err(RouteFailure::Denied(DenyReason::ResolvedToForbiddenIp {
+                host,
+            }))
         }
+        Err(error) => Err(RouteFailure::Error(anyhow!(error))),
     }
-}
-
-fn is_forbidden_ipv4(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local() // includes 169.254.169.254 cloud metadata
-        || ip.is_unspecified()
-        || ip.is_broadcast()
-        // Shared address space (RFC 6598, 100.64.0.0/10): CGNAT, and notably
-        // Tailscale-style overlay networks.
-        || (octets[0] == 100 && (octets[1] & 0xc0) == 64)
 }
 
 fn handle_connect(
-    mut client: TcpStream,
+    mut client: ClientStream,
     host: String,
     port: u16,
     leftover_body: Vec<u8>,
@@ -540,7 +566,7 @@ fn handle_connect(
 }
 
 fn handle_http_forward(
-    mut client: TcpStream,
+    mut client: ClientStream,
     method: String,
     host: String,
     port: u16,
@@ -643,7 +669,13 @@ fn handle_http_forward(
 /// handshake with the CONNECT path.
 fn open_route(route: &Route, host: &str, port: u16) -> Result<(TcpStream, Vec<u8>)> {
     match route {
-        Route::Direct(addrs) => Ok((connect_to_any(addrs, host, port)?, Vec::new())),
+        Route::Direct(pinned) => {
+            // Connect to the addresses pinned when the host was vetted, never
+            // re-resolving `host` here — that re-resolution is exactly the
+            // DNS-rebinding window `PinnedHost` exists to close.
+            let addrs: Vec<SocketAddr> = pinned.socket_addrs().collect();
+            Ok((connect_to_any(&addrs, host, port)?, Vec::new()))
+        }
         Route::ViaUpstream(upstream) => connect_via_upstream(host, port, upstream),
     }
 }
@@ -741,7 +773,7 @@ fn connect_via_upstream(
 /// Send a 511 response with `Via` and `Proxy-Status` headers and an
 /// explanatory body. Closes the connection afterwards.
 fn deny_request(
-    client: &mut TcpStream,
+    client: &mut ClientStream,
     state: &RuntimeState,
     host: String,
     port: u16,
@@ -809,7 +841,7 @@ fn emit(state: &RuntimeState, event: ProxyEvent) {
 /// Returns `(client→remote bytes, remote→client bytes)`. Errors are
 /// swallowed — partial transfer is fine, the caller just emits whatever
 /// totals we got.
-fn pump_bidir(client: TcpStream, upstream: TcpStream) -> (u64, u64) {
+fn pump_bidir(client: ClientStream, upstream: TcpStream) -> (u64, u64) {
     // Two clones per direction so each side owns the half it touches.
     // `try_clone` dups the underlying fd, so reads/writes on the two
     // halves don't contend for the same kernel state.
@@ -852,7 +884,7 @@ fn pump_bidir(client: TcpStream, upstream: TcpStream) -> (u64, u64) {
 
 /// Copy bytes from `from` to `to` until EOF on the read side or write
 /// failure. Half-closes `to` for writes when done so the partner sees EOF.
-fn copy_one_way(mut from: TcpStream, mut to: TcpStream) -> u64 {
+fn copy_one_way(mut from: impl Read, mut to: impl StreamIo) -> u64 {
     let mut total = 0u64;
     let mut buf = vec![0u8; PUMP_BUFFER_SIZE];
     loop {
@@ -901,7 +933,8 @@ mod tests {
     fn plan_route_allows_loopback_when_allowlist_allows_any() {
         let state = runtime_state(Allowlist::any());
         match plan_route("localhost", 80, &state) {
-            Ok(Route::Direct(addrs)) => {
+            Ok(Route::Direct(pinned)) => {
+                let addrs: Vec<SocketAddr> = pinned.socket_addrs().collect();
                 assert!(!addrs.is_empty());
                 assert!(addrs.iter().all(|addr| addr.ip().is_loopback()));
             }
@@ -994,35 +1027,7 @@ mod tests {
         assert!(!is_ip_literal("localhost"));
     }
 
-    #[test]
-    fn forbidden_ips_cover_local_space() {
-        for forbidden in [
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.100.1.1",
-            "0.0.0.0",
-            "::1",
-            "::",
-            "fe80::1",
-            "fd00::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-        ] {
-            assert!(
-                is_forbidden_ip(forbidden.parse().unwrap()),
-                "{forbidden} should be forbidden"
-            );
-        }
-        for public in ["140.82.112.3", "8.8.8.8", "2606:4700::6810:84e5"] {
-            assert!(
-                !is_forbidden_ip(public.parse().unwrap()),
-                "{public} should be allowed"
-            );
-        }
-    }
+    // Forbidden-IP range coverage lives with the logic in `pinned_host.rs`.
 
     #[test]
     fn parsed_request_recognizes_connect() {

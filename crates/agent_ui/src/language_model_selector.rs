@@ -47,15 +47,12 @@ pub fn language_model_selector(
     if popover_styles {
         Picker::list(delegate, window, cx)
             .show_scrollbar(true)
-            .minimum_results_width(rems(20.))
-            .height(rems(20.))
-            .no_vertical_padding()
-            .modal(false)
+            .initial_width(rems(20.))
+            .popover()
     } else {
         Picker::list(delegate, window, cx)
             .show_scrollbar(true)
-            .minimum_results_width(rems(20.))
-            .initial_width(rems(20.))
+            .embedded()
     }
 }
 

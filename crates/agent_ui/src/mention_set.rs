@@ -263,7 +263,7 @@ impl MentionSet {
                 .read(cx)
                 .project_path_for_absolute_path(&abs_path, cx)
             else {
-                log::error!("project path not found");
+                log::error!("project path not found for image mention {abs_path:?}");
                 return Task::ready(());
             };
             let image_task = project.update(cx, |project, cx| project.open_image(project_path, cx));
@@ -395,7 +395,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for file mention {abs_path:?}"
+            )));
         };
 
         if is_raster_image_path(&abs_path) {
@@ -465,7 +467,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for symbol mention {abs_path:?}"
+            )));
         };
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
@@ -697,23 +701,41 @@ impl MentionSet {
     }
 }
 
-/// Computes disambiguated labels for a set of mentions. When multiple mentions
-/// share the same base name, their labels include extra context (additional
-/// parent path components for files/directories, source for skills) so the user
-/// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
-/// which is the same utility used for buffer tab titles and the sidebar.
+/// Computes disambiguated labels for a set of mentions, so that mentions sharing
+/// a base name get extra context (parent path components, skill source) to tell
+/// them apart. Same approach as buffer tab titles and the sidebar.
 fn compute_disambiguated_labels<'a>(
     mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
 ) -> HashMap<CreaseId, SharedString> {
-    let mentions: Vec<_> = mentions.collect();
+    let (ids, uris): (Vec<CreaseId>, Vec<&MentionUri>) = mentions.unzip();
+    ids.into_iter()
+        .zip(disambiguated_labels_for_uris(&uris))
+        .collect()
+}
+
+/// Labels for each URI, in input order. Duplicate URIs are collapsed first, so a
+/// mention added twice keeps its base name instead of being escalated to its
+/// full path by the collision-resolution loop.
+fn disambiguated_labels_for_uris(uris: &[&MentionUri]) -> Vec<SharedString> {
+    let mut seen: HashSet<&MentionUri> = HashSet::default();
+    let unique_uris: Vec<&MentionUri> = uris
+        .iter()
+        .copied()
+        .filter(|&uri| seen.insert(uri))
+        .collect();
+
     let details =
-        util::disambiguate::compute_disambiguation_details(&mentions, |(_, uri), detail| {
+        util::disambiguate::compute_disambiguation_details(&unique_uris, |uri, detail| {
             uri.disambiguated_name(detail)
         });
-    mentions
-        .into_iter()
-        .zip(details)
-        .map(|((id, uri), detail)| (id, uri.disambiguated_name(detail).into()))
+
+    let uri_to_detail: HashMap<&MentionUri, usize> = unique_uris.into_iter().zip(details).collect();
+
+    uris.iter()
+        .map(|uri| {
+            let detail = uri_to_detail.get(uri).copied().unwrap_or(0);
+            uri.disambiguated_name(detail).into()
+        })
         .collect()
 }
 
@@ -823,6 +845,27 @@ mod tests {
         // Non-image extensions and paths with no extension.
         assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
         assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
+
+    #[test]
+    fn test_disambiguated_labels_dedupe_identical_uris() {
+        // Mentioning the same file twice must not escalate the duplicates to
+        // their full path. Distinct files sharing a base name still disambiguate.
+        let foo_a = MentionUri::File {
+            abs_path: path!("/project/a/foo.rs").into(),
+        };
+
+        let foo_b = MentionUri::File {
+            abs_path: path!("/project/b/foo.rs").into(),
+        };
+
+        let uris = vec![&foo_a, &foo_a, &foo_b];
+        let labels = disambiguated_labels_for_uris(&uris);
+
+        assert_eq!(labels[0].as_ref(), "a/foo.rs");
+        assert_eq!(labels[2].as_ref(), "b/foo.rs");
+        // The duplicate keeps the same label rather than escalating to full path.
+        assert_eq!(labels[1].as_ref(), "a/foo.rs");
     }
 }
 
@@ -1183,7 +1226,9 @@ fn full_mention_for_directory(
         .read(cx)
         .project_path_for_absolute_path(&abs_path, cx)
     else {
-        return Task::ready(Err(anyhow!("project path not found")));
+        return Task::ready(Err(anyhow!(
+            "project path not found for directory mention {abs_path:?}"
+        )));
     };
     let Some(entry) = project.read(cx).entry_for_path(&project_path, cx) else {
         return Task::ready(Err(anyhow!("project entry not found")));
@@ -1203,8 +1248,7 @@ fn full_mention_for_directory(
                 |(worktree_path, full_path): (Arc<RelPath>, String)| {
                     let rel_path = worktree_path
                         .strip_prefix(&directory_path)
-                        .log_err()
-                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+                        .map_or_else(|_| worktree_path.clone(), |rel_path| rel_path.into());
 
                     let open_task = project.update(cx, |project, cx| {
                         project.buffer_store().update(cx, |buffer_store, cx| {

@@ -5,7 +5,7 @@ mod role;
 pub mod tool_schema;
 pub mod util;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionRequestStatus;
 use http_client::{StatusCode, http};
 use schemars::JsonSchema;
@@ -25,7 +25,10 @@ pub use crate::rate_limiter::*;
 pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::tool_schema::LanguageModelToolSchemaFormat;
-pub use crate::util::{fix_streamed_json, parse_prompt_too_long, parse_tool_arguments};
+pub use crate::util::{
+    fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
+    parse_tool_arguments,
+};
 pub use gpui_shared_string::SharedString;
 
 /// A completion event from a language model.
@@ -241,7 +244,13 @@ impl LanguageModelCompletionError {
         retry_after: Option<Duration>,
     ) -> Self {
         match status_code {
-            StatusCode::BAD_REQUEST => Self::BadRequestFormat { provider, message },
+            StatusCode::BAD_REQUEST => {
+                if is_context_window_exceeded_message(&message) {
+                    Self::PromptTooLarge { tokens: None }
+                } else {
+                    Self::BadRequestFormat { provider, message }
+                }
+            }
             StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
             StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
             StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
@@ -351,11 +360,99 @@ pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
     pub name: Arc<str>,
     pub raw_input: String,
-    pub input: serde_json::Value,
+    pub input: LanguageModelToolUseInput,
     pub is_input_complete: bool,
     /// Thought signature the model sent us. Some models require that this
     /// signature be preserved and sent back in conversation history for validation.
     pub thought_signature: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub enum LanguageModelToolUseInput {
+    Json(serde_json::Value),
+    Text(String),
+}
+
+impl Serialize for LanguageModelToolUseInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut state = serializer.serialize_struct("LanguageModelToolUseInput", 2)?;
+        match self {
+            Self::Json(input) => {
+                state.serialize_field("type", "json")?;
+                state.serialize_field("value", input)?;
+            }
+            Self::Text(input) => {
+                state.serialize_field("type", "text")?;
+                state.serialize_field("value", input)?;
+            }
+        }
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for LanguageModelToolUseInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let Some(object) = value.as_object()
+            && object.len() == 2
+            && let Some(input_type) = object.get("type").and_then(|value| value.as_str())
+            && let Some(input) = object.get("value")
+        {
+            return match input_type {
+                "json" => Ok(Self::Json(input.clone())),
+                "text" => input
+                    .as_str()
+                    .map(|input| Self::Text(input.to_string()))
+                    .ok_or_else(|| serde::de::Error::custom("text tool input must be a string")),
+                _ => Ok(Self::Json(value)),
+            };
+        }
+
+        Ok(Self::Json(value))
+    }
+}
+
+impl LanguageModelToolUseInput {
+    pub fn as_json(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Json(input) => Some(input),
+            Self::Text(_) => None,
+        }
+    }
+
+    /// Typed parsing for JSON tool inputs; freeform (Text) inputs always error.
+    ///
+    /// Callers wanting the raw value should use [`Self::as_json`] or [`Self::into_json`].
+    pub fn parse<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        match self {
+            Self::Json(input) => {
+                serde_json::from_value(input.clone()).context("failed to parse JSON tool input")
+            }
+            Self::Text(_) => Err(anyhow!("custom tool text input cannot be parsed as JSON")),
+        }
+    }
+
+    pub fn into_json(self) -> Result<serde_json::Value> {
+        match self {
+            Self::Json(input) => Ok(input),
+            Self::Text(_) => Err(anyhow!("custom tool text input cannot be used as JSON")),
+        }
+    }
+
+    pub fn to_display_json(&self) -> serde_json::Value {
+        match self {
+            Self::Json(input) => input.clone(),
+            Self::Text(input) => serde_json::Value::String(input.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +557,7 @@ pub enum ModelMode {
     Thinking {
         budget_tokens: Option<u32>,
     },
+    Adaptive,
 }
 
 /// Settings-layer–free reasoning-effort enum.
@@ -478,6 +576,42 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
+}
+
+impl ReasoningEffort {
+    pub const OPENAI_COMPATIBLE_SELECTABLE: [Self; 6] = [
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+        Self::Max,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::XHigh => "Extra High",
+            Self::Max => "Max",
+        }
+    }
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +654,33 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[test]
+    fn test_from_http_status_maps_context_length_exceeded_to_prompt_too_large() {
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again.","param":"input"}}"#.to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
+
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("OpenAI").into(),
+            StatusCode::BAD_REQUEST,
+            "Invalid request.".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::BadRequestFormat { .. }
+        ));
     }
 
     #[test]
@@ -588,7 +749,7 @@ mod tests {
             id: LanguageModelToolUseId::from("test_id"),
             name: "test_tool".into(),
             raw_input: json!({"arg": "value"}).to_string(),
-            input: json!({"arg": "value"}),
+            input: LanguageModelToolUseInput::Json(json!({"arg": "value"})),
             is_input_complete: true,
             thought_signature: Some("test_signature".to_string()),
         };
@@ -616,7 +777,95 @@ mod tests {
 
         assert_eq!(tool_use.id, LanguageModelToolUseId::from("test_id"));
         assert_eq!(tool_use.name.as_ref(), "test_tool");
+        assert_eq!(
+            tool_use.input,
+            LanguageModelToolUseInput::Json(json!({"arg": "value"}))
+        );
         assert_eq!(tool_use.thought_signature, None);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_input_round_trips_json() {
+        use serde_json::json;
+
+        let input = LanguageModelToolUseInput::Json(json!({"arg": "value"}));
+        let serialized = serde_json::to_value(&input).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "type": "json",
+                "value": {"arg": "value"}
+            })
+        );
+
+        let deserialized: LanguageModelToolUseInput = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, input);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_input_round_trips_text() {
+        use serde_json::json;
+
+        let input = LanguageModelToolUseInput::Text("raw custom input".to_string());
+        let serialized = serde_json::to_value(&input).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "type": "text",
+                "value": "raw custom input"
+            })
+        );
+
+        let deserialized: LanguageModelToolUseInput = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, input);
+    }
+
+    #[test]
+    fn test_language_model_tool_use_input_parse() {
+        use serde_json::json;
+
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct TestInput {
+            arg: String,
+        }
+
+        let parsed: TestInput = LanguageModelToolUseInput::Json(json!({"arg": "value"}))
+            .parse()
+            .unwrap();
+        assert_eq!(
+            parsed,
+            TestInput {
+                arg: "value".to_string()
+            }
+        );
+
+        let error = LanguageModelToolUseInput::Text("raw custom input".to_string())
+            .parse::<TestInput>()
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("custom tool text input cannot be parsed as JSON")
+        );
+    }
+
+    #[test]
+    fn test_language_model_tool_use_input_deserializes_legacy_plain_json_as_json() {
+        use serde_json::json;
+
+        let deserialized: LanguageModelToolUseInput =
+            serde_json::from_value(json!({"arg": "value"})).unwrap();
+        assert_eq!(
+            deserialized,
+            LanguageModelToolUseInput::Json(json!({"arg": "value"}))
+        );
+
+        let deserialized: LanguageModelToolUseInput =
+            serde_json::from_value(json!("legacy string argument")).unwrap();
+        assert_eq!(
+            deserialized,
+            LanguageModelToolUseInput::Json(json!("legacy string argument"))
+        );
     }
 
     #[test]
@@ -627,7 +876,7 @@ mod tests {
             id: LanguageModelToolUseId::from("round_trip_id"),
             name: "round_trip_tool".into(),
             raw_input: json!({"key": "value"}).to_string(),
-            input: json!({"key": "value"}),
+            input: LanguageModelToolUseInput::Json(json!({"key": "value"})),
             is_input_complete: true,
             thought_signature: Some("round_trip_sig".to_string()),
         };
@@ -648,7 +897,7 @@ mod tests {
             id: LanguageModelToolUseId::from("no_sig_id"),
             name: "no_sig_tool".into(),
             raw_input: json!({"arg": "value"}).to_string(),
-            input: json!({"arg": "value"}),
+            input: LanguageModelToolUseInput::Json(json!({"arg": "value"})),
             is_input_complete: true,
             thought_signature: None,
         };

@@ -322,6 +322,8 @@ pub(crate) fn render_mermaid_diagram(
     let cached = mermaid_state.cache.get(&parsed.contents);
     let render_result = cached.and_then(|cached| cached.render_image.get());
     let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
+    // Preview keeps diagrams at natural size + scroll instead of crushing them via max_w_full (#61051).
+    let allow_overflow_x = style.code_block_overflow_x_scroll;
 
     let code = parsed.contents.contents.clone();
 
@@ -333,16 +335,7 @@ pub(crate) fn render_mermaid_diagram(
             let body = if showing_code {
                 render_mermaid_code_view(&parsed.contents.contents)
             } else {
-                div()
-                    .w_full()
-                    .child(
-                        img(ImageSource::Render(render_image.clone()))
-                            .max_w_full()
-                            .with_fallback(|| {
-                                Label::new("Failed to Load Mermaid Diagram").into_any_element()
-                            }),
-                    )
-                    .into_any_element()
+                render_mermaid_image(render_image.clone(), allow_overflow_x, source_offset)
             };
 
             container
@@ -382,16 +375,11 @@ pub(crate) fn render_mermaid_diagram(
                 container
                     .child(
                         div()
-                            .w_full()
-                            .child(
-                                img(ImageSource::Render(fallback.clone()))
-                                    .max_w_full()
-                                    .with_fallback(|| {
-                                        div()
-                                            .child(Label::new("Failed to load mermaid diagram"))
-                                            .into_any_element()
-                                    }),
-                            )
+                            .child(render_mermaid_image(
+                                fallback.clone(),
+                                allow_overflow_x,
+                                source_offset,
+                            ))
                             .with_animation(
                                 "mermaid-fallback-pulse",
                                 Animation::new(Duration::from_secs(2))
@@ -439,11 +427,46 @@ pub(crate) fn render_mermaid_diagram(
     }
 }
 
+/// Renders a mermaid diagram image, scrolling at intrinsic size in preview or fit-to-pane elsewhere.
+fn render_mermaid_image(
+    render_image: Arc<RenderImage>,
+    allow_overflow_x: bool,
+    source_offset: usize,
+) -> AnyElement {
+    let image = img(ImageSource::Render(render_image))
+        .with_fallback(|| Label::new("Failed to Load Mermaid Diagram").into_any_element());
+
+    if allow_overflow_x {
+        div()
+            .id(("mermaid-scroll", source_offset))
+            .w_full()
+            .map(|mut container| {
+                container.style().restrict_scroll_to_axis = Some(true);
+                container.overflow_x_scroll()
+            })
+            .child(image)
+            .into_any_element()
+    } else {
+        div().w_full().child(image.max_w_full()).into_any_element()
+    }
+}
+
 fn render_mermaid_tab_header(
     source_offset: usize,
     showing_code: bool,
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
+    let preview_id = ElementId::NamedChild(
+        Arc::new(ElementId::from((
+            "mermaid-tab-preview",
+            markdown.entity_id(),
+        ))),
+        source_offset.to_string().into(),
+    );
+    let code_id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("mermaid-tab-code", markdown.entity_id()))),
+        source_offset.to_string().into(),
+    );
     let preview_markdown = markdown.clone();
     let code_markdown = markdown;
 
@@ -451,38 +474,32 @@ fn render_mermaid_tab_header(
         .gap_0p5()
         .mb_2p5()
         .child(
-            Button::new(
-                ElementId::named_usize("mermaid-tab-preview", source_offset),
-                "Preview",
-            )
-            .label_size(LabelSize::Small)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(!showing_code)
-            .on_click(move |_event, _window, cx| {
-                preview_markdown.update(cx, |md, cx| {
-                    if md.is_mermaid_showing_code(source_offset) {
-                        md.toggle_mermaid_tab(source_offset);
-                        cx.notify();
-                    }
-                });
-            }),
+            Button::new(preview_id, "Preview")
+                .label_size(LabelSize::Small)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(!showing_code)
+                .on_click(move |_event, _window, cx| {
+                    preview_markdown.update(cx, |md, cx| {
+                        if md.is_mermaid_showing_code(source_offset) {
+                            md.toggle_mermaid_tab(source_offset);
+                            cx.notify();
+                        }
+                    });
+                }),
         )
         .child(
-            Button::new(
-                ElementId::named_usize("mermaid-tab-code", source_offset),
-                "Code",
-            )
-            .label_size(LabelSize::Small)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(showing_code)
-            .on_click(move |_event, _window, cx| {
-                code_markdown.update(cx, |md, cx| {
-                    if !md.is_mermaid_showing_code(source_offset) {
-                        md.toggle_mermaid_tab(source_offset);
-                        cx.notify();
-                    }
-                });
-            }),
+            Button::new(code_id, "Code")
+                .label_size(LabelSize::Small)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(showing_code)
+                .on_click(move |_event, _window, cx| {
+                    code_markdown.update(cx, |md, cx| {
+                        if !md.is_mermaid_showing_code(source_offset) {
+                            md.toggle_mermaid_tab(source_offset);
+                            cx.notify();
+                        }
+                    });
+                }),
         )
 }
 
@@ -491,7 +508,10 @@ fn render_mermaid_copy_button(
     code: String,
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
-    let id = ElementId::named_usize("copy-mermaid-code", source_offset);
+    let id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("copy-mermaid-code", markdown.entity_id()))),
+        source_offset.to_string().into(),
+    );
 
     div().absolute().top_1().right_1().justify_end().child(
         CopyButton::new(id.clone(), code.clone())
