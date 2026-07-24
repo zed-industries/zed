@@ -19,7 +19,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 futures.workspace = true
@@ -45,11 +44,13 @@ client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
+markdown_preview.workspace = true
 zed_actions.workspace = true
 telemetry.workspace = true
 notifications.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

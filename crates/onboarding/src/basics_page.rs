@@ -565,20 +565,28 @@ fn render_registry_agent_button(
         .name(agent.name().clone())
         .state(state_element)
         .disabled(installed)
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             telemetry::event!("Welcome Agent Install Clicked", agent = agent_id.as_str());
-            let agent_id = agent_id.clone();
-            update_settings_file(fs.clone(), cx, move |settings, _| {
-                let agent_servers = settings.agent_servers.get_or_insert_default();
-                agent_servers.entry(agent_id).or_insert_with(|| {
-                    CustomAgentServerSettings::Registry {
-                        env: Default::default(),
-                        default_mode: None,
-                        default_config_options: HashMap::default(),
-                        favorite_config_option_values: HashMap::default(),
-                    }
-                });
+            update_settings_file(fs.clone(), cx, {
+                let agent_id = agent_id.clone();
+                move |settings, _| {
+                    let agent_servers = settings.agent_servers.get_or_insert_default();
+                    agent_servers.entry(agent_id).or_insert_with(|| {
+                        CustomAgentServerSettings::Registry {
+                            env: Default::default(),
+                            default_mode: None,
+                            default_config_options: HashMap::default(),
+                            favorite_config_option_values: HashMap::default(),
+                        }
+                    });
+                }
             });
+            window.dispatch_action(
+                Box::new(zed_actions::agent::SelectAgent {
+                    agent: agent_id.clone(),
+                }),
+                cx,
+            );
         })
 }
 

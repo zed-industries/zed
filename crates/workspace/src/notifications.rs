@@ -528,8 +528,12 @@ pub mod simple_message_notification {
                     if let Some(auto_hide) = this.auto_hide.as_mut() {
                         auto_hide.finish_timer();
                         if !auto_hide.hovered {
-                            auto_hide.start_fading_out();
-                            cx.notify();
+                            if cx.reduce_motion() {
+                                cx.emit(DismissEvent);
+                            } else {
+                                auto_hide.start_fading_out();
+                                cx.notify();
+                            }
                         }
                     }
                 }) {
@@ -956,7 +960,7 @@ pub mod simple_message_notification {
                 cx.emit(DismissEvent);
             }
 
-            if self.needs_animation_frame() {
+            if self.needs_animation_frame() && !cx.reduce_motion() {
                 window.request_animation_frame();
             }
 

@@ -298,9 +298,10 @@ impl VariableList {
                     contains_local_scope = true;
                 }
 
-                self.session.update(cx, |session, cx| {
-                    !session.variables(scope.variables_reference, cx).is_empty()
-                })
+                scope.expensive
+                    || self.session.update(cx, |session, cx| {
+                        !session.variables(scope.variables_reference, cx).is_empty()
+                    })
             })
             .map(|scope| {
                 (
@@ -347,12 +348,13 @@ impl VariableList {
                 .or_insert(EntryState {
                     depth: path.indices.len(),
                     is_expanded: dap_kind.as_scope().is_some_and(|scope| {
-                        (scopes_count == 1 && !contains_local_scope)
-                            || scope
-                                .presentation_hint
-                                .as_ref()
-                                .map(|hint| *hint == ScopePresentationHint::Locals)
-                                .unwrap_or(scope.name.to_lowercase().starts_with("local"))
+                        !scope.expensive
+                            && ((scopes_count == 1 && !contains_local_scope)
+                                || scope
+                                    .presentation_hint
+                                    .as_ref()
+                                    .map(|hint| *hint == ScopePresentationHint::Locals)
+                                    .unwrap_or(scope.name.to_lowercase().starts_with("local")))
                     }),
                     parent_reference: container_reference,
                     has_children: variables_reference != 0,
