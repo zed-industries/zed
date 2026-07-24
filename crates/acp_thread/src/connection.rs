@@ -502,10 +502,17 @@ pub enum AgentModelIcon {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentModelCapabilities {
+    pub supports_thinking: bool,
+    pub context_window_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelInfo {
     pub id: AgentModelId,
     pub name: SharedString,
     pub description: Option<SharedString>,
+    pub capabilities: Option<AgentModelCapabilities>,
     pub icon: Option<AgentModelIcon>,
     pub is_latest: bool,
     pub cost: Option<SharedString>,
@@ -1101,6 +1108,7 @@ mod test_support {
                     id: AgentModelId::new("visual-test-model"),
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
+                    capabilities: None,
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
                     is_latest: false,
                     cost: None,

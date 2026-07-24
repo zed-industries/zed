@@ -308,6 +308,10 @@ impl LanguageModels {
             id: Self::model_id(model),
             name: model.name().0,
             description: None,
+            capabilities: Some(acp_thread::AgentModelCapabilities {
+                supports_thinking: model.supports_thinking(),
+                context_window_tokens: model.max_token_count(),
+            }),
             icon: Some(match provider.icon() {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
@@ -5590,6 +5594,10 @@ mod internal_tests {
                     id: AgentModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
+                    capabilities: Some(acp_thread::AgentModelCapabilities {
+                        supports_thinking: false,
+                        context_window_tokens: 1_000_000,
+                    }),
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),

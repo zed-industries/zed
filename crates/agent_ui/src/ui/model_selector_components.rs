@@ -1,9 +1,73 @@
+use acp_thread::AgentModelCapabilities;
 use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
 use language_model::DisabledReason;
 use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::CycleFavoriteModels;
+
+#[derive(IntoElement)]
+pub struct ModelSelectorDetails {
+    description: Option<SharedString>,
+    capabilities: Option<AgentModelCapabilities>,
+}
+
+impl ModelSelectorDetails {
+    pub fn new(
+        description: Option<SharedString>,
+        capabilities: Option<AgentModelCapabilities>,
+    ) -> Self {
+        Self {
+            description,
+            capabilities,
+        }
+    }
+}
+
+impl RenderOnce for ModelSelectorDetails {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let supports_thinking = self
+            .capabilities
+            .as_ref()
+            .map(|capabilities| capabilities.supports_thinking);
+        let context_window_tokens = self
+            .capabilities
+            .map(|capabilities| capabilities.context_window_tokens);
+
+        v_flex()
+            .gap_1()
+            .children(self.description.map(Label::new))
+            .when_some(supports_thinking, |this, supports_thinking| {
+                this.child(model_detail_row(
+                    "Reasoning",
+                    if supports_thinking {
+                        "Supported".into()
+                    } else {
+                        "Unsupported".into()
+                    },
+                ))
+            })
+            .when_some(context_window_tokens, |this, context_window_tokens| {
+                this.child(model_detail_row(
+                    "Context Window",
+                    format!(
+                        "{} tokens",
+                        crate::humanize_token_count(context_window_tokens)
+                    )
+                    .into(),
+                ))
+            })
+    }
+}
+
+fn model_detail_row(label: &'static str, value: SharedString) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .gap_4()
+        .justify_between()
+        .child(Label::new(label).color(Color::Muted))
+        .child(Label::new(value))
+}
 
 enum ModelIcon {
     Name(IconName),

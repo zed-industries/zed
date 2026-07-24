@@ -21,7 +21,8 @@ use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
 use crate::ui::{
-    ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, documentation_aside_side,
+    ModelSelectorDetails, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
+    documentation_aside_side,
 };
 
 pub type ModelSelector = Picker<ModelPickerDelegate>;
@@ -48,7 +49,7 @@ pub struct ModelPickerDelegate {
     filtered_entries: Vec<ModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
-    selected_description: Option<(usize, SharedString)>,
+    hovered_index: Option<usize>,
     selected_model: Option<AgentModelInfo>,
     favorites: HashSet<AgentModelId>,
     _refresh_models_task: Task<()>,
@@ -117,7 +118,7 @@ impl ModelPickerDelegate {
             models: None,
             selected_model: None,
             selected_index: 0,
-            selected_description: None,
+            hovered_index: None,
             favorites,
             _refresh_models_task: refresh_models_task,
             _settings_subscription: settings_subscription,
@@ -313,17 +314,18 @@ impl PickerDelegate for ModelPickerDelegate {
                 };
 
                 let model_cost = model_info.cost.clone();
+                let has_details =
+                    model_info.description.is_some() || model_info.capabilities.is_some();
 
                 Some(
                     div()
                         .id(("model-picker-menu-child", ix))
-                        .when_some(model_info.description.clone(), |this, description| {
+                        .when(has_details, |this| {
                             this.on_hover(cx.listener(move |menu, hovered, _, cx| {
                                 if *hovered {
-                                    menu.delegate.selected_description =
-                                        Some((ix, description.clone()));
-                                } else if matches!(menu.delegate.selected_description, Some((id, _)) if id == ix) {
-                                    menu.delegate.selected_description = None;
+                                    menu.delegate.hovered_index = Some(ix);
+                                } else if menu.delegate.hovered_index == Some(ix) {
+                                    menu.delegate.hovered_index = None;
                                 }
                                 cx.notify();
                             }))
@@ -331,7 +333,9 @@ impl PickerDelegate for ModelPickerDelegate {
                         .child(
                             ModelSelectorListItem::new(ix, model_info.name.clone())
                                 .map(|this| match &model_info.icon {
-                                    Some(AgentModelIcon::Path(path)) => this.icon_path(path.clone()),
+                                    Some(AgentModelIcon::Path(path)) => {
+                                        this.icon_path(path.clone())
+                                    }
                                     Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
                                     None => this,
                                 })
@@ -341,7 +345,7 @@ impl PickerDelegate for ModelPickerDelegate {
                                 .is_latest(model_info.is_latest)
                                 .is_favorite(is_favorite)
                                 .on_toggle_favorite(handle_action_click)
-                                .cost_info(model_cost)
+                                .cost_info(model_cost),
                         )
                         .into_any_element(),
                 )
@@ -354,20 +358,25 @@ impl PickerDelegate for ModelPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<ui::DocumentationAside> {
-        self.selected_description.as_ref().map(|(_, description)| {
-            let description = description.clone();
+        let ix = self.hovered_index?;
+        let ModelPickerEntry::Model(model_info, _) = self.filtered_entries.get(ix)? else {
+            return None;
+        };
+        let description = model_info.description.clone();
+        let capabilities = model_info.capabilities.clone();
+        let side = documentation_aside_side(cx);
 
-            let side = documentation_aside_side(cx);
-
-            DocumentationAside::new(
-                side,
-                Rc::new(move |_| Label::new(description.clone()).into_any_element()),
-            )
-        })
+        Some(DocumentationAside::new(
+            side,
+            Rc::new(move |_| {
+                ModelSelectorDetails::new(description.clone(), capabilities.clone())
+                    .into_any_element()
+            }),
+        ))
     }
 
     fn documentation_aside_index(&self) -> Option<usize> {
-        self.selected_description.as_ref().map(|(ix, _)| *ix)
+        self.hovered_index
     }
 
     fn render_footer(
@@ -509,6 +518,7 @@ mod tests {
                             id: AgentModelId::new(model),
                             name: model.to_string().into(),
                             description: None,
+                            capabilities: None,
                             icon: None,
                             is_latest: false,
                             disabled: None,
@@ -617,6 +627,7 @@ mod tests {
                     id: AgentModelId::new("auto"),
                     name: "Auto".into(),
                     description: None,
+                    capabilities: None,
                     icon: None,
                     is_latest: false,
                     disabled: None,
@@ -626,6 +637,7 @@ mod tests {
                     id: AgentModelId::new("manual"),
                     name: "Manual".into(),
                     description: None,
+                    capabilities: None,
                     icon: None,
                     is_latest: false,
                     disabled: None,
@@ -811,6 +823,7 @@ mod tests {
                 id: AgentModelId::new("zed/claude"),
                 name: "Claude".into(),
                 description: None,
+                capabilities: None,
                 icon: None,
                 is_latest: false,
                 disabled: None,
@@ -820,6 +833,7 @@ mod tests {
                 id: AgentModelId::new("zed/gemini"),
                 name: "Gemini".into(),
                 description: None,
+                capabilities: None,
                 icon: None,
                 is_latest: false,
                 disabled: None,
@@ -863,6 +877,7 @@ mod tests {
                 id: AgentModelId::new("favorite-model"),
                 name: "Favorite".into(),
                 description: None,
+                capabilities: None,
                 icon: None,
                 is_latest: false,
                 disabled: None,
@@ -872,6 +887,7 @@ mod tests {
                 id: AgentModelId::new("regular-model"),
                 name: "Regular".into(),
                 description: None,
+                capabilities: None,
                 icon: None,
                 is_latest: false,
                 disabled: None,

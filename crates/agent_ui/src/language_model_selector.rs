@@ -1,5 +1,6 @@
-use std::{cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
+use acp_thread::AgentModelCapabilities;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -17,7 +18,10 @@ use settings::Settings;
 use ui::prelude::*;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
+use crate::ui::{
+    ModelSelectorDetails, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
+    documentation_aside_side,
+};
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -126,6 +130,7 @@ pub struct LanguageModelPickerDelegate {
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
+    hovered_index: Option<usize>,
     _subscriptions: Vec<Subscription>,
     popover_styles: bool,
     focus_handle: FocusHandle,
@@ -149,6 +154,7 @@ impl LanguageModelPickerDelegate {
             on_model_changed,
             all_models: Arc::new(models),
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
+            hovered_index: None,
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
             on_toggle_favorite: Arc::new(on_toggle_favorite),
@@ -536,21 +542,60 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 };
 
                 Some(
-                    ModelSelectorListItem::new(ix, model_info.model.name().0)
-                        .map(|this| match &model_info.icon {
-                            IconOrSvg::Icon(icon_name) => this.icon(*icon_name),
-                            IconOrSvg::Svg(icon_path) => this.icon_path(icon_path.clone()),
-                        })
-                        .is_selected(is_selected)
-                        .is_focused(selected)
-                        .is_latest(model_info.model.is_latest())
-                        .is_favorite(is_favorite)
-                        .cost_info(model_cost)
-                        .on_toggle_favorite(handle_action_click)
+                    div()
+                        .id(("language-model-picker-menu-child", ix))
+                        .on_hover(cx.listener(move |picker, hovered, _, cx| {
+                            if *hovered {
+                                picker.delegate.hovered_index = Some(ix);
+                            } else if picker.delegate.hovered_index == Some(ix) {
+                                picker.delegate.hovered_index = None;
+                            }
+                            cx.notify();
+                        }))
+                        .child(
+                            ModelSelectorListItem::new(ix, model_info.model.name().0)
+                                .map(|this| match &model_info.icon {
+                                    IconOrSvg::Icon(icon_name) => this.icon(*icon_name),
+                                    IconOrSvg::Svg(icon_path) => this.icon_path(icon_path.clone()),
+                                })
+                                .is_selected(is_selected)
+                                .is_focused(selected)
+                                .is_latest(model_info.model.is_latest())
+                                .is_favorite(is_favorite)
+                                .cost_info(model_cost)
+                                .on_toggle_favorite(handle_action_click),
+                        )
                         .into_any_element(),
                 )
             }
         }
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<ui::DocumentationAside> {
+        let ix = self.hovered_index?;
+        let LanguageModelPickerEntry::Model(model_info) = self.filtered_entries.get(ix)? else {
+            return None;
+        };
+        let capabilities = AgentModelCapabilities {
+            supports_thinking: model_info.model.supports_thinking(),
+            context_window_tokens: model_info.model.max_token_count(),
+        };
+        let side = documentation_aside_side(cx);
+
+        Some(ui::DocumentationAside::new(
+            side,
+            Rc::new(move |_| {
+                ModelSelectorDetails::new(None, Some(capabilities.clone())).into_any_element()
+            }),
+        ))
+    }
+
+    fn documentation_aside_index(&self) -> Option<usize> {
+        self.hovered_index
     }
 
     fn render_footer(
