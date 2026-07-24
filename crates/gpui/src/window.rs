@@ -3942,6 +3942,45 @@ impl Window {
         }
     }
 
+    fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
+        let radii = &quad.corner_radii;
+        let widths = &quad.border_widths;
+        let edge_radii = Edges {
+            top: radii.top_left.max(radii.top_right),
+            right: radii.top_right.max(radii.bottom_right),
+            bottom: radii.bottom_left.max(radii.bottom_right),
+            left: radii.top_left.max(radii.bottom_left),
+        };
+
+        let antialias_inset = point(ScaledPixels(1.0), ScaledPixels(1.0));
+        let inset_bounds = |top_left_inset, bottom_right_inset| {
+            Bounds::from_corners(
+                quad.bounds.origin + top_left_inset + antialias_inset,
+                quad.bounds.bottom_right() - bottom_right_inset - antialias_inset,
+            )
+        };
+
+        // Rounded corners need only be excluded on one axis. Either candidate
+        // is empty of border pixels, so use the larger interior.
+        let horizontal_band = inset_bounds(
+            point(widths.left, widths.top.max(edge_radii.top)),
+            point(widths.right, widths.bottom.max(edge_radii.bottom)),
+        );
+        let vertical_band = inset_bounds(
+            point(widths.left.max(edge_radii.left), widths.top),
+            point(widths.right.max(edge_radii.right), widths.bottom),
+        );
+
+        let area = |bounds: &Bounds<ScaledPixels>| {
+            bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
+        };
+        if area(&horizontal_band) >= area(&vertical_band) {
+            horizontal_band
+        } else {
+            vertical_band
+        }
+    }
+
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`], [`outline`], and [`quad`] to construct this type.
@@ -3973,29 +4012,10 @@ impl Window {
             return;
         }
 
-        // We're drawing a quad with a border but no fill color. Painting this quad would run the quad shader for every
-        // transparent interior pixel, which is especially costly when the quad is large.
-        // Instead, split it into four non-overlapping strips that cover the regions where borders are painted:
-        // the side strips own the straight left and right edges, while the top and bottom strips own the horizontal
-        // edges and the rounded corners.
-        let radii = &quad.corner_radii;
-        let widths = &quad.border_widths;
-
-        let antialias_slack = point(ScaledPixels(1.0), ScaledPixels(1.0));
-        let top_left_inset = point(
-            widths.left,
-            widths.top.max(radii.top_left).max(radii.top_right),
-        ) + antialias_slack;
-        let bottom_right_inset = point(
-            widths.right,
-            widths.bottom.max(radii.bottom_left).max(radii.bottom_right),
-        ) + antialias_slack;
-
+        // Splitting a border-only quad around its empty interior avoids shading
+        // every transparent pixel inside large outlines.
         let outer_bounds = quad.bounds;
-        let inner_bounds = Bounds::from_corners(
-            outer_bounds.origin + top_left_inset,
-            outer_bounds.bottom_right() - bottom_right_inset,
-        );
+        let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
             self.next_frame.scene.insert_primitive(quad);
