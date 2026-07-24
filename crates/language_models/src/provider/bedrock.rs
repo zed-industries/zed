@@ -49,6 +49,7 @@ use language_model::{
     SubPageProviderSettings, TokenUsage, env_var,
 };
 use open_ai::responses::Request as OpenAiResponseRequest;
+use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1278,6 +1279,437 @@ fn strip_unsupported_mantle_response_fields(request: &mut OpenAiResponseRequest)
     request.context_management = None;
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum MantleMessageSnapshotKind {
+    Undetermined,
+    Cumulative,
+    Independent,
+}
+
+struct MantleMessageSnapshot {
+    item_id: String,
+    text: String,
+    emitted_text_length: usize,
+    kind: MantleMessageSnapshotKind,
+    phase: Option<String>,
+    output_index: usize,
+    content_index: Option<usize>,
+}
+
+/// The most recently completed message item, used to detect Mantle's cumulative
+/// snapshot replays.
+#[derive(Clone)]
+struct MantlePreviousMessage {
+    text: String,
+    phase: Option<String>,
+}
+
+/// Adapts Mantle's cumulative Responses message snapshots to incremental events.
+///
+/// Mantle can emit a new message item containing all text produced so far, then
+/// replay the corresponding output deltas. The shared OpenAI mapper assumes each
+/// delta is new text, so forwarding those events directly duplicates the reply.
+///
+/// Only adjacent, same-phase, strict-prefix extensions are collapsed. Equal,
+/// shrinking, divergent, or different-phase messages stay visible. Any non-message
+/// output item (reasoning, tool call, etc.) is a hard boundary: it is forwarded
+/// unchanged and clears the snapshot used for collapsing, so a message after a
+/// tool call is never merged with the one before it.
+struct MantleResponseEventMapper {
+    open_ai_mapper: OpenAiResponseEventMapper,
+    current_message: Option<MantleMessageSnapshot>,
+    previous_message: Option<MantlePreviousMessage>,
+    pending_message_events: Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+}
+
+impl MantleResponseEventMapper {
+    fn new() -> Self {
+        Self {
+            open_ai_mapper: OpenAiResponseEventMapper::new(),
+            current_message: None,
+            previous_message: None,
+            pending_message_events: Vec::new(),
+        }
+    }
+
+    fn map_stream(
+        mut self,
+        events: BoxStream<'static, Result<OpenAiResponseStreamEvent>>,
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events
+            .flat_map(move |event| {
+                futures::stream::iter(match event {
+                    Ok(event) => self.map_event(event),
+                    Err(error) => {
+                        let mut events = self.finish_current_message();
+                        events.push(Err(LanguageModelCompletionError::from(error)));
+                        events
+                    }
+                })
+            })
+            .boxed()
+    }
+
+    fn map_event(
+        &mut self,
+        event: OpenAiResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        match event {
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index,
+                sequence_number,
+                item,
+            } => match &item {
+                ResponseOutputItem::Message(message) => {
+                    let mut events = self.finish_current_message();
+                    let item_id = message.id.clone();
+                    let phase = message.phase.clone();
+                    if let Some(item_id) = item_id {
+                        self.current_message = Some(MantleMessageSnapshot {
+                            item_id,
+                            text: String::new(),
+                            emitted_text_length: 0,
+                            kind: MantleMessageSnapshotKind::Undetermined,
+                            phase,
+                            output_index,
+                            content_index: None,
+                        });
+
+                        self.map_message_added(OpenAiResponseStreamEvent::OutputItemAdded {
+                            output_index,
+                            sequence_number,
+                            item,
+                        });
+                    } else {
+                        self.flush_pending_message(&mut events, false);
+                        events.extend(self.open_ai_mapper.map_event(
+                            OpenAiResponseStreamEvent::OutputItemAdded {
+                                output_index,
+                                sequence_number,
+                                item,
+                            },
+                        ));
+                    }
+                    events
+                }
+                _ => {
+                    let mut events = self.finish_current_message();
+                    self.previous_message = None;
+                    events.extend(self.open_ai_mapper.map_event(
+                        OpenAiResponseStreamEvent::OutputItemAdded {
+                            output_index,
+                            sequence_number,
+                            item,
+                        },
+                    ));
+                    events
+                }
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id,
+                output_index,
+                content_index,
+                delta,
+            } => self.map_text_delta(item_id, output_index, content_index, delta),
+            OpenAiResponseStreamEvent::OutputTextDone {
+                item_id,
+                output_index,
+                content_index,
+                text,
+            } => {
+                let suffix = self
+                    .current_message
+                    .as_ref()
+                    .filter(|message| message.item_id == item_id)
+                    .and_then(|message| text.strip_prefix(&message.text))
+                    .map(str::to_string);
+                if let Some(suffix) = suffix {
+                    if suffix.is_empty() {
+                        return Vec::new();
+                    }
+                    return self.map_text_delta(item_id, output_index, content_index, suffix);
+                }
+
+                let mut events = self.finish_current_message();
+                events.extend(self.open_ai_mapper.map_event(
+                    OpenAiResponseStreamEvent::OutputTextDone {
+                        item_id,
+                        output_index,
+                        content_index,
+                        text,
+                    },
+                ));
+                events
+            }
+            OpenAiResponseStreamEvent::ContentPartAdded { ref item_id, .. }
+            | OpenAiResponseStreamEvent::ContentPartDone { ref item_id, .. }
+            | OpenAiResponseStreamEvent::RefusalDelta { ref item_id, .. }
+            | OpenAiResponseStreamEvent::RefusalDone { ref item_id, .. }
+                if self
+                    .current_message
+                    .as_ref()
+                    .is_some_and(|message| &message.item_id == item_id) =>
+            {
+                self.open_ai_mapper.map_event(event)
+            }
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index,
+                sequence_number,
+                item,
+            } => {
+                if let ResponseOutputItem::Message(message) = &item
+                    && let Some(item_id) = message.id.as_ref()
+                    && let Some(current_message) = self.current_message.as_mut()
+                    && &current_message.item_id == item_id
+                {
+                    current_message.phase = message.phase.clone();
+                }
+
+                let is_non_message = !matches!(item, ResponseOutputItem::Message(_));
+                let was_merged = matches!(
+                    self.current_message.as_ref(),
+                    Some(current_message)
+                        if current_message.kind == MantleMessageSnapshotKind::Cumulative
+                );
+                let mut events = self.finish_current_message();
+                if is_non_message {
+                    self.previous_message = None;
+                }
+                let done_events =
+                    self.open_ai_mapper
+                        .map_event(OpenAiResponseStreamEvent::OutputItemDone {
+                            output_index,
+                            sequence_number,
+                            item,
+                        });
+                if was_merged {
+                    // The message was merged into the previous one, so the phase/
+                    // reasoning metadata this `OutputItemDone` would otherwise emit
+                    // again is already reflected by the metadata emitted earlier.
+                    events.extend(done_events.into_iter().filter(|event| {
+                        !matches!(event, Ok(LanguageModelCompletionEvent::ReasoningDetails(_)))
+                    }));
+                } else {
+                    events.extend(done_events);
+                }
+                events
+            }
+            event => {
+                let mut events = self.finish_current_message();
+                events.extend(self.open_ai_mapper.map_event(event));
+                events
+            }
+        }
+    }
+
+    fn map_message_added(&mut self, event: OpenAiResponseStreamEvent) {
+        debug_assert!(
+            self.pending_message_events.is_empty(),
+            "pending message events must be flushed before a new message is added"
+        );
+        self.pending_message_events = self.open_ai_mapper.map_event(event);
+    }
+
+    fn map_text_delta(
+        &mut self,
+        item_id: String,
+        output_index: usize,
+        content_index: Option<usize>,
+        delta: String,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        if !self
+            .current_message
+            .as_ref()
+            .is_some_and(|current_message| current_message.item_id == item_id)
+        {
+            let mut events = self.finish_current_message();
+            events.extend(self.open_ai_mapper.map_event(
+                OpenAiResponseStreamEvent::OutputTextDelta {
+                    item_id,
+                    output_index,
+                    content_index,
+                    delta,
+                },
+            ));
+            return events;
+        }
+
+        let Some(current_message) = self.current_message.as_mut() else {
+            return Vec::new();
+        };
+        current_message.text.push_str(&delta);
+        current_message.output_index = output_index;
+        current_message.content_index = content_index;
+        let kind = current_message.kind;
+
+        match kind {
+            MantleMessageSnapshotKind::Undetermined => {
+                let snapshot = current_message.text.clone();
+                let phase = current_message.phase.clone();
+                let previous = self.previous_message.clone();
+
+                if let Some(previous) = previous
+                    && previous.phase == phase
+                {
+                    // Strict same-phase extension: previous text is a proper prefix of
+                    // the new snapshot. Collapse the replayed prefix and emit only the
+                    // suffix.
+                    if snapshot.starts_with(&previous.text) && snapshot.len() > previous.text.len()
+                    {
+                        if let Some(current_message) = self.current_message.as_mut() {
+                            current_message.kind = MantleMessageSnapshotKind::Cumulative;
+                            current_message.emitted_text_length = previous.text.len();
+                        }
+                        let mut events = Vec::new();
+                        self.flush_pending_message(&mut events, true);
+                        events.extend(self.map_snapshot_suffix(output_index, content_index));
+                        return events;
+                    }
+
+                    // The snapshot is still a prefix of (or equal to) the previous
+                    // message. A genuine cumulative replay keeps growing past the
+                    // previous text, so defer the decision and withhold emission
+                    // until it either exceeds the previous text or diverges.
+                    if previous.text.starts_with(&snapshot) {
+                        return Vec::new();
+                    }
+                }
+
+                // Diverged from the previous message, had a different phase, or there
+                // was no previous message: this is an independent message.
+                if let Some(current_message) = self.current_message.as_mut() {
+                    current_message.kind = MantleMessageSnapshotKind::Independent;
+                }
+                let mut events = Vec::new();
+                self.flush_pending_message(&mut events, false);
+                events.extend(self.map_text_event(item_id, output_index, content_index, snapshot));
+                events
+            }
+            MantleMessageSnapshotKind::Cumulative => {
+                self.map_snapshot_suffix(output_index, content_index)
+            }
+            MantleMessageSnapshotKind::Independent => {
+                self.map_text_event(item_id, output_index, content_index, delta)
+            }
+        }
+    }
+
+    fn map_snapshot_suffix(
+        &mut self,
+        output_index: usize,
+        content_index: Option<usize>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let (item_id, suffix) = {
+            let Some(current_message) = self.current_message.as_mut() else {
+                return Vec::new();
+            };
+
+            if current_message.text.len() <= current_message.emitted_text_length {
+                return Vec::new();
+            }
+
+            let suffix = current_message.text[current_message.emitted_text_length..].to_string();
+            current_message.emitted_text_length = current_message.text.len();
+            (current_message.item_id.clone(), suffix)
+        };
+
+        self.map_text_event(item_id, output_index, content_index, suffix)
+    }
+
+    fn map_text_event(
+        &mut self,
+        item_id: String,
+        output_index: usize,
+        content_index: Option<usize>,
+        delta: String,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        if delta.is_empty() {
+            return Vec::new();
+        }
+
+        self.open_ai_mapper
+            .map_event(OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id,
+                output_index,
+                content_index,
+                delta,
+            })
+    }
+
+    fn finish_current_message(
+        &mut self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        self.finish_current_message_into(&mut events);
+        events
+    }
+
+    fn finish_current_message_into(
+        &mut self,
+        events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+    ) {
+        let Some(current_message) = self.current_message.take() else {
+            self.flush_pending_message(events, false);
+            return;
+        };
+
+        match current_message.kind {
+            MantleMessageSnapshotKind::Cumulative => {
+                self.flush_pending_message(events, true);
+            }
+            MantleMessageSnapshotKind::Independent => {
+                self.flush_pending_message(events, false);
+            }
+            MantleMessageSnapshotKind::Undetermined => {
+                // The message never exceeded or diverged from the previous one, so
+                // it could not be confirmed as a cumulative replay. Treat it as an
+                // independent message: emit the withheld StartMessage and any text
+                // accumulated while deferring the decision.
+                self.flush_pending_message(events, false);
+                if !current_message.text.is_empty() {
+                    events.extend(self.map_text_event(
+                        current_message.item_id.clone(),
+                        current_message.output_index,
+                        current_message.content_index,
+                        current_message.text.clone(),
+                    ));
+                }
+            }
+        }
+
+        if !current_message.text.is_empty() {
+            self.previous_message = Some(MantlePreviousMessage {
+                text: current_message.text,
+                phase: current_message.phase,
+            });
+        }
+    }
+
+    fn flush_pending_message(
+        &mut self,
+        events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        suppress_start_message: bool,
+    ) {
+        for event in self.pending_message_events.drain(..) {
+            // When merging into the previous message, the phase/reasoning metadata
+            // can't have changed since it was last emitted (a merge only happens for
+            // adjacent, same-phase messages with no reasoning item in between), so
+            // suppress both the StartMessage and the now-redundant ReasoningDetails.
+            if suppress_start_message
+                && matches!(
+                    event,
+                    Ok(LanguageModelCompletionEvent::StartMessage { .. })
+                        | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
+                )
+            {
+                continue;
+            }
+            events.push(event);
+        }
+    }
+}
+
 struct BedrockMantleModel {
     id: LanguageModelId,
     model: MantleModel,
@@ -1477,7 +1909,7 @@ impl LanguageModel for BedrockMantleModel {
                 );
                 let completions = self.stream_response(request, cx);
                 async move {
-                    let mapper = OpenAiResponseEventMapper::new();
+                    let mapper = MantleResponseEventMapper::new();
                     Ok(mapper.map_stream(completions.await?).boxed())
                 }
                 .boxed()
@@ -2442,6 +2874,9 @@ impl ConfigurationView {
 mod tests {
     use super::*;
     use language_model::LanguageModelRequestMessage;
+    use open_ai::responses::{
+        ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem,
+    };
 
     fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
         into_bedrock(
@@ -2602,6 +3037,531 @@ mod tests {
         assert!(MANTLE_SUPPORTED_REGIONS.contains(&"us-east-1"));
         assert!(MANTLE_SUPPORTED_REGIONS.contains(&"eu-west-1"));
         assert!(!MANTLE_SUPPORTED_REGIONS.contains(&"ap-southeast-1"));
+    }
+
+    fn mantle_message_item(id: &str) -> ResponseOutputItem {
+        mantle_message_item_with_phase(id, None)
+    }
+
+    fn mantle_message_item_with_phase(id: &str, phase: Option<&str>) -> ResponseOutputItem {
+        ResponseOutputItem::Message(ResponseOutputMessage {
+            id: Some(id.to_string()),
+            content: Vec::new(),
+            role: Some("assistant".to_string()),
+            status: Some("in_progress".to_string()),
+            phase: phase.map(str::to_string),
+        })
+    }
+
+    fn mantle_function_call_item(id: &str, name: &str, call_id: &str) -> ResponseOutputItem {
+        ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
+            id: Some(id.to_string()),
+            arguments: String::new(),
+            call_id: Some(call_id.to_string()),
+            name: Some(name.to_string()),
+            status: Some("in_progress".to_string()),
+        })
+    }
+
+    fn mantle_reasoning_item(id: &str) -> ResponseOutputItem {
+        ResponseOutputItem::Reasoning(ResponseReasoningItem {
+            id: Some(id.to_string()),
+            summary: Vec::new(),
+            content: Vec::new(),
+            encrypted_content: None,
+            status: Some("in_progress".to_string()),
+        })
+    }
+
+    fn text_delta(item_id: &str, output_index: usize, delta: &str) -> OpenAiResponseStreamEvent {
+        OpenAiResponseStreamEvent::OutputTextDelta {
+            item_id: item_id.to_string(),
+            output_index,
+            content_index: Some(0),
+            delta: delta.to_string(),
+        }
+    }
+
+    fn item_added(output_index: usize, item: ResponseOutputItem) -> OpenAiResponseStreamEvent {
+        OpenAiResponseStreamEvent::OutputItemAdded {
+            output_index,
+            sequence_number: None,
+            item,
+        }
+    }
+
+    fn item_done(output_index: usize, item: ResponseOutputItem) -> OpenAiResponseStreamEvent {
+        OpenAiResponseStreamEvent::OutputItemDone {
+            output_index,
+            sequence_number: None,
+            item,
+        }
+    }
+
+    fn map_mantle_response_events(
+        events: Vec<OpenAiResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        let mut mapper = MantleResponseEventMapper::new();
+        events
+            .into_iter()
+            .flat_map(|event| mapper.map_event(event))
+            .map(|event| event.expect("Mantle response event should map successfully"))
+            .collect()
+    }
+
+    // Keeps only StartMessage and Text events so phase/reasoning tests can assert on
+    // message boundaries without depending on incidental ReasoningDetails metadata.
+    fn start_messages_and_texts(
+        events: Vec<LanguageModelCompletionEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        events
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    LanguageModelCompletionEvent::StartMessage { .. }
+                        | LanguageModelCompletionEvent::Text(_)
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mantle_response_mapper_coalesces_cumulative_message_snapshots() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_1".to_string(),
+                output_index: 0,
+                content_index: Some(0),
+                delta: "Plan: rename".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message,
+            },
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: "Plan: rename".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: " and regenerate".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message,
+            },
+            OpenAiResponseStreamEvent::Completed {
+                response: open_ai::responses::ResponseSummary::default(),
+            },
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename".to_string()),
+                LanguageModelCompletionEvent::Text(" and regenerate".to_string()),
+                LanguageModelCompletionEvent::Stop(language_model::StopReason::EndTurn),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_preserves_independent_messages() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_1".to_string(),
+                output_index: 0,
+                content_index: Some(0),
+                delta: "Plan".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: first_message,
+            },
+            OpenAiResponseStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message.clone(),
+            },
+            OpenAiResponseStreamEvent::OutputTextDelta {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: "Final answer".to_string(),
+            },
+            OpenAiResponseStreamEvent::OutputItemDone {
+                output_index: 1,
+                sequence_number: None,
+                item: second_message,
+            },
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Final answer".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_coalesces_chained_cumulative_snapshots() {
+        // Each merge must thread `previous_message`/`emitted_text_length`
+        // through to the next.
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let third_message = mantle_message_item("msg_3");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan and go"),
+            item_done(1, second_message),
+            item_added(2, third_message.clone()),
+            text_delta("msg_3", 2, "Plan and go further"),
+            item_done(2, third_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::Text(" and go".to_string()),
+                LanguageModelCompletionEvent::Text(" further".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_keeps_message_state_across_content_events() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            OpenAiResponseStreamEvent::ContentPartAdded {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: 0,
+                part: serde_json::json!({"type": "output_text", "text": ""}),
+            },
+            text_delta("msg_2", 1, "Plan"),
+            text_delta("msg_2", 1, " and continue"),
+            OpenAiResponseStreamEvent::OutputTextDone {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: Some(0),
+                text: "Plan and continue".to_string(),
+            },
+            OpenAiResponseStreamEvent::ContentPartDone {
+                item_id: "msg_2".to_string(),
+                output_index: 1,
+                content_index: 0,
+                part: serde_json::json!({"type": "output_text", "text": "Plan and continue"}),
+            },
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::Text(" and continue".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_resets_on_non_message_item_done() {
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let tool_call = mantle_function_call_item("call_1", "get_weather", "server_call_1");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_done(1, tool_call),
+            item_added(2, second_message.clone()),
+            text_delta("msg_2", 2, "Plan continued"),
+            item_done(2, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan continued".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_keeps_post_tool_message_separate_when_extending_prior_text() {
+        // A tool call sits between two messages. Even though the second message's
+        // text happens to extend the first message's text, the tool call is a hard
+        // boundary and the second message must remain a separate, visible message.
+        let first_message = mantle_message_item("msg_1");
+        let tool_call = mantle_function_call_item("call_1", "get_weather", "server_call_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, tool_call.clone()),
+            OpenAiResponseStreamEvent::FunctionCallArgumentsDone {
+                item_id: "call_1".to_string(),
+                output_index: 1,
+                arguments: "{\"city\":\"Boston\"}".to_string(),
+                sequence_number: None,
+            },
+            item_done(1, tool_call),
+            item_added(2, second_message.clone()),
+            text_delta("msg_2", 2, "Plan continued"),
+            item_done(2, second_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: language_model::LanguageModelToolUseId::from("server_call_1"),
+                    name: Arc::<str>::from("get_weather"),
+                    is_input_complete: true,
+                    input: language_model::LanguageModelToolUseInput::Json(
+                        serde_json::json!({"city": "Boston"}),
+                    ),
+                    raw_input: "{\"city\":\"Boston\"}".to_string(),
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan continued".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_treats_reasoning_as_collapse_boundary() {
+        // A reasoning item between two messages breaks adjacency, so the second
+        // message is emitted independently even though it repeats the first's text.
+        let first_message = mantle_message_item("msg_1");
+        let reasoning = mantle_reasoning_item("rsn_1");
+        let second_message = mantle_message_item("msg_2");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan"),
+            item_done(0, first_message),
+            item_added(1, reasoning.clone()),
+            item_done(1, reasoning),
+            item_added(2, second_message.clone()),
+            text_delta("msg_2", 2, "Plan"),
+            item_done(2, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_preserves_equal_and_shrinking_messages() {
+        // Equal and strict-prefix (shrinking) adjacent messages must not be dropped:
+        // they are emitted as independent messages rather than collapsed away.
+        let first_message = mantle_message_item("msg_1");
+        let second_message = mantle_message_item("msg_2");
+        let third_message = mantle_message_item("msg_3");
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Hello world"),
+            item_done(0, first_message),
+            // Equal to the previous message.
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Hello world"),
+            item_done(1, second_message),
+            // Strict prefix of (shorter than) the previous message.
+            item_added(2, third_message.clone()),
+            text_delta("msg_3", 2, "Hello"),
+            item_done(2, third_message),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Hello world".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Hello world".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_3".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Hello".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_keeps_different_phase_messages_separate() {
+        // Two messages share a text prefix but have different phases; only same-phase
+        // strict extensions collapse, so the second message stays visible.
+        let first_message = mantle_message_item_with_phase("msg_1", Some("commentary"));
+        let second_message = mantle_message_item_with_phase("msg_2", Some("final_answer"));
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan: rename and regenerate"),
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename".to_string()),
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_2".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename and regenerate".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_coalesces_same_phase_strict_extension() {
+        // Same phase, strict extension: the replayed prefix is collapsed and only the
+        // new suffix is emitted, so no second StartMessage appears.
+        let first_message = mantle_message_item_with_phase("msg_1", Some("final_answer"));
+        let second_message = mantle_message_item_with_phase("msg_2", Some("final_answer"));
+        let events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan: rename"),
+            text_delta("msg_2", 1, " and regenerate"),
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            start_messages_and_texts(events),
+            vec![
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "msg_1".to_string(),
+                },
+                LanguageModelCompletionEvent::Text("Plan: rename".to_string()),
+                LanguageModelCompletionEvent::Text(" and regenerate".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn mantle_response_mapper_does_not_duplicate_reasoning_details_on_merge() {
+        // Merging a second message into the first must not emit any additional
+        // phase/reasoning metadata events beyond what the first message alone would
+        // have produced, since the metadata can't have changed by merging.
+        fn reasoning_details_count(events: &[LanguageModelCompletionEvent]) -> usize {
+            events
+                .iter()
+                .filter(|event| matches!(event, LanguageModelCompletionEvent::ReasoningDetails(_)))
+                .count()
+        }
+
+        let first_message = mantle_message_item_with_phase("msg_1", Some("final_answer"));
+        let baseline_events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message.clone()),
+        ]);
+
+        let second_message = mantle_message_item_with_phase("msg_2", Some("final_answer"));
+        let merged_events = map_mantle_response_events(vec![
+            item_added(0, first_message.clone()),
+            text_delta("msg_1", 0, "Plan: rename"),
+            item_done(0, first_message),
+            item_added(1, second_message.clone()),
+            text_delta("msg_2", 1, "Plan: rename"),
+            text_delta("msg_2", 1, " and regenerate"),
+            item_done(1, second_message),
+        ]);
+
+        assert_eq!(
+            reasoning_details_count(&merged_events),
+            reasoning_details_count(&baseline_events),
+        );
     }
 
     #[test]

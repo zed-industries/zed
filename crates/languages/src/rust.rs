@@ -692,31 +692,23 @@ impl LspAdapter for RustLspAdapter {
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
 
+        let mut commands = vec![
+            "rust-analyzer.showReferences",
+            "rust-analyzer.gotoLocation",
+            "rust-analyzer.triggerParameterHints",
+            "rust-analyzer.rename",
+        ];
+        if enable_lsp_tasks {
+            commands.push("rust-analyzer.runSingle");
+        }
+
         let mut experimental = json!({
             "commands": {
-                "commands": [
-                    "rust-analyzer.showReferences",
-                    "rust-analyzer.gotoLocation",
-                    "rust-analyzer.triggerParameterHints",
-                    "rust-analyzer.rename",
-                ]
+                "commands": commands,
             }
         });
-
         if enable_lsp_tasks {
-            merge_json_value_into(
-                json!({
-                    "runnables": {
-                        "kinds": [ "cargo", "shell" ],
-                    },
-                    "commands": {
-                        "commands": [
-                            "rust-analyzer.runSingle",
-                        ]
-                    }
-                }),
-                &mut experimental,
-            );
+            experimental["runnables"] = json!({ "kinds": ["cargo", "shell"] });
         }
 
         if let Some(original_experimental) = &mut original.capabilities.experimental {

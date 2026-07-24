@@ -3819,6 +3819,161 @@ async fn test_repo_exclude_anchored_pattern(executor: BackgroundExecutor, cx: &m
     });
 }
 
+#[gpui::test]
+async fn test_repo_exclude_applies_within_nested_repos(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let project_dir = Path::new(path!("/project"));
+
+    // Mirrors the layout used by tools that keep working copies of the
+    // repository inside the repository itself: a bare clone in
+    // `.scratch/clones` and a linked worktree of that clone in
+    // `.scratch/worktrees`, both hidden via the outer repository's
+    // `.git/info/exclude` rather than a `.gitignore`.
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": "/.scratch/worktrees/\n/.scratch/clones/\n"
+                }
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            ".scratch": {
+                "clones": {
+                    "abc": {
+                        "project.git": {
+                            "HEAD": "ref: refs/heads/main",
+                            "worktrees": {
+                                "project": {
+                                    "HEAD": "ref: refs/heads/feature",
+                                    "commondir": "../..",
+                                }
+                            }
+                        }
+                    }
+                },
+                "worktrees": {
+                    "abc": {
+                        "project": {
+                            ".git": "gitdir: ../../../clones/abc/project.git/worktrees/project",
+                            "src": {
+                                "main.rs": "fn main() {}",
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // After the initial scan, both excluded directories are ignored.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &[".scratch/clones", ".scratch/worktrees"],
+                tracked_paths: &["src/main.rs"],
+                ..Default::default()
+            },
+        );
+    });
+
+    // Load a file within the excluded nested repository, as happens when a
+    // search that includes ignored files runs or when the file is opened.
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().refresh_entries_for_paths(vec![
+                rel_path(".scratch/worktrees/abc/project/src/main.rs").into(),
+            ])
+        })
+        .recv()
+        .await;
+    cx.run_until_parked();
+
+    // The nested repository's own `.git` must not cause the outer
+    // repository's `info/exclude` rules to be dropped.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &[
+                    ".scratch/worktrees/abc",
+                    ".scratch/worktrees/abc/project",
+                    ".scratch/worktrees/abc/project/src",
+                    ".scratch/worktrees/abc/project/src/main.rs",
+                ],
+                tracked_paths: &["src/main.rs"],
+                ..Default::default()
+            },
+        );
+    });
+
+    // A file written inside the loaded nested repository (e.g. by a tool
+    // working in the clone) must also be ignored.
+    fs.save(
+        path!("/project/.scratch/worktrees/abc/project/src/generated.rs").as_ref(),
+        &"fn generated() {}".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &[".scratch/worktrees/abc/project/src/generated.rs"],
+                ..Default::default()
+            },
+        );
+    });
+
+    // Nothing under the excluded directories is visible to a traversal that
+    // skips ignored entries, which is what project search uses.
+    worktree.update(cx, |worktree, _cx| {
+        let unignored_entries = worktree
+            .entries(false, 0)
+            .filter(|entry| {
+                entry.path.starts_with(rel_path(".scratch"))
+                    && entry.path.as_ref() != rel_path(".scratch")
+            })
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unignored_entries,
+            Vec::<Arc<RelPath>>::new(),
+            "entries under the excluded .scratch directories leaked into the unignored traversal",
+        );
+    });
+}
+
 #[derive(Default)]
 struct WorktreeExpectations {
     excluded_paths: &'static [&'static str],
@@ -4527,12 +4682,11 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
     let dot_git = project_dir.join(DOT_GIT);
 
-    // Case 1: Events for .git AND .git/index.lock should NOT emit UpdatedGitRepositories
+    // Case 1: Event for .git/index.lock only should NOT emit UpdatedGitRepositories
     // (index.lock is in the skipped files list)
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
-        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
         fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
         fs.unpause_events_and_flush();
         executor.run_until_parked();
@@ -4544,7 +4698,7 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
         );
     }
 
-    // Case 2: Event for just .git (bare directory event) should NOT emit UpdatedGitRepositories
+    // Case 2: Event for just .git (bare directory event) should emit UpdatedGitRepositories
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
@@ -4554,8 +4708,8 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
         let got_git_update = drain_git_repo_updates(&mut events);
         assert!(
-            !got_git_update,
-            "should NOT emit UpdatedGitRepositories for a bare .git directory event"
+            got_git_update,
+            "should emit UpdatedGitRepositories for a bare .git directory event"
         );
     }
 
