@@ -6159,7 +6159,17 @@ impl Workspace {
             project.set_active_path(active_entry.clone(), cx)
         });
 
-        if focus_changed && let Some(project_path) = &active_entry {
+        // Only infer the active repository from the file path when the
+        // focused item is backed by a single buffer.  Multi-buffer items
+        // (e.g. ProjectDiff) span multiple repositories, and their cursor
+        // position should not trigger an automatic repo switch.
+        // See: https://github.com/zed-industries/zed/issues/58792
+        if focus_changed
+            && let Some(project_path) = &active_entry
+            && self
+                .active_item(cx)
+                .is_some_and(|item| item.buffer_kind(cx) == ItemBufferKind::Singleton)
+        {
             let git_store_entity = self.project.read(cx).git_store().clone();
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
