@@ -273,7 +273,9 @@ pub mod remote_debug {
 }
 
 pub mod workspace {
-    use gpui::actions;
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         workspace,
@@ -287,6 +289,12 @@ pub mod workspace {
             OpenWithSystem,
         ]
     );
+
+    #[derive(Clone, PartialEq, Action, Deserialize, JsonSchema, Default, Debug)]
+    #[action(namespace = workspace)]
+    pub struct CompareWithActiveTab {
+        pub item_id: Option<u64>,
+    }
 }
 
 /// Describes which ref to base a new git worktree on. The worktree is

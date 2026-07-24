@@ -33,6 +33,7 @@ use futures::FutureExt as _;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::branch_diff::BranchDiffToolbar;
 use git_ui::commit_view::CommitViewToolbar;
+use git_ui::file_diff_view::FileDiffView;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
@@ -40,7 +41,7 @@ use git_ui::staged_diff::StagedDiffToolbar;
 use git_ui::unstaged_diff::UnstagedDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
+    Element, Entity, EntityId, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
     PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
     UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
     actions, image_cache, img, point, px, retain_all,
@@ -1225,6 +1226,85 @@ fn register_actions(
                 |_, _, _| None,
             );
         })
+        .register_action(
+            |workspace, action: &zed_actions::workspace::CompareWithActiveTab, window, cx| {
+                let active_item = workspace.active_item(cx);
+                let item_id = action.item_id.map(EntityId::from);
+
+                let item = item_id.and_then(|id| {
+                    workspace
+                        .panes()
+                        .iter()
+                        .find_map(|pane| {
+                            pane.read(cx)
+                                .items()
+                                .find(|item| item.item_id() == id)
+                                .map(|item| item.boxed_clone())
+                        })
+                });
+
+                if let (Some(active_item), Some(item)) = (active_item, item) {
+                    if active_item.item_id() != item.item_id() {
+                        let active_buffer = active_item
+                            .to_any_view()
+                            .downcast::<Editor>()
+                            .ok()
+                            .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton());
+                        let item_buffer = item
+                            .to_any_view()
+                            .downcast::<Editor>()
+                            .ok()
+                            .and_then(|editor| editor.read(cx).buffer().read(cx).as_singleton());
+
+                        if let (Some(active_buffer), Some(item_buffer)) =
+                            (active_buffer, item_buffer)
+                        {
+                            let mut existing_diff_view = None;
+                            for pane in workspace.panes() {
+                                for existing_item in pane.read(cx).items() {
+                                    if let Some(diff_view) = existing_item
+                                        .to_any_view()
+                                        .downcast::<FileDiffView>()
+                                        .ok()
+                                    {
+                                        let diff_view = diff_view.read(cx);
+                                        if diff_view.old_buffer() == &item_buffer
+                                            && diff_view.new_buffer() == &active_buffer
+                                        {
+                                            existing_diff_view = Some(existing_item.boxed_clone());
+                                            break;
+                                        }
+                                    }
+                                }
+                                if existing_diff_view.is_some() {
+                                    break;
+                                }
+                            }
+
+                            if let Some(existing_item) = existing_diff_view {
+                                workspace.activate_item(
+                                    existing_item.as_ref(),
+                                    true,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            }
+
+                            FileDiffView::open_buffers(
+                                item_buffer,
+                                active_buffer,
+                                workspace.weak_handle(),
+                                window,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
+                    }
+                }
+            },
+        )
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
         .register_action(open_worktree_setup_tasks_file)
