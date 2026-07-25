@@ -1119,6 +1119,7 @@ impl CompletionsMenu {
                                     .child(
                                         h_flex()
                                             .min_w_0()
+                                            .flex_grow_1()
                                             .when(left_aligned_suffix, |this| this.justify_start())
                                             .when(right_aligned_suffix, |this| {
                                                 this.justify_between()
