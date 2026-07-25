@@ -2444,27 +2444,6 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             }
         });
 
-        update_settings_file(
-            self.connection.0.read(cx).fs.clone(),
-            cx,
-            move |settings, cx| {
-                let provider = model.provider_id().0.to_string();
-                let model = model.id().0.to_string();
-                let enable_thinking = thread.read(cx).thinking_enabled();
-                let speed = thread.read(cx).speed();
-                settings
-                    .agent
-                    .get_or_insert_default()
-                    .set_model(LanguageModelSelection {
-                        provider: provider.into(),
-                        model,
-                        enable_thinking,
-                        effort,
-                        speed,
-                    });
-            },
-        );
-
         Task::ready(Ok(()))
     }
 

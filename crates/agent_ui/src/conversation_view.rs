@@ -1370,7 +1370,6 @@ impl ConversationView {
             .map(|native_thread| {
                 cx.new(|cx| {
                     ProfileSelector::new(
-                        <dyn Fs>::global(cx),
                         Arc::new(native_thread),
                         self.focus_handle(cx),
                         cx,

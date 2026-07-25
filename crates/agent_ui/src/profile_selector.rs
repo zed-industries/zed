@@ -4,14 +4,13 @@ use crate::{
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
-use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, AnyView, App, BackgroundExecutor, Context, DismissEvent, Empty, Entity,
     FocusHandle, Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore};
 use std::{
     sync::atomic::Ordering,
     sync::{Arc, atomic::AtomicBool},
@@ -56,7 +55,6 @@ pub trait ProfileProvider {
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
     pending_refresh: bool,
-    fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     picker: Option<Entity<Picker<ProfilePickerDelegate>>>,
     picker_handle: PopoverMenuHandle<Picker<ProfilePickerDelegate>>,
@@ -66,7 +64,6 @@ pub struct ProfileSelector {
 
 impl ProfileSelector {
     pub fn new(
-        fs: Arc<dyn Fs>,
         provider: Arc<dyn ProfileProvider>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
@@ -79,7 +76,6 @@ impl ProfileSelector {
         Self {
             profiles: AgentProfile::available_profiles(cx),
             pending_refresh: false,
-            fs,
             provider,
             picker: None,
             picker_handle: PopoverMenuHandle::default(),
@@ -128,7 +124,6 @@ impl ProfileSelector {
     ) -> Entity<Picker<ProfilePickerDelegate>> {
         if self.picker.is_none() {
             let delegate = ProfilePickerDelegate::new(
-                self.fs.clone(),
                 self.provider.clone(),
                 self.profiles.clone(),
                 cx.foreground_executor().clone(),
@@ -278,7 +273,6 @@ enum ProfilePickerEntry {
 }
 
 pub struct ProfilePickerDelegate {
-    fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     foreground: ForegroundExecutor,
     background: BackgroundExecutor,
@@ -294,7 +288,6 @@ pub struct ProfilePickerDelegate {
 
 impl ProfilePickerDelegate {
     fn new(
-        fs: Arc<dyn Fs>,
         provider: Arc<dyn ProfileProvider>,
         profiles: AvailableProfiles,
         foreground: ForegroundExecutor,
@@ -307,7 +300,6 @@ impl ProfilePickerDelegate {
         let filtered_entries = Self::entries_from_candidates(&candidates);
 
         let mut this = Self {
-            fs,
             provider,
             foreground,
             background,
@@ -575,18 +567,7 @@ impl PickerDelegate for ProfilePickerDelegate {
             Some(ProfilePickerEntry::Profile(entry)) => {
                 if let Some(candidate) = self.candidates.get(entry.candidate_index) {
                     let profile_id = candidate.id.clone();
-                    let fs = self.fs.clone();
                     let provider = self.provider.clone();
-
-                    update_settings_file(fs, cx, {
-                        let profile_id = profile_id.clone();
-                        move |settings, _cx| {
-                            settings
-                                .agent
-                                .get_or_insert_default()
-                                .set_profile(profile_id.0);
-                        }
-                    });
 
                     provider.set_profile(profile_id.clone(), cx);
 
@@ -846,7 +827,6 @@ impl PickerDelegate for ProfilePickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -889,7 +869,6 @@ mod tests {
             let focus_handle = cx.focus_handle();
 
             let delegate = ProfilePickerDelegate {
-                fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
                 foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
@@ -927,7 +906,6 @@ mod tests {
             let focus_handle = cx.focus_handle();
 
             let delegate = ProfilePickerDelegate {
-                fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
                 foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
