@@ -5037,11 +5037,7 @@ pub mod tests {
                     assert_eq!(results_editor.scroll_position(cx), Point::default());
 
                     // Scroll results all the way down
-                    results_editor.scroll(
-                        Point::new(0., f64::MAX),
-                        window,
-                        cx,
-                    );
+                    results_editor.scroll(Point::new(0., f64::MAX), window, cx);
                 });
             })
             .expect("unable to update search view");
