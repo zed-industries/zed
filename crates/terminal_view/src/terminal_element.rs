@@ -2153,6 +2153,12 @@ mod tests {
             &mut regions,
         ));
 
+        assert_eq!(
+            regions.len(),
+            1,
+            "adjacent full blocks should be merged eagerly by push_block_element_region"
+        );
+
         let rects = TerminalElement::block_element_regions_to_rects(regions);
 
         assert_eq!(rects.len(), 1);
