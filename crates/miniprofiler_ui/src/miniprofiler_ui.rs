@@ -2,41 +2,51 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     rc::Rc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
+#[cfg(feature = "zed")]
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
-    SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, Task,
-    TasksIncluded, ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity,
-    WindowBounds, WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size,
-    uniform_list,
+    SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, TasksIncluded,
+    ThreadTimingsDelta, UniformListScrollHandle, div, prelude::FluentBuilder, profiler, px,
+    relative, uniform_list,
 };
+#[cfg(feature = "zed")]
+use gpui::{Task, TitlebarOptions, WeakEntity, WindowBounds, WindowOptions, size};
+#[cfg(feature = "zed")]
 use rpc::{AnyProtoClient, proto};
+#[cfg(feature = "zed")]
 use settings::{RegisterSetting, Settings, SettingsContent, SettingsStore};
+#[cfg(feature = "zed")]
 use std::any::TypeId;
-use util::ResultExt;
-use workspace::{
-    Workspace,
-    ui::{
-        ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, ContextMenu, Divider,
-        DropdownMenu, ScrollAxes, ScrollableHandle as _, Scrollbars, ToggleState, Tooltip,
-        WithScrollbar, h_flex, v_flex,
-    },
+#[cfg(feature = "zed")]
+use std::time::Duration;
+use ui::{
+    ActiveTheme, Button, ButtonCommon, ButtonStyle, Checkbox, Clickable, ContextMenu, Divider,
+    DropdownMenu, ScrollAxes, ScrollableHandle as _, Scrollbars, ToggleState, Tooltip,
+    WithScrollbar, h_flex, v_flex,
 };
+use util::ResultExt;
+#[cfg(feature = "zed")]
+use workspace::Workspace;
+#[cfg(feature = "zed")]
 use zed_actions::OpenPerformanceProfiler;
 
 const NANOS_PER_MS: u128 = 1_000_000;
 const VISIBLE_WINDOW_NANOS: u128 = 10 * 1_000_000_000;
+#[cfg(feature = "zed")]
 const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProfileSource {
     Foreground,
     AllThreads,
+    #[cfg(feature = "zed")]
     RemoteForeground,
+    #[cfg(feature = "zed")]
     RemoteAllThreads,
 }
 
@@ -45,31 +55,40 @@ impl ProfileSource {
         match self {
             ProfileSource::Foreground => "Foreground",
             ProfileSource::AllThreads => "All threads",
+            #[cfg(feature = "zed")]
             ProfileSource::RemoteForeground => "Remote: Foreground",
+            #[cfg(feature = "zed")]
             ProfileSource::RemoteAllThreads => "Remote: All threads",
         }
     }
 
+    #[cfg(feature = "zed")]
     fn is_remote(&self) -> bool {
-        matches!(
-            self,
-            ProfileSource::RemoteForeground | ProfileSource::RemoteAllThreads
-        )
+        match self {
+            ProfileSource::Foreground | ProfileSource::AllThreads => false,
+            ProfileSource::RemoteForeground | ProfileSource::RemoteAllThreads => true,
+        }
     }
 
     fn foreground_only(&self) -> bool {
-        matches!(
-            self,
-            ProfileSource::Foreground | ProfileSource::RemoteForeground
-        )
+        match self {
+            ProfileSource::Foreground => true,
+            ProfileSource::AllThreads => false,
+            #[cfg(feature = "zed")]
+            ProfileSource::RemoteForeground => true,
+            #[cfg(feature = "zed")]
+            ProfileSource::RemoteAllThreads => false,
+        }
     }
 }
 
+#[cfg(feature = "zed")]
 #[derive(Clone, Copy, Debug, Default, RegisterSetting)]
 struct PerformanceProfilerSettings {
     enabled: bool,
 }
 
+#[cfg(feature = "zed")]
 impl Settings for PerformanceProfilerSettings {
     fn from_settings(content: &SettingsContent) -> Self {
         let instrumentation = content.instrumentation.as_ref().unwrap();
@@ -80,6 +99,7 @@ impl Settings for PerformanceProfilerSettings {
     }
 }
 
+#[cfg(feature = "zed")]
 pub fn init(startup_time: Instant, cx: &mut App) {
     let initial_enabled = PerformanceProfilerSettings::get_global(cx).enabled;
     profiler::set_trace_enabled(initial_enabled);
@@ -117,6 +137,7 @@ pub fn init(startup_time: Instant, cx: &mut App) {
     .detach();
 }
 
+#[cfg(feature = "zed")]
 fn update_command_palette_filter(enabled: bool, cx: &mut App) {
     CommandPaletteFilter::update_global(cx, |filter, _| {
         let action = [TypeId::of::<OpenPerformanceProfiler>()];
@@ -128,6 +149,7 @@ fn update_command_palette_filter(enabled: bool, cx: &mut App) {
     });
 }
 
+#[cfg(feature = "zed")]
 fn open_performance_profiler(
     startup_time: Instant,
     workspace_handle: WeakEntity<Workspace>,
@@ -170,7 +192,7 @@ fn open_performance_profiler(
                 window_bounds: Some(WindowBounds::centered(default_bounds, cx)),
                 ..Default::default()
             },
-            |_window, cx| ProfilerWindow::new(startup_time, Some(workspace_handle), cx),
+            |_window, cx| ProfilerWindow::new_for_workspace(startup_time, workspace_handle, cx),
         )
         .log_err();
     });
@@ -192,19 +214,20 @@ pub struct ProfilerWindow {
     include_self_timings: ToggleState,
     autoscroll: bool,
     scroll_handle: UniformListScrollHandle,
+    #[cfg(feature = "zed")]
     workspace: Option<WeakEntity<Workspace>>,
+    #[cfg(feature = "zed")]
     has_remote: bool,
+    #[cfg(feature = "zed")]
     remote_now_nanos: u128,
+    #[cfg(feature = "zed")]
     remote_received_at: Option<Instant>,
+    #[cfg(feature = "zed")]
     _remote_poll_task: Option<Task<()>>,
 }
 
 impl ProfilerWindow {
-    pub fn new(
-        startup_time: Instant,
-        workspace_handle: Option<WeakEntity<Workspace>>,
-        cx: &mut App,
-    ) -> Entity<Self> {
+    pub fn new(startup_time: Instant, cx: &mut App) -> Entity<Self> {
         cx.new(|_cx| ProfilerWindow {
             collector: ProfilingCollector::new(startup_time),
             source: ProfileSource::Foreground,
@@ -214,28 +237,52 @@ impl ProfilerWindow {
             include_self_timings: ToggleState::Unselected,
             autoscroll: true,
             scroll_handle: UniformListScrollHandle::default(),
-            workspace: workspace_handle,
+            #[cfg(feature = "zed")]
+            workspace: None,
+            #[cfg(feature = "zed")]
             has_remote: false,
+            #[cfg(feature = "zed")]
             remote_now_nanos: 0,
+            #[cfg(feature = "zed")]
             remote_received_at: None,
+            #[cfg(feature = "zed")]
             _remote_poll_task: None,
         })
     }
 
+    #[cfg(feature = "zed")]
+    fn new_for_workspace(
+        startup_time: Instant,
+        workspace_handle: WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let profiler = Self::new(startup_time, cx);
+        profiler.update(cx, |profiler, _| {
+            profiler.workspace = Some(workspace_handle);
+        });
+        profiler
+    }
+
     fn poll_timings(&mut self, cx: &App) {
-        self.has_remote = self.remote_proto_client(cx).is_some();
+        #[cfg(not(feature = "zed"))]
+        let _ = cx;
+        #[cfg(feature = "zed")]
+        {
+            self.has_remote = self.remote_proto_client(cx).is_some();
+        }
         match self.source {
             ProfileSource::Foreground => {
                 let current_thread =
-                    gpui::profiler::get_current_thread_timings(TasksIncluded::OnlyCompleted);
+                    profiler::get_current_thread_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(vec![current_thread]);
                 self.apply_deltas(deltas);
             }
             ProfileSource::AllThreads => {
-                let all_timings = gpui::profiler::get_all_timings(TasksIncluded::OnlyCompleted);
+                let all_timings = profiler::get_all_timings(TasksIncluded::OnlyCompleted);
                 let deltas = self.collector.collect_unseen(all_timings);
                 self.apply_deltas(deltas);
             }
+            #[cfg(feature = "zed")]
             ProfileSource::RemoteForeground | ProfileSource::RemoteAllThreads => {
                 // Remote timings arrive asynchronously via apply_remote_response.
             }
@@ -259,20 +306,25 @@ impl ProfilerWindow {
     }
 
     fn now_nanos(&self) -> u128 {
-        if self.source.is_remote() {
-            let elapsed_since_poll = self
-                .remote_received_at
-                .map(|at| Instant::now().duration_since(at).as_nanos())
-                .unwrap_or(0);
-            self.remote_now_nanos + elapsed_since_poll
-        } else {
-            Instant::now()
-                .duration_since(self.collector.startup_time())
-                .as_nanos()
+        #[cfg(feature = "zed")]
+        {
+            if self.source.is_remote() {
+                let elapsed_since_poll = self
+                    .remote_received_at
+                    .map(|at| Instant::now().duration_since(at).as_nanos())
+                    .unwrap_or(0);
+                return self.remote_now_nanos + elapsed_since_poll;
+            }
         }
+
+        Instant::now()
+            .duration_since(self.collector.startup_time())
+            .as_nanos()
     }
 
     fn set_source(&mut self, source: ProfileSource, cx: &mut Context<Self>) {
+        #[cfg(not(feature = "zed"))]
+        let _ = cx;
         if self.source == source {
             return;
         }
@@ -282,17 +334,21 @@ impl ProfilerWindow {
         self.timings.clear();
         self.collector.reset();
         self.display_timings = Rc::new(Vec::new());
-        self.remote_now_nanos = 0;
-        self.remote_received_at = None;
-        self.has_remote = self.remote_proto_client(cx).is_some();
+        #[cfg(feature = "zed")]
+        {
+            self.remote_now_nanos = 0;
+            self.remote_received_at = None;
+            self.has_remote = self.remote_proto_client(cx).is_some();
 
-        if source.is_remote() {
-            self.start_remote_polling(cx);
-        } else {
-            self._remote_poll_task = None;
+            if source.is_remote() {
+                self.start_remote_polling(cx);
+            } else {
+                self._remote_poll_task = None;
+            }
         }
     }
 
+    #[cfg(feature = "zed")]
     fn remote_proto_client(&self, cx: &App) -> Option<AnyProtoClient> {
         let workspace = self.workspace.as_ref()?;
         workspace
@@ -305,6 +361,7 @@ impl ProfilerWindow {
             .flatten()
     }
 
+    #[cfg(feature = "zed")]
     fn start_remote_polling(&mut self, cx: &mut Context<Self>) {
         let Some(proto_client) = self.remote_proto_client(cx) else {
             return;
@@ -341,6 +398,7 @@ impl ProfilerWindow {
         }));
     }
 
+    #[cfg(feature = "zed")]
     fn apply_remote_response(&mut self, response: proto::GetRemoteProfilingDataResponse) {
         self.has_remote = true;
         self.remote_now_nanos = response.now_nanos as u128;
@@ -388,6 +446,27 @@ impl ProfilerWindow {
         }
     }
 
+    fn save_directory(&self, cx: &App) -> PathBuf {
+        #[cfg(feature = "zed")]
+        if let Some(active_path) = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| {
+                workspace
+                    .read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx))
+                    .log_err()
+                    .flatten()
+            })
+            .and_then(|path| path.parent().map(PathBuf::from))
+        {
+            return active_path;
+        }
+
+        #[cfg(not(feature = "zed"))]
+        let _ = cx;
+        PathBuf::default()
+    }
+
     fn render_source_dropdown(
         &self,
         window: &mut gpui::Window,
@@ -395,9 +474,14 @@ impl ProfilerWindow {
     ) -> DropdownMenu {
         let weak = cx.weak_entity();
         let current_source = self.source;
+        #[cfg(feature = "zed")]
         let has_remote = self.has_remote;
 
+        #[cfg(not(feature = "zed"))]
+        let sources = vec![ProfileSource::Foreground, ProfileSource::AllThreads];
+        #[cfg(feature = "zed")]
         let mut sources = vec![ProfileSource::Foreground, ProfileSource::AllThreads];
+        #[cfg(feature = "zed")]
         if has_remote {
             sources.push(ProfileSource::RemoteForeground);
             sources.push(ProfileSource::RemoteAllThreads);
@@ -553,6 +637,7 @@ impl Render for ProfilerWindow {
                                 .on_click(cx.listener(
                                     |this, _, _window, cx| {
                                         this.paused = !this.paused;
+                                        #[cfg(feature = "zed")]
                                         if !this.paused && this.source.is_remote() {
                                             this.start_remote_polling(cx);
                                         } else if this.paused && this.source.is_remote() {
@@ -566,10 +651,6 @@ impl Render for ProfilerWindow {
                                 Button::new("export-data", "Save")
                                     .style(ButtonStyle::Filled)
                                     .on_click(cx.listener(|this, _, _window, cx| {
-                                        let Some(workspace) = this.workspace.as_ref() else {
-                                            return;
-                                        };
-
                                         if this.timings.iter().all(|t| t.timings.is_empty()) {
                                             return;
                                         }
@@ -589,14 +670,7 @@ impl Render for ProfilerWindow {
                                             return;
                                         };
 
-                                        let active_path = workspace
-                                            .read_with(cx, |workspace, cx| {
-                                                workspace.most_recent_active_path(cx)
-                                            })
-                                            .log_err()
-                                            .flatten()
-                                            .and_then(|p| p.parent().map(|p| p.to_owned()))
-                                            .unwrap_or_else(PathBuf::default);
+                                        let active_path = this.save_directory(cx);
 
                                         let path = cx.prompt_for_new_path(
                                             &active_path,

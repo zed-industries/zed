@@ -11,17 +11,28 @@ workspace = true
 [lib]
 path = "src/miniprofiler_ui.rs"
 
+[features]
+default = ["zed"]
+zed = [
+    "dep:command_palette_hooks",
+    "dep:rpc",
+    "dep:settings",
+    "dep:workspace",
+    "dep:zed_actions",
+]
+
 [dependencies]
-command_palette_hooks.workspace = true
+command_palette_hooks = { workspace = true, optional = true }
 gpui.workspace = true
-rpc.workspace = true
-settings.workspace = true
+rpc = { workspace = true, optional = true }
+settings = { workspace = true, optional = true }
 theme_settings.workspace = true
-zed_actions.workspace = true
-workspace.workspace = true
+ui.workspace = true
 util.workspace = true
 serde_json.workspace = true
 smol.workspace = true
+workspace = { workspace = true, optional = true }
+zed_actions = { workspace = true, optional = true }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
