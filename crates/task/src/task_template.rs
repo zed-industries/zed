@@ -452,7 +452,10 @@ fn substitute_all_template_variables_in_vec(
             variable_names,
             substituted_variables,
         )?;
-        expanded.push(new_value);
+
+        if !new_value.is_empty() || variable.is_empty() {
+            expanded.push(new_value);
+        }
     }
 
     Some(expanded)
