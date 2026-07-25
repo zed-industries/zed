@@ -43,9 +43,17 @@ impl Editor {
                 else {
                     return false;
                 };
-                LanguageSettings::for_buffer(buffer.read(cx), cx).colorize_brackets
+                let buffer = buffer.read(cx);
+                buffer
+                    .language()
+                    .is_some_and(|language| language.grammar().is_some())
+                    && LanguageSettings::for_buffer(buffer, cx).colorize_brackets
             })
             .collect();
+
+        if !invalidate && (accents.is_empty() || excerpt_data.is_empty()) {
+            return;
+        }
 
         let mut fetched_tree_sitter_chunks = excerpt_data
             .iter()
@@ -785,6 +793,48 @@ where
             format!("{paired_brackets_highlights}\n{footer}"),
             bracket_colors_markup(&mut cx),
             "Paired bracket pairs should be colored"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_code_block_brackets_across_chunks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+
+        let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+        language_registry.add(markdown_lang());
+        language_registry.add(rust_lang());
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown_lang()), cx);
+        });
+
+        // The code block is longer than a single tree-sitter data chunk (50 rows),
+        // so the outer brackets open in the first chunk and close in the second one.
+        let filler = (0..58).map(|_| "        \"one\",\n").collect::<String>();
+        let source = format!("ˇ```rs\nfn main() {{\n    let a = vec![\n{filler}    ];\n}}\n```\n");
+        cx.set_state(&source);
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let expected = format!(
+            "```rs\nfn main«1()1» «1{{\n    let a = vec!«2[\n{filler}    ]2»;\n}}1»\n```\n\n1 hsla(207.80, 81.00%, 66.00%, 1.00)\n2 hsla(29.00, 54.00%, 61.00%, 1.00)\n"
+        );
+        assert_eq!(
+            expected,
+            bracket_colors_markup(&mut cx),
+            "Brackets crossing the 50-row chunk boundary inside a markdown code block should keep consistent colors"
         );
     }
 
@@ -1939,7 +1989,7 @@ mod foo «1{
 
         assert_eq!(
             indoc! {r#"
-⋯1»
+⋯1»2»1»
 
 fn small_function«1()1» «1{
     let x = «2(1, «3(2, 3)3»)2»;

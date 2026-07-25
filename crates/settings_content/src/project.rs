@@ -234,6 +234,11 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `120`
     pub request_timeout: Option<u64>,
+    /// The maximum line length a buffer may contain before language server features are disabled for the entire buffer.
+    ///
+    /// Default: `20000`
+    #[schemars(range(min = 1))]
+    pub max_buffer_line_length: Option<u32>,
     /// Settings for language server notifications
     pub notifications: Option<LspNotificationSettingsContent>,
     /// Rules for rendering LSP semantic tokens.
