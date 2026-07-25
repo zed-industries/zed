@@ -183,8 +183,8 @@ use language::{
     LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
-        SoftWrapIndent, WordsCompletionMode, all_language_settings,
+        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior, SoftWrapIndent,
+        WordsCompletionMode, all_language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -11661,7 +11661,26 @@ impl EditorSnapshot {
                     .display_snapshot
                     .buffer_snapshot()
                     .indent_size_for_line(MultiBufferRow(row_candidate));
-                indent_size.len >= INLINE_SLOT_CHAR_LIMIT
+                if indent_size.len >= INLINE_SLOT_CHAR_LIMIT {
+                    true
+                } else if row_candidate == buffer_point.row {
+                    // If the initial line indentation is less than the slot limit,
+                    // check if the cursor is on a soft-wrapped continuation row whose
+                    // wrap indentation provides enough space.
+                    let display_row = self
+                        .display_snapshot
+                        .point_to_display_point(buffer_point, text::Bias::Left)
+                        .row();
+                    if display_row.0 > 0 {
+                        self.display_snapshot
+                            .soft_wrap_indent(DisplayRow(display_row.0 - 1))
+                            .is_some_and(|indent| indent >= INLINE_SLOT_CHAR_LIMIT)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
         };
 
@@ -11682,7 +11701,7 @@ impl EditorSnapshot {
             })
         }?;
 
-        let new_display_row = self
+        let mut new_display_row = self
             .display_snapshot
             .point_to_display_point(
                 Point {
@@ -11692,6 +11711,24 @@ impl EditorSnapshot {
                 text::Bias::Left,
             )
             .row();
+
+        if new_display_row.0 > 0
+            && self
+                .display_snapshot
+                .soft_wrap_indent(DisplayRow(new_display_row.0 - 1))
+                .is_some_and(|indent| indent < INLINE_SLOT_CHAR_LIMIT)
+        {
+            new_display_row = self
+                .display_snapshot
+                .point_to_display_point(
+                    Point {
+                        row: new_buffer_row,
+                        column: 0,
+                    },
+                    text::Bias::Left,
+                )
+                .row();
+        }
 
         Some(new_display_row)
     }
