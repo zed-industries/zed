@@ -1140,7 +1140,7 @@ fn has_strong_snippet_prefix_match(
 
     languages.iter().any(|language| {
         snippet_store
-            .snippets_for(Some(language.lsp_id()), cx)
+            .snippets_for(Some(language.snippet_scope_id()), cx)
             .iter()
             .flat_map(|snippet| snippet.prefix.iter())
             .flat_map(|prefix| snippet_candidate_suffixes(prefix, &is_word_char))
@@ -1161,7 +1161,7 @@ fn snippet_completions(
     let scopes: Vec<_> = languages
         .iter()
         .filter_map(|language| {
-            let language_name = language.lsp_id();
+            let language_name = language.snippet_scope_id();
             let snippets = snippet_store.snippets_for(Some(language_name), cx);
 
             if snippets.is_empty() {

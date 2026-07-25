@@ -304,11 +304,19 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 - Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 - Setting: `base_keymap`
-- Default: `VSCode`
+- Default: `Zed`
 
 **Options**
 
-1. VS Code
+1. Zed
+
+```json [settings]
+{
+  "base_keymap": "Zed"
+}
+```
+
+2. VS Code
 
 ```json [settings]
 {
@@ -316,7 +324,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-2. Atom
+3. Atom
 
 ```json [settings]
 {
@@ -324,19 +332,11 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-3. JetBrains
+4. JetBrains
 
 ```json [settings]
 {
   "base_keymap": "JetBrains"
-}
-```
-
-4. None
-
-```json [settings]
-{
-  "base_keymap": "None"
 }
 ```
 
@@ -353,6 +353,30 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 ```json [settings]
 {
   "base_keymap": "TextMate"
+}
+```
+
+7. Emacs
+
+```json [settings]
+{
+  "base_keymap": "Emacs"
+}
+```
+
+8. Cursor
+
+```json [settings]
+{
+  "base_keymap": "Cursor"
+}
+```
+
+9. None
+
+```json [settings]
+{
+  "base_keymap": "None"
 }
 ```
 
@@ -2003,6 +2027,8 @@ Similar to `modifications`, but behaves like `on` when range formatting cannot b
   }
 }
 ```
+
+Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 

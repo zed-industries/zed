@@ -3,7 +3,7 @@ use std::{collections::hash_map, ops::Range, slice::ChunksExact, sync::Arc};
 use anyhow::Result;
 
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     FutureExt as _,
     future::{Shared, join_all},
@@ -26,6 +26,7 @@ use crate::{
         LspCommand, SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFull,
         SemanticTokensResponse,
     },
+    lsp_store::missing_servers_to_query,
     project_settings::ProjectSettings,
 };
 
@@ -80,50 +81,37 @@ impl SemanticTokenConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct RefreshForServer {
-    pub server_id: LanguageServerId,
-    pub request_id: Option<usize>,
-}
-
 impl LspStore {
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
+        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
-        if let Some(refresh) = refresh {
-            let mut invalidate_cache = true;
-            match semantic_tokens_data
-                .latest_invalidation_requests
-                .entry(refresh.server_id)
-            {
-                hash_map::Entry::Occupied(mut o) => {
-                    if refresh.request_id > *o.get() {
-                        o.insert(refresh.request_id);
-                    } else {
-                        invalidate_cache = false;
-                    }
-                }
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(refresh.request_id);
-                }
-            }
-
-            if invalidate_cache {
-                let SemanticTokensData {
-                    raw_tokens,
-                    latest_invalidation_requests: _,
-                    update,
-                } = semantic_tokens_data;
-                *update = None;
-                raw_tokens.servers.clear();
-            }
+        let refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
+        if !refreshed_servers.is_empty() {
+            semantic_tokens_data.update = None;
+            semantic_tokens_data.generation += 1;
         }
+        for refreshed_server in &refreshed_servers {
+            semantic_tokens_data
+                .raw_tokens
+                .servers
+                .remove(refreshed_server);
+        }
+        let missing_servers = missing_servers_to_query(
+            &mut semantic_tokens_data.raw_tokens.servers,
+            &mut semantic_tokens_data.fetched_servers,
+            &current_servers,
+        )
+        .unwrap_or_default();
+        if !missing_servers.is_empty() {
+            semantic_tokens_data.update = None;
+        }
+        let query_generation = semantic_tokens_data.generation;
 
         if let Some((updating_for, task)) = &semantic_tokens_data.update
             && !version_queried_for.changed_since(updating_for)
@@ -131,11 +119,23 @@ impl LspStore {
             return task.clone();
         }
 
-        let new_tokens = self.fetch_semantic_tokens_for_buffer(
-            &buffer,
-            refresh.map(|refresh| refresh.server_id),
-            cx,
-        );
+        let mut servers_to_fetch = refreshed_servers;
+        servers_to_fetch.extend(missing_servers);
+        let for_server = if servers_to_fetch.len() == 1 {
+            servers_to_fetch.iter().next().copied()
+        } else {
+            // With multiple servers refreshed, query all of them instead of fanning out
+            // filtered queries — the non-refreshed ones kept their tokens and answer
+            // with cheap deltas.
+            None
+        };
+        semantic_tokens_data
+            .fetched_servers
+            .extend(match for_server {
+                Some(server_id) => HashSet::from_iter([server_id]),
+                None => current_servers,
+            });
+        let new_tokens = self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
 
         let task_buffer = buffer.clone();
         let task_version_queried_for = version_queried_for.clone();
@@ -150,7 +150,9 @@ impl LspStore {
                             let semantic_tokens_data =
                                 lsp_data.semantic_tokens.get_or_insert_default();
 
-                            if version_queried_for == lsp_data.buffer_version {
+                            if version_queried_for == lsp_data.buffer_version
+                                && semantic_tokens_data.generation == query_generation
+                            {
                                 for (server_id, new_tokens_response) in new_tokens {
                                     match new_tokens_response {
                                         SemanticTokensResponse::Full { data, result_id } => {
@@ -191,10 +193,11 @@ impl LspStore {
                     lsp_store.update(cx, |lsp_store, cx| {
                         if let Some(current_lsp_data) =
                             lsp_store.current_lsp_data(buffer.read(cx).remote_id())
+                            && current_lsp_data.buffer_version == version_queried_for
+                            && let Some(semantic_tokens) = current_lsp_data.semantic_tokens.as_mut()
+                            && semantic_tokens.generation == query_generation
                         {
-                            if current_lsp_data.buffer_version == version_queried_for {
-                                current_lsp_data.semantic_tokens = None;
-                            }
+                            semantic_tokens.evict_all();
                         }
                     })?;
                     None
@@ -351,24 +354,25 @@ impl LspStore {
         }
     }
 
-    /// `request_id` orders per-server refreshes (a higher id invalidates the cache).
-    /// Client-initiated refreshes (e.g. after dynamic registration) pass `None`.
+    /// Marks the server's semantic tokens as refresh-pending in every buffer, to be
+    /// invalidated by the next query, and notifies the observers.
     pub(crate) fn refresh_semantic_tokens(
         &mut self,
         server_id: LanguageServerId,
-        request_id: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(LspStoreEvent::RefreshSemanticTokens {
-            server_id,
-            request_id,
-        });
+        for lsp_data in self.lsp_data.values_mut() {
+            if let Some(semantic_tokens) = &mut lsp_data.semantic_tokens {
+                semantic_tokens.pending_refreshes.insert(server_id);
+            }
+        }
+        cx.emit(LspStoreEvent::RefreshSemanticTokens { server_id });
         if let Some((client, project_id)) = self.downstream_client.as_ref() {
             client
                 .send(proto::RefreshSemanticTokens {
                     project_id: *project_id,
                     server_id: server_id.to_proto(),
-                    request_id: request_id.map(|id| id as u64),
+                    request_id: Some(super::next_wire_refresh_request_id()),
                 })
                 .log_err();
         }
@@ -379,13 +383,54 @@ impl LspStore {
         envelope: TypedEnvelope<proto::RefreshSemanticTokens>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        lsp_store.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshSemanticTokens {
-                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
-                request_id: envelope.payload.request_id.map(|id| id as usize),
-            });
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.refresh_semantic_tokens(
+                LanguageServerId::from_proto(envelope.payload.server_id),
+                cx,
+            );
         });
         Ok(proto::Ack {})
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn semantic_token_servers(&self, buffer_id: text::BufferId) -> Vec<LanguageServerId> {
+        let mut servers = self
+            .lsp_data
+            .get(&buffer_id)
+            .and_then(|lsp_data| lsp_data.semantic_tokens.as_ref())
+            .map(|semantic_tokens| {
+                semantic_tokens
+                    .raw_tokens
+                    .servers
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        servers.sort();
+        servers
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn semantic_token_data(
+        &self,
+        buffer_id: text::BufferId,
+    ) -> Vec<(LanguageServerId, Vec<u32>)> {
+        let mut data = self
+            .lsp_data
+            .get(&buffer_id)
+            .and_then(|lsp_data| lsp_data.semantic_tokens.as_ref())
+            .map(|semantic_tokens| {
+                semantic_tokens
+                    .raw_tokens
+                    .servers
+                    .iter()
+                    .map(|(server_id, tokens)| (*server_id, tokens.data.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        data.sort_by_key(|(server_id, _)| *server_id);
+        data
     }
 
     fn semantic_tokens_result_id(
@@ -629,15 +674,28 @@ async fn raw_to_buffer_semantic_tokens(
 #[derive(Default, Debug)]
 pub struct SemanticTokensData {
     pub(super) raw_tokens: RawSemanticTokens,
-    pub(super) latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
+    pub(super) pending_refreshes: HashSet<LanguageServerId>,
+    fetched_servers: HashSet<LanguageServerId>,
     update: Option<(Global, SemanticTokensTask)>,
+    /// Bumped on every eviction so that fetches started against the evicted state
+    /// cannot write their stale results into the new one.
+    generation: u64,
 }
 
 impl SemanticTokensData {
     pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
         self.raw_tokens.servers.remove(&server_id);
-        self.latest_invalidation_requests.remove(&server_id);
+        self.pending_refreshes.remove(&server_id);
+        self.fetched_servers.remove(&server_id);
         self.update = None;
+        self.generation += 1;
+    }
+
+    fn evict_all(&mut self) {
+        self.raw_tokens.servers.clear();
+        self.fetched_servers.clear();
+        self.update = None;
+        self.generation += 1;
     }
 }
 

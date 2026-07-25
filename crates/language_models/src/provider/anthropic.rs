@@ -616,6 +616,7 @@ impl LanguageModel for AnthropicModel {
             self.model.max_output_tokens,
             self.model.mode.clone(),
             AnthropicPromptCacheMode::Automatic,
+            &PROVIDER_ID,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -626,7 +627,7 @@ impl LanguageModel for AnthropicModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new(PROVIDER_NAME).map_stream(response))
+            Ok(AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
