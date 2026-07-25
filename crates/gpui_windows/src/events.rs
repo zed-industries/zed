@@ -28,6 +28,7 @@ pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
+pub(crate) const WM_GPUI_VSYNC_FRAME: u32 = WM_USER + 9;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
@@ -156,6 +157,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
+            WM_GPUI_VSYNC_FRAME => self.handle_vsync_frame(handle),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
@@ -308,6 +310,34 @@ impl WindowsWindowInner {
 
     fn handle_paint_msg(&self, handle: HWND) -> Option<isize> {
         self.draw_window(handle, false)
+    }
+
+    /// Deliver the frame the vsync thread invalidated.
+    ///
+    /// `WM_PAINT` is synthesized rather than queued. The thread only receives one
+    /// once its queue holds nothing else, so sustained input (a high-polling mouse,
+    /// a held key) starves it and frames stop reaching the display. A posted message
+    /// queues behind that input instead of losing to it, and `UpdateWindow` then
+    /// delivers the pending paint directly.
+    ///
+    /// Queued duplicates are dropped first, otherwise a window that can't keep up
+    /// with the refresh rate would accumulate them faster than it retires them,
+    /// since the vsync thread re-invalidates before the previous frame is done.
+    fn handle_vsync_frame(&self, handle: HWND) -> Option<isize> {
+        unsafe {
+            let mut msg = MSG::default();
+            while PeekMessageW(
+                &mut msg,
+                Some(handle),
+                WM_GPUI_VSYNC_FRAME,
+                WM_GPUI_VSYNC_FRAME,
+                PM_REMOVE,
+            )
+            .as_bool()
+            {}
+            UpdateWindow(handle).ok().log_err();
+        }
+        Some(0)
     }
 
     fn handle_close_msg(&self) -> Option<isize> {
