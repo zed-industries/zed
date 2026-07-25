@@ -23,13 +23,7 @@ use windows::{
         System::{
             Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
         },
-        UI::{
-            Controls::*,
-            HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*},
-            Shell::*,
-            WindowsAndMessaging::*,
-        },
+        UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
 };
@@ -553,17 +547,6 @@ impl WindowsWindow {
         let this = context.inner.take().transpose()?;
         let hwnd = creation_result?;
         let this = this.unwrap();
-
-        if params.kind == WindowKind::PopUp && !params.focus {
-            // On Windows, windows created on the same thread share the default IME context,
-            // so avoid committing an active IME composition in another window.
-            unsafe {
-                // `hwnd` is a valid window handle created above, and a null `HIMC` detaches its IME context.
-                ImmAssociateContextEx(hwnd, HIMC::default(), 0)
-                    .ok()
-                    .context("unable to disable IME for non-activating popup")?;
-            }
-        }
 
         register_drag_drop(&this)?;
         set_non_rude_hwnd(hwnd, true);

@@ -689,7 +689,11 @@ impl WindowsWindowInner {
                     .ok()
                     .log_err();
             } else {
-                if let Some(ctx) = ImeContext::get(handle) {
+                // The IME context is per-thread, so without this check a change in this
+                // window's text input state could commit an IME composition happening in another window.
+                if GetFocus() == handle
+                    && let Some(ctx) = ImeContext::get(handle)
+                {
                     ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
                         .ok()
                         .log_err();
