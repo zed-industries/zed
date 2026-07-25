@@ -56,6 +56,10 @@ fn bench_layout_line(c: &mut Criterion) {
 
     let text = code_text();
 
+    // Same text, but with a bidi paragraph separator (U+001C) and RTL content
+    // forcing the per-paragraph shaping path.
+    let text_mixed_direction = text.clone() + "\u{001c}\u{05d0}\u{05d1}";
+
     let runs_no_fallback = vec![FontRun {
         len: text.len(),
         font_id: font_id_no_fallback,
@@ -63,6 +67,10 @@ fn bench_layout_line(c: &mut Criterion) {
     let runs_with_fallback = vec![FontRun {
         len: text.len(),
         font_id: font_id_with_fallback,
+    }];
+    let runs_mixed_direction = vec![FontRun {
+        len: text_mixed_direction.len(),
+        font_id: font_id_no_fallback,
     }];
 
     let mut group = c.benchmark_group("layout_line");
@@ -73,6 +81,10 @@ fn bench_layout_line(c: &mut Criterion) {
 
     group.bench_function("with_fallback_ascii", |b| {
         b.iter(|| system.layout_line(&text, px(14.0), &runs_with_fallback))
+    });
+
+    group.bench_function("mixed_direction_paragraphs", |b| {
+        b.iter(|| system.layout_line(&text_mixed_direction, px(14.0), &runs_mixed_direction))
     });
 
     group.finish();
