@@ -16,14 +16,14 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Axis, Bounds, ClickEvent, DispatchPhase,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Display, Element, ElementId, Entity, EntityId, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
-    MouseUpEvent, Overflow, ParentElement, PinchEvent, Pixels, Point, Render, ScrollWheelEvent,
-    SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
-    WindowControlArea, point, px, size,
+    MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
+    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
+    Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -39,7 +39,7 @@ use std::{
     mem,
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use super::ImageCacheProvider;
@@ -81,71 +81,6 @@ impl<T: 'static> DragMoveEvent<T> {
     /// An item that is about to be dropped.
     pub fn dragged_item(&self) -> &dyn Any {
         self.dragged_item.as_ref()
-    }
-}
-
-const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct OngoingScroll {
-    last_event: Instant,
-    axis: Option<Axis>,
-}
-
-impl Default for OngoingScroll {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OngoingScroll {
-    fn new() -> Self {
-        Self {
-            last_event: Instant::now() - SCROLL_EVENT_SEPARATION,
-            axis: None,
-        }
-    }
-
-    fn filter(&mut self, delta: &mut Point<Pixels>) {
-        const UNLOCK_PERCENT: f32 = 1.9;
-        const UNLOCK_LOWER_BOUND: Pixels = px(6.);
-        let mut axis = self.axis;
-
-        let x = delta.x.abs();
-        let y = delta.y.abs();
-        let now = Instant::now();
-        let duration = now.duration_since(self.last_event);
-        self.last_event = now;
-        if duration > SCROLL_EVENT_SEPARATION {
-            axis = if x <= y {
-                Some(Axis::Vertical)
-            } else {
-                Some(Axis::Horizontal)
-            };
-        } else if x.max(y) >= UNLOCK_LOWER_BOUND {
-            match axis {
-                Some(Axis::Vertical) => {
-                    if x > y && x >= y * UNLOCK_PERCENT {
-                        axis = None;
-                    }
-                }
-
-                Some(Axis::Horizontal) => {
-                    if y > x && y >= x * UNLOCK_PERCENT {
-                        axis = None;
-                    }
-                }
-
-                None => {}
-            }
-        }
-
-        self.axis = axis;
-        match axis {
-            Some(Axis::Vertical) => delta.x = Pixels::ZERO,
-            Some(Axis::Horizontal) => delta.y = Pixels::ZERO,
-            None => {}
-        }
     }
 }
 
@@ -2165,7 +2100,7 @@ impl Interactivity {
                     self.ongoing_scroll = Some(
                         element_state
                             .ongoing_scroll
-                            .get_or_insert_with(|| Rc::new(RefCell::new(OngoingScroll::new())))
+                            .get_or_insert_with(|| Rc::new(RefCell::new(OngoingScroll::default())))
                             .clone(),
                     );
                 }
@@ -3171,8 +3106,13 @@ impl Interactivity {
                     let old_scroll_offset = *scroll_offset;
                     let mut delta = event.delta.pixel_delta(line_height);
 
-                    if restrict_scroll_to_axis && let Some(ongoing_scroll) = &ongoing_scroll {
-                        ongoing_scroll.borrow_mut().filter(&mut delta);
+                    if restrict_scroll_to_axis
+                        && event.delta.precise()
+                        && let Some(ongoing_scroll) = &ongoing_scroll
+                    {
+                        ongoing_scroll
+                            .borrow_mut()
+                            .filter(&mut delta, event.touch_phase);
                     }
 
                     let mut delta_x = match overflow.x {
@@ -4202,34 +4142,6 @@ mod tests {
         TestAppContext, canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
-
-    #[test]
-    fn ongoing_scroll_locks_to_dominant_axis() {
-        let mut ongoing_scroll = OngoingScroll::new();
-        let mut horizontal_delta = point(px(10.), px(2.));
-        ongoing_scroll.filter(&mut horizontal_delta);
-        assert_eq!(horizontal_delta, point(px(10.), px(0.)));
-
-        let mut continued_delta = point(px(3.), px(2.));
-        ongoing_scroll.filter(&mut continued_delta);
-        assert_eq!(continued_delta, point(px(3.), px(0.)));
-
-        ongoing_scroll.last_event = Instant::now() - SCROLL_EVENT_SEPARATION;
-        let mut vertical_delta = point(px(2.), px(10.));
-        ongoing_scroll.filter(&mut vertical_delta);
-        assert_eq!(vertical_delta, point(px(0.), px(10.)));
-    }
-
-    #[test]
-    fn ongoing_scroll_unlocks_when_direction_changes() {
-        let mut ongoing_scroll = OngoingScroll::new();
-        let mut horizontal_delta = point(px(10.), px(2.));
-        ongoing_scroll.filter(&mut horizontal_delta);
-
-        let mut vertical_delta = point(px(2.), px(10.));
-        ongoing_scroll.filter(&mut vertical_delta);
-        assert_eq!(vertical_delta, point(px(2.), px(10.)));
-    }
 
     struct GroupHoverTestView {
         render_count: Rc<Cell<usize>>,
