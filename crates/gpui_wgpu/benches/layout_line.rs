@@ -7,7 +7,12 @@ const LILEX: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.t
 const IBM_PLEX: &[u8] =
     include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
 
-// ~4 000 chars of typical ASCII code text.
+// ~4 000 chars of typical ASCII code text, as a single display line.
+//
+// `layout_line` is handed one line at a time, already split on `\n` by its
+// callers, so the newlines are replaced rather than kept: leaving them in would
+// make this measure the multi-paragraph path instead of the common one, since
+// `\n` is itself a bidi paragraph separator.
 fn code_text() -> String {
     concat!(
         "    fn compute_run_spans(\n",
@@ -38,6 +43,7 @@ fn code_text() -> String {
         "    }\n",
     )
     .repeat(8) // ~3 800 chars
+    .replace('\n', " ")
 }
 
 fn bench_layout_line(c: &mut Criterion) {
@@ -59,6 +65,10 @@ fn bench_layout_line(c: &mut Criterion) {
     // Same text, but with a bidi paragraph separator (U+001C) and RTL content
     // forcing the per-paragraph shaping path.
     let text_mixed_direction = text.clone() + "\u{001c}\u{05d0}\u{05d1}";
+    assert!(
+        !text.contains('\n'),
+        "fast-path corpus must contain no separator"
+    );
 
     let runs_no_fallback = vec![FontRun {
         len: text.len(),
