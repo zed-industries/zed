@@ -1599,6 +1599,7 @@ impl MessageEditor {
                 anchor..anchor,
                 self.editor.downgrade(),
                 self.mention_set.downgrade(),
+                self.workspace.clone(),
                 Some(selection),
             )
         else {
