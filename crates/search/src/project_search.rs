@@ -22,7 +22,7 @@ use editor::{
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
-    Action, AnyElement, App, AsyncApp, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyElement, App, AsyncApp, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
     Render, SharedString, Styled, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, Window,
     actions, div,
