@@ -72,7 +72,9 @@ impl FsWatcher {
             // so drop the stale registration and fall through to register a
             // fresh watch on the new inode. When either inode is unknown we can't
             // tell, so conservatively keep the existing registration.
-            if current_inode.is_none() || existing.inode.is_none() || current_inode == existing.inode
+            if current_inode.is_none()
+                || existing.inode.is_none()
+                || current_inode == existing.inode
             {
                 log::trace!("path to watch is already watched: {path:?}");
                 return Ok(());
