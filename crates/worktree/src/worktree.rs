@@ -1485,6 +1485,18 @@ impl LocalWorktree {
                             new_repos.next();
                         }
                         Ordering::Equal => {
+                            // A change to a repository's git state is signaled by bumping
+                            // `git_dir_scan_id`, and the diff below detects it via `!=`. If the
+                            // value ever regresses (e.g. a rescan re-inserting the repository
+                            // with a fresh scan id of 0), a bump from the same cycle is wiped
+                            // out and the corresponding git update is silently lost.
+                            debug_assert!(
+                                new_repo.git_dir_scan_id >= old_repo.git_dir_scan_id,
+                                "git_dir_scan_id for repository at {:?} regressed from {} to {}",
+                                new_repo.work_directory_abs_path,
+                                old_repo.git_dir_scan_id,
+                                new_repo.git_dir_scan_id,
+                            );
                             if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
                                 || new_repo.work_directory_abs_path
                                     != old_repo.work_directory_abs_path
@@ -3575,11 +3587,28 @@ impl BackgroundScannerState {
 
         let work_directory_id = work_dir_entry.id;
 
+        // A repository can be re-inserted when its `.git` entry is re-discovered, e.g.
+        // during a watcher-forced rescan. Carry the existing `git_dir_scan_id` forward
+        // in that case: the snapshot diff detects git changes by comparing scan ids, so
+        // resetting the id would wipe out a bump made earlier in the same scan cycle,
+        // silently dropping the corresponding git update. Deliberately don't bump the
+        // id here either: re-insertion is snapshot bookkeeping, not evidence that git
+        // state changed. It also happens on non-lossy paths (explicit refreshes,
+        // path-prefix scans) where we know nothing in `.git` changed, and a bump would
+        // trigger a spurious full reload of the repository's git state. Only
+        // `update_git_repositories` claims that git state changed, by stamping the
+        // current scan id.
+        let git_dir_scan_id = self
+            .snapshot
+            .git_repositories
+            .get(&work_directory_id)
+            .map_or(0, |existing_repository| existing_repository.git_dir_scan_id);
+
         let local_repository = LocalRepositoryEntry {
             work_directory_id,
             work_directory,
             work_directory_abs_path: work_directory_abs_path.as_path().into(),
-            git_dir_scan_id: 0,
+            git_dir_scan_id,
             dot_git_abs_path,
             common_dir_abs_path,
             repository_dir_abs_path,
@@ -4744,6 +4773,18 @@ impl BackgroundScanner {
             let snapshot = &self.state.lock().await.snapshot;
 
             let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
+            // On Windows, creating or deleting a file directly inside `.git`
+            // updates the directory's last-write time, so the watcher reports a
+            // bare `.git` Changed event alongside the file's own event. When the
+            // file event is filtered out (e.g. git's transient `index.lock`), the
+            // bare event carries no information either, so acting on it would
+            // turn every ignored lock file into a git rescan. Since a rescan's
+            // own `git diff` can take `index.lock`, that feeds back into an
+            // infinite loop of rescans. So bare `.git` events are deferred here
+            // and only rescanned when nothing in the batch explains them; a
+            // standalone bare event (macOS coalescing) still triggers a rescan.
+            let mut bare_dot_git_abs_paths = Vec::new();
+            let mut dot_git_dirs_with_ignored_events = Vec::new();
 
             for (ix, event) in events.iter().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
@@ -4787,6 +4828,21 @@ impl BackgroundScanner {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );
+                        if !dot_git_dirs_with_ignored_events.contains(&dot_git_abs_path) {
+                            dot_git_dirs_with_ignored_events.push(dot_git_abs_path);
+                        }
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
+
+                    if is_dot_git {
+                        log::debug!(
+                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
+                            event.kind
+                        );
+                        if !bare_dot_git_abs_paths.contains(&dot_git_abs_path) {
+                            bare_dot_git_abs_paths.push(dot_git_abs_path);
+                        }
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
                     }
@@ -4796,15 +4852,6 @@ impl BackgroundScanner {
                             "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
                         );
                         dot_git_abs_paths.push(dot_git_abs_path);
-                    }
-
-                    if is_dot_git {
-                        log::debug!(
-                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
-                            event.kind
-                        );
-                        skip_ix(&mut ranges_to_drop, ix);
-                        continue;
                     }
 
                     // New directories can appear under the `refs` tree at any time, e.g. when a
@@ -4826,6 +4873,31 @@ impl BackgroundScanner {
                     }
                 }
 
+                // A rescan event means the watcher lost sync and events under the
+                // rescanned path were dropped, possibly including events inside `.git`
+                // directories. Reload the git state of every repository with a git
+                // directory under the rescanned path, since changes there may have
+                // gone unseen.
+                if self.track_git_repositories && matches!(event.kind, Some(PathEventKind::Rescan))
+                {
+                    for repository in snapshot.git_repositories.values() {
+                        let affected_by_rescan = [
+                            &repository.dot_git_abs_path,
+                            &repository.common_dir_abs_path,
+                            &repository.repository_dir_abs_path,
+                        ]
+                        .iter()
+                        .any(|git_dir_abs_path| git_dir_abs_path.starts_with(abs_path.as_path()));
+                        let dot_git_abs_path = repository.dot_git_abs_path.to_path_buf();
+                        if affected_by_rescan && !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                            log::debug!(
+                                "reloading git repo at {dot_git_abs_path:?} due to rescan of {abs_path:?}"
+                            );
+                            dot_git_abs_paths.push(dot_git_abs_path);
+                        }
+                    }
+                }
+
                 if self.track_git_repositories
                     && abs_path
                         .as_path()
@@ -4837,6 +4909,19 @@ impl BackgroundScanner {
                         work_dirs_needing_exclude_update
                             .push(repository.work_directory_abs_path.clone());
                     }
+                }
+            }
+
+            for dot_git_abs_path in bare_dot_git_abs_paths {
+                if dot_git_dirs_with_ignored_events.contains(&dot_git_abs_path) {
+                    log::debug!(
+                        "not reloading git repo at {dot_git_abs_path:?}: the bare .git event is explained by filtered events in the same batch"
+                    );
+                } else if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                    log::debug!(
+                        "detected update within git repo at {dot_git_abs_path:?}: bare .git directory event"
+                    );
+                    dot_git_abs_paths.push(dot_git_abs_path);
                 }
             }
 
