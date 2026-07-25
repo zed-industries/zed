@@ -475,11 +475,7 @@ impl WindowsWindow {
         );
 
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            let mut dwexstyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
-            if !params.focus {
-                dwexstyle |= WS_EX_NOACTIVATE;
-            }
-            (dwexstyle, WINDOW_STYLE(0x0))
+            (WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WINDOW_STYLE(0x0))
         } else {
             let mut dwstyle = WS_SYSMENU;
 
