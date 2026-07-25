@@ -1198,6 +1198,7 @@ impl InputRateTracker {
 /// A point-in-time snapshot of the input-latency histograms for a window,
 /// suitable for external formatting.
 #[cfg(feature = "input-latency-histogram")]
+#[derive(Clone)]
 pub struct InputLatencySnapshot {
     /// Histogram of input-to-frame latency samples, in nanoseconds.
     pub latency_histogram: Histogram<u64>,
