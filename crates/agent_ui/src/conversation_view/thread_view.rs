@@ -4310,8 +4310,12 @@ impl ThreadView {
                         v_flex()
                             .relative()
                             .w_full()
-                            .min_h_0()
-                            .when(fills_container, |this| this.flex_1())
+                            // `min_h_0` is only safe while this wrapper fills the
+                            // container and scrolls internally. Otherwise it lets the
+                            // editor shrink past its `min_lines` height, and since the
+                            // editor keeps painting its full content, the text ends up
+                            // drawn over the footer controls below.
+                            .when(fills_container, |this| this.min_h_0().flex_1())
                             .pt_1()
                             .pr_2p5()
                             .child(self.message_editor.clone())
@@ -4359,6 +4363,10 @@ impl ThreadView {
                                 h_flex()
                                     .min_w_0()
                                     .flex_wrap()
+                                    // Icon glyphs carry whitespace inside their SVG box,
+                                    // so they read as indented next to the text triggers
+                                    // once the footer wraps them onto separate rows.
+                                    .ml_neg_0p5()
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
@@ -4730,6 +4738,7 @@ impl ThreadView {
                     .id("split_token_usage")
                     .flex_shrink_0()
                     .gap_1p5()
+                    .pl(DynamicSpacing::Base04.rems(cx))
                     .mr_1()
                     .child(
                         h_flex()
@@ -4777,6 +4786,9 @@ impl ThreadView {
                 h_flex()
                     .id("circular_progress_tokens")
                     .mt_px()
+                    // Line the ring up with the select triggers, which get this
+                    // padding from `Button`, once the footer wraps onto rows.
+                    .pl(DynamicSpacing::Base04.rems(cx))
                     .mr_1()
                     .child(
                         CircularProgress::new(
@@ -6018,6 +6030,11 @@ impl ThreadView {
                 div()
                     .when_some(max_content_width, |this, max_w| this.max_w(max_w))
                     .w_full()
+                    // Without this, entries whose content can't wrap (long mention
+                    // pills, say) keep the container at its min-content width, and
+                    // `justify_center` then spills the overflow off *both* edges,
+                    // clipping the start of each line.
+                    .min_w_0()
                     .child(content),
             )
         };

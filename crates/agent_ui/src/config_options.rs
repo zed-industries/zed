@@ -573,6 +573,10 @@ impl Render for ConfigOptionSelector {
                     .id(ElementId::Name(
                         format!("config-option-{}", option_id.0).into(),
                     ))
+                    // Match the horizontal padding the select triggers get from
+                    // `Button`, so boolean options line up with them once the
+                    // footer wraps onto multiple rows.
+                    .pl(DynamicSpacing::Base04.rems(cx))
                     .pr_1()
                     .tooltip(tooltip)
                     .child(

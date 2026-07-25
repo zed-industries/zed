@@ -104,6 +104,10 @@ use workspace::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
+/// `MIN_PANEL_WIDTH` expressed in rems at the default 16px rem size. The message
+/// editor's footer controls are all sized in rems, so the floor has to grow with
+/// the UI font size or those controls overflow the panel.
+const MIN_PANEL_WIDTH_REMS: f32 = 18.75;
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
@@ -4988,7 +4992,18 @@ impl Panel for AgentPanel {
 
     fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => Some(MIN_PANEL_WIDTH),
+            DockPosition::Left | DockPosition::Right => {
+                // Agent threads render inside a `WithRemSize` using
+                // `agent_ui_font_size`, so the window's own rem size is the wrong
+                // yardstick for how wide the panel's controls actually are.
+                let rem_size = match self.visible_font_size() {
+                    WhichFontSize::AgentFont => {
+                        ThemeSettings::get_global(cx).agent_ui_font_size(cx)
+                    }
+                    WhichFontSize::None => window.rem_size(),
+                };
+                Some(MIN_PANEL_WIDTH.max(rem_size * MIN_PANEL_WIDTH_REMS))
+            }
             DockPosition::Bottom => None,
         }
     }
