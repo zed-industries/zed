@@ -458,6 +458,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub no_verify: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -2559,6 +2560,10 @@ impl GitRepository for RealGitRepository {
 
             if options.allow_empty {
                 cmd.arg("--allow-empty");
+            }
+
+            if options.no_verify {
+                cmd.arg("--no-verify");
             }
 
             if let Some((name, email)) = name_and_email {
@@ -5031,6 +5036,28 @@ mod tests {
 
         let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
         assert_eq!(message, "rewritten by commit-msg hook");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+        fs::write(repo_dir.path().join("file"), "three").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit without verification".into(),
+            None,
+            CommitOptions {
+                no_verify: true,
+                ..Default::default()
+            },
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("--no-verify should skip pre-commit and commit-msg hooks");
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "Commit without verification");
     }
 
     #[gpui::test]

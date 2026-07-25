@@ -14,7 +14,7 @@ use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
-use editor::{Editor, MultiBufferOffset, ToPoint};
+use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
@@ -29,9 +29,9 @@ use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId}
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use task::{DebugScenario, SharedTaskContext};
-use tree_sitter::{Query, StreamingIterator as _};
+
 use ui::{
     ButtonLike, ContextMenu, Divider, ElevationIndex, PopoverMenu, PopoverMenuHandle, SplitButton,
     Tab, TintColor, Tooltip, prelude::*,
@@ -1220,76 +1220,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Result<Task<Result<()>>> {
-        static LAST_ITEM_QUERY: LazyLock<Query> = LazyLock::new(|| {
-            Query::new(
-                &tree_sitter_json::LANGUAGE.into(),
-                "(document (array (object) @object))", // TODO: use "." anchor to only match last object
-            )
-            .expect("Failed to create LAST_ITEM_QUERY")
-        });
-        static EMPTY_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
-            Query::new(
-                &tree_sitter_json::LANGUAGE.into(),
-                "(document (array) @array)",
-            )
-            .expect("Failed to create EMPTY_ARRAY_QUERY")
-        });
-
-        let content = editor.text(cx);
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let syntax_tree = parser
-            .parse(&content, None)
-            .context("could not parse debug.json")?;
-        let mut matches = cursor.matches(
-            &LAST_ITEM_QUERY,
-            syntax_tree.root_node(),
-            content.as_bytes(),
-        );
-
-        let mut last_offset = None;
-        while let Some(mat) = matches.next() {
-            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
-                last_offset = Some(MultiBufferOffset(pos))
-            }
-        }
-        let mut edits = Vec::new();
-        let mut cursor_position = MultiBufferOffset(0);
-
-        if let Some(pos) = last_offset {
-            edits.push((pos..pos, format!(",\n{new_scenario}")));
-            cursor_position = pos + ",\n  ".len();
-        } else {
-            let mut matches = cursor.matches(
-                &EMPTY_ARRAY_QUERY,
-                syntax_tree.root_node(),
-                content.as_bytes(),
-            );
-
-            if let Some(mat) = matches.next() {
-                if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
-                    edits.push((
-                        MultiBufferOffset(pos)..MultiBufferOffset(pos),
-                        format!("\n{new_scenario}\n"),
-                    ));
-                    cursor_position = MultiBufferOffset(pos) + "\n  ".len();
-                }
-            } else {
-                edits.push((
-                    MultiBufferOffset(0)..MultiBufferOffset(0),
-                    format!("[\n{}\n]", new_scenario),
-                ));
-                cursor_position = MultiBufferOffset("[\n  ".len());
-            }
-        }
-        editor.transact(window, cx, |editor, window, cx| {
-            editor.edit(edits, cx);
-            let snapshot = editor.buffer().read(cx).read(cx);
-            let point = cursor_position.to_point(&snapshot);
-            drop(snapshot);
-            editor.go_to_singleton_buffer_point(point, window, cx);
-        });
+        tasks_ui::insert_task_json_into_editor(editor, new_scenario, window, cx)?;
         Ok(editor.save(SaveOptions::default(), project, window, cx))
     }
 

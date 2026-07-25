@@ -23,6 +23,9 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -55,7 +58,7 @@ jobs:
             echo "tag_suffix=$tag_suffix"
         } >> "$GITHUB_OUTPUT"
     - name: steps::install_cargo_edit
-      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
       with:
         tool: cargo-edit
     - id: bump-version

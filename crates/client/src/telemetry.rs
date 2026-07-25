@@ -95,6 +95,13 @@ pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
         .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
 });
 
+pub fn should_install_crash_handler(channel: ReleaseChannel) -> bool {
+    matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || (channel != ReleaseChannel::Dev && MINIDUMP_ENDPOINT.is_some())
+}
+
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
