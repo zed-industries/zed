@@ -19,7 +19,7 @@
 | A crash freezes the IDE and leaves the microcontroller's port locked up | Backend runs as a fully separate process; auto-inserted watchdog timer + rescue sequence provide fail-safety at both the process and hardware level |
 | Small code changes are hard to track cleanly in Git | Zed's built-in inline Git integration and branch-linked builds keep progress traceable end to end |
 
-Full architecture, scope, and roadmap: see the project RFC (in progress). The open technical challenges that need to be resolved before this is buildable are tracked in [RFC 0001](./docs/rfcs/0001-hybrid-architecture.md).
+Scope, developer-experience commitments, and what is deliberately out of scope: [RFC 0002](./docs/rfcs/0002-product-scope-and-dx.md). The open technical challenges that need to be resolved before this is buildable are tracked in [RFC 0001](./docs/rfcs/0001-hybrid-architecture.md).
 
 ### Architecture: the Rust/C boundary
 
