@@ -4773,6 +4773,18 @@ impl BackgroundScanner {
             let snapshot = &self.state.lock().await.snapshot;
 
             let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
+            // On Windows, creating or deleting a file directly inside `.git`
+            // updates the directory's last-write time, so the watcher reports a
+            // bare `.git` Changed event alongside the file's own event. When the
+            // file event is filtered out (e.g. git's transient `index.lock`), the
+            // bare event carries no information either, so acting on it would
+            // turn every ignored lock file into a git rescan. Since a rescan's
+            // own `git diff` can take `index.lock`, that feeds back into an
+            // infinite loop of rescans. So bare `.git` events are deferred here
+            // and only rescanned when nothing in the batch explains them; a
+            // standalone bare event (macOS coalescing) still triggers a rescan.
+            let mut bare_dot_git_abs_paths = Vec::new();
+            let mut dot_git_dirs_with_ignored_events = Vec::new();
 
             for (ix, event) in events.iter().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
@@ -4816,6 +4828,21 @@ impl BackgroundScanner {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );
+                        if !dot_git_dirs_with_ignored_events.contains(&dot_git_abs_path) {
+                            dot_git_dirs_with_ignored_events.push(dot_git_abs_path);
+                        }
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
+
+                    if is_dot_git {
+                        log::debug!(
+                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
+                            event.kind
+                        );
+                        if !bare_dot_git_abs_paths.contains(&dot_git_abs_path) {
+                            bare_dot_git_abs_paths.push(dot_git_abs_path);
+                        }
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
                     }
@@ -4825,15 +4852,6 @@ impl BackgroundScanner {
                             "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
                         );
                         dot_git_abs_paths.push(dot_git_abs_path);
-                    }
-
-                    if is_dot_git {
-                        log::debug!(
-                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
-                            event.kind
-                        );
-                        skip_ix(&mut ranges_to_drop, ix);
-                        continue;
                     }
 
                     // New directories can appear under the `refs` tree at any time, e.g. when a
@@ -4891,6 +4909,19 @@ impl BackgroundScanner {
                         work_dirs_needing_exclude_update
                             .push(repository.work_directory_abs_path.clone());
                     }
+                }
+            }
+
+            for dot_git_abs_path in bare_dot_git_abs_paths {
+                if dot_git_dirs_with_ignored_events.contains(&dot_git_abs_path) {
+                    log::debug!(
+                        "not reloading git repo at {dot_git_abs_path:?}: the bare .git event is explained by filtered events in the same batch"
+                    );
+                } else if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                    log::debug!(
+                        "detected update within git repo at {dot_git_abs_path:?}: bare .git directory event"
+                    );
+                    dot_git_abs_paths.push(dot_git_abs_path);
                 }
             }
 
