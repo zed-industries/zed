@@ -88,7 +88,10 @@ fn resolve_versions() -> (steps::NamedJob, ResolvedOutputs) {
         .id("versions")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
+        .with_permissions([(steps::TokenPermissions::Contents, Level::Read)])
+        .into();
     let versions_step = extract_versions();
     let next_version = StepOutput::new(&versions_step, "next_version");
     let pr_branch = StepOutput::new(&versions_step, "pr_branch");
@@ -134,7 +137,13 @@ fn bump_main(
         named::bash("cargo set-version -p zed --bump minor")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
+        .with_permissions([
+            (steps::TokenPermissions::Contents, Level::Write),
+            (steps::TokenPermissions::PullRequests, Level::Write),
+        ])
+        .into();
 
     named::job(
         Job::default()
@@ -175,7 +184,10 @@ fn create_preview_branch(
         named::bash("echo \"main_sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\"").id("main-sha")
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
+        .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
+        .into();
 
     let main_sha_step = get_main_sha();
     let main_sha = StepOutput::new(&main_sha_step, "main_sha");
@@ -225,7 +237,10 @@ fn promote_to_stable(
     versions_job: &steps::NamedJob,
     outputs: &ResolvedOutputs,
 ) -> steps::NamedJob {
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(steps::RepositoryTarget::current())
+        .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
+        .into();
 
     let read_version_step = named::bash(indoc::indoc! {r#"
             stable_version=$(script/get-crate-version zed)

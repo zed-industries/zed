@@ -203,10 +203,10 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
-            let parent = parent.display(PathStyle::Posix);
+            let parent = parent.display(PathStyle::Unix);
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
@@ -214,7 +214,7 @@ impl WslRemoteConnection {
         }
 
         let binary_exists_on_server = self
-            .run_wsl_command(&dst_path.display(PathStyle::Posix), &["version"])
+            .run_wsl_command(&dst_path.display(PathStyle::Unix), &["version"])
             .await
             .is_ok();
 
@@ -228,7 +228,7 @@ impl WslRemoteConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                &RelPath::unix(&format!(
+                &RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -239,11 +239,11 @@ impl WslRemoteConnection {
                 .await?;
             self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = match release_channel {
@@ -257,16 +257,16 @@ impl WslRemoteConnection {
 
         let tmp_path = format!(
             "{}.{}.gz",
-            dst_path.display(PathStyle::Posix),
+            dst_path.display(PathStyle::Unix),
             std::process::id()
         );
-        let tmp_path = RelPath::unix(&tmp_path).unwrap();
+        let tmp_path = RelPath::from_unix_str(&tmp_path).unwrap();
 
         self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
         self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
             .await?;
 
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn upload_file(
@@ -279,7 +279,7 @@ impl WslRemoteConnection {
         delegate.set_status(Some("Uploading remote server"), cx);
 
         if let Some(parent) = dst_path.parent() {
-            let parent = parent.display(PathStyle::Posix);
+            let parent = parent.display(PathStyle::Unix);
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
@@ -301,7 +301,7 @@ impl WslRemoteConnection {
         let cp = self.shell_kind.prepend_command_prefix("cp");
         self.run_wsl_command(
             &cp,
-            &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Posix)],
+            &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Unix)],
         )
         .await
         .map_err(|e| {
@@ -327,8 +327,8 @@ impl WslRemoteConnection {
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote server"), cx);
 
-        let tmp_path_str = tmp_path.display(PathStyle::Posix);
-        let dst_path_str = dst_path.display(PathStyle::Posix);
+        let tmp_path_str = tmp_path.display(PathStyle::Unix);
+        let dst_path_str = dst_path.display(PathStyle::Unix);
 
         // Build extraction script with proper error handling
         let script = if tmp_path_str.ends_with(".gz") {
@@ -379,7 +379,7 @@ impl RemoteConnection for WslRemoteConnection {
             }
         }
 
-        proxy_args.push(remote_binary_path.display(PathStyle::Posix).into_owned());
+        proxy_args.push(remote_binary_path.display(PathStyle::Unix).into_owned());
         proxy_args.push("proxy".to_owned());
         proxy_args.push("--identifier".to_owned());
         proxy_args.push(unique_identifier);
@@ -467,7 +467,7 @@ impl RemoteConnection for WslRemoteConnection {
 
         let shell_kind = self.shell_kind;
         let working_dir = working_dir
-            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
+            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Unix).to_string())
             .unwrap_or("~".to_string());
 
         let mut exec = String::from("exec env ");
@@ -538,7 +538,7 @@ impl RemoteConnection for WslRemoteConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        PathStyle::Posix
+        PathStyle::Unix
     }
 
     fn remote_platform(&self) -> RemotePlatform {

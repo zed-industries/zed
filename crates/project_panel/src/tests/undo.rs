@@ -1,15 +1,17 @@
 #![cfg(test)]
 
+use client::proto;
 use collections::HashSet;
 use fs::{FakeFs, Fs};
-use gpui::{Entity, VisualTestContext};
+use gpui::{App, BorrowAppContext, Entity, VisualTestContext};
 use project::Project;
 use serde_json::{Value, json};
+use settings::SettingsStore;
 use std::path::Path;
 use std::sync::Arc;
-use workspace::MultiWorkspace;
+use workspace::{MultiWorkspace, register_project_item};
 
-use crate::project_panel_tests::{self, find_project_entry, select_path};
+use crate::project_panel_tests::{self, TestProjectItemView, find_project_entry, select_path};
 use crate::{NewDirectory, NewFile, ProjectPanel, Redo, Rename, Trash, Undo};
 
 struct TestContext {
@@ -240,9 +242,19 @@ impl TestContext {
             .unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         let panel = workspace.update_in(&mut cx, ProjectPanel::new);
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<ProjectPanel>(window, cx);
+        });
+
         cx.run_until_parked();
 
         TestContext { panel, fs, cx }
+    }
+
+    fn update_app<R>(&mut self, update: impl FnOnce(&mut App) -> R) -> R {
+        self.cx.cx.update(update)
     }
 }
 
@@ -384,6 +396,37 @@ async fn trash_undo_redo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn trash_directory_undo_redo(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new_with_tree(
+        cx,
+        json!({
+            "a.txt": "",
+            "dir": {
+                "b.txt": "File B's Content",
+            },
+        }),
+    )
+    .await;
+    cx.assert_fs_state_is(&["a.txt", "dir/", "dir/b.txt"]);
+
+    cx.trash(&["dir"]).await;
+    cx.assert_fs_state_is(&["a.txt"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "dir/", "dir/b.txt"]);
+    assert_eq!(
+        cx.fs
+            .load(Path::new(&path("/workspace/dir/b.txt")))
+            .await
+            .unwrap(),
+        "File B's Content",
+    );
+
+    cx.redo().await;
+    cx.assert_fs_state_is(&["a.txt"]);
+}
+
+#[gpui::test]
 async fn trash_continues_when_one_entry_fails(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new_with_tree(
         cx,
@@ -403,4 +446,100 @@ async fn trash_continues_when_one_entry_fails(cx: &mut gpui::TestAppContext) {
 
     cx.undo().await;
     cx.assert_fs_state_is(&["0_dir/", "a.txt", "b.txt"]);
+}
+
+#[gpui::test]
+async fn record_via_collab(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    // Manually update the `UndoManager::is_via_collab` field in order to
+    // simulate a Project Panel's Undo Manager in a collab scenario, acting as a
+    // client.
+    cx.panel.update(&mut cx.cx, |panel, _cx| {
+        panel.undo_manager.set_is_via_collab(true);
+    });
+
+    // Even though the rename operation should succeed, no operation should be
+    // recorded so calling undo or redo should not update the filesystem state.
+    cx.rename("a.txt", "renamed.txt").await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+
+    cx.redo().await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
+}
+
+#[gpui::test]
+async fn undo_redo_unavailable_for_read_only_collab_guest(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+    let focus_handle = cx
+        .panel
+        .read_with(&cx.cx, |panel, _| panel.focus_handle.clone());
+
+    cx.cx.update(|window, _cx| {
+        assert!(window.is_action_available_in(&crate::Undo, &focus_handle));
+        assert!(window.is_action_available_in(&crate::Redo, &focus_handle));
+    });
+
+    // In order to simulate a read-only project, we mark it both as a collab
+    // session as well as being a guest, which only has read access.
+    // This is currently a bit redundant, seeing as these actions are already
+    // disabled in collab either way. However, we'll want to enable undo/redo in
+    // collab in the future and this test will ensure that, at that point, we
+    // continue to not allow undo/redo in read-only projects.
+    cx.panel.update(&mut cx.cx, |panel, cx| {
+        panel.project.update(cx, |project, cx| {
+            project.mark_as_collab_for_testing();
+            project.set_role(proto::ChannelRole::Guest, cx);
+        });
+
+        assert!(panel.project.read(cx).is_read_only(cx));
+        cx.notify();
+    });
+
+    cx.cx.update(|window, _cx| {
+        assert!(!window.is_action_available_in(&crate::Undo, &focus_handle));
+        assert!(!window.is_action_available_in(&crate::Redo, &focus_handle));
+    });
+}
+
+#[gpui::test]
+async fn excluded_create_is_not_recorded(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new_with_tree(
+        cx,
+        json!({
+            "a.txt": "",
+            "b.txt": ""
+        }),
+    )
+    .await;
+
+    cx.update_app(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![
+                    "**/token.secret".to_string(),
+                    "**/banana.secret".to_string(),
+                ]);
+            });
+        });
+
+        register_project_item::<TestProjectItemView>(cx);
+    });
+
+    cx.rename("a.txt", "renamed.txt").await;
+    cx.create_file("token.secret").await;
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt", "token.secret"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["b.txt", "a.txt", "token.secret"]);
+
+    cx.rename("a.txt", "renamed.txt").await;
+    cx.rename("b.txt", "banana.secret").await;
+    cx.assert_fs_state_is(&["renamed.txt", "token.secret", "banana.secret"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "token.secret", "banana.secret"]);
 }

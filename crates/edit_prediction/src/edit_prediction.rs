@@ -929,6 +929,17 @@ fn predict_edits_request_trigger_from_editor_trigger(
         EditPredictionRequestTrigger::PredictionPartiallyAccepted => {
             PredictEditsRequestTrigger::PredictionPartiallyAccepted
         }
+        EditPredictionRequestTrigger::EditorCreated => PredictEditsRequestTrigger::EditorCreated,
+        EditPredictionRequestTrigger::ProviderChanged => {
+            PredictEditsRequestTrigger::ProviderChanged
+        }
+        EditPredictionRequestTrigger::UserInfoChanged => {
+            PredictEditsRequestTrigger::UserInfoChanged
+        }
+        EditPredictionRequestTrigger::VimModeChanged => PredictEditsRequestTrigger::VimModeChanged,
+        EditPredictionRequestTrigger::SettingsChanged => {
+            PredictEditsRequestTrigger::SettingsChanged
+        }
         EditPredictionRequestTrigger::Other => PredictEditsRequestTrigger::Other,
     }
 }

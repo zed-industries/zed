@@ -68,7 +68,7 @@ static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed_server").unwrap());
     *CACHED
 }
 
@@ -76,7 +76,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed_wsl_server").unwrap());
     *CACHED
 }
 
@@ -496,21 +496,21 @@ pub fn local_vscode_folder_name() -> &'static str {
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/settings.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/settings.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/tasks.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/tasks.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".vscode/tasks.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".vscode/tasks.json").unwrap());
     *CACHED
 }
 
@@ -526,14 +526,14 @@ pub fn task_file_name() -> &'static str {
 /// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/debug.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".zed/debug.json").unwrap());
     *CACHED
 }
 
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".vscode/launch.json").unwrap());
+        LazyLock::new(|| RelPath::from_unix_str(".vscode/launch.json").unwrap());
     *CACHED
 }
 

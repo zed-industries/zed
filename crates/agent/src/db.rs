@@ -281,7 +281,9 @@ impl DbThread {
                                 name: tool_use.name.into(),
                                 raw_input: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
-                                input: tool_use.input,
+                                input: language_model::LanguageModelToolUseInput::Json(
+                                    tool_use.input,
+                                ),
                                 is_input_complete: true,
                                 thought_signature: None,
                             },
