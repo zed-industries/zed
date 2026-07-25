@@ -454,10 +454,6 @@ impl CosmicTextSystemState {
 
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-        // `ShapeLine` panics when the text it is given resolves to multiple bidi
-        // paragraphs that do not share a base direction, so a line containing a
-        // paragraph separator is shaped one paragraph at a time. Lines without one
-        // - virtually all of them - take the single-pass path unchanged.
         if contains_paragraph_separator(text) {
             self.layout_line_with_separators(text, font_size, font_runs)
         } else {
@@ -465,18 +461,17 @@ impl CosmicTextSystemState {
         }
     }
 
-    /// Shapes each bidi paragraph of `text` separately and places them
-    /// left-to-right in logical order. Paragraph separators are shaped as their
-    /// own slices so every byte of `text` is still covered by a glyph, which
-    /// keeps byte offsets and hit testing exact.
     fn layout_line_with_separators(
         &mut self,
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
     ) -> LineLayout {
-        let mut runs = Vec::new();
-        let mut line = Segment::default();
+        let mut layout = LineLayout {
+            font_size,
+            len: text.len(),
+            ..Default::default()
+        };
         let mut paragraph_start = 0;
 
         for (separator_start, separator) in text
@@ -489,16 +484,14 @@ impl CosmicTextSystemState {
                 paragraph_start..separator_start,
                 font_size,
                 font_runs,
-                &mut runs,
-                &mut line,
+                &mut layout,
             );
             self.shape_segment(
                 text,
                 separator_start..separator_end,
                 font_size,
                 font_runs,
-                &mut runs,
-                &mut line,
+                &mut layout,
             );
             paragraph_start = separator_end;
         }
@@ -508,30 +501,19 @@ impl CosmicTextSystemState {
             paragraph_start..text.len(),
             font_size,
             font_runs,
-            &mut runs,
-            &mut line,
+            &mut layout,
         );
 
-        LineLayout {
-            font_size,
-            width: line.width,
-            ascent: line.ascent,
-            descent: line.descent,
-            runs,
-            len: text.len(),
-        }
+        layout
     }
 
-    /// Shapes `text[range]` and appends it to `runs` at the width accumulated so
-    /// far, growing `line` to cover the new segment.
     fn shape_segment(
         &mut self,
         text: &str,
         range: Range<usize>,
         font_size: Pixels,
         font_runs: &[FontRun],
-        runs: &mut Vec<ShapedRun>,
-        line: &mut Segment,
+        layout: &mut LineLayout,
     ) {
         if range.is_empty() {
             return;
@@ -544,19 +526,22 @@ impl CosmicTextSystemState {
         for mut run in segment.runs {
             for glyph in &mut run.glyphs {
                 glyph.index += range.start;
-                glyph.position.x += line.width;
+                glyph.position.x += layout.width;
             }
 
-            // Keep runs coalesced across the segment boundary.
-            match runs.last_mut().filter(|last| last.font_id == run.font_id) {
+            match layout
+                .runs
+                .last_mut()
+                .filter(|last| last.font_id == run.font_id)
+            {
                 Some(last) => last.glyphs.append(&mut run.glyphs),
-                None => runs.push(run),
+                None => layout.runs.push(run),
             }
         }
 
-        line.width += segment.width;
-        line.ascent = line.ascent.max(segment.ascent);
-        line.descent = line.descent.max(segment.descent);
+        layout.width += segment.width;
+        layout.ascent = layout.ascent.max(segment.ascent);
+        layout.descent = layout.descent.max(segment.descent);
     }
 
     fn layout_line_no_separators(
@@ -730,33 +715,11 @@ impl CosmicTextSystemState {
     }
 }
 
-/// Width and vertical metrics of a shaped span of text: one paragraph or
-/// separator on its own, or a whole line once its segments are accumulated.
-#[derive(Default)]
-struct Segment {
-    width: Pixels,
-    ascent: Pixels,
-    descent: Pixels,
-}
-
-/// `true` for code points of Unicode `Bidi_Class=B`.
-///
-/// [`unicode_bidi::BidiInfo`] begins a new paragraph at each of these, and
-/// [`ShapeLine`] asserts that every paragraph in the text it is given resolves to
-/// the same base direction. Splitting on exactly this predicate is what keeps
-/// that assertion satisfiable, so it is derived from the same crate `cosmic-text`
-/// uses rather than from a hand-written list.
 #[inline(always)]
 fn is_paragraph_separator(character: char) -> bool {
     unicode_bidi::bidi_class(character) == unicode_bidi::BidiClass::B
 }
 
-/// `true` when `text` holds a code point that would start a new bidi paragraph.
-///
-/// The ASCII separators are found with a byte scan, because a byte below `0x80`
-/// is always a standalone code point in UTF-8 and so cannot be matched inside a
-/// multi-byte sequence. That keeps the overwhelmingly common all-ASCII line off
-/// the per-character `bidi_class` table lookup.
 fn contains_paragraph_separator(text: &str) -> bool {
     if text
         .bytes()
@@ -768,7 +731,6 @@ fn contains_paragraph_separator(text: &str) -> bool {
     !text.is_ascii() && text.chars().any(is_paragraph_separator)
 }
 
-/// Restricts `font_runs` to `range`, returning runs relative to `range.start`.
 fn clip_font_runs(font_runs: &[FontRun], range: Range<usize>) -> SmallVec<[FontRun; 4]> {
     let mut clipped = SmallVec::new();
     let mut offs = 0;
