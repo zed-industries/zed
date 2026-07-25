@@ -47,6 +47,33 @@ pub(crate) enum AgentContextSelection {
     Terminal(Vec<String>),
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct AgentContextSelections {
+    editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+    terminal_selections: Vec<String>,
+}
+
+impl AgentContextSelections {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.editor_selections.is_empty() && self.terminal_selections.is_empty()
+    }
+}
+
+impl From<AgentContextSelection> for AgentContextSelections {
+    fn from(selection: AgentContextSelection) -> Self {
+        match selection {
+            AgentContextSelection::Editor(editor_selections) => Self {
+                editor_selections,
+                terminal_selections: Vec::new(),
+            },
+            AgentContextSelection::Terminal(terminal_selections) => Self {
+                editor_selections: Vec::new(),
+                terminal_selections,
+            },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum AgentContextSource {
     Editor(WeakEntity<Editor>),
@@ -137,6 +164,40 @@ fn terminal_panel_dock_is_open(workspace: &Workspace, cx: &App) -> bool {
     }
     let position = TerminalSettings::get_global(cx).dock.into();
     workspace.dock_at_position(position).read(cx).is_open()
+}
+
+pub(crate) fn available_context_selections(
+    workspace: &Workspace,
+    include_current_line: bool,
+    cx: &mut App,
+) -> AgentContextSelections {
+    let editor_selections = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx))
+        .map(|editor| editor_selection_ranges(&editor, include_current_line, cx))
+        .unwrap_or_default();
+
+    let mut terminal_selections = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+        .and_then(|terminal_view| terminal_view_selection(&terminal_view, cx))
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    if terminal_panel_dock_is_open(workspace, cx)
+        && let Some(panel) = workspace.panel::<TerminalPanel>(cx)
+    {
+        for selection in panel.read(cx).terminal_selections(cx) {
+            if !terminal_selections.contains(&selection) {
+                terminal_selections.push(selection);
+            }
+        }
+    }
+
+    AgentContextSelections {
+        editor_selections,
+        terminal_selections,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,11 +585,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 group: None,
             }),
             PromptContextEntry::Action(action) => {
-                let selection = workspace.update(cx, |workspace, cx| {
-                    AgentContextSource::from_active(workspace, cx)?
-                        .read_selection(workspace, false, cx)
+                let selections = workspace.update(cx, |workspace, cx| {
+                    available_context_selections(workspace, false, cx)
                 });
-                Self::completion_for_action(action, source_range, editor, mention_set, selection)
+                Self::completion_for_action(action, source_range, editor, mention_set, selections)
             }
         }
     }
@@ -815,27 +875,19 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        selection: Option<AgentContextSelection>,
+        selections: AgentContextSelections,
     ) -> Option<Completion> {
+        if selections.is_empty() {
+            return None;
+        }
+
         let (new_text, on_action) = match action {
-            PromptContextAction::AddSelections => match selection? {
-                AgentContextSelection::Editor(editor_selections) => {
-                    completion_text_for_editor_selections(
-                        source_range.clone(),
-                        editor,
-                        mention_set,
-                        editor_selections,
-                    )
-                }
-                AgentContextSelection::Terminal(terminal_selections) => {
-                    completion_text_for_terminal_selections(
-                        source_range.clone(),
-                        editor,
-                        mention_set,
-                        terminal_selections,
-                    )
-                }
-            },
+            PromptContextAction::AddSelections => completion_text_for_selections(
+                source_range.clone(),
+                editor,
+                mention_set,
+                selections,
+            ),
         };
 
         Some(Completion {
@@ -1361,12 +1413,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
         }
 
-        let has_active_selection = workspace.update(cx, |workspace, cx| {
-            AgentContextSource::from_active(workspace, cx)
-                .and_then(|source| source.read_selection(workspace, false, cx))
-                .is_some()
+        let has_selection = workspace.update(cx, |workspace, cx| {
+            !available_context_selections(workspace, false, cx).is_empty()
         });
-        if has_active_selection {
+        if has_selection {
             entries.push(PromptContextEntry::Action(
                 PromptContextAction::AddSelections,
             ));
@@ -2698,15 +2748,17 @@ fn editor_selection_ranges(
 
 type ConfirmCallback = Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>;
 
-fn completion_text_for_editor_selections(
+fn completion_text_for_selections(
     source_range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     mention_set: WeakEntity<MentionSet>,
-    editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+    selections: AgentContextSelections,
 ) -> (String, ConfirmCallback) {
     const EDITOR_PLACEHOLDER: &str = "selection ";
+    const TERMINAL_PLACEHOLDER: &str = "terminal ";
 
-    let selections = editor_selections
+    let editor_selections = selections
+        .editor_selections
         .into_iter()
         .enumerate()
         .map(|(ix, (buffer, range))| {
@@ -2718,48 +2770,9 @@ fn completion_text_for_editor_selections(
         })
         .collect::<Vec<_>>();
 
-    let new_text = EDITOR_PLACEHOLDER.repeat(selections.len());
-
-    let callback: ConfirmCallback = Arc::new({
-        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
-            let editor = editor.clone();
-            let selections = selections.clone();
-            let mention_set = mention_set.clone();
-            let source_range = source_range.clone();
-            window.defer(cx, move |window, cx| {
-                if let Some(editor) = editor.upgrade()
-                    && !selections.is_empty()
-                {
-                    mention_set
-                        .update(cx, |store, cx| {
-                            store.confirm_mention_for_selection(
-                                source_range.clone(),
-                                selections,
-                                editor.clone(),
-                                window,
-                                cx,
-                            )
-                        })
-                        .ok();
-                }
-            });
-            false
-        }
-    });
-
-    (new_text, callback)
-}
-
-fn completion_text_for_terminal_selections(
-    source_range: Range<Anchor>,
-    editor: WeakEntity<Editor>,
-    mention_set: WeakEntity<MentionSet>,
-    terminal_selections: Vec<String>,
-) -> (String, ConfirmCallback) {
-    const TERMINAL_PLACEHOLDER: &str = "terminal ";
-
-    let mut new_text = String::new();
-    let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+    let mut new_text = EDITOR_PLACEHOLDER.repeat(editor_selections.len());
+    let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = selections
+        .terminal_selections
         .into_iter()
         .map(|text| {
             let start = new_text.len();
@@ -2771,6 +2784,7 @@ fn completion_text_for_terminal_selections(
     let callback: ConfirmCallback = Arc::new({
         move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
             let editor = editor.clone();
+            let editor_selections = editor_selections.clone();
             let mention_set = mention_set.clone();
             let source_range = source_range.clone();
             let terminal_ranges = terminal_ranges.clone();
@@ -2778,6 +2792,21 @@ fn completion_text_for_terminal_selections(
                 let Some(editor) = editor.upgrade() else {
                     return;
                 };
+
+                if !editor_selections.is_empty() {
+                    mention_set
+                        .update(cx, |store, cx| {
+                            store.confirm_mention_for_selection(
+                                source_range.clone(),
+                                editor_selections,
+                                editor.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                }
+
                 for (terminal_text, terminal_range) in terminal_ranges {
                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                     let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
@@ -3416,5 +3445,112 @@ mod tests {
             // fallback is suppressed and read_selection should return None.
             assert!(source.read_selection(workspace, false, cx).is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_available_context_selections_include_editor_and_terminal_panel_selections(
+        cx: &mut TestAppContext,
+    ) {
+        use editor::Editor;
+        use project::Project;
+        use serde_json::json;
+        use util::path;
+        use workspace::{AppState, MultiWorkspace};
+
+        crate::conversation_view::tests::init_test(cx);
+        cx.update(terminal_view::init);
+
+        let app_state = cx.update(AppState::test);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "a.txt": "abcdef" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TerminalPanel::test_new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<TerminalPanel>(window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        terminal_panel.update_in(cx, |panel, window, cx| {
+            let settings = TerminalSettings::get_global(cx).clone();
+            let path_style = project.read(cx).path_style(cx);
+            let builder = terminal::TerminalBuilder::new_display_only(
+                settings.cursor_shape,
+                settings.alternate_scroll,
+                settings.max_scroll_history_lines,
+                1,
+                cx.background_executor(),
+                path_style,
+            )
+            .expect("failed to create display-only terminal");
+            let terminal = cx.new(|cx| builder.subscribe(cx));
+            let terminal_view = cx.new(|cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            });
+            let pane = panel
+                .panes()
+                .into_iter()
+                .next()
+                .expect("terminal panel should have a pane")
+                .clone();
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(terminal_view), true, false, None, window, cx);
+            });
+        });
+
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("abcdef", None, false, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor =
+                    Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([
+                        editor::MultiBufferOffset(0)..editor::MultiBufferOffset(3)
+                    ]);
+                });
+                editor
+            });
+            workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+        });
+
+        terminal_panel.update(cx, |panel, cx| {
+            let terminal_view = panel
+                .panes()
+                .iter()
+                .flat_map(|pane| pane.read(cx).items())
+                .find_map(|item| item.downcast::<TerminalView>())
+                .expect("terminal panel should contain a terminal view");
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.terminal().update(cx, |terminal, _| {
+                    terminal.last_content.selection_text = Some("terminal output".to_string());
+                });
+            });
+        });
+
+        let selections = workspace.update(cx, |workspace, cx| {
+            available_context_selections(workspace, false, cx)
+        });
+
+        assert_eq!(selections.editor_selections.len(), 1);
+        assert_eq!(selections.terminal_selections, vec!["terminal output"]);
     }
 }

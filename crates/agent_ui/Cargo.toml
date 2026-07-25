@@ -151,3 +151,4 @@ vim.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
+terminal_view = { workspace = true, features = ["test-support"] }
