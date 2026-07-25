@@ -523,7 +523,7 @@ impl CosmicTextSystemState {
         let segment =
             self.layout_line_no_separators(&text[range.clone()], font_size, &segment_font_runs);
 
-        let mut segment_runs = segment.runs.clone();
+        let mut segment_runs = segment.runs;
         for run in &mut segment_runs {
             for glyph in &mut run.glyphs {
                 glyph.index += range.start;
