@@ -515,6 +515,27 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
+#[derive(Clone)]
+struct DraggedProjectGroup {
+    key: ProjectGroupKey,
+    label: SharedString,
+    index: usize,
+}
+
+impl Render for DraggedProjectGroup {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .h(Tab::content_height(cx))
+            .px_2()
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_sm()
+            .shadow_md()
+            .child(Label::new(self.label.clone()))
+    }
+}
+
 /// Identity-and-layout key for a [`ListEntry`] used to preserve measured list items
 /// across rebuilds. Equal shapes must render to the same height; add any new
 /// height-affecting state here.
@@ -2322,6 +2343,20 @@ impl Sidebar {
 
         let key_for_toggle = key.clone();
         let key_for_focus = key.clone();
+        let drag_label = label.clone();
+        // Sticky headers are a scroll artifact rather than a real list position, and
+        // while a filter is active the visible order isn't the stored order, so a drop
+        // index would be misleading.
+        let project_group_index = (!is_sticky && !has_filter)
+            .then(|| {
+                self.multi_workspace
+                    .read_with(cx, |multi_workspace, _| {
+                        multi_workspace.reorderable_project_group_index(key)
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .flatten();
 
         // The fade gradient renders as a visible patch on transparent windows,
         // so truncate the label instead.
@@ -2474,6 +2509,44 @@ impl Sidebar {
                     cx.stop_propagation();
                     menu_handle.toggle(window, cx);
                 }
+            })
+            .when_some(project_group_index, |this, target_index| {
+                let multi_workspace = self.multi_workspace.clone();
+                let target_key = key.clone();
+                let dragged = DraggedProjectGroup {
+                    key: key.clone(),
+                    label: drag_label.clone(),
+                    index: target_index,
+                };
+                this.on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+                    .drag_over::<DraggedProjectGroup>(
+                        move |header, dragged: &DraggedProjectGroup, _, cx| {
+                            if dragged.index == target_index {
+                                return header;
+                            }
+
+                            let header = header
+                                .bg(cx.theme().colors().drop_target_background)
+                                .border_0()
+                                .border_color(cx.theme().colors().drop_target_border);
+                            if dragged.index < target_index {
+                                header.border_b_2()
+                            } else {
+                                header.border_t_2()
+                            }
+                        },
+                    )
+                    .on_drop(move |dragged: &DraggedProjectGroup, _, cx| {
+                        multi_workspace
+                            .update(cx, |multi_workspace, cx| {
+                                multi_workspace.move_project_group_to(
+                                    &dragged.key,
+                                    &target_key,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
             })
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {

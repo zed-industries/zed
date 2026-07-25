@@ -903,6 +903,50 @@ impl MultiWorkspace {
         true
     }
 
+    /// Returns the index of the given project group, but only when reordering is
+    /// meaningful (i.e. there is more than one group). Mirrors the gating used for
+    /// the "Move Up"/"Move Down" menu entries.
+    pub fn reorderable_project_group_index(&self, key: &ProjectGroupKey) -> Option<usize> {
+        if self.project_groups.len() < 2 {
+            return None;
+        }
+        self.project_groups
+            .iter()
+            .position(|group| group.key == *key)
+    }
+
+    pub fn move_project_group_to(
+        &mut self,
+        key: &ProjectGroupKey,
+        target: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        let Some(target_index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *target)
+        else {
+            return false;
+        };
+        if index == target_index {
+            return false;
+        }
+
+        let group = self.project_groups.remove(index);
+        self.project_groups.insert(target_index, group);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
     pub fn workspaces_for_project_group(
         &self,
         key: &ProjectGroupKey,
