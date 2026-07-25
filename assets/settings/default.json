@@ -13,16 +13,18 @@
   },
   "icon_theme": "Zed (Default)",
   // The name of a base set of key bindings to use.
-  // This setting can take six values, each named after another
-  // text editor:
+  // This setting can take the following values:
   //
-  // 1. "VSCode"
-  // 2. "Atom"
-  // 3. "JetBrains"
-  // 4. "None"
+  // 1. "Zed"
+  // 2. "VSCode"
+  // 3. "Atom"
+  // 4. "JetBrains"
   // 5. "SublimeText"
   // 6. "TextMate"
-  "base_keymap": "VSCode",
+  // 7. "Emacs"
+  // 8. "Cursor"
+  // 9. "None"
+  "base_keymap": "Zed",
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.
@@ -2342,7 +2344,7 @@
       },
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "!phpantom", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -2561,6 +2563,11 @@
     //
     // Default: 120
     "request_timeout": 120,
+    // The maximum line length a buffer may contain before language server features are disabled
+    // for the entire buffer.
+    //
+    // Default: 20000
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -2693,7 +2700,7 @@
   "windows": {
     "languages": {
       "PHP": {
-        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."],
+        "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."],
       },
     },
   },

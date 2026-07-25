@@ -5495,18 +5495,17 @@ pub mod tests {
                 "Newly opened editor should have the correct text with hints",
             );
         });
-        project.update(cx, |_, cx| {
-            cx.emit(project::Event::RefreshInlayHints {
-                server_id: fake_server.server.server_id(),
-                request_id: Some(1),
-            });
-        });
+        fake_server
+            .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await
+            .into_response()
+            .unwrap();
         cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         assert_eq!(
             requests_count.load(atomic::Ordering::Acquire),
             5,
-            "After a simulated server refresh request, we should have sent another request",
+            "After a server refresh request, we should have sent another request",
         );
 
         perform_search(search_view, "let ", cx);
