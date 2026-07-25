@@ -1291,6 +1291,7 @@ impl EditorElement {
         non_visible_cursors: bool,
         right_margin: Pixels,
         editor_width: Pixels,
+        show_vertical_scrollbar: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
@@ -1358,8 +1359,7 @@ impl EditorElement {
             ScrollbarAxes {
                 horizontal: scrollbar_settings.axes.horizontal
                     && self.editor.read(cx).show_scrollbars.horizontal,
-                vertical: scrollbar_settings.axes.vertical
-                    && self.editor.read(cx).show_scrollbars.vertical,
+                vertical: show_vertical_scrollbar,
             },
             scrollbar_layout_information,
             content_offset,
@@ -1386,19 +1386,6 @@ impl EditorElement {
         let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
-
-        if minimap_settings.on_active_editor() {
-            let active_editor = self.editor.read(cx).workspace().and_then(|ws| {
-                ws.read(cx)
-                    .active_pane()
-                    .read(cx)
-                    .active_item()
-                    .and_then(|i| i.act_as::<Editor>(cx))
-            });
-            if active_editor.is_some_and(|e| e != self.editor) {
-                return None;
-            }
-        }
 
         if !snapshot.mode.is_full()
             || minimap_width.is_zero()
@@ -1532,6 +1519,20 @@ impl EditorElement {
     ) -> Option<Pixels> {
         if minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown {
             return None;
+        }
+
+        if minimap_settings.on_active_editor() {
+            let active_editor = self.editor.read(cx).workspace().and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.act_as::<Editor>(cx))
+            });
+            if active_editor.is_some_and(|editor| editor != self.editor) {
+                return None;
+            }
         }
 
         let minimap_font_size = self.editor.read_with(cx, |editor, cx| {
@@ -8017,11 +8018,6 @@ impl Element for EditorElement {
 
                     let settings = EditorSettings::get_global(cx);
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
-                    let vertical_scrollbar_width = (scrollbars_shown
-                        && settings.scrollbar.axes.vertical
-                        && self.editor.read(cx).show_scrollbars.vertical)
-                        .then_some(style.scrollbar_width)
-                        .unwrap_or_default();
                     let minimap_width = self
                         .get_minimap_width(
                             &settings.minimap,
@@ -8032,6 +8028,13 @@ impl Element for EditorElement {
                             rem_size,
                             cx,
                         )
+                        .unwrap_or_default();
+                    let show_vertical_scrollbar = scrollbars_shown
+                        && settings.scrollbar.axes.vertical
+                        && self.editor.read(cx).show_scrollbars.vertical
+                        && minimap_width.is_zero();
+                    let vertical_scrollbar_width = show_vertical_scrollbar
+                        .then_some(style.scrollbar_width)
                         .unwrap_or_default();
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
@@ -9037,6 +9040,7 @@ impl Element for EditorElement {
                         non_visible_cursors,
                         right_margin,
                         editor_width,
+                        show_vertical_scrollbar,
                         window,
                         cx,
                     );
