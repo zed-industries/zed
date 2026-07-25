@@ -458,6 +458,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub no_verify: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -1013,6 +1014,10 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Only used to serve `proto::RunGitHook` requests from older remote clients;
+    /// new code lets `git commit` run hooks itself.
+    ///
+    /// TODO: remove together with `proto::RunGitHook` (see the deprecation note in git.proto).
     fn run_hook(
         &self,
         hook: RunHook,
@@ -1105,6 +1110,7 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
@@ -1187,6 +1193,13 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+#[derive(Clone, Copy)]
+pub enum DiffStatType {
+    HeadToIndex,
+    HeadToWorktree,
+    IndexToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -1517,7 +1530,7 @@ impl GitRepository for RealGitRepository {
                 let change = change?;
                 let path = change.path;
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Some(rel_path) = RelPath::unix(path).log_err() else {
+                let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
                     continue;
                 };
 
@@ -2329,6 +2342,7 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
@@ -2337,12 +2351,13 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match diff {
+                    DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
+                    DiffStatType::HeadToWorktree => args.push("HEAD".into()),
+                    DiffStatType::IndexToWorktree => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(
@@ -2532,7 +2547,6 @@ impl GitRepository for RealGitRepository {
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
@@ -2546,6 +2560,10 @@ impl GitRepository for RealGitRepository {
 
             if options.allow_empty {
                 cmd.arg("--allow-empty");
+            }
+
+            if options.no_verify {
+                cmd.arg("--no-verify");
             }
 
             if let Some((name, email)) = name_and_email {
@@ -3744,6 +3762,16 @@ async fn run_git_command(
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force");
+
+        if !env.contains_key("GIT_CONFIG_COUNT")
+            && let Some(gpg_wrapper) = ask_pass.gpg_wrapper_path()
+        {
+            command
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "gpg.program")
+                .env("GIT_CONFIG_VALUE_0", gpg_wrapper);
+        }
+
         #[cfg(target_os = "windows")]
         command.env("ZED_ASKPASS_SOCKET", ask_pass.socket_path());
         let git_process = command.spawn()?;
@@ -3757,12 +3785,15 @@ async fn run_askpass_command(
     git_process: util::command::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
     select_biased! {
-        result = ask_pass.run().fuse() => {
+        // Git can legitimately run long without prompting (e.g. large fetches,
+        // hooks), so completion is determined by the process itself.
+        result = ask_pass.run(None).fuse() => {
             match result {
                 AskPassResult::CancelledByUser => {
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
+                    // Unreachable since no timeout is passed to run()
                     Err(anyhow!("Connecting to host timed out"))?
                 }
             }
@@ -3793,7 +3824,7 @@ impl std::fmt::Debug for RepoPath {
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
-        let rel_path = RelPath::unix(s.as_ref())?;
+        let rel_path = RelPath::from_unix_str(s.as_ref())?;
         Ok(Self::from_rel_path(rel_path))
     }
 
@@ -3803,7 +3834,7 @@ impl RepoPath {
     }
 
     pub fn from_proto(proto: &str) -> Result<Self> {
-        let rel_path = RelPath::from_proto(proto)?;
+        let rel_path = RelPath::from_unix_str(proto)?.into();
         Ok(Self(rel_path))
     }
 
@@ -3822,7 +3853,7 @@ impl RepoPath {
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
-    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
+    RepoPath(RelPath::from_unix_str(s.as_ref()).unwrap().into())
 }
 
 impl AsRef<Arc<RelPath>> for RepoPath {
@@ -4924,6 +4955,109 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_runs_git_hooks(cx: &mut TestAppContext) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let hooks_dir = repo_dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let write_hook = |name: &str, contents: &str| {
+            let path = hooks_dir.join(name);
+            fs::write(&path, contents).unwrap();
+            fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+
+        fs::write(repo_dir.path().join("file"), "one").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        // Hooks must not run for untrusted repositories.
+        repo.commit(
+            "Commit in untrusted repo".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("failing pre-commit hook should be skipped in untrusted repos");
+
+        repo.set_trusted(true);
+
+        fs::write(repo_dir.path().join("file"), "two").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit blocked by hook".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect_err("failing pre-commit hook should abort the commit");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 0\n");
+        write_hook(
+            "commit-msg",
+            "#!/bin/sh\necho 'rewritten by commit-msg hook' > \"$1\"\n",
+        );
+
+        repo.commit(
+            "Original message".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "rewritten by commit-msg hook");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+        fs::write(repo_dir.path().join("file"), "three").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit without verification".into(),
+            None,
+            CommitOptions {
+                no_verify: true,
+                ..Default::default()
+            },
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("--no-verify should skip pre-commit and commit-msg hooks");
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "Commit without verification");
     }
 
     #[gpui::test]

@@ -36,8 +36,10 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError,
-    popup::PopupOptions, px, size,
+    WindowDecorations, WindowKind, WindowParams,
+    layer_shell::{Anchor, LayerShellNotSupportedError},
+    popup::PopupOptions,
+    px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
@@ -183,12 +185,12 @@ impl WaylandSurfaceState {
             }
 
             if let Some(exclusive_edge) = options.exclusive_edge {
-                layer_surface
-                    .set_exclusive_edge(super::layer_shell::wayland_anchor(exclusive_edge));
+                Self::apply_exclusive_edge(&layer_surface, options.anchor, exclusive_edge);
             }
 
             return Ok(WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
                 layer_surface,
+                anchor: options.anchor,
             }));
         }
 
@@ -298,6 +300,7 @@ pub struct WaylandXdgSurfaceState {
 
 pub struct WaylandLayerSurfaceState {
     layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    anchor: Anchor,
 }
 
 pub struct WaylandPopupSurfaceState {
@@ -452,6 +455,49 @@ impl WaylandSurfaceState {
         }
     }
 
+    fn set_exclusive_zone(&self, zone: i32) -> bool {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) =
+            self
+        {
+            layer_surface.set_exclusive_zone(zone);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// An exclusive edge must be a single edge that the surface is anchored to,
+    /// otherwise the compositor raises a fatal `invalid_exclusive_edge` protocol
+    /// error. An invalid edge is logged and ignored. Returns whether it applied.
+    fn apply_exclusive_edge(
+        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        anchor: Anchor,
+        edge: Anchor,
+    ) -> bool {
+        if edge.bits().count_ones() == 1 && anchor.contains(edge) {
+            layer_surface.set_exclusive_edge(super::layer_shell::wayland_anchor(edge));
+            true
+        } else {
+            log::warn!(
+                "ignoring exclusive edge {edge:?}: must be a single edge of the surface anchor {anchor:?}"
+            );
+            false
+        }
+    }
+
+    fn set_exclusive_edge(&self, edge: Anchor) -> bool {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+            layer_surface,
+            anchor,
+            ..
+        }) = self
+        {
+            Self::apply_exclusive_edge(layer_surface, *anchor, edge)
+        } else {
+            false
+        }
+    }
+
     fn destroy(&mut self) {
         match self {
             WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
@@ -470,7 +516,7 @@ impl WaylandSurfaceState {
                 toplevel.destroy();
                 xdg_surface.destroy();
             }
-            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface }) => {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
                 layer_surface.destroy();
             }
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState {
@@ -1533,7 +1579,7 @@ impl PlatformWindow for WaylandWindow {
             // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
             let serial = state.client.get_serial(SerialKind::MousePress);
             token.set_app_id(app_id);
-            token.set_serial(serial, &state.globals.seat);
+            token.set_serial(serial.as_raw(), &state.globals.seat);
             token.set_surface(&state.surface);
             token.commit();
         }
@@ -1713,7 +1759,7 @@ impl PlatformWindow for WaylandWindow {
         if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel.show_window_menu(
                 &state.globals.seat,
-                serial,
+                serial.as_raw(),
                 f32::from(position.x) as i32,
                 f32::from(position.y) as i32,
             );
@@ -1724,7 +1770,7 @@ impl PlatformWindow for WaylandWindow {
         let state = self.borrow();
         let serial = state.client.get_serial(SerialKind::MousePress);
         if let Some(toplevel) = state.surface_state.toplevel() {
-            toplevel._move(&state.globals.seat, serial);
+            toplevel._move(&state.globals.seat, serial.as_raw());
         }
     }
 
@@ -1733,9 +1779,30 @@ impl PlatformWindow for WaylandWindow {
         if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel.resize(
                 &state.globals.seat,
-                state.client.get_serial(SerialKind::MousePress),
+                state.client.get_serial(SerialKind::MousePress).as_raw(),
                 edge.to_xdg(),
             )
+        }
+    }
+
+    fn set_exclusive_zone(&self, zone: Pixels) {
+        let state = self.borrow();
+        if state
+            .surface_state
+            .set_exclusive_zone(f32::from(zone) as i32)
+        {
+            // Commit to apply it immediately, otherwise it only takes effect
+            // on the next frame.
+            state.surface.commit();
+        }
+    }
+
+    fn set_exclusive_edge(&self, edge: Anchor) {
+        let state = self.borrow();
+        if state.surface_state.set_exclusive_edge(edge) {
+            // Commit to apply it immediately, otherwise it only takes effect
+            // on the next frame.
+            state.surface.commit();
         }
     }
 

@@ -1095,6 +1095,48 @@ async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_action_include_ignored_param(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let cases = [
+        (None, Some(true), Some(true)),
+        (None, Some(false), Some(false)),
+        (None, None, None),
+        (Some(true), Some(false), Some(false)),
+        (Some(false), Some(true), Some(true)),
+        (Some(true), None, Some(true)),
+    ];
+    for (setting, action_param, expected) in cases {
+        cx.update(|_, cx| {
+            let settings = *FileFinderSettings::get_global(cx);
+            FileFinderSettings::override_global(
+                FileFinderSettings {
+                    include_ignored: setting,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        cx.dispatch_action(ToggleFileFinder {
+            separate_history: false,
+            include_ignored: action_param,
+        });
+        let picker = active_file_picker(&workspace, cx);
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.include_ignored, expected,
+                "setting: {setting:?}, action param: {action_param:?}"
+            );
+        });
+        cx.dispatch_action(menu::Cancel);
+    }
+}
+
+#[gpui::test]
 async fn test_ignored_root(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -3305,7 +3347,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
             .expect("unable to create file");
     }
 
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
@@ -3474,7 +3516,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         .remove_file("/src/main.rs".as_ref(), Default::default())
         .await
         .expect("unable to remove file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // main.rs is in not among search results anymore
     picker.update(cx, |finder, _| {
@@ -3489,7 +3531,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         .create_file("/src/util.rs".as_ref(), Default::default())
         .await
         .expect("unable to create file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // util.rs is among search results
     picker.update(cx, |finder, _| {
@@ -3497,6 +3539,51 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "util.rs");
         assert_match_at_position(finder, 2, "rs");
+    });
+}
+
+#[gpui::test]
+async fn test_worktree_entry_updates_are_coalesced(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "lib.rs": "// Lib file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    simulate_input(cx, "rs");
+    let initial_search_count = picker.read_with(cx, |picker, _| picker.delegate.search_count);
+
+    for filename in ["one.rs", "two.rs", "three.rs"] {
+        app_state
+            .fs
+            .create_file(Path::new(&format!("/src/{filename}")), Default::default())
+            .await
+            .expect("unable to create file");
+        cx.executor().advance_clock(FS_WATCH_LATENCY);
+        cx.run_until_parked();
+    }
+
+    cx.executor()
+        .advance_clock(WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
+
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            picker.delegate.search_count,
+            initial_search_count + 1,
+            "bursty worktree entry updates should be coalesced into one search refresh"
+        );
+        assert_eq!(picker.delegate.matches.len(), 5);
     });
 }
 
@@ -3646,7 +3733,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
         })
         .await
         .expect("unable to create workdir");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // main.rs is among search results
     picker.update(cx, |finder, _| {
@@ -3876,10 +3963,14 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
             .create_file(Path::new(&filename), Default::default())
             .await
             .expect("unable to create file");
-        // Wait for each file system event to be fully processed before adding the next
+        // Wait for each file system event to be observed before adding the next.
         cx.executor().advance_clock(FS_WATCH_LATENCY);
         cx.run_until_parked();
     }
+
+    cx.executor()
+        .advance_clock(WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
 
     // file_13.txt is still selected
     picker.update(cx, |finder, _| {
@@ -3924,7 +4015,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
         .remove_file("/src/file_2.txt".as_ref(), Default::default())
         .await
         .expect("unable to remove file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // file_1.txt is now selected
     picker.update(cx, |finder, _| {
@@ -4513,6 +4604,7 @@ pub(crate) fn open_file_picker(
 ) -> Entity<Picker<FileFinderDelegate>> {
     cx.dispatch_action(ToggleFileFinder {
         separate_history: true,
+        include_ignored: None,
     });
     active_file_picker(workspace, cx)
 }
@@ -4525,6 +4617,12 @@ pub(crate) fn open_file_picker(
 fn simulate_input(cx: &mut VisualTestContext, input: &str) {
     cx.simulate_input(input);
     cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
+}
+
+fn advance_worktree_update_refresh(cx: &mut VisualTestContext) {
+    cx.executor()
+        .advance_clock(FS_WATCH_LATENCY + WORKTREE_UPDATE_REFRESH_DEBOUNCE);
     cx.run_until_parked();
 }
 
@@ -4584,7 +4682,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                 if let Some(path_match) = path_match.as_ref() {
                     search_entries
                         .history
-                        .push(path_match.0.path_prefix.join(&path_match.0.path));
+                        .push(path_match.0.path_prefix.join(&path_match.0.path).into());
                 } else {
                     // This occurs when the query is empty and we show history matches
                     // that are outside the project.
@@ -4597,7 +4695,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             Match::Search(path_match) => {
                 search_entries
                     .search
-                    .push(path_match.0.path_prefix.join(&path_match.0.path));
+                    .push(path_match.0.path_prefix.join(&path_match.0.path).into());
                 search_entries.search_matches.push(path_match.0.clone());
             }
             Match::CreateNew(_) => {}

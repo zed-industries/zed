@@ -34,7 +34,7 @@ impl LineNumber {
                     if start + 1 == end {
                         format!("{start}\n{end}")
                     } else {
-                        format!("{start}\n...\n{end}")
+                        format!("{start}\n-\n{end}")
                     }
                 }
                 RowIdentDisplayMode::Horizontal => {
@@ -77,11 +77,6 @@ impl CsvPreviewView {
         } else {
             (max_line_number as f32).log10().floor() as usize + 1
         };
-
-        // if !self.settings.multiline_cells_enabled {
-        //     // Uses horizontal line numbers layout like `123-456`. Needs twice the size
-        //     digit_count *= 2;
-        // }
 
         let char_width_px = 9.0; // TODO: get real width of the characters
         let base_width = (digit_count as f32) * char_width_px;
@@ -157,7 +152,7 @@ impl CsvPreviewView {
                 .contents
                 .line_numbers
                 .get(*data_row)?
-                .display_string(if self.settings.multiline_cells_enabled {
+                .display_string(if self.settings.multiline_cells_effectively_enabled() {
                     RowIdentDisplayMode::Vertical
                 } else {
                     RowIdentDisplayMode::Horizontal
@@ -169,15 +164,14 @@ impl CsvPreviewView {
         let value = div()
             .flex()
             .px_1()
-            .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .bg(cx.theme().colors().panel_background)
             .h_full()
-            .text_ui(cx)
-            // Row identifiers are always centered
+            .text_color(cx.theme().colors().text_muted)
+            .justify_center()
             .items_center()
-            .justify_end()
             .font_buffer(cx)
+            .text_ui(cx)
             .child(row_identifier)
             .into_any_element();
         Some(value)

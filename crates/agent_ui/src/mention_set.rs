@@ -1248,8 +1248,7 @@ fn full_mention_for_directory(
                 |(worktree_path, full_path): (Arc<RelPath>, String)| {
                     let rel_path = worktree_path
                         .strip_prefix(&directory_path)
-                        .log_err()
-                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+                        .map_or_else(|_| worktree_path.clone(), |rel_path| rel_path.into());
 
                     let open_task = project.update(cx, |project, cx| {
                         project.buffer_store().update(cx, |buffer_store, cx| {

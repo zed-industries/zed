@@ -10979,6 +10979,71 @@ async fn run_create_file_in_folded_path_case(
     }
 }
 
+#[gpui::test]
+async fn test_focus_follows_mouse_into_blank_area(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.focus_follows_mouse = Some(settings::FocusFollowsMouse {
+                    enabled: Some(true),
+                    debounce_ms: Some(100),
+                });
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let worktree_id = workspace.worktrees(cx).next().unwrap().read(cx).id();
+            let project_path = ProjectPath {
+                worktree_id,
+                path: rel_path("a.txt").into(),
+            };
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Editor should be focused after opening a file"
+        );
+    });
+
+    // Hover over the blank space below the last entry in the project panel,
+    // which lives in the right dock by default.
+    cx.simulate_mouse_move(point(px(1800.), px(600.)), None, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused after hovering the blank area below the entries"
+        );
+    });
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -11128,12 +11193,12 @@ fn ensure_no_open_items_and_panes(workspace: &Entity<Workspace>, cx: &mut Visual
     });
 }
 
-struct TestProjectItemView {
+pub(crate) struct TestProjectItemView {
     focus_handle: FocusHandle,
     path: ProjectPath,
 }
 
-struct TestProjectItem {
+pub(crate) struct TestProjectItem {
     path: ProjectPath,
 }
 

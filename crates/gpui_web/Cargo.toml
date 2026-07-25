@@ -31,7 +31,7 @@ wasm-bindgen-futures = "0.4"
 web-time.workspace = true
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3"
-raw-window-handle = "0.6"
+raw-window-handle.workspace = true
 wasm_thread = { version = "0.3", features = ["es_modules"], optional = true }
 web-sys = { version = "0.3", features = [
     "console",
@@ -66,6 +66,7 @@ web-sys = { version = "0.3", features = [
     "VisualViewport",
     "Headers",
     "Request",
+    "RequestCredentials",
     "RequestInit",
     "RequestRedirect",
     "Response",

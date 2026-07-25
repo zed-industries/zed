@@ -20,7 +20,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
-use syntax_map::TreeSitterOptions;
+use syntax_map::{MAX_BYTES_TO_QUERY, TreeSitterOptions};
 use text::network::Network;
 use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
@@ -153,10 +153,11 @@ fn test_select_language(cx: &mut App) {
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: LanguageName::new_static("Rust"),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -164,10 +165,11 @@ fn test_select_language(cx: &mut App) {
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust with longer extension".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["longer.rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -175,10 +177,11 @@ fn test_select_language(cx: &mut App) {
     registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: LanguageName::new_static("Make"),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -188,13 +191,13 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.rs"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Rust".into())
     );
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.mk"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Make".into())
     );
 
@@ -202,7 +205,7 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("src/lib.longer.rs"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Rust with longer extension".into())
     );
 
@@ -210,7 +213,7 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("src/Makefile"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         Some("Make".into())
     );
 
@@ -218,19 +221,19 @@ fn test_select_language(cx: &mut App) {
     assert_eq!(
         registry
             .language_for_file(&file("zed/cars"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/a.cars"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         None
     );
     assert_eq!(
         registry
             .language_for_file(&file("zed/sumk"), None, cx)
-            .map(|l| l.name()),
+            .and_then(|id| registry.language_name_for_id(id)),
         None
     );
 }
@@ -244,11 +247,12 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 
     languages.register_test_language(LanguageConfig {
         name: "JavaScript".into(),
-        matcher: LanguageMatcher {
+        matcher: (LanguageMatcher {
             path_suffixes: vec!["js".into()],
             first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
             ..LanguageMatcher::default()
-        },
+        })
+        .into(),
         ..Default::default()
     });
 
@@ -267,8 +271,8 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
             Some(&"#!/bin/env node".into()),
             cx
         ))
-        .unwrap()
-        .name(),
+        .and_then(|id| languages.language_name_for_id(id))
+        .unwrap(),
         "JavaScript"
     );
 }
@@ -277,7 +281,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |settings| {
-            settings.file_types.get_or_insert_default().extend([
+            settings.file_types.get_or_insert_default().0.extend([
                 ("TypeScript".into(), vec!["js".into()].into()),
                 (
                     "JavaScript".into(),
@@ -293,46 +297,52 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     });
 
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    let language_name = |id| languages.language_name_for_id(id).unwrap();
 
     for config in [
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string(), "ts.ecmascript".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "C++".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["cpp".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "C".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["c".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         LanguageConfig {
             name: "Dockerfile".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["Dockerfile".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
     ] {
@@ -343,48 +353,48 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript");
+    assert_eq!(language_name(language), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript");
+    assert_eq!(language_name(language), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.cpp"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++");
+    assert_eq!(language_name(language), "C++");
 
     // user configured lang extension, same length as system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript");
+    assert_eq!(language_name(language), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++");
+    assert_eq!(language_name(language), "C++");
 
     // user configured lang extension, longer than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.longer.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript");
+    assert_eq!(language_name(language), "JavaScript");
 
     // user configured lang extension, shorter than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript");
+    assert_eq!(language_name(language), "JavaScript");
 
     // user configured glob matches
     let language = cx
         .read(|cx| languages.language_for_file(&file("c-plus-plus.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++");
+    assert_eq!(language_name(language), "C++");
     // should match Dockerfile.* => Dockerfile, not *.dev => C++
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "Dockerfile");
+    assert_eq!(language_name(language), "Dockerfile");
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -768,9 +778,7 @@ async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
         "(source_file (expression_statement (block)))"
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(Arc::new(json_lang())), cx)
-    });
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(json_lang()), cx));
     cx.executor().run_until_parked();
     assert_eq!(get_tree_sexp(&buffer, cx), "(document (object))");
 }
@@ -1207,10 +1215,11 @@ fn test_text_objects_with_has_parent_predicate(cx: &mut App) {
     let language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -1256,10 +1265,11 @@ fn test_text_objects_with_not_has_parent_predicate(cx: &mut App) {
     let language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -1416,6 +1426,125 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
             let foo = 1;ˇ"},
         Vec::new(),
         cx,
+    );
+}
+
+#[gpui::test]
+fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut App) {
+    let mut text = String::from("{\n  \"theme\": {\n");
+    let mut property_object_open_offsets = Vec::new();
+    for index in 0..500 {
+        text.push_str(&format!("    \"scope_{index:03}\": "));
+        property_object_open_offsets.push(text.len());
+        text.push_str("{\n      \"color\": \"#ffffff\"\n    },\n");
+    }
+    text.push_str("    \"last\": {}\n  }\n}\n");
+    assert!(
+        text.len() > MAX_BYTES_TO_QUERY,
+        "fixture should exceed the bounded tree-sitter query window"
+    );
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(json_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let late_open_offset = property_object_open_offsets[400];
+    let late_matches = snapshot.fetch_bracket_ranges(late_open_offset..late_open_offset + 1, None);
+    let late_color_index = color_index_for_open(&late_matches, late_open_offset);
+
+    assert_eq!(
+        late_color_index,
+        Some(2),
+        "Jumping directly into a later row chunk should preserve enclosing JSON object depth"
+    );
+
+    let first_open_offset = property_object_open_offsets[0];
+    let all_matches = snapshot.fetch_bracket_ranges(0..snapshot.len(), None);
+    assert_eq!(
+        color_index_for_open(&all_matches, first_open_offset),
+        late_color_index,
+        "Sibling object braces should keep the same color across row chunks"
+    );
+
+    for open_offset in property_object_open_offsets {
+        assert_eq!(
+            color_index_for_open(&all_matches, open_offset),
+            late_color_index,
+            "All generated sibling object braces should share the same depth color"
+        );
+    }
+}
+
+#[test]
+fn test_applicable_row_chunks() {
+    let text = (0..125)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    let buffer = TextBuffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
+    let snapshot = buffer.snapshot();
+    let chunks = row_chunk::RowChunks::new(snapshot, 10);
+    assert_eq!(chunks.len(), 13);
+
+    let row_ranges = |ranges: &[Range<Point>]| {
+        chunks
+            .applicable_chunks(ranges)
+            .map(|chunk| chunk.row_range())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        row_ranges(&[Point::new(15, 0)..Point::new(17, 3)]),
+        vec![10..20],
+        "Range in the middle of a chunk should yield that chunk only"
+    );
+    assert_eq!(
+        row_ranges(&[Point::new(10, 0)..Point::new(12, 0)]),
+        vec![0..10, 10..20],
+        "Range starting exactly at a chunk boundary should also touch the previous chunk"
+    );
+    assert_eq!(
+        row_ranges(&[Point::new(5, 0)..Point::new(9, 0)]),
+        vec![0..10],
+        "Range ending before a chunk boundary should not touch the next chunk"
+    );
+    assert_eq!(
+        row_ranges(&[Point::new(5, 0)..Point::new(10, 0)]),
+        vec![0..10, 10..20],
+        "Range ending exactly at a chunk boundary should touch the next chunk"
+    );
+    assert_eq!(
+        row_ranges(&[
+            Point::new(112, 0)..Point::new(112, 0),
+            Point::new(15, 0)..Point::new(16, 0),
+            Point::new(11, 0)..Point::new(18, 0),
+        ]),
+        vec![10..20, 110..120],
+        "Chunks for multiple ranges should be deduplicated and sorted"
+    );
+
+    let all_chunks = chunks
+        .applicable_chunks(&[Point::zero()..Point::new(125, 0)])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_chunks.iter().map(|chunk| chunk.id).collect::<Vec<_>>(),
+        (0..13).collect::<Vec<_>>()
+    );
+    assert_eq!(all_chunks[12].row_range(), 120..125);
+    for chunk in &all_chunks {
+        assert_eq!(
+            chunk.start_anchor.to_point(snapshot),
+            Point::new(chunk.start, 0)
+        );
+        assert_eq!(
+            chunk.end_anchor.to_point(snapshot),
+            Point::new(chunk.end_exclusive, 0)
+        );
+    }
+    assert_eq!(
+        chunks
+            .applicable_chunks(&[Point::zero()..Point::new(125, 0)])
+            .collect::<Vec<_>>(),
+        all_chunks,
+        "Memoized chunks should be identical to the initially computed ones"
     );
 }
 
@@ -2982,6 +3111,104 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
+async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
+    let markdown_language = markdown_lang();
+    let markdown_inline_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "markdown-inline".into(),
+                grammar: Some("markdown-inline".into()),
+                ..Default::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query(include_str!(
+            "../../grammars/src/markdown-inline/highlights.scm"
+        ))
+        .unwrap()
+        .with_injection_query(include_str!(
+            "../../grammars/src/markdown-inline/injections.scm"
+        ))
+        .unwrap(),
+    );
+    let html_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_highlights_query("(comment) @comment (tag_name) @tag")
+        .unwrap(),
+    );
+    let syntax_theme = SyntaxTheme::new([
+        ("comment".to_string(), gpui::rgba(0xffffffff).into()),
+        ("tag".to_string(), gpui::rgba(0xff0000ff).into()),
+    ]);
+    markdown_language.set_theme(&syntax_theme);
+    markdown_inline_language.set_theme(&syntax_theme);
+    html_language.set_theme(&syntax_theme);
+    let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    language_registry.add(markdown_language.clone());
+    language_registry.add(markdown_inline_language);
+    language_registry.add(html_language);
+
+    let text = "<!--Annotation from the start is OK-->\n\n\
+        Annotation in the middle <!--is rendered badly.-->\n\n\
+        An inline comment can span <!--multiple\nlines--> within a paragraph.\n\n\
+        Ordinary inline HTML: <em>emphasized</em>.";
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_language), cx);
+        buffer
+    });
+
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _cx| {
+        let snapshot = buffer.snapshot();
+        let highlighted_text = |capture_name: &str| {
+            let highlight_id = syntax_theme
+                .highlight_id(capture_name)
+                .map(HighlightId::new);
+            assert!(highlight_id.is_some(), "{capture_name} not in test theme");
+            let mut runs: Vec<String> = Vec::new();
+            let mut previous_chunk_matched = false;
+            let chunks = snapshot.chunks(
+                0..snapshot.len(),
+                LanguageAwareStyling {
+                    tree_sitter: true,
+                    diagnostics: false,
+                },
+            );
+            for chunk in chunks {
+                let chunk_matches = chunk.syntax_highlight_id == highlight_id;
+                if chunk_matches {
+                    match runs.last_mut() {
+                        Some(last_run) if previous_chunk_matched => last_run.push_str(chunk.text),
+                        _ => runs.push(chunk.text.to_string()),
+                    }
+                }
+                previous_chunk_matched = chunk_matches;
+            }
+            runs
+        };
+
+        assert_eq!(
+            highlighted_text("comment"),
+            vec![
+                "<!--Annotation from the start is OK-->",
+                "<!--is rendered badly.-->",
+                "<!--multiple\nlines-->",
+            ]
+        );
+        assert_eq!(highlighted_text("tag"), vec!["em", "em"]);
+    });
+}
+
+#[gpui::test]
 fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -4207,10 +4434,11 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
@@ -4263,10 +4491,11 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML+ERB".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             block_comment: Some(BlockCommentConfig {
                 start: "<%#".into(),
                 prefix: "".into(),
@@ -4295,18 +4524,15 @@ fn erb_lang() -> Language {
     .unwrap()
 }
 
-fn json_lang() -> Language {
-    Language::new(
-        LanguageConfig {
-            name: "Json".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_json::LANGUAGE.into()),
-    )
+fn color_index_for_open(
+    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>>,
+    open_offset: usize,
+) -> Option<usize> {
+    matches
+        .values()
+        .flatten()
+        .find(|bracket_match| bracket_match.open_range.start == open_offset)
+        .and_then(|bracket_match| bracket_match.color_index)
 }
 
 fn javascript_lang() -> Language {
@@ -4365,6 +4591,184 @@ fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> Stri
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
         layers[0].node().to_sexp()
     })
+}
+
+fn typescript_lang_with_indents() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_brackets_query(r#"("{" @open "}" @close) ("(" @open ")" @close)"#)
+        .unwrap()
+        .with_indents_query(include_str!("../../grammars/src/typescript/indents.scm"))
+        .unwrap(),
+    )
+}
+
+fn tsx_lang_with_indents() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_brackets_query(r#"("{" @open "}" @close) ("(" @open ")" @close)"#)
+        .unwrap()
+        .with_indents_query(include_str!("../../grammars/src/tsx/indents.scm"))
+        .unwrap(),
+    )
+}
+
+#[gpui::test]
+fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
+    init_settings(cx, |_| {});
+    cx.new(|cx| {
+        for lang in [typescript_lang_with_indents(), tsx_lang_with_indents()] {
+            let mut indent = |header: &str, header_len: usize, body: &str| {
+                let mut buffer = Buffer::local(header, cx).with_language(lang.clone(), cx);
+                buffer.edit(
+                    [(header_len..header_len, body)],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+                buffer.text()
+            };
+
+            // A braceless body is indented under its `if`/`for`/`while`.
+            assert_eq!(indent("if (true)", 9, "\nx()"), "if (true)\n    x()");
+            assert_eq!(indent("for (;;)", 8, "\nx()"), "for (;;)\n    x()");
+            assert_eq!(indent("while (true)", 12, "\nx()"), "while (true)\n    x()");
+            assert_eq!(
+                indent("for (const a of b)", 18, "\nx()"),
+                "for (const a of b)\n    x()"
+            );
+
+            // The statement after a braceless body returns to the outer indent.
+            assert_eq!(
+                indent("if (true)\n    x()", 17, "\ny()"),
+                "if (true)\n    x()\ny()"
+            );
+
+            // A `{}` block keeps its brace unindented (Allman style), leaving the
+            // block rule to indent the contents. Regression guard for #24976.
+            assert_eq!(indent("if (true)", 9, "\n{}"), "if (true)\n{}");
+            assert_eq!(indent("for (;;)", 8, "\n{}"), "for (;;)\n{}");
+            assert_eq!(indent("while (true)", 12, "\n{}"), "while (true)\n{}");
+
+            // K&R braced bodies indent their contents once.
+            assert_eq!(
+                indent("if (true) {\n}", 11, "\nx()"),
+                "if (true) {\n    x()\n}"
+            );
+
+            // A braceless `else` body is indented under the `else`.
+            assert_eq!(
+                indent("if (true)\n    x()\nelse", 22, "\ny()"),
+                "if (true)\n    x()\nelse\n    y()"
+            );
+        }
+        Buffer::local("", cx)
+    });
+}
+
+#[gpui::test]
+fn test_completion_triggers_across_language_servers(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    let replica = cx.new(|cx| {
+        Buffer::from_proto(
+            ReplicaId::new(1),
+            Capability::ReadWrite,
+            buffer.read(cx).to_proto(cx),
+            None,
+        )
+        .unwrap()
+    });
+    replica.update(cx, |_, cx| {
+        cx.subscribe(&buffer, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+
+    let server_a = LanguageServerId(1);
+    let server_b = LanguageServerId(2);
+    let triggers = |buffer: &Entity<Buffer>, cx: &mut TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::from_iter([".".to_string()]), cx);
+        buffer.set_completion_triggers(server_b, BTreeSet::from_iter([":".to_string()]), cx);
+    });
+    let expected = BTreeSet::from_iter([".".to_string(), ":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected triggers from both servers to be combined",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to combine triggers from both servers",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::from_iter([",".to_string()]), cx);
+    });
+    let expected = BTreeSet::from_iter([",".to_string(), ":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected replaced triggers to not linger in the combined set",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to not keep replaced triggers in the combined set",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_a, BTreeSet::new(), cx);
+    });
+    let expected = BTreeSet::from_iter([":".to_string()]);
+    assert_eq!(
+        triggers(&buffer, cx),
+        expected,
+        "expected the other server's triggers to survive clearing one server's triggers",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        expected,
+        "expected the replica to keep the other server's triggers",
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_completion_triggers(server_b, BTreeSet::new(), cx);
+    });
+    assert_eq!(
+        triggers(&buffer, cx),
+        BTreeSet::new(),
+        "expected no triggers after clearing all servers",
+    );
+    assert_eq!(
+        triggers(&replica, cx),
+        BTreeSet::new(),
+        "expected no triggers on the replica after clearing all servers",
+    );
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`

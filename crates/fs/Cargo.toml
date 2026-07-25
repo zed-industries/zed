@@ -36,18 +36,21 @@ proto.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+slotmap.workspace = true
 smol.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
+path.workspace = true
 is_executable = "1.0.5"
 notify = "9.0.0-rc.4"
 trash = { git = "https://github.com/zed-industries/trash-rs", rev = "47761739192828a66b11a94ba5420b82d63c03c5" }
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 dunce.workspace = true
+async-std.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true

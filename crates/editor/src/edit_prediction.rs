@@ -152,6 +152,7 @@ impl Editor {
     pub fn set_edit_prediction_provider<T>(
         &mut self,
         provider: Option<Entity<T>>,
+        trigger: EditPredictionRequestTrigger,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) where
@@ -166,13 +167,7 @@ impl Editor {
             provider: Arc::new(provider),
         });
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(
-            false,
-            false,
-            EditPredictionRequestTrigger::Other,
-            window,
-            cx,
-        );
+        self.refresh_edit_prediction(false, false, trigger, window, cx);
     }
 
     pub fn set_edit_predictions_hidden_for_vim_mode(
@@ -189,7 +184,7 @@ impl Editor {
                 self.refresh_edit_prediction(
                     true,
                     false,
-                    EditPredictionRequestTrigger::Other,
+                    EditPredictionRequestTrigger::VimModeChanged,
                     window,
                     cx,
                 );

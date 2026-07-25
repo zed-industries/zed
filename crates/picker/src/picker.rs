@@ -76,8 +76,6 @@ actions!(
         SetPreviewHidden,
         /// Opens the footer's actions menu.
         ToggleActionsMenu,
-        /// Take the picker's content and open it in a multibuffer
-        ToMultiBuffer,
         /// Toggles multi-select mode, in which clicking items adds them to
         /// the selection instead of opening them
         ToggleMultiSelect,
@@ -300,6 +298,27 @@ pub trait PickerDelegate: Sized + 'static {
         _query: String,
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
+    /// Called when `SelectChild` fires (e.g. shift-right-arrow). Return `Some(query)`
+    /// to step into the currently selected item (e.g. a directory); the picker
+    /// will set the query and refresh matches.
+    fn select_child(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
+
+    /// Called when `SelectParent` fires (e.g. shift-left-arrow). Return `Some(query)`
+    /// to step back to the parent; the picker will set the query and refresh
+    /// matches.
+    fn select_parent(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         None
     }
@@ -999,6 +1018,26 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
+            self.set_query(&new_query, window, cx);
+        } else {
+            cx.propagate()
+        }
+    }
+    fn select_child(&mut self, _: &menu::SelectChild, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(new_query) = self.delegate.select_child(window, cx) {
+            self.set_query(&new_query, window, cx);
+        } else {
+            cx.propagate()
+        }
+    }
+
+    fn select_parent(
+        &mut self,
+        _: &menu::SelectParent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(new_query) = self.delegate.select_parent(window, cx) {
             self.set_query(&new_query, window, cx);
         } else {
             cx.propagate()
