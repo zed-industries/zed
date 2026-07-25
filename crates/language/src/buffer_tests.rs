@@ -1474,6 +1474,80 @@ fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut Ap
     }
 }
 
+#[gpui::test]
+fn test_c_bracket_ranges_in_error_nodes(cx: &mut App) {
+    fn expected_pairs(text: &str, open: char, close: char) -> Vec<(Range<usize>, Range<usize>)> {
+        let mut open_offsets = Vec::new();
+        let mut pairs = Vec::new();
+        for (offset, character) in text.char_indices() {
+            if character == open {
+                open_offsets.push(offset);
+            } else if character == close {
+                let Some(open_offset) = open_offsets.pop() else {
+                    panic!("unexpected closing {close} at offset {offset}");
+                };
+                pairs.push((open_offset..open_offset + 1, offset..offset + 1));
+            }
+        }
+        assert!(open_offsets.is_empty(), "expected balanced {open}{close}");
+        pairs
+    }
+
+    let text = indoc! {r#"
+        CLAY(CLAY_ID("MenuContainer"),
+             CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
+             CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                          .sizing = {.width = CLAY_SIZING_FIT()},
+                          .padding = {16, 16},
+                          .childGap = 16})) {
+          CLAY(CLAY_ID("StartStopButton"), CLAY_LAYOUT({.padding = {16, 8}}),
+               CLAY_RECTANGLE({.color = {140, 140, 140, 255}, .cornerRadius = 5}),
+               Clay_OnHover(HandleStartButtonInteraction, 1)) {
+            CLAY_TEXT(CLAY_STRING("Start/Stop"),
+                      CLAY_TEXT_CONFIG({.fontId = FONT_ID_BODY_16,
+                                        .fontSize = 16,
+                                        .textColor = {255, 255, 255, 255}}));
+          }
+        }
+    "#};
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+    let matches = snapshot
+        .all_bracket_ranges(0..snapshot.len())
+        .map(BracketMatch::bracket_ranges)
+        .filter(|(open, _)| matches!(&text[open.clone()], "(" | "{"))
+        .collect::<Vec<_>>();
+
+    let mut expected = expected_pairs(text, '(', ')');
+    expected.extend(expected_pairs(text, '{', '}'));
+    assert_set_eq!(matches, expected);
+}
+
+#[gpui::test]
+fn test_bracket_ranges_do_not_repair_unbalanced_error_nodes(cx: &mut App) {
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            CLAY«(»CLAY_ID("MenuContainer"),
+                 CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                              .sizing = {.width = CLAY_SIZING_FIT()},
+                              .padding = {16, 16},
+                              .childGap = 16}) {
+            }
+        "#},
+        false,
+    );
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    assert!(
+        snapshot
+            .all_bracket_ranges(0..snapshot.len())
+            .filter(|pair| pair.open_range == ranges[0])
+            .all(|pair| pair.close_range.is_empty()),
+        "a missing closing parenthesis should not be inferred from a concrete delimiter"
+    );
+}
+
 #[test]
 fn test_applicable_row_chunks() {
     let text = (0..125)
@@ -4568,6 +4642,8 @@ fn c_lang() -> Arc<Language> {
             Some(tree_sitter_c::LANGUAGE.into()),
         )
         .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
+        .unwrap()
+        .with_brackets_query(include_str!("../../grammars/src/c/brackets.scm"))
         .unwrap(),
     )
 }
