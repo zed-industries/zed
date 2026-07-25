@@ -695,19 +695,6 @@ impl MinimapVisibility {
             _ => false,
         }
     }
-
-    fn toggle_visibility(&self) -> Self {
-        match *self {
-            Self::Enabled {
-                toggle_override,
-                setting_configuration,
-            } => Self::Enabled {
-                setting_configuration,
-                toggle_override: !toggle_override,
-            },
-            Self::Disabled => Self::Disabled,
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -8286,14 +8273,16 @@ impl Editor {
         !self.minimap_visibility.disabled() && self.buffer_kind(cx) == ItemBufferKind::Singleton
     }
 
-    pub fn toggle_minimap(
-        &mut self,
-        _: &ToggleMinimap,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
+    pub fn toggle_minimap(&mut self, _: &ToggleMinimap, _: &mut Window, cx: &mut Context<Editor>) {
         if self.supports_minimap(cx) {
-            self.set_minimap_visibility(self.minimap_visibility.toggle_visibility(), window, cx);
+            let show = if EditorSettings::get_global(cx).minimap.minimap_enabled() {
+                ShowMinimap::Never
+            } else {
+                ShowMinimap::Always
+            };
+            update_settings_file(<dyn fs::Fs>::global(cx), cx, move |settings, _| {
+                settings.editor.minimap.get_or_insert_default().show = Some(show);
+            });
         }
     }
 

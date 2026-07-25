@@ -82,6 +82,48 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
         .display_ranges(&editor.display_snapshot(cx))
 }
 
+#[gpui::test]
+async fn test_toggle_minimap_updates_settings_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let fs = FakeFs::new(cx.executor());
+    let settings_fs: Arc<dyn fs::Fs> = fs;
+    cx.update(|cx| <dyn fs::Fs>::set_global(settings_fs.clone(), cx));
+
+    let editor = cx.add_window(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_simple("text", cx),
+            None,
+            window,
+            cx,
+        )
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.toggle_minimap(&ToggleMinimap, window, cx)
+        })
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+    let settings: serde_json::Value = settings::parse_json_with_comments(&settings_text).unwrap();
+    assert_eq!(settings["minimap"]["show"], "always");
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.toggle_minimap(&ToggleMinimap, window, cx)
+        })
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    let settings_text = SettingsStore::load_settings(&settings_fs).await.unwrap();
+    let settings: serde_json::Value = settings::parse_json_with_comments(&settings_text).unwrap();
+    assert_eq!(settings["minimap"]["show"], "never");
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod property_test;
 
