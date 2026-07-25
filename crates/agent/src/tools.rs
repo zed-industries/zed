@@ -47,19 +47,17 @@ where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ValueOrJsonString<T> {
-        Value(T),
-        String(String),
+    let raw = serde_json::Value::deserialize(deserializer)
+        .map_err(|e| D::Error::custom(format!("invalid JSON: {e}")))?;
+
+    // If the model stringified the argument, parse the inner JSON.
+    if let Ok(string) = String::deserialize(&raw) {
+        return serde_json::from_str::<T>(&string)
+            .map_err(|e| D::Error::custom(format!("failed to parse stringified value: {e}")));
     }
 
-    match ValueOrJsonString::<T>::deserialize(deserializer)? {
-        ValueOrJsonString::Value(value) => Ok(value),
-        ValueOrJsonString::String(string) => serde_json::from_str::<T>(&string).map_err(|error| {
-            D::Error::custom(format!("failed to parse stringified value: {error}"))
-        }),
-    }
+    // Otherwise, deserialize directly and pass errors through.
+    T::deserialize(&raw).map_err(|e| D::Error::custom(format!("{e}")))
 }
 
 pub use apply_code_action_tool::*;
