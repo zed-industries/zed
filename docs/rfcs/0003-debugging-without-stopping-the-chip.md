@@ -48,6 +48,21 @@ citadel_runtime_tick();
 
 - **Open:** whether the shim is inserted into the sketch by scaffolding (visible, editable, the user can delete it) or called from the vendored core behind the user's back (invisible, cannot be forgotten). Visible-and-forgettable is the safer default under "the user's logic is the user's", but a watch panel that silently shows nothing because a line was deleted is a bad first experience.
 
+### Standard I/O, and why there is no Rust I/O crate
+
+There is no stdio in `no_std`, so the question of what `print` means on the Rust side has to be answered explicitly. It is answered by the transport above, not by a new package: **`Arduino.h` keeps ownership of the hardware, and Citadel does not grow a Rust HAL or I/O crate.**
+
+A peripheral can only have one owner. If the Rust side drove the USART registers itself it would be contending with the Arduino core's `HardwareSerial` for the same hardware — and more fundamentally, a Rust layer that can reach pins and serial directly dissolves the premise that C/C++ performs the I/O hand-off and Rust performs the logic. Re-implementing what `avr-hal` already provides would buy the same contention at a higher price.
+
+So:
+
+- **Output.** `citadel_print!` is a sibling of `citadel_watch!` writing into the same ring buffer: structured values go out as watch frames, human-readable strings go out as text, one buffer, one drain, one owner. No second channel to keep in sync.
+- **Input.** The C++ side calls `Serial.read()` and hands the byte to an `extern "C"` Rust function. This is the permitted direction of the boundary as written — C/C++ calling into Rust — and needs no new mechanism. The `while (Serial.available())` pump is a loop, so it lives in `citadel_runtime_tick()` alongside the TX drain. Both directions therefore cost the user's sketch the same single straight-line call already shown above.
+
+**Formatting is the one real decision.** `core::fmt` works in `no_std` and costs no dependency, but its formatting machinery is well known to pull in on the order of a kilobyte or two of AVR flash — material on a 32 KB ATmega328P, noise on a 256 KB ATmega2560. `ufmt` exists specifically for this and is the de-facto choice in the avr-hal ecosystem. **Citadel uses `ufmt`**; unlike the size question in RFC 0001 §3, this one does not need a measurement first, because the `core::fmt` cost is a known quantity rather than a suspicion.
+
+- **Open:** the panic path. Routing `#[panic_handler]` output through the same buffer is the obvious thing to want, but a panic is exactly the moment the buffer is least likely to be drained before the device stops or resets. Setting a flag and surfacing it after reset may be the only honest option; it needs a design.
+
 ### Non-blocking, and what gets dropped
 
 The ring buffer is fixed-size and drops on overflow. It never blocks the caller. A blocking write on a full TX buffer would make the watch macro capable of stalling the developer's control loop, which would turn the debug feature into the freeze the whole project exists to prevent.
