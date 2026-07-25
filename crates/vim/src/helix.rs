@@ -1881,6 +1881,7 @@ mod test {
     use workspace::{DeploySearch, MultiWorkspace};
 
     use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
+    use crate::SwitchToHelixNormalMode;
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
         state::{Mode, Operator},
@@ -4670,5 +4671,21 @@ mod test {
         cx.assert_state("  «aaˇ»  \nbbb\nccc\n", Mode::HelixNormal);
         cx.simulate_keystrokes("x");
         cx.assert_state("«  aa  \nˇ»bbb\nccc\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_with_multi_keybinding(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new("j j", SwitchToHelixNormalMode, None)]);
+        });
+
+        cx.set_state("hello worldˇ\n", Mode::Insert);
+        cx.simulate_keystrokes("j j");
+        cx.assert_state("hello worldˇ\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("hello world\nˇ\n", Mode::Insert);
     }
 }
