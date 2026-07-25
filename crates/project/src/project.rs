@@ -99,6 +99,7 @@ use lsp::{
     LanguageServerBinary, LanguageServerId, LanguageServerName, LanguageServerSelector,
     MessageActionItem,
 };
+pub use lsp_command::EditPredictionDefinition;
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
 pub use manifest_tree::ManifestProvidersStore;
@@ -397,13 +398,25 @@ pub enum Event {
     Rejoined,
     RefreshInlayHints {
         server_id: LanguageServerId,
-        request_id: Option<usize>,
     },
     RefreshSemanticTokens {
         server_id: LanguageServerId,
-        request_id: Option<usize>,
     },
-    RefreshCodeLens,
+    RefreshCodeLens {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentColors {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentLinks {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshFoldingRanges {
+        server_id: Option<LanguageServerId>,
+    },
+    RefreshDocumentSymbols {
+        server_id: Option<LanguageServerId>,
+    },
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
@@ -439,14 +452,14 @@ impl ProjectPath {
     pub fn from_proto(p: proto::ProjectPath) -> Option<Self> {
         Some(Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: RelPath::from_proto(&p.path).log_err()?,
+            path: RelPath::from_unix_str(&p.path).log_err()?.into(),
         })
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
         proto::ProjectPath {
             worktree_id: self.worktree_id.to_proto(),
-            path: self.path.as_ref().to_proto(),
+            path: self.path.as_ref().as_unix_str().to_owned(),
         }
     }
 
@@ -864,7 +877,7 @@ pub struct Symbol {
     pub path: SymbolLocation,
     pub label: CodeLabel,
     pub name: String,
-    pub kind: lsp::SymbolKind,
+    pub kind: language::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
     pub container_name: Option<String>,
 }
@@ -872,7 +885,7 @@ pub struct Symbol {
 #[derive(Clone, Debug)]
 pub struct DocumentSymbol {
     pub name: String,
-    pub kind: lsp::SymbolKind,
+    pub kind: language::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
     pub selection_range: Range<Unclipped<PointUtf16>>,
     pub children: Vec<DocumentSymbol>,
@@ -1724,7 +1737,7 @@ impl Project {
         let path_style = if response.payload.windows_paths {
             PathStyle::Windows
         } else {
-            PathStyle::Posix
+            PathStyle::Unix
         };
 
         let worktree_store = cx.new(|cx| {
@@ -2151,7 +2164,7 @@ impl Project {
                 root_repo_is_linked_worktree: false,
             },
             client,
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         );
         self.worktree_store
@@ -2520,17 +2533,20 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
-                let is_dir = relative_path
-                    .as_ref()
-                    .and_then(|p| worktree.entry_for_path(p))
-                    .is_some_and(|e| e.is_dir());
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
                 // Don't exclude the worktree root itself, only actual subdirectories
-                let is_subdir = relative_path
-                    .as_ref()
-                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
-                let contains =
-                    relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
+                let is_subpath = !relative_path.is_empty();
+                // Gitignored subtrees aren't scanned, so their contents don't
+                // meaningfully belong to this project (e.g. nested checkouts
+                // in an ignored directory). Treat such paths as not contained
+                // so opening them behaves like opening an unrelated path.
+                if is_subpath && worktree.is_path_ignored(&relative_path) {
+                    return None;
+                }
+                let is_dir = worktree
+                    .entry_for_path(&relative_path)
+                    .is_some_and(|e| e.is_dir());
+                let contains = !exclude_sub_dirs || !is_dir || !is_subpath;
                 contains.then(|| worktree.is_visible())
             })
             .max()
@@ -2551,10 +2567,9 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
-                let is_subpath = relative_path
-                    .as_ref()
-                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
+                let is_subpath =
+                    !relative_path.is_empty() && !worktree.is_path_ignored(&relative_path);
                 is_subpath.then(|| worktree.is_visible())
             })
             .max()
@@ -2661,35 +2676,52 @@ impl Project {
     }
 
     #[inline]
+    pub fn trash_file(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<TrashId>>> {
+        let entry = self.entry_for_path(&path, cx)?;
+        self.trash_entry(entry.id, cx)
+    }
+
+    #[inline]
     pub fn delete_file(
         &mut self,
         path: ProjectPath,
-        trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_path(&path, cx)?;
-        self.delete_entry(entry.id, trash, cx)
+        self.delete_entry(entry.id, cx)
+    }
+
+    #[inline]
+    pub fn trash_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<TrashId>>> {
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
+        worktree.update(cx, |worktree, cx| worktree.trash_entry(entry_id, cx))
     }
 
     #[inline]
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
+    ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
-        worktree.update(cx, |worktree, cx| {
-            worktree.delete_entry(entry_id, trash, cx)
-        })
+        worktree.update(cx, |worktree, cx| worktree.delete_entry(entry_id, cx))
     }
 
     #[inline]
     pub fn restore_entry(
         &self,
         worktree_id: WorktreeId,
-        trash_entry: TrashedEntry,
+        trash_id: TrashId,
         cx: &mut Context<'_, Self>,
     ) -> Task<Result<ProjectPath>> {
         let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
@@ -2697,12 +2729,14 @@ impl Project {
         };
 
         cx.spawn(async move |_, cx| {
-            Worktree::restore_entry(trash_entry, worktree, cx)
-                .await
-                .map(|rel_path_buf| ProjectPath {
-                    worktree_id: worktree_id,
-                    path: Arc::from(rel_path_buf.as_rel_path()),
-                })
+            let entry = worktree
+                .update(cx, |worktree, cx| worktree.restore_entry(trash_id, cx))
+                .await?;
+
+            Ok(ProjectPath {
+                worktree_id: worktree_id,
+                path: entry.path,
+            })
         })
     }
 
@@ -3149,7 +3183,7 @@ impl Project {
         // because SSH projects have client_state: Local but still need to communicate with remote server
         let project_id = self.remote_id().unwrap_or(REMOTE_SERVER_PROJECT_ID);
         let downloading_files = self.downloading_files.clone();
-        let path_str = path.to_proto();
+        let path_str = path.as_unix_str().to_owned();
 
         static NEXT_FILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let file_id = NEXT_FILE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -3644,21 +3678,37 @@ impl Project {
                     return;
                 };
             }
-            LspStoreEvent::RefreshInlayHints {
-                server_id,
-                request_id,
-            } => cx.emit(Event::RefreshInlayHints {
+            LspStoreEvent::RefreshInlayHints { server_id } => cx.emit(Event::RefreshInlayHints {
                 server_id: *server_id,
-                request_id: *request_id,
             }),
-            LspStoreEvent::RefreshSemanticTokens {
-                server_id,
-                request_id,
-            } => cx.emit(Event::RefreshSemanticTokens {
+            LspStoreEvent::RefreshSemanticTokens { server_id } => {
+                cx.emit(Event::RefreshSemanticTokens {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshCodeLens { server_id } => cx.emit(Event::RefreshCodeLens {
                 server_id: *server_id,
-                request_id: *request_id,
             }),
-            LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            LspStoreEvent::RefreshDocumentColors { server_id } => {
+                cx.emit(Event::RefreshDocumentColors {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshDocumentLinks { server_id } => {
+                cx.emit(Event::RefreshDocumentLinks {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshFoldingRanges { server_id } => {
+                cx.emit(Event::RefreshFoldingRanges {
+                    server_id: *server_id,
+                })
+            }
+            LspStoreEvent::RefreshDocumentSymbols { server_id } => {
+                cx.emit(Event::RefreshDocumentSymbols {
+                    server_id: *server_id,
+                })
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
@@ -4285,21 +4335,16 @@ impl Project {
         })
     }
 
-    pub fn workspace_definitions<T: ToPointUtf16>(
+    pub fn edit_prediction_definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
+        include_type_definitions: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+    ) -> Task<Result<Vec<EditPredictionDefinition>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        let guard = self.retain_remotely_created_models(cx);
-        let task = self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.workspace_definitions(buffer, position, cx)
-        });
-        cx.background_spawn(async move {
-            let result = task.await;
-            drop(guard);
-            result
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.edit_prediction_definitions(buffer, position, include_type_definitions, cx)
         })
     }
 
@@ -4331,24 +4376,6 @@ impl Project {
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
-        });
-        cx.background_spawn(async move {
-            let result = task.await;
-            drop(guard);
-            result
-        })
-    }
-
-    pub fn workspace_type_definitions<T: ToPointUtf16>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: T,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
-        let guard = self.retain_remotely_created_models(cx);
-        let task = self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.workspace_type_definitions(buffer, position, cx)
         });
         cx.background_spawn(async move {
             let result = task.await;
@@ -5786,7 +5813,7 @@ impl Project {
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let path = RelPath::from_proto(&envelope.payload.path)?;
+        let path = RelPath::from_unix_str(&envelope.payload.path)?.into();
         let open_buffer = this
             .update(&mut cx, |this, cx| {
                 this.open_buffer(ProjectPath { worktree_id, path }, cx)

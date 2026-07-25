@@ -12,15 +12,15 @@ use ec4rs::{
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
-use itertools::{Either, Itertools};
+use itertools::Itertools;
 use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
-    EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, REST_OF_LANGUAGE_SERVERS, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
-    WordsCompletionMode,
+    AutoIndentMode, CompletionSettingsContent, ConfiguredLanguageServer,
+    EditPredictionDataCollectionChoice, EditPredictionPromptFormatContent, EditPredictionProvider,
+    EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
+    LanguageSettingsContent, LineEndingSetting, LspInsertMode, REST_OF_LANGUAGE_SERVERS,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -102,7 +102,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    pub language_servers: Vec<String>,
+    pub language_servers: Vec<ConfiguredLanguageServer>,
     /// Controls how semantic tokens from language servers are used for syntax highlighting.
     pub semantic_tokens: SemanticTokens,
     /// Controls whether folding ranges from language servers are used instead of
@@ -355,18 +355,22 @@ impl LanguageSettings {
     }
 
     pub(crate) fn resolve_language_servers(
-        configured_language_servers: &[String],
+        configured_language_servers: &[ConfiguredLanguageServer],
         available_language_servers: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
         let (disabled_language_servers, enabled_language_servers): (
             Vec<LanguageServerName>,
             Vec<LanguageServerName>,
-        ) = configured_language_servers.iter().partition_map(
-            |language_server| match language_server.strip_prefix('!') {
-                Some(disabled) => Either::Left(LanguageServerName(disabled.to_string().into())),
-                None => Either::Right(LanguageServerName(language_server.clone().into())),
-            },
-        );
+        ) = configured_language_servers
+            .iter()
+            .partition_map(|language_server| {
+                let name = LanguageServerName(language_server.name.clone().into());
+                if language_server.disabled {
+                    itertools::Either::Left(name)
+                } else {
+                    itertools::Either::Right(name)
+                }
+            });
 
         let rest = available_language_servers
             .iter()
@@ -695,9 +699,15 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         .merge_from_option(preferred_line_length.as_ref());
     settings.tab_size.merge_from_option(tab_size.as_ref());
     settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
-    settings
-        .remove_trailing_whitespace_on_save
-        .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    // Avoid re-enabling destructive whitespace trimming when Zed settings have
+    // disabled it, e.g. for Markdown hard breaks.
+    if !matches!(remove_trailing_whitespace_on_save, Some(true))
+        || settings.remove_trailing_whitespace_on_save
+    {
+        settings
+            .remove_trailing_whitespace_on_save
+            .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    }
     settings
         .ensure_final_newline_on_save
         .merge_from_option(ensure_final_newline_on_save.as_ref());
@@ -882,7 +892,10 @@ impl settings::Settings for AllLanguageSettings {
 
             file_types.insert(
                 language.clone(),
-                (builder.build().unwrap(), patterns.0.clone()),
+                (
+                    builder.build().unwrap(),
+                    patterns.0.iter().cloned().collect(),
+                ),
             );
         }
 
@@ -927,6 +940,7 @@ pub struct JsxTagAutoCloseSettings {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use settings::{LocalSettingsKind, LocalSettingsPath, WorktreeId};
     use util::rel_path::rel_path;
 
     #[gpui::test]
@@ -1145,5 +1159,354 @@ mod tests {
                 "tailwind",
             ])
         );
+    }
+
+    #[gpui::test]
+    fn test_language_servers_across_settings_files(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<AllLanguageSettings>();
+
+            let worktree_id = WorktreeId::from_usize(1);
+            let root = LocalSettingsPath::InWorktree(rel_path("root").into());
+            let subdir = LocalSettingsPath::InWorktree(rel_path("root/subdir").into());
+            let root_location = Some(SettingsLocation {
+                worktree_id,
+                path: rel_path("root/a.ts"),
+            });
+            let subdir_location = Some(SettingsLocation {
+                worktree_id,
+                path: rel_path("root/subdir/b.ts"),
+            });
+
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["vtsls", "eslint"]),
+                "default settings should disable typescript-language-server for TypeScript"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "vtsls", "eslint"]),
+            );
+
+            store
+                .set_user_settings(r#"{"language_servers": ["!vtsls", "..."]}"#, cx)
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["vtsls", "eslint"]),
+                "the per-language list should fully replace the user's global list"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+                "user's global disable should apply to languages without their own list"
+            );
+
+            store
+                .set_local_settings(
+                    worktree_id,
+                    root.clone(),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"language_servers": ["..."]}"#),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "Rust"),
+                servers(&["typescript-language-server", "vtsls", "eslint"]),
+                "project settings enabling all servers should undo the user's global disable (#61524)"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+                "user's global disable should still apply outside of the project"
+            );
+
+            store
+                .set_local_settings(
+                    worktree_id,
+                    root.clone(),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"language_servers": ["!eslint", "..."]}"#),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "Rust"),
+                servers(&["typescript-language-server", "vtsls"]),
+                "project's global list should replace the user's global list"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "TypeScript"),
+                servers(&["vtsls", "eslint"]),
+                "the per-language list should fully replace the project's global list"
+            );
+
+            store
+                .set_local_settings(
+                    worktree_id,
+                    subdir.clone(),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"language_servers": ["..."]}"#),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, subdir_location, "Rust"),
+                servers(&["typescript-language-server", "vtsls", "eslint"]),
+                "nested project settings should replace the outer global list"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "Rust"),
+                servers(&["typescript-language-server", "vtsls"]),
+            );
+            store
+                .set_local_settings(worktree_id, subdir, LocalSettingsKind::Settings, None, cx)
+                .unwrap();
+
+            store
+                .set_local_settings(
+                    worktree_id,
+                    root.clone(),
+                    LocalSettingsKind::Settings,
+                    Some(
+                        r#"{"languages": {"TypeScript": {"language_servers": ["vtsls", "..."]}}}"#,
+                    ),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "TypeScript"),
+                servers(&["vtsls", "typescript-language-server", "eslint"]),
+                "project's per-language configuration should override the user's global disable"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+                "user's global disable should still apply to other languages"
+            );
+
+            store
+                .set_user_settings(
+                    r#"{
+                        "language_servers": ["!vtsls", "..."],
+                        "languages": {"TypeScript": {"language_servers": ["vtsls", "..."]}}
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["vtsls", "typescript-language-server", "eslint"]),
+                "per-language configuration should win over a global disable from the same file"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+            );
+
+            store
+                .set_local_settings(
+                    worktree_id,
+                    root.clone(),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"language_servers": ["!vtsls", "..."]}"#),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "TypeScript"),
+                servers(&["vtsls", "typescript-language-server", "eslint"]),
+                "user's per-language list should win over the project's global disable"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+                "project's global disable should still apply to languages without their own list"
+            );
+
+            store
+                .set_user_settings(
+                    r#"{"languages": {"JavaScript": {"language_servers": ["!vtsls", "..."]}}}"#,
+                    cx,
+                )
+                .unwrap();
+            store
+                .set_local_settings(
+                    worktree_id,
+                    root,
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"languages": {"JavaScript": {"language_servers": ["..."]}}}"#),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "JavaScript"),
+                servers(&["typescript-language-server", "vtsls", "eslint"]),
+                "project's per-language list should re-enable a server disabled by the user (#61524)"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "JavaScript"),
+                servers(&["typescript-language-server", "eslint"]),
+                "user's per-language disable should still apply outside of the project"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_language_servers_combined_restrictions(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<AllLanguageSettings>();
+
+            let worktree_id = WorktreeId::from_usize(1);
+            let root = LocalSettingsPath::InWorktree(rel_path("root").into());
+            let root_location = Some(SettingsLocation {
+                worktree_id,
+                path: rel_path("root/a.ts"),
+            });
+
+            store
+                .set_user_settings(r#"{"language_servers": ["!vtsls", "..."]}"#, cx)
+                .unwrap();
+            store
+                .set_local_settings(
+                    worktree_id,
+                    root,
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"language_servers": ["!eslint", "..."]}"#),
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "Rust"),
+                servers(&["typescript-language-server", "vtsls"]),
+                "global lists replace wholesale: disables from different files must not accumulate"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+                "user's own disable should still apply outside of the project"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, root_location, "TypeScript"),
+                servers(&["vtsls", "eslint"]),
+                "a language with its own list should ignore global lists from every file"
+            );
+
+            store
+                .set_user_settings(r#"{"language_servers": ["...", "!vtsls"]}"#, cx)
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "eslint"]),
+                "the position of a disabled entry relative to '...' should not matter"
+            );
+
+            store
+                .set_user_settings(r#"{"language_servers": ["eslint", "..."]}"#, cx)
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["eslint", "typescript-language-server", "vtsls"]),
+                "the position of '...' should determine the priority order of enabled servers"
+            );
+
+            store
+                .set_user_settings(r#"{"language_servers": ["eslint"]}"#, cx)
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["eslint"]),
+                "a global list without '...' should be exhaustive for languages without their own list"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["vtsls", "eslint"]),
+                "a global list, exhaustive or not, never applies to languages with their own list"
+            );
+
+            store
+                .set_user_settings(
+                    r#"{
+                        "language_servers": ["!eslint", "..."],
+                        "languages": {"TypeScript": {"language_servers": ["vtsls", "..."]}}
+                    }"#,
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["vtsls", "typescript-language-server", "eslint"]),
+                "authoring a per-language list opts the language out of the global list entirely"
+            );
+            assert_eq!(
+                resolved_language_servers(&store, None, "Rust"),
+                servers(&["typescript-language-server", "vtsls"]),
+            );
+
+            // Issue #60763: to disable a server that the shipped list explicitly
+            // enables, the spelling is per-language, restating the shipped
+            // exclusions.
+            store
+                .set_user_settings(
+                    r#"{"languages": {"TypeScript": {"language_servers": ["!typescript-language-server", "!vtsls", "..."]}}}"#,
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["eslint"]),
+                "a per-language disable should win over the shipped explicit enable"
+            );
+            store
+                .set_user_settings(
+                    r#"{"languages": {"TypeScript": {"language_servers": ["!vtsls", "..."]}}}"#,
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["typescript-language-server", "eslint"]),
+                "a per-language list not restating the shipped exclusions should lift them"
+            );
+
+            store
+                .set_user_settings(
+                    r#"{"languages": {"TypeScript": {"language_servers": ["eslint"]}}}"#,
+                    cx,
+                )
+                .unwrap();
+            assert_eq!(
+                resolved_language_servers(&store, None, "TypeScript"),
+                servers(&["eslint"]),
+                "an exhaustive per-language list should pin exactly the listed servers"
+            );
+        });
+    }
+
+    fn servers(names: &[&str]) -> Vec<LanguageServerName> {
+        names
+            .iter()
+            .map(|name| LanguageServerName(name.to_string().into()))
+            .collect::<Vec<_>>()
+    }
+
+    fn resolved_language_servers(
+        store: &SettingsStore,
+        location: Option<SettingsLocation>,
+        language: &str,
+    ) -> Vec<LanguageServerName> {
+        let all_settings = store.get::<AllLanguageSettings>(location);
+        let language_settings = all_settings
+            .languages
+            .get(&LanguageName::new(language))
+            .unwrap_or(&all_settings.defaults);
+        language_settings.customized_language_servers(&servers(&[
+            "typescript-language-server",
+            "vtsls",
+            "eslint",
+        ]))
     }
 }

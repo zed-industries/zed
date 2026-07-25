@@ -51,7 +51,6 @@ impl CsvPreviewView {
 
         Table::new(cols)
             .interactable(&self.table_interaction_state)
-            .striped()
             .width_config(ColumnWidthConfig::Resizable(current_widths.clone()))
             .header(headers)
             .disable_base_style()
@@ -70,6 +69,7 @@ impl CsvPreviewView {
                                     cols,
                                     display_row,
                                     row_identifier_text_color,
+                                    this.row_height,
                                     cx,
                                 )
                                 .unwrap_or_else(|| panic!("Expected to render a table row"))
@@ -84,6 +84,7 @@ impl CsvPreviewView {
                                     .rendered_indices
                                     .extend(range.clone());
 
+                                let row_height = this.row_height;
                                 range
                                     .filter_map(|display_index| {
                                         Self::render_single_table_row(
@@ -91,6 +92,7 @@ impl CsvPreviewView {
                                             cols,
                                             DisplayRow(display_index),
                                             row_identifier_text_color,
+                                            row_height,
                                             cx,
                                         )
                                     })
@@ -111,6 +113,7 @@ impl CsvPreviewView {
         cols: usize,
         display_row: DisplayRow,
         row_identifier_text_color: gpui::Hsla,
+        row_height: Pixels,
         cx: &Context<CsvPreviewView>,
     ) -> Option<UncheckedTableRow<AnyElement>> {
         // Get the actual row index from our sorted indices
@@ -129,14 +132,23 @@ impl CsvPreviewView {
 
             let display_cell_id = DisplayCellId::new(display_row, col);
 
-            let cell = div().size_full().whitespace_nowrap().text_ellipsis().child(
-                CsvPreviewView::create_selectable_cell(
+            let cell = div()
+                .size_full()
+                .when(
+                    !this.settings.multiline_cells_effectively_enabled(),
+                    |div| {
+                        div.whitespace_nowrap()
+                            .text_ellipsis()
+                            .h(row_height)
+                            .overflow_hidden()
+                    },
+                )
+                .child(CsvPreviewView::create_selectable_cell(
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
                     cx,
-                ),
-            );
+                ));
 
             elements.push(
                 div()
@@ -155,7 +167,6 @@ impl CsvPreviewView {
                             },
                         ))
                     })
-                    .text_ui(cx)
                     .child(cell)
                     .into_any_element(),
             );

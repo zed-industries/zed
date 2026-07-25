@@ -758,11 +758,10 @@ impl ActionLog {
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
-                                self.project.update(cx, |project, cx| {
-                                    project.delete_entry(entry_id, false, cx)
-                                })
+                                self.project
+                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
                             })
-                            .unwrap_or_else(|| Task::ready(Ok(None)));
+                            .unwrap_or_else(|| Task::ready(Ok(())));
 
                         cx.background_spawn(async move {
                             task.await?;
@@ -1048,23 +1047,12 @@ pub struct DiffStats {
 }
 
 impl DiffStats {
-    pub fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
-        let mut stats = DiffStats::default();
-        let diff_snapshot = diff.snapshot(cx);
-        let buffer_snapshot = buffer.snapshot();
-        let base_text = diff_snapshot.base_text();
-
-        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
-            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-            stats.lines_added += added_rows;
-
-            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
-            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
-            let removed_rows = base_end.saturating_sub(base_start);
-            stats.lines_removed += removed_rows;
+    pub fn single_file(diff: &BufferDiff) -> Self {
+        let (lines_added, lines_removed) = diff.changed_row_counts();
+        DiffStats {
+            lines_added,
+            lines_removed,
         }
-
-        stats
     }
 
     pub fn all_files(
@@ -1072,8 +1060,8 @@ impl DiffStats {
         cx: &App,
     ) -> Self {
         let mut total = DiffStats::default();
-        for (buffer, diff) in changed_buffers {
-            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+        for (_, diff) in changed_buffers {
+            let stats = DiffStats::single_file(diff.read(cx));
             total.lines_added += stats.lines_added;
             total.lines_removed += stats.lines_removed;
         }
@@ -1831,14 +1819,14 @@ mod tests {
         action_log.update(cx, |log, cx| log.will_delete_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| {
-                project.delete_file(file1_path.clone(), false, cx)
+                project.delete_file(file1_path.clone(), cx)
             })
             .unwrap()
             .await
             .unwrap();
         project
             .update(cx, |project, cx| {
-                project.delete_file(file2_path.clone(), false, cx)
+                project.delete_file(file2_path.clone(), cx)
             })
             .unwrap()
             .await
@@ -2143,9 +2131,7 @@ mod tests {
             action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| {
-                project.delete_file(file_path.clone(), false, cx)
-            })
+            .update(cx, |project, cx| project.delete_file(file_path.clone(), cx))
             .unwrap()
             .await
             .unwrap();
@@ -3156,7 +3142,7 @@ mod tests {
             child_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| project.delete_file(file_path, false, cx))
+            .update(cx, |project, cx| project.delete_file(file_path, cx))
             .unwrap()
             .await
             .unwrap();

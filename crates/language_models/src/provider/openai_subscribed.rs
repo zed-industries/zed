@@ -194,9 +194,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        // No GPT-5.5 Mini exists yet; per the OpenAI Codex docs, gpt-5.4-mini
-        // is the recommended fast/cheap default alongside gpt-5.5.
-        Some(self.create_language_model(ChatGptModel::Gpt54Mini))
+        Some(self.create_language_model(ChatGptModel::Gpt56Luna))
     }
 
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -313,6 +311,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 enum ChatGptModel {
     Gpt56Sol,
     Gpt56Terra,
+    Gpt56Luna,
     Gpt55,
     Gpt54,
     Gpt54Mini,
@@ -323,6 +322,7 @@ impl ChatGptModel {
         vec![
             Self::Gpt56Sol,
             Self::Gpt56Terra,
+            Self::Gpt56Luna,
             Self::Gpt55,
             Self::Gpt54,
             Self::Gpt54Mini,
@@ -333,6 +333,7 @@ impl ChatGptModel {
         match self {
             Self::Gpt56Sol => "gpt-5.6-sol",
             Self::Gpt56Terra => "gpt-5.6-terra",
+            Self::Gpt56Luna => "gpt-5.6-luna",
             Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
@@ -343,6 +344,7 @@ impl ChatGptModel {
         match self {
             Self::Gpt56Sol => "GPT-5.6 Sol",
             Self::Gpt56Terra => "GPT-5.6 Terra",
+            Self::Gpt56Luna => "GPT-5.6 Luna",
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
@@ -351,7 +353,7 @@ impl ChatGptModel {
 
     fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt56Sol | Self::Gpt56Terra => 372_000,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
             Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
         }
     }
@@ -369,7 +371,7 @@ impl ChatGptModel {
     fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
         match self {
             Self::Gpt56Sol => Some(ReasoningEffort::Low),
-            Self::Gpt56Terra | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => {
+            Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => {
                 Some(ReasoningEffort::Medium)
             }
         }
@@ -377,7 +379,7 @@ impl ChatGptModel {
 
     fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
         match self {
-            Self::Gpt56Sol | Self::Gpt56Terra => &[
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -403,7 +405,7 @@ impl ChatGptModel {
 
     fn supports_priority(&self) -> bool {
         match self {
-            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt55 | Self::Gpt54 => true,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 => true,
             Self::Gpt54Mini => false,
         }
     }
@@ -517,7 +519,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
-        let mut responses_request = into_open_ai_response(
+        let mut responses_request = match into_open_ai_response(
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
@@ -527,26 +529,18 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model
                 .supported_reasoning_efforts()
                 .contains(&ReasoningEffort::None),
-        );
+            &PROVIDER_ID,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         responses_request.store = Some(false);
 
-        // The Codex backend requires system messages to be in the top-level
-        // `instructions` field rather than as input items.
-        let mut instructions = Vec::new();
-        responses_request.input.retain(|item| {
-            if let open_ai::responses::ResponseInputItem::Message(msg) = item {
-                if msg.role == open_ai::Role::System {
-                    for part in &msg.content {
-                        if let open_ai::responses::ResponseInputContent::Text { text } = part {
-                            instructions.push(text.clone());
-                        }
-                    }
-                    return false;
-                }
-            }
-            true
-        });
-        responses_request.instructions = Some(instructions.join("\n\n"));
+        // `into_open_ai_response` already hoists system messages into
+        // `instructions`, which is the only form the Codex backend accepts.
+        // Codex has only ever been sent requests with the field present
+        // (possibly empty), so keep sending it even without system messages.
+        responses_request.instructions.get_or_insert_default();
 
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
@@ -592,7 +586,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         });
 
         async move {
-            let mapper = OpenAiResponseEventMapper::new();
+            let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
             Ok(mapper.map_stream(future.await?.boxed()).boxed())
         }
         .boxed()

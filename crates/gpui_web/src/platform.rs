@@ -342,7 +342,15 @@ impl Platform for WebPlatform {
         None
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        if let Some(text) = item.text()
+            && let Some(window) = web_sys::window()
+        {
+            // Fire-and-forget; called synchronously inside the user's input
+            // event, which satisfies the browser's user-activation requirement.
+            drop(window.navigator().clipboard().write_text(&text));
+        }
+    }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(

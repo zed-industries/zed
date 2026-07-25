@@ -123,6 +123,8 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
+    app_name: Option<String>,
+    system_notifications: crate::linux::system_notifications::SystemNotificationState,
     #[cfg_attr(
         not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
         allow(dead_code)
@@ -163,6 +165,9 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
+            app_name: None,
+            system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
+            ),
             wake_sender,
             wake_listener_started: false,
         };
@@ -553,6 +558,34 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.with_common(|common| {
             common.callbacks.system_wake = Some(callback);
             common.start_wake_listener();
+        });
+    }
+
+    fn set_app_identity(&self, _identifier: &str, name: &str) {
+        self.inner
+            .with_common(|common| common.app_name = Some(name.to_string()));
+    }
+
+    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+        self.inner.with_common(|common| {
+            common
+                .system_notifications
+                .show(common.app_name.as_deref(), notification)
+        });
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        self.inner
+            .with_common(|common| common.system_notifications.dismiss(tag));
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+    ) {
+        self.inner.with_common(|common| {
+            let executor = common.foreground_executor.clone();
+            common.system_notifications.on_response(&executor, callback)
         });
     }
 
