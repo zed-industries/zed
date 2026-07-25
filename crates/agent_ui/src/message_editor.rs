@@ -3468,10 +3468,11 @@ mod tests {
         let plain_text_language = Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Plain Text".into(),
-                matcher: language::LanguageMatcher {
+                matcher: (language::LanguageMatcher {
                     path_suffixes: vec!["txt".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,

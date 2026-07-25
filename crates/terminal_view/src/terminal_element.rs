@@ -1035,7 +1035,8 @@ impl Element for TerminalElement {
                     if matches!(self.terminal_view.read(cx).mode, TerminalMode::Standalone) {
                         let should_anchor_to_bottom = {
                             let content = self.terminal.read(cx).last_content();
-                            content.scrolled_to_bottom && content.bottom_row_occupied
+                            content.mode.contains(Modes::ALT_SCREEN)
+                                || (content.scrolled_to_bottom && content.bottom_row_occupied)
                         };
                         let scale_factor = window.scale_factor();
                         let line_height_pixels = px(line_height);
