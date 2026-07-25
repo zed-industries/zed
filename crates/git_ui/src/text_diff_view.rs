@@ -105,8 +105,15 @@ impl TextDiffView {
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
         let mut clipboard_text = diff_data.clipboard_text.clone();
 
-        if !clipboard_text.ends_with("\n") {
-            clipboard_text.push_str("\n");
+        // Only mirror a trailing newline the selection actually has: appending one
+        // unconditionally leaves a buffer without one never diffing clean.
+        let selection_ends_with_newline = source_buffer_snapshot
+            .reversed_chars_at(expanded_selection_range.end)
+            .next()
+            == Some('\n');
+
+        if selection_ends_with_newline && !clipboard_text.ends_with('\n') {
+            clipboard_text.push('\n');
         }
 
         let workspace = workspace.weak_handle();
@@ -552,6 +559,42 @@ mod tests {
             ),
             "Clipboard ↔ text.txt @ L1:1-3",
             &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    /// Regression test for #49204.
+    #[gpui::test]
+    async fn test_diffing_identical_clipboard_against_buffer_without_trailing_newline(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "abc",
+            "ˇabc",
+            "ˇabc",
+            "Clipboard ↔ text.txt @ L1:1-4",
+            &format!("Clipboard ↔ {} @ L1:1-4", path!("test/text.txt")),
+            cx,
+        )
+        .await;
+    }
+
+    /// Counterpart to the test above: here the newline must still be appended.
+    #[gpui::test]
+    async fn test_diffing_clipboard_without_trailing_newline_against_buffer_with_one(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(
+            path!("/test"),
+            path!("/test/text.txt"),
+            "abc",
+            "ˇabc\n",
+            "ˇabc\n",
+            "Clipboard ↔ text.txt @ L1:1-L2:1",
+            &format!("Clipboard ↔ {} @ L1:1-L2:1", path!("test/text.txt")),
             cx,
         )
         .await;
