@@ -3269,10 +3269,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3717,10 +3718,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3804,10 +3806,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
