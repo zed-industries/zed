@@ -519,23 +519,27 @@ impl CosmicTextSystemState {
             return;
         }
 
-        let segment_runs = clip_font_runs(font_runs, range.clone());
+        let segment_font_runs = clip_font_runs(font_runs, range.clone());
         let segment =
-            self.layout_line_no_separators(&text[range.clone()], font_size, &segment_runs);
+            self.layout_line_no_separators(&text[range.clone()], font_size, &segment_font_runs);
 
-        for mut run in segment.runs {
+        let mut segment_runs = segment.runs.clone();
+        for run in &mut segment_runs {
             for glyph in &mut run.glyphs {
                 glyph.index += range.start;
                 glyph.position.x += layout.width;
             }
+        }
 
-            match layout
+        for mut run in segment_runs {
+            if let Some(same_run) = layout
                 .runs
                 .last_mut()
                 .filter(|last| last.font_id == run.font_id)
             {
-                Some(last) => last.glyphs.append(&mut run.glyphs),
-                None => layout.runs.push(run),
+                same_run.glyphs.append(&mut run.glyphs);
+            } else {
+                layout.runs.push(run);
             }
         }
 
