@@ -908,6 +908,10 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// Bit flag stored in the otherwise-unused `pad` field marking this
+    /// background as glass content.
+    const GLASS_CONTENT: u32 = 1;
+
     /// Returns the solid color if this is a solid background, None otherwise.
     pub fn as_solid(&self) -> Option<Hsla> {
         if self.tag == BackgroundTag::Solid {
@@ -915,6 +919,22 @@ impl Background {
         } else {
             None
         }
+    }
+
+    /// Marks this background as "glass content": when painted it only blends
+    /// its RGB and preserves the destination alpha channel, so its rounded,
+    /// anti-aliased edges don't punch through a translucent glass surface
+    /// beneath it. Set automatically when an element opts in via
+    /// [`crate::Styled::glass`].
+    pub(crate) fn glass_content(mut self) -> Self {
+        self.pad |= Self::GLASS_CONTENT;
+        self
+    }
+
+    /// Whether this background was marked as glass content via
+    /// [`crate::Styled::glass`].
+    pub fn is_glass_content(&self) -> bool {
+        self.pad & Self::GLASS_CONTENT != 0
     }
 
     /// Use specified color space for color interpolation.

@@ -297,6 +297,17 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// Whether this element's children are painted as "glass content": their
+    /// fills only blend RGB and preserve the destination alpha, so rounded
+    /// anti-aliased edges drawn on top of a translucent glass surface don't
+    /// punch through it.
+    ///
+    /// Glass mode is inherited by descendants. `Some(true)` turns it on,
+    /// `Some(false)` turns it back off for an opaque subtree (e.g. a crisp
+    /// content panel nested inside a glass surface), and `None` inherits the
+    /// surrounding state. Set via [`crate::Styled::glass`].
+    pub glass_content: Option<bool>,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -805,6 +816,7 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            glass_content: None,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,
