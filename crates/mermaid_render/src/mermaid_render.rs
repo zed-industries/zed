@@ -68,6 +68,7 @@ mod render;
 
 use anyhow::Result;
 use gpui::{Hsla, Rgba};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AccentColor {
@@ -179,6 +180,26 @@ pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
     let svg = render::render_mermaid(source, theme)?;
     let svg = postprocess::postprocess(&svg, theme)?;
     Ok(svg)
+}
+
+/// Returns `merman`'s identifier for the diagram type `source` declares, or
+/// `None` when `merman` can't determine one.
+///
+/// The returned identifier is `merman`'s internal id rather than the Mermaid
+/// keyword, so a `graph`/`flowchart` header reports `flowchart-v2` and
+/// `sequenceDiagram` reports `sequence`.
+///
+/// Callers that gate on diagram type should use this rather than inspecting
+/// `source` themselves: it skips Mermaid preambles (frontmatter, `%%{init}%%`
+/// directives and `%%` comments) exactly the way [`render_to_svg`] does, so the
+/// two can't disagree about what a diagram is.
+pub fn detect_diagram_type(source: &str) -> Option<&'static str> {
+    static DETECTORS: OnceLock<merman::DetectorRegistry> = OnceLock::new();
+    let detectors = DETECTORS.get_or_init(merman::DetectorRegistry::default_mermaid_11_12_2);
+    // Detection only reads config, but directives in `source` may write to it,
+    // so each call gets a scratch copy to write into.
+    let mut config = merman::MermaidConfig::default();
+    detectors.detect_type(source, &mut config).ok()
 }
 
 #[cfg(test)]

@@ -232,32 +232,37 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
 /// supports them, because we have not yet written custom CSS to ensure text is
 /// readable.
 fn is_supported_diagram_type(source: &str) -> bool {
+    /// `merman`'s diagram type ids, which don't always match the Mermaid
+    /// keyword that selects them: `graph`/`flowchart` both report
+    /// `flowchart-v2`, and `sequenceDiagram` reports `sequence`.
+    ///
+    /// The legacy `dagre-d3` ids (`flowchart`, `class`, `state`) aren't
+    /// currently reachable — detection resolves those diagrams to their `v2`
+    /// ids — but they're listed so that a `merman` upgrade which starts
+    /// reporting them doesn't silently stop rendering diagrams we do support.
+    ///
     /// If updating this list, also update the system prompt!
-    const SUPPORTED_PREFIXES: &[&str] = &[
+    const SUPPORTED_TYPES: &[&str] = &[
         "flowchart",
-        "graph",
-        "sequenceDiagram",
+        "flowchart-v2",
+        "flowchart-elk",
+        "sequence",
+        "class",
         "classDiagram",
+        "state",
         "stateDiagram",
-        "stateDiagram-v2",
-        "erDiagram",
+        "er",
         "gantt",
         "pie",
         "gitGraph",
         "mindmap",
         "timeline",
         "quadrantChart",
-        "xychart-beta",
+        "xychart",
         "journey",
     ];
-    let first_token = source
-        .trim_start()
-        .split(|c: char| c.is_whitespace() || c == '\n')
-        .next()
-        .unwrap_or("");
-    SUPPORTED_PREFIXES
-        .iter()
-        .any(|prefix| first_token.eq_ignore_ascii_case(prefix))
+    mermaid_render::detect_diagram_type(source)
+        .is_some_and(|diagram_type| SUPPORTED_TYPES.contains(&diagram_type))
 }
 
 pub(crate) fn extract_mermaid_diagrams(
@@ -550,7 +555,8 @@ fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
 mod tests {
     use super::{
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, is_supported_diagram_type,
+        parse_mermaid_info,
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
@@ -560,6 +566,9 @@ mod tests {
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
     use ui::prelude::*;
+
+    const MERMAID_WITH_INIT_DIRECTIVE: &str =
+        "%%{init: {'themeVariables': {'fontFamily': 'monospace'}}}%%\nflowchart TB\n    A";
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -691,6 +700,132 @@ mod tests {
         let diagram = diagrams.values().next().unwrap();
         assert_eq!(diagram.contents.contents, "graph TD;");
         assert_eq!(diagram.contents.scale, 150);
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagrams_with_preamble() {
+        const MULTILINE_DIRECTIVES: &str = "%%{init: {\n\
+            'themeVariables': {'fontFamily': 'monospace'}\n\
+            }}%%\n\
+            %%{wrap}%%\n\
+            sequenceDiagram\n\
+                A->>B: Hello";
+        const FRONTMATTER: &str = "---\n\
+            title: Diagram\n\
+            ---\n\
+            classDiagram\n\
+                class A";
+        const FRONTMATTER_AND_DIRECTIVE: &str = "---\n\
+            title: Diagram\n\
+            ---\n\
+            %%{init: {'theme': 'base'}}%%\n\
+            stateDiagram-v2\n\
+                [*] --> A";
+
+        let markdown = [
+            "```mermaid\n",
+            MERMAID_WITH_INIT_DIRECTIVE,
+            "\n```\n\n```mermaid\n",
+            MULTILINE_DIRECTIVES,
+            "\n```\n\n```mermaid\n",
+            FRONTMATTER,
+            "\n```\n\n```mermaid\n",
+            FRONTMATTER_AND_DIRECTIVE,
+            "\n```\n\n```mermaid\n%%{init: {}}%%\nsankey-beta\n```\n\n",
+            "```mermaid\n%%{init: {}\nflowchart TB\n    A\n```\n\n",
+            "```mermaid\n---\ntitle: Diagram\nflowchart TB\n    A\n```",
+        ]
+        .concat();
+        let events =
+            crate::parser::parse_markdown_with_options(&markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(&markdown, &events);
+        let extracted_contents = diagrams
+            .values()
+            .map(|diagram| diagram.contents.contents.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            extracted_contents,
+            [
+                MERMAID_WITH_INIT_DIRECTIVE,
+                MULTILINE_DIRECTIVES,
+                FRONTMATTER,
+                FRONTMATTER_AND_DIRECTIVE,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagrams_with_comment_preamble() {
+        const COMMENT_ONLY: &str = "%% Payment flow\nflowchart TB\n    A";
+        const DIRECTIVE_THEN_COMMENT: &str =
+            "%%{init: {'theme': 'base'}}%%\n%% Payment flow\nflowchart TB\n    A";
+
+        let markdown = [
+            "```mermaid\n",
+            COMMENT_ONLY,
+            "\n```\n\n```mermaid\n",
+            DIRECTIVE_THEN_COMMENT,
+            "\n```\n\n```mermaid\n%% Just a comment\nsankey-beta\n```",
+        ]
+        .concat();
+        let events =
+            crate::parser::parse_markdown_with_options(&markdown, false, false, false).events;
+        let diagrams = extract_mermaid_diagrams(&markdown, &events);
+        let extracted_contents = diagrams
+            .values()
+            .map(|diagram| diagram.contents.contents.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(extracted_contents, [COMMENT_ONLY, DIRECTIVE_THEN_COMMENT]);
+    }
+
+    #[test]
+    fn test_diagram_keyword_support_matches_allowlist() {
+        const SUPPORTED: &[&str] = &[
+            "flowchart TB\n    A",
+            "graph TD\n    A --> B",
+            "sequenceDiagram\n    A->>B: Hi",
+            "classDiagram\n    class A",
+            "stateDiagram\n    [*] --> A",
+            "stateDiagram-v2\n    [*] --> A",
+            "erDiagram\n    A ||--o{ B : has",
+            "gantt\n    title A\n    section S\n    Task :a1, 2024-01-01, 1d",
+            "pie\n    \"A\" : 10",
+            "gitGraph\n    commit",
+            "mindmap\n  root",
+            "timeline\n    title A\n    2024 : Thing",
+            "quadrantChart\n    x-axis A --> B",
+            "xychart-beta\n    line [1, 2]",
+            "journey\n    title A\n    section S\n      Do: 5: Me",
+        ];
+        const UNSUPPORTED: &[&str] = &[
+            "sankey-beta\nA,B,1",
+            "block-beta\n    A",
+            "packet-beta\n    0-7: \"A\"",
+            "requirementDiagram\n    requirement A {\n    }",
+            "C4Context\n    Person(a, \"A\")",
+            "kanban\n    a[A]",
+            "treemap\n    \"A\"",
+            "radar-beta\n    axis a",
+            "architecture-beta\n    group a",
+            "info",
+        ];
+
+        for source in SUPPORTED {
+            assert!(
+                is_supported_diagram_type(source),
+                "expected {source:?} to be supported, merman detected {:?}",
+                mermaid_render::detect_diagram_type(source)
+            );
+        }
+        for source in UNSUPPORTED {
+            assert!(
+                !is_supported_diagram_type(source),
+                "expected {source:?} to be unsupported, merman detected {:?}",
+                mermaid_render::detect_diagram_type(source)
+            );
+        }
     }
 
     #[test]
@@ -867,6 +1002,29 @@ mod tests {
             .join("\n");
 
         assert!(!text.contains("graph TD;"));
+    }
+
+    #[gpui::test]
+    fn test_mermaid_with_init_directive_renders(cx: &mut TestAppContext) {
+        let markdown = format!("```mermaid\n{MERMAID_WITH_INIT_DIRECTIVE}\n```");
+        let rendered = render_markdown_with_options(
+            &markdown,
+            MarkdownOptions {
+                render_mermaid_diagrams: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        let text = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!text.contains("%%{init"));
+        assert!(!text.contains("flowchart TB"));
     }
 
     #[gpui::test]
