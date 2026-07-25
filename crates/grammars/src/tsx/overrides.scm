@@ -5,7 +5,7 @@
 (template_string
   (string_fragment) @string)
 
-(jsx_element) @element
+(jsx_element) @element.inclusive_start
 
 [
   (jsx_opening_element)
