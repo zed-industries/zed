@@ -15,16 +15,15 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
-use crate::PinchEvent;
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Axis, Bounds, ClickEvent, DispatchPhase,
     Display, Element, ElementId, Entity, EntityId, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
-    MouseUpEvent, Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString,
-    Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea,
-    point, px, size,
+    MouseUpEvent, Overflow, ParentElement, PinchEvent, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
+    WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -40,7 +39,7 @@ use std::{
     mem,
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use super::ImageCacheProvider;
@@ -82,6 +81,71 @@ impl<T: 'static> DragMoveEvent<T> {
     /// An item that is about to be dropped.
     pub fn dragged_item(&self) -> &dyn Any {
         self.dragged_item.as_ref()
+    }
+}
+
+const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OngoingScroll {
+    last_event: Instant,
+    axis: Option<Axis>,
+}
+
+impl Default for OngoingScroll {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OngoingScroll {
+    fn new() -> Self {
+        Self {
+            last_event: Instant::now() - SCROLL_EVENT_SEPARATION,
+            axis: None,
+        }
+    }
+
+    fn filter(&mut self, delta: &mut Point<Pixels>) {
+        const UNLOCK_PERCENT: f32 = 1.9;
+        const UNLOCK_LOWER_BOUND: Pixels = px(6.);
+        let mut axis = self.axis;
+
+        let x = delta.x.abs();
+        let y = delta.y.abs();
+        let now = Instant::now();
+        let duration = now.duration_since(self.last_event);
+        self.last_event = now;
+        if duration > SCROLL_EVENT_SEPARATION {
+            axis = if x <= y {
+                Some(Axis::Vertical)
+            } else {
+                Some(Axis::Horizontal)
+            };
+        } else if x.max(y) >= UNLOCK_LOWER_BOUND {
+            match axis {
+                Some(Axis::Vertical) => {
+                    if x > y && x >= y * UNLOCK_PERCENT {
+                        axis = None;
+                    }
+                }
+
+                Some(Axis::Horizontal) => {
+                    if y > x && y >= x * UNLOCK_PERCENT {
+                        axis = None;
+                    }
+                }
+
+                None => {}
+            }
+        }
+
+        self.axis = axis;
+        match axis {
+            Some(Axis::Vertical) => delta.x = Pixels::ZERO,
+            Some(Axis::Horizontal) => delta.y = Pixels::ZERO,
+            None => {}
+        }
     }
 }
 
@@ -1963,6 +2027,7 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -2084,7 +2149,9 @@ impl Interactivity {
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                    let scroll_handle_state = scroll_handle.0.borrow();
+                    self.scroll_offset = Some(scroll_handle_state.offset.clone());
+                    self.ongoing_scroll = Some(scroll_handle_state.ongoing_scroll.clone());
                 } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll))
                     && let Some(element_state) = element_state.as_mut()
@@ -2093,6 +2160,12 @@ impl Interactivity {
                         element_state
                             .scroll_offset
                             .get_or_insert_with(Rc::default)
+                            .clone(),
+                    );
+                    self.ongoing_scroll = Some(
+                        element_state
+                            .ongoing_scroll
+                            .get_or_insert_with(|| Rc::new(RefCell::new(OngoingScroll::new())))
                             .clone(),
                     );
                 }
@@ -3085,6 +3158,7 @@ impl Interactivity {
         _cx: &mut App,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
+            let ongoing_scroll = self.ongoing_scroll.clone();
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -3095,24 +3169,30 @@ impl Interactivity {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
-                    let delta = event.delta.pixel_delta(line_height);
+                    let mut delta = event.delta.pixel_delta(line_height);
 
-                    let mut delta_x = Pixels::ZERO;
-                    if overflow.x == Overflow::Scroll {
-                        if !delta.x.is_zero() {
-                            delta_x = delta.x;
-                        } else if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll {
-                            delta_x = delta.y;
-                        }
+                    if restrict_scroll_to_axis && let Some(ongoing_scroll) = &ongoing_scroll {
+                        ongoing_scroll.borrow_mut().filter(&mut delta);
                     }
-                    let mut delta_y = Pixels::ZERO;
-                    if overflow.y == Overflow::Scroll {
-                        if !delta.y.is_zero() {
-                            delta_y = delta.y;
-                        } else if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll {
-                            delta_y = delta.x;
+
+                    let mut delta_x = match overflow.x {
+                        Overflow::Scroll if !delta.x.is_zero() => delta.x,
+                        Overflow::Scroll
+                            if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
+                        {
+                            delta.y
                         }
-                    }
+                        _ => Pixels::ZERO,
+                    };
+                    let mut delta_y = match overflow.y {
+                        Overflow::Scroll if !delta.y.is_zero() => delta.y,
+                        Overflow::Scroll
+                            if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll =>
+                        {
+                            delta.x
+                        }
+                        _ => Pixels::ZERO,
+                    };
                     if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
                         if delta_x.abs() > delta_y.abs() {
                             delta_y = Pixels::ZERO;
@@ -3360,6 +3440,7 @@ pub struct InteractiveElementState {
     /// blur). `None` means no activation key is pending.
     pub(crate) pending_keyboard_down: Option<Rc<RefCell<Option<u64>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
@@ -3895,6 +3976,7 @@ impl ScrollAnchor {
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
+    ongoing_scroll: Rc<RefCell<OngoingScroll>>,
     bounds: Bounds<Pixels>,
     max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
@@ -4120,6 +4202,34 @@ mod tests {
         TestAppContext, canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
+
+    #[test]
+    fn ongoing_scroll_locks_to_dominant_axis() {
+        let mut ongoing_scroll = OngoingScroll::new();
+        let mut horizontal_delta = point(px(10.), px(2.));
+        ongoing_scroll.filter(&mut horizontal_delta);
+        assert_eq!(horizontal_delta, point(px(10.), px(0.)));
+
+        let mut continued_delta = point(px(3.), px(2.));
+        ongoing_scroll.filter(&mut continued_delta);
+        assert_eq!(continued_delta, point(px(3.), px(0.)));
+
+        ongoing_scroll.last_event = Instant::now() - SCROLL_EVENT_SEPARATION;
+        let mut vertical_delta = point(px(2.), px(10.));
+        ongoing_scroll.filter(&mut vertical_delta);
+        assert_eq!(vertical_delta, point(px(0.), px(10.)));
+    }
+
+    #[test]
+    fn ongoing_scroll_unlocks_when_direction_changes() {
+        let mut ongoing_scroll = OngoingScroll::new();
+        let mut horizontal_delta = point(px(10.), px(2.));
+        ongoing_scroll.filter(&mut horizontal_delta);
+
+        let mut vertical_delta = point(px(2.), px(10.));
+        ongoing_scroll.filter(&mut vertical_delta);
+        assert_eq!(vertical_delta, point(px(2.), px(10.)));
+    }
 
     struct GroupHoverTestView {
         render_count: Rc<Cell<usize>>,
