@@ -400,6 +400,48 @@ fn test_rust_json_macro_empty_string_highlighting(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_highlight_captures_filter_custom_predicates(cx: &mut App) {
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        highlights: Some(Cow::from(
+            "((closure_expression) @function (#not-has-parent? @function arguments))",
+        )),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    registry.add(language.clone());
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "fn main() { let standalone = || {}; foo(|| {}); }",
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(language, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["function"],
+        "fn main() { let standalone = «|| {}»; foo(|| {}); }",
+    );
+}
+
+#[gpui::test]
 fn test_typing_multiple_new_injections(cx: &mut App) {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
