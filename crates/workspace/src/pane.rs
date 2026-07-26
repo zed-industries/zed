@@ -2875,13 +2875,13 @@ impl Pane {
                 .tooltip(move |_, cx| {
                     if toggleable {
                         Tooltip::with_meta(
-                            "Unlock File",
+                            "Unlock Tab",
                             None,
-                            "This will make this file editable",
+                            "This will make this tab editable",
                             cx,
                         )
                     } else {
-                        Tooltip::with_meta("Locked File", None, "This file is read-only", cx)
+                        Tooltip::with_meta("Locked Tab", None, "This tab is read-only", cx)
                     }
                 })
                 .on_click(cx.listener(move |pane, _, window, cx| {
@@ -3058,7 +3058,7 @@ impl Pane {
                             } else {
                                 this.tooltip(move |_, cx| {
                                     let text = text.clone();
-                                    Tooltip::with_meta(text, None, "Read-Only File", cx)
+                                    Tooltip::with_meta(text, None, "Read-Only Tab", cx)
                                 })
                             }
                         }
@@ -3240,9 +3240,9 @@ impl Pane {
 
                         if capability != Capability::ReadOnly {
                             let read_only_label = if capability.editable() {
-                                "Make File Read-Only"
+                                "Make Tab Read-Only"
                             } else {
-                                "Make File Editable"
+                                "Make Tab Editable"
                             };
                             menu = menu.separator().entry(
                                 read_only_label,

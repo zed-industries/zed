@@ -5859,14 +5859,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let source = snapshot.anchor_before(Point::new(display_row.0, 0u32));
+        let display_snapshot = self.display_snapshot(cx);
+        let display_point = display_row.as_display_point();
+        let source = display_snapshot.display_point_to_anchor(display_point, Bias::Left);
         let anchor = position.unwrap_or(source);
 
         // Every entry in this menu either requires a worktree-file-backed buffer
         // (breakpoints, bookmarks, run to cursor) or is meaningless without one
         // (git blame), so don't open it for e.g. untitled buffers.
-        if !snapshot
+        if !display_snapshot
+            .buffer_snapshot()
             .anchor_to_buffer_anchor(anchor)
             .is_some_and(|(_, buffer_snapshot)| {
                 project::File::from_dyn(buffer_snapshot.file()).is_some()
