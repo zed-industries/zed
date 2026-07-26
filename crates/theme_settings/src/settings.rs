@@ -65,6 +65,10 @@ pub struct ThemeSettings {
     /// Falls back to the buffer font family if unset. Diagnostic messages
     /// continue to use the buffer font family.
     markdown_inline_code_font_family: Option<SharedString>,
+    /// The font size used for prose in markdown-rendered surfaces such as the
+    /// agent panel. Falls back to each surface's UI font size if unset. The
+    /// markdown preview and hover popups use their own font size settings.
+    markdown_prose_font_size: Option<Pixels>,
     /// The font size used for prose in symbol hover popups and other
     /// documentation tooltips. Inherits the surrounding text size if unset.
     hover_popover_font_size: Option<Pixels>,
@@ -459,6 +463,12 @@ impl ThemeSettings {
             .unwrap_or(&self.buffer_font.family)
     }
 
+    /// Returns the font size to use for prose in markdown-rendered surfaces
+    /// such as the agent panel, if configured.
+    pub fn markdown_prose_font_size(&self) -> Option<Pixels> {
+        self.markdown_prose_font_size.map(clamp_font_size)
+    }
+
     /// Returns the font size to use for prose in hover popups, if configured.
     pub fn hover_popover_font_size(&self) -> Option<Pixels> {
         self.hover_popover_font_size.map(clamp_font_size)
@@ -787,6 +797,7 @@ impl settings::Settings for ThemeSettings {
                 .markdown_inline_code_font_family
                 .as_ref()
                 .map(|f| f.0.clone().into()),
+            markdown_prose_font_size: content.markdown_prose_font_size.map(|s| s.into_gpui()),
             hover_popover_font_size: content.hover_popover_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content
                 .markdown_preview_font_family

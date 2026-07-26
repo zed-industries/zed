@@ -1176,7 +1176,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn markdown_font_section() -> [SettingsPageItem; 3] {
+    fn markdown_font_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Markdown Fonts"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1214,6 +1214,26 @@ fn appearance_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.theme.markdown_inline_code_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prose Font Size",
+                description: "Font size for prose in markdown-rendered surfaces such as the agent panel. Falls back to each surface's UI font size. The markdown preview and hover popups use their own font size settings.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_prose_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .markdown_prose_font_size
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_size.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.markdown_prose_font_size = value;
                     },
                 }),
                 metadata: None,

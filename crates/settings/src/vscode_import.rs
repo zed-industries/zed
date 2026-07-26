@@ -998,6 +998,7 @@ impl VsCodeSettings {
             git_commit_buffer_font_size: None,
             markdown_prose_font_family: None,
             markdown_inline_code_font_family: None,
+            markdown_prose_font_size: None,
             hover_popover_font_size: None,
             markdown_preview_font_family: None,
             markdown_preview_code_font_family: None,

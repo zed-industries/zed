@@ -82,6 +82,11 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // If not specified, it falls back to the editor font family.
   // Diagnostic messages continue to use the editor font family.
   "markdown_inline_code_font_family": null,
+  // Controls the font size for prose in markdown-rendered surfaces
+  // such as the agent panel.
+  // If not specified, it falls back to each surface's UI font size.
+  // The markdown preview and hover popups use their own font size settings.
+  "markdown_prose_font_size": null,
 
   // Controls the font size for prose in symbol hover popups and other
   // documentation tooltips.
@@ -540,8 +545,10 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
 }
 ```
 
-The agent panel's response text also follows the `markdown_prose_font_family`
-and `markdown_inline_code_font_family` settings described in [Fonts](#fonts).
+The agent panel's response text also follows the `markdown_prose_font_family`,
+`markdown_prose_font_size`, and `markdown_inline_code_font_family` settings
+described in [Fonts](#fonts). Setting `markdown_prose_font_size` resizes only
+the response prose, leaving the rest of the panel at `agent_ui_font_size`.
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
 

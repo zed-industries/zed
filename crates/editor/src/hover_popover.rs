@@ -709,6 +709,8 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     // `base_text_style`, so the font size must also be set on the container.
     let mut container_style = StyleRefinement::default();
     container_style.text.font_size = hover_popover_font_size.map(Into::into);
+    let prose_font_size = hover_popover_font_size
+        .unwrap_or_else(|| base_text_style.font_size.to_pixels(window.rem_size()));
     let code_block = StyleRefinement::default()
         .my(rems(1.))
         .font_family(buffer_font_family)
@@ -725,6 +727,9 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             font_family: Some(inline_code_font_family),
             font_features: Some(buffer_font_features),
             font_fallbacks: buffer_font_fallbacks,
+            // Monospace glyphs read optically larger than prose at the same
+            // size, so inline code is set at 95% of the prose size.
+            font_size: Some((prose_font_size * 0.95).into()),
             font_weight: Some(buffer_font_weight),
             ..Default::default()
         },
@@ -1394,7 +1399,7 @@ mod tests {
                 Some(px(21.0))
             );
             assert_eq!(style.inline_code.font_family.as_deref(), Some(".ZedMono"));
-            assert_eq!(style.inline_code.font_size, None);
+            assert_eq!(style.inline_code.font_size, Some((px(13.0) * 0.95).into()));
         });
     }
 

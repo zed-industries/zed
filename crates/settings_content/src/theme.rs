@@ -159,6 +159,10 @@ pub struct ThemeSettingsContent {
     /// surfaces. Falls back to the buffer font if unset. Diagnostic messages
     /// continue to use the buffer font.
     pub markdown_inline_code_font_family: Option<FontFamilyName>,
+    /// The font size for prose in markdown-rendered surfaces such as the
+    /// agent panel. Falls back to each surface's UI font size if unset. The
+    /// markdown preview and hover popups use their own font size settings.
+    pub markdown_prose_font_size: Option<FontSize>,
     /// The font size for prose in symbol hover popups and other documentation
     /// tooltips. Inherits the surrounding text size if unset.
     pub hover_popover_font_size: Option<FontSize>,
