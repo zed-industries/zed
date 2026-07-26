@@ -43,12 +43,10 @@ impl TableDataEngine {
         self.filter_stack.retention_config.contains_key(&col)
     }
 
-    /// Get available filters for a specific column with cascade behavior.
-    ///
-    /// A filter entry is "unavailable" when all of its rows are hidden by a
-    /// filter on an earlier-activated column, meaning selecting it would show
-    /// zero rows. The cascade walk stops at `column` so that the column's own
-    /// current filter does not affect its own entry availability.
+    /// Marks an entry unavailable if choosing it would leave zero rows, so users
+    /// aren't offered filter values that lead to an empty table. Only
+    /// earlier-activated columns count toward this: including `column`'s own
+    /// filter would make every currently-selected value block all others.
     pub(crate) fn get_filters_for_column(
         &self,
         column: AnyColumn,
@@ -106,15 +104,12 @@ impl TableDataEngine {
             .get(&column)
             .unwrap_or(&empty);
 
-        // Counts must reflect rows that also satisfy every other column's
-        // currently applied filter, not the whole dataset, so counts stay
-        // accurate once filters are stacked across columns. `column`'s own
-        // filter is excluded so its entries show what selecting them would
-        // additionally include, independent of its current selection.
-        let mut other_columns_filter_stack = self.filter_stack.clone();
-        other_columns_filter_stack.retention_config.remove(&column);
+        // Excludes `column`'s own filter so its entries reflect what selecting
+        // them would add, rather than being constrained by the current
+        // selection. Other columns' filters stay applied so counts remain
+        // accurate under stacked filters instead of reflecting the whole dataset.
         let rows_passing_other_filters =
-            retain_rows(&self.contents.rows, &other_columns_filter_stack);
+            retain_rows(&self.contents.rows, &self.filter_stack, Some(column));
 
         Ok(Arc::new(
             all_column_entries
@@ -245,10 +240,12 @@ pub fn calculate_available_filters(
     available_filters
 }
 
-/// Returns the set of data rows that survive all active filters in the stack.
+/// Returns the set of data rows that survive all active filters in the stack,
+/// optionally ignoring the filter on `exclude` without cloning the stack.
 pub fn retain_rows(
     content_rows: &[TableRow<TableCell>],
     filter_stack: &FilterStack,
+    exclude: Option<AnyColumn>,
 ) -> HashSet<DataRow> {
     let config = &filter_stack.retention_config;
     if config.is_empty() {
@@ -260,6 +257,9 @@ pub fn retain_rows(
         .enumerate()
         .filter(|(_, row)| {
             config.iter().all(|(col, allowed_values)| {
+                if Some(*col) == exclude {
+                    return true;
+                }
                 let cell_value = row.get(*col).and_then(|cell| cell.display_value().cloned());
                 allowed_values.contains(&cell_value)
             })

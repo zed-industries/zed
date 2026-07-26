@@ -8,7 +8,8 @@ use std::{
 
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    BackgroundExecutor, DismissEvent, ElementId, Entity, Focusable, ForegroundExecutor, Task,
+    BackgroundExecutor, ClipboardItem, DismissEvent, ElementId, Entity, Focusable,
+    ForegroundExecutor, MouseButton, Task,
 };
 use picker::{Picker, PickerDelegate};
 use ui::{
