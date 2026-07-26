@@ -13,6 +13,7 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           TransformationMatrix transformation,
                           constant Size_DevicePixels *input_viewport_size);
+float quad_depth(uint quad_id);
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
@@ -64,17 +65,21 @@ struct QuadFragmentInput {
 };
 
 vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
-                                    uint quad_id [[instance_id]],
+                                    uint instance_id [[instance_id]],
                                     constant float2 *unit_vertices
                                     [[buffer(QuadInputIndex_Vertices)]],
                                     constant Quad *quads
                                     [[buffer(QuadInputIndex_Quads)]],
+                                    constant uint *quad_indices
+                                    [[buffer(QuadInputIndex_QuadIndices)]],
                                     constant Size_DevicePixels *viewport_size
                                     [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
+  uint quad_id = quad_indices[instance_id];
   Quad quad = quads[quad_id];
   float4 device_position =
       to_device_position(unit_vertex, quad.bounds, viewport_size);
+  device_position.z = quad_depth(quad_id);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
@@ -444,6 +449,104 @@ float quarter_ellipse_sdf(float2 point, float2 radii) {
   // TODO: A better solution would be to use the gradient of the implicit
   // function for an ellipse to approximate a scaling factor.
   return unit_circle_sdf * (radii.x + radii.y) * -0.5;
+}
+
+struct OpaqueQuadVertexOutput {
+  float4 position [[position]];
+  float4 color [[flat]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct OpaqueQuadFragmentInput {
+  float4 position [[position]];
+  float4 color [[flat]];
+};
+
+Bounds_ScaledPixels opaque_quad_core(Quad quad) {
+  bool has_rounded_corners = quad.corner_radii.top_left != 0.0 ||
+                             quad.corner_radii.top_right != 0.0 ||
+                             quad.corner_radii.bottom_right != 0.0 ||
+                             quad.corner_radii.bottom_left != 0.0;
+  if (!has_rounded_corners) {
+    return quad.bounds;
+  }
+
+  const float antialias_inset = 1.0;
+  float left_inset =
+      max(quad.corner_radii.top_left, quad.corner_radii.bottom_left) +
+      antialias_inset;
+  float right_inset =
+      max(quad.corner_radii.top_right, quad.corner_radii.bottom_right) +
+      antialias_inset;
+  float top_inset =
+      max(quad.corner_radii.top_left, quad.corner_radii.top_right) +
+      antialias_inset;
+  float bottom_inset =
+      max(quad.corner_radii.bottom_left, quad.corner_radii.bottom_right) +
+      antialias_inset;
+
+  float2 size = float2(quad.bounds.size.width, quad.bounds.size.height);
+
+  // A horizontal band avoids the top and bottom corner arcs; a vertical band
+  // avoids the left and right arcs. Either is fully opaque, so use the larger.
+  float2 horizontal_band = max(
+      size - float2(2.0 * antialias_inset, top_inset + bottom_inset),
+      float2(0.0));
+  float2 vertical_band = max(
+      size - float2(left_inset + right_inset, 2.0 * antialias_inset),
+      float2(0.0));
+
+  Bounds_ScaledPixels core = quad.bounds;
+  if (horizontal_band.x * horizontal_band.y >=
+      vertical_band.x * vertical_band.y) {
+    core.origin.x += antialias_inset;
+    core.origin.y += top_inset;
+    core.size.width = horizontal_band.x;
+    core.size.height = horizontal_band.y;
+  } else {
+    core.origin.x += left_inset;
+    core.origin.y += antialias_inset;
+    core.size.width = vertical_band.x;
+    core.size.height = vertical_band.y;
+  }
+  return core;
+}
+
+vertex OpaqueQuadVertexOutput opaque_quad_vertex(
+    uint unit_vertex_id [[vertex_id]], uint instance_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(QuadInputIndex_Vertices)]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    constant uint *quad_indices [[buffer(QuadInputIndex_QuadIndices)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(QuadInputIndex_ViewportSize)]]) {
+  uint quad_id = quad_indices[instance_id];
+  Quad quad = quads[quad_id];
+  Bounds_ScaledPixels core = opaque_quad_core(quad);
+
+  if (core.size.width <= 0.0 || core.size.height <= 0.0) {
+    // Zero-area triangles are rejected before rasterization.
+    return OpaqueQuadVertexOutput{float4(0.0, 0.0, 0.0, 1.0), float4(0.0),
+                                  {1.0, 1.0, 1.0, 1.0}};
+  }
+
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  float4 device_position = to_device_position(unit_vertex, core, viewport_size);
+  device_position.z = quad_depth(quad_id);
+  float4 clip_distance =
+      distance_from_clip_rect(unit_vertex, core, quad.content_mask.bounds);
+  // Matches the blended quad shader's solid-background output exactly: tag-0
+  // quads resolve to `hsla_to_rgba(solid)`, and alpha-1 blending is an
+  // overwrite.
+  float4 color = hsla_to_rgba(quad.background.solid);
+
+  return OpaqueQuadVertexOutput{
+      device_position, color,
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment float4 opaque_quad_fragment(OpaqueQuadFragmentInput input
+                                     [[stage_in]]) {
+  return input.color;
 }
 
 struct ShadowVertexOutput {
@@ -1007,6 +1110,11 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   float2 device_position =
       position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+// Must match `gpui::quad_depth`.
+float quad_depth(uint quad_id) {
+  return saturate(float(quad_id + 1u) * (1.0 / 16777216.0));
 }
 
 float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
