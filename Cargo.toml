@@ -734,6 +734,7 @@ runtimelib = { version = "1.4.0", default-features = false, features = [
 ] }
 rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
+rustix = { version = "1.1", features = ["fs"] }
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io

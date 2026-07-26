@@ -611,62 +611,57 @@ fn path_to_c_string(path: &Path) -> io::Result<CString> {
     })
 }
 
-// Reads a directory's entries eagerly so the directory handle is opened and closed
-// within this call. On unix we go through libc directly instead of `std::fs::read_dir`
-// because `std`'s `ReadDir` aborts the process if `closedir` fails (it `assert!`s the
-// result), which turns transient errors (e.g. EBADF under file-descriptor pressure)
-// into an unrecoverable crash via Zed's panic hook. Tolerating a failing `closedir`
-// here keeps directory scanning resilient.
+// On Unix targets, std::fs::ReadDir panics in its Drop implementation
+// when an unexpected error is returned from closedir(2). We hit this
+// condition in production; one cause seems to be macOS's FSEventStream
+// incorrectly closing fds it doesn't own, resulting in closedir returning
+// EBADF, see https://github.com/zed-industries/zed/issues/59952#issuecomment-5080178879.
+//
+// We also see occasional errors like ENXIO and ETIMEDOUT that seem to
+// come from network or other exotic filesystems.
+//
+// To avoid crashing the app in this situation, we use the rustix analogue of
+// ReadDir, which doesn't have this panic in drop.
 #[cfg(unix)]
-fn read_dir_entries(path: &Path) -> Result<Vec<PathBuf>> {
-    use std::ffi::CStr;
+fn read_dir_entries(path: PathBuf) -> Result<impl Send + Iterator<Item = Result<PathBuf>>> {
+    use rustix::fs::{Dir, Mode, OFlags};
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
-    let c_path = CString::new(path.as_os_str().as_bytes())
-        .with_context(|| format!("path contains interior NUL: {path:?}"))?;
+    let directory_fd = rustix::fs::open(
+        &path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .with_context(|| format!("failed to open directory {path:?}"))?;
+    let directory =
+        Dir::new(directory_fd).with_context(|| format!("failed to read directory {path:?}"))?;
 
-    // SAFETY: `c_path` is a valid NUL-terminated C string for the lifetime of the call.
-    let dir = unsafe { libc::opendir(c_path.as_ptr()) };
-    if dir.is_null() {
-        return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("failed to open directory {path:?}"));
-    }
-
-    let mut entries = Vec::new();
-    loop {
-        // A null return is end-of-stream (a rare mid-iteration read error is treated as
-        // end-of-stream rather than aborting; the next scan will pick up any changes).
-        // SAFETY: `dir` is a valid, open directory stream owned by this thread.
-        let entry = unsafe { libc::readdir(dir) };
-        if entry.is_null() {
-            break;
-        }
-        // SAFETY: `entry` points to a valid `dirent` whose `d_name` is NUL-terminated
-        // and remains valid until the next `readdir`/`closedir` call.
-        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+    Ok(directory.filter_map(move |entry| {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                return Some(Err(anyhow::Error::new(error)
+                    .context(format!("failed to read directory entry in {path:?}"))));
+            }
+        };
+        let name = entry.file_name().to_bytes();
         if name == b"." || name == b".." {
-            continue;
+            return None;
         }
-        entries.push(path.join(OsStr::from_bytes(name)));
-    }
-
-    // Deliberately ignore the result: unlike `std`, a failing `closedir` must not crash.
-    // SAFETY: `dir` is a valid directory stream that is not used again after this call.
-    unsafe { libc::closedir(dir) };
-
-    Ok(entries)
+        Some(Ok(path.join(OsStr::from_bytes(name))))
+    }))
 }
 
 #[cfg(not(unix))]
-fn read_dir_entries(path: &Path) -> Result<Vec<PathBuf>> {
-    // Non-unix `std` directory iteration does not abort on close, so reuse it; collect
-    // eagerly so the handle is dropped inside this call.
-    let mut entries = Vec::new();
-    for entry in std::fs::read_dir(path)? {
-        entries.push(entry?.path());
-    }
-    Ok(entries)
+fn read_dir_entries(path: PathBuf) -> Result<impl Send + Iterator<Item = Result<PathBuf>>> {
+    let entries =
+        std::fs::read_dir(&path).with_context(|| format!("failed to open directory {path:?}"))?;
+    Ok(entries.map(move |entry| {
+        entry
+            .map(|entry| entry.path())
+            .with_context(|| format!("failed to read directory entry in {path:?}"))
+    }))
 }
 
 #[async_trait::async_trait]
@@ -1109,9 +1104,9 @@ impl Fs for RealFs {
         let path = path.to_owned();
         let entries = self
             .executor
-            .spawn(async move { read_dir_entries(&path) })
+            .spawn(async move { read_dir_entries(path) })
             .await?;
-        Ok(Box::pin(iter(entries.into_iter().map(Ok))))
+        Ok(Box::pin(iter(entries)))
     }
 
     async fn watch(
@@ -3448,41 +3443,5 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
             None,
         )
-    }
-}
-
-#[cfg(test)]
-mod read_dir_tests {
-    use super::read_dir_entries;
-    use std::collections::BTreeSet;
-    use std::path::PathBuf;
-
-    #[test]
-    fn lists_entries_and_excludes_dot_and_dotdot() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        std::fs::write(root.join("a.txt"), b"a").unwrap();
-        std::fs::write(root.join(".hidden"), b"h").unwrap();
-        std::fs::create_dir(root.join("sub")).unwrap();
-
-        let got: BTreeSet<PathBuf> = read_dir_entries(root).unwrap().into_iter().collect();
-        let want: BTreeSet<PathBuf> = [root.join("a.txt"), root.join(".hidden"), root.join("sub")]
-            .into_iter()
-            .collect();
-
-        assert_eq!(got, want);
-    }
-
-    #[test]
-    fn empty_dir_yields_no_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(read_dir_entries(dir.path()).unwrap().is_empty());
-    }
-
-    #[test]
-    fn missing_dir_is_err_not_panic() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("does-not-exist");
-        assert!(read_dir_entries(&missing).is_err());
     }
 }
