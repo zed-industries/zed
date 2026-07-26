@@ -12,8 +12,8 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use ui::{
-    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label,
-    LabelSize, ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
+    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label, LabelSize,
+    ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
 };
 
 use crate::{
@@ -107,11 +107,15 @@ impl ColumnFilterDelegate {
                 is_applied,
                 hidden_by: None,
             })
-            .chain(hidden.into_iter().map(|(entry, blocked_by)| ColumnFilterRow {
-                entry,
-                is_applied: false,
-                hidden_by: Some(blocked_by),
-            }))
+            .chain(
+                hidden
+                    .into_iter()
+                    .map(|(entry, blocked_by)| ColumnFilterRow {
+                        entry,
+                        is_applied: false,
+                        hidden_by: Some(blocked_by),
+                    }),
+            )
             .collect();
 
         let string_candidates = Arc::new(
@@ -272,7 +276,12 @@ impl PickerDelegate for ColumnFilterDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         self.selected_index = ix.min(self.filtered.len().saturating_sub(1));
         cx.notify();
     }
@@ -332,7 +341,10 @@ impl PickerDelegate for ColumnFilterDelegate {
                     return;
                 }
                 let rows = &this.delegate.rows;
-                let matches = matches.into_iter().map(|m| (m.candidate_id, m.positions)).collect();
+                let matches = matches
+                    .into_iter()
+                    .map(|m| (m.candidate_id, m.positions))
+                    .collect();
                 this.delegate.filtered = ColumnFilterDelegate::build_entries(rows, matches);
                 this.delegate.selected_index = this.delegate.first_selectable_index();
                 cx.notify();
