@@ -44,6 +44,7 @@ use project::{
 };
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use theme_settings::ThemeSettings;
 use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
@@ -754,6 +755,25 @@ fn create_worktree_in_workspace(
             cx,
         );
     });
+}
+
+#[derive(Clone)]
+struct DraggedProjectGroup {
+    label: SharedString,
+    width: Pixels,
+}
+
+impl Render for DraggedProjectGroup {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
+        h_flex()
+            .font_family(ui_font)
+            .bg(cx.theme().colors().background)
+            .w(self.width)
+            .p_1()
+            .gap_1()
+            .child(Label::new(self.label.clone()))
+    }
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
@@ -2323,6 +2343,10 @@ impl Sidebar {
         let opaque_window =
             cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
 
+        let dragged_project_group = DraggedProjectGroup {
+            label: label.clone(),
+            width: self.width,
+        };
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
                 .when(!is_active, |this| this.color(Color::Muted))
@@ -2478,6 +2502,10 @@ impl Sidebar {
                         this.toggle_collapse(&key_for_toggle, window, cx);
                     }
                 }),
+            )
+            .on_drag(
+                dragged_project_group.clone(),
+                move |dragged_project_group, _, _, cx| cx.new(|_| dragged_project_group.clone()),
             )
             .block_mouse_except_scroll();
 
