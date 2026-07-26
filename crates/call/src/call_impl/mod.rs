@@ -35,13 +35,37 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             return;
         };
 
-        let active_call_handle = active_call_handle.clone();
-        cx.subscribe_in(
-            &cx.entity(),
-            window,
+        cx.observe_window_activation(window, {
+            let active_call_handle = active_call_handle.clone();
+            move |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.update_active_view_for_followers(window, cx)
+                });
+
+                if window.is_window_active() {
+                    let project = workspace.read(cx).project().clone();
+                    if let Ok(task) = active_call_handle.update(cx, |active_call, cx| {
+                        active_call.set_location(Some(&project), cx)
+                    }) {
+                        task.detach_and_log_err(cx);
+                    }
+                } else if cx.active_window().is_none() {
+                    if let Ok(task) = active_call_handle
+                        .update(cx, |active_call, cx| active_call.set_location(None, cx))
+                    {
+                        task.detach_and_log_err(cx);
+                    }
+                }
+            }
+        })
+        .detach();
+
+        cx.subscribe_in(&cx.entity(), window, {
+            let active_call_handle = active_call_handle.clone();
             move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
-                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
-                    && window.is_window_active()
+                if !(matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
+                    && window.is_window_active())
                 {
                     return;
                 }
@@ -52,8 +76,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 }) {
                     task.detach_and_log_err(cx);
                 }
-            },
-        )
+            }
+        })
         .detach();
     })
     .detach();

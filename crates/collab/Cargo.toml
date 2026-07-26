@@ -128,6 +128,7 @@ sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme_settings = { workspace = true, features = ["test-support"] }
 theme.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 
 unindent.workspace = true
 util.workspace = true

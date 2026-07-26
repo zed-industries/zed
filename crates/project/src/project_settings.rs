@@ -133,6 +133,10 @@ pub struct GlobalLspSettings {
     ///
     /// Default: `120`
     pub request_timeout: u64,
+    /// The maximum line length a buffer may contain before language server features are disabled for the entire buffer.
+    ///
+    /// Default: `20000`
+    pub max_buffer_line_length: u32,
     pub notifications: LspNotificationSettings,
 
     /// Rules for highlighting semantic tokens.
@@ -144,6 +148,7 @@ impl Default for GlobalLspSettings {
         Self {
             button: true,
             request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+            max_buffer_line_length: 20_000,
             notifications: LspNotificationSettings::default(),
             semantic_token_rules: SemanticTokenRules::default(),
         }
@@ -736,6 +741,12 @@ impl Settings for ProjectSettings {
                     .as_ref()
                     .unwrap()
                     .request_timeout
+                    .unwrap(),
+                max_buffer_line_length: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .max_buffer_line_length
                     .unwrap(),
                 notifications: LspNotificationSettings {
                     dismiss_timeout_ms: content

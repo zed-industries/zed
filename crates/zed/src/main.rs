@@ -382,11 +382,8 @@ fn main() {
         return;
     }
 
-    let should_install_crash_handler = matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *release_channel::RELEASE_CHANNEL
-        != ReleaseChannel::Dev;
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*release_channel::RELEASE_CHANNEL);
 
     let crash_handler = if should_install_crash_handler {
         Some(
@@ -659,7 +656,7 @@ fn main() {
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
-        reliability::init(client.clone(), cx);
+        reliability::init(client.clone(), app_state.workspace_store.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
