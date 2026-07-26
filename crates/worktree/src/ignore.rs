@@ -85,12 +85,12 @@ impl IgnoreStack {
             IgnoreStackEntry::Global { ignore } => {
                 let combined_path;
                 let abs_path = if let Some(repo_root) = self.repo_root.as_ref() {
-                    if let Ok(relative_path) = abs_path.strip_prefix(repo_root) {
-                        combined_path = ignore.path().join(relative_path);
-                        &combined_path
-                    } else {
-                        abs_path
-                    }
+                    let Ok(relative_path) = abs_path.strip_prefix(repo_root) else {
+                        // abs_path is outside repo_root and cannot be ignored by this global ignore
+                        return false;
+                    };
+                    combined_path = ignore.path().join(relative_path);
+                    &combined_path
                 } else {
                     abs_path
                 };
@@ -125,5 +125,26 @@ impl IgnoreStack {
                 ignore::Match::Whitelist(_) => false,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ignore::gitignore::GitignoreBuilder;
+
+    #[test]
+    fn global_ignore_does_not_match_ancestors_of_repo_root() {
+        let mut builder = GitignoreBuilder::new("/home/user/.config/git");
+        builder.add_line(None, "*.com").unwrap();
+        let global_ignore = Arc::new(builder.build().unwrap());
+
+        let mut stack = IgnoreStack::global(global_ignore);
+        stack.repo_root = Some(Arc::from(Path::new("/home/user/example.com/repo")));
+
+        assert!(!stack.is_abs_path_ignored(Path::new("/home/user/example.com"), true));
+        assert!(
+            stack.is_abs_path_ignored(Path::new("/home/user/example.com/repo/build.com"), false)
+        );
     }
 }
