@@ -76,25 +76,23 @@ impl VtslsLspAdapter {
 
     pub fn enhance_diagnostic_message(message: &str) -> Option<String> {
         static QUOTED_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(^|[^[:alnum:]_'])'([^']*)'([^[:alnum:]_']|$)")
-            .expect("Failed to create REGEX")
+            Regex::new(r"(^|[^[:alnum:]_'])'([^']*)'([^[:alnum:]_']|$)")
+                .expect("Failed to create REGEX")
         });
 
         let result = QUOTED_REGEX
-           .replace_all(message, |caps: &Captures| {
-            let before = &caps[1];
-            let content = &caps[2];
-            let after = &caps[3];
+            .replace_all(message, |caps: &Captures| {
+                let before = &caps[1];
+                let content = &caps[2];
+                let after = &caps[3];
 
-            if content.contains('\n') || content.contains(' ') {
-                format!(
-                    "{before}\n```typescript\n{content}\n```\n{after}"
-                )
-            } else {
-                format!("{before}`{content}`{after}")
-            }
-        })
-        .to_string();
+                if content.contains('\n') || content.contains(' ') {
+                    format!("{before}\n```typescript\n{content}\n```\n{after}")
+                } else {
+                    format!("{before}`{content}`{after}")
+                }
+            })
+            .to_string();
 
         Some(result)
     }
@@ -435,6 +433,17 @@ mod tests {
 
         assert_eq!(
             VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
+            expected
+        );
+
+        // Check if ' used in normal English language (isn't, possesive 's, etc) are not converted into `
+        let message = "Element implicitly has an 'any' type because expression of type '\"a\" | \"c\"' can't be used to index type '{ a: number; b: string; }'. Property 'c' does not exist on type '{ a: number; b: string; }'.";
+
+        let expected = "Element implicitly has an `any` type because expression of type \n```typescript\n\"a\" | \"c\"\n```\n can't be used to index type \n```typescript\n{ a: number; b: string; }\n```\n. Property `c` does not exist on type \n```typescript\n{ a: number; b: string; }\n```\n.";
+
+        assert_eq!(
+            VtslsLspAdapter::enhance_diagnostic_message(message)
+                .expect("Should return enhanced message"),
             expected
         );
     }
