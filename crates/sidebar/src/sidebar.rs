@@ -759,7 +759,9 @@ fn create_worktree_in_workspace(
 
 #[derive(Clone)]
 struct DraggedProjectGroup {
+    key: ProjectGroupKey,
     label: SharedString,
+    index: usize,
     width: Pixels,
 }
 
@@ -2337,6 +2339,7 @@ impl Sidebar {
 
         let key_for_toggle = key.clone();
         let key_for_focus = key.clone();
+        let key_for_drop = key.clone();
 
         // The fade gradient renders as a visible patch on transparent windows,
         // so truncate the label instead.
@@ -2344,7 +2347,9 @@ impl Sidebar {
             cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
 
         let dragged_project_group = DraggedProjectGroup {
+            key: key.clone(),
             label: label.clone(),
+            index: ix,
             width: self.width,
         };
         let label = if highlight_positions.is_empty() {
@@ -2507,6 +2512,22 @@ impl Sidebar {
                 dragged_project_group.clone(),
                 move |dragged_project_group, _, _, cx| cx.new(|_| dragged_project_group.clone()),
             )
+            .drag_over::<DraggedProjectGroup>({
+                move |style, dragged_project_group: &DraggedProjectGroup, _window, cx| {
+                    if dragged_project_group.key == key_for_drop {
+                        return style;
+                    }
+                    let style = style
+                        .bg(cx.theme().colors().drop_target_background)
+                        .border_color(cx.theme().colors().drop_target_border)
+                        .border_0();
+                    if ix < dragged_project_group.index {
+                        style.border_t_2()
+                    } else {
+                        style.border_b_2()
+                    }
+                }
+            })
             .block_mouse_except_scroll();
 
         if !is_collapsed && !has_threads {
