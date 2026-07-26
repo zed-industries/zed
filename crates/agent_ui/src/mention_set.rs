@@ -426,14 +426,9 @@ impl MentionSet {
         cx.spawn(async move |_, cx| {
             let buffer = match buffer.await {
                 Ok(buffer) => buffer,
-                // Binary files (docx, xlsx, and any other non-text file the user drags in)
-                // can't be opened as a text buffer. Fall back to a path-only link instead of
-                // failing the whole mention, which would delete the text already inserted
-                // into the message editor.
-                Err(error) if error.to_string().contains("Binary files are not supported") => {
+                Err(_error) => {
                     return Ok(Mention::Link);
                 }
-                Err(error) => return Err(error),
             };
             let buffer_content = outline::get_buffer_content_or_outline(
                 buffer.clone(),
