@@ -18,7 +18,7 @@ use agent_settings::UserAgentsMd;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
-use project::{AgentId, ProjectItem};
+use project::{AgentId, ProjectItem, agent_server_store::AllAgentServersSettings};
 use serde::{Deserialize, Serialize};
 
 use zed_actions::{
@@ -1416,8 +1416,20 @@ impl AgentPanel {
                             agent
                         }
                     };
-                    let global_fallback =
-                        global_last_used_agent.filter(|agent| !is_via_collab || agent.is_native());
+                    // An external agent can be removed from settings while it
+                    // is still persisted as this panel's selection. Restoring
+                    // it would show its icon and fail every new thread with
+                    // "is not registered", so only persisted agents that are
+                    // still configured are eligible.
+                    let is_configured = |agent: &Agent| match agent {
+                        Agent::Custom { id } => {
+                            AllAgentServersSettings::get_global(cx).contains_key(id.0.as_ref())
+                        }
+                        _ => true,
+                    };
+                    let global_fallback = global_last_used_agent
+                        .filter(|agent| !is_via_collab || agent.is_native())
+                        .filter(is_configured);
 
                     if let Some(serialized_panel) = &serialized_panel {
                         panel.last_created_entry_kind = serialized_panel.last_created_entry_kind;
@@ -1438,6 +1450,7 @@ impl AgentPanel {
                             .as_ref()
                             .and_then(|p| p.selected_agent.clone())
                             .map(clamp)
+                            .filter(is_configured)
                             .or(global_fallback),
                     };
                     if let Some(agent) = initial_agent {
@@ -7089,6 +7102,7 @@ mod tests {
             cx.new(|cx| AgentPanel::new(workspace, window, cx))
         });
 
+        cx.update(|_, cx| configure_custom_agent("claude-acp", cx));
         panel_b.update(cx, |panel, _cx| {
             panel.selected_agent = Agent::Custom {
                 id: "claude-acp".into(),
@@ -8842,6 +8856,95 @@ mod tests {
                 &Agent::Stub,
                 "restored draft should still be bound to its original Agent::Stub, \
                  not the panel's current `selected_agent`"
+            );
+        });
+    }
+
+    fn configure_custom_agent(id: &str, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.agent_servers.get_or_insert_default().insert(
+                    id.to_owned(),
+                    settings::CustomAgentServerSettings::Custom {
+                        path: PathBuf::from("/bin/agent"),
+                        args: Vec::new(),
+                        env: Default::default(),
+                        default_mode: None,
+                        default_config_options: Default::default(),
+                        favorite_config_option_values: Default::default(),
+                    },
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reload_drops_unconfigured_selected_agent(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| workspace.set_random_database_id());
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.update(|_, cx| configure_custom_agent("configured-agent", cx));
+
+        let configured_agent = Agent::Custom {
+            id: "configured-agent".into(),
+        };
+        panel.update(cx, |panel, cx| {
+            panel.selected_agent = configured_agent.clone();
+            panel.serialize(cx);
+        });
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+        reloaded_panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent, configured_agent,
+                "an agent that is still configured should survive a reload"
+            );
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.selected_agent = Agent::Custom {
+                id: "uninstalled-agent".into(),
+            };
+            panel.serialize(cx);
+        });
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+        reloaded_panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent,
+                Agent::NativeAgent,
+                "an external agent that is no longer configured should not stay selected"
             );
         });
     }
@@ -11248,6 +11351,7 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
             // Use an isolated DB so parallel tests can't overwrite our global key.
             cx.set_global(db::AppDatabase::test_new());
+            configure_custom_agent("my-preferred-agent", cx);
         });
 
         let custom_agent = Agent::Custom {
@@ -11383,6 +11487,10 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
+        cx.update(|_, cx| {
+            configure_custom_agent("agent-alpha", cx);
+            configure_custom_agent("agent-beta", cx);
+        });
         let agent_a = Agent::Custom {
             id: "agent-alpha".into(),
         };
