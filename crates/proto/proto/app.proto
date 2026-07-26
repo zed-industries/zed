@@ -1,6 +1,8 @@
 syntax = "proto3";
 package zed.messages;
 
+import "core.proto";
+
 message ShutdownRemoteServer {}
 
 message Toast {
@@ -66,6 +68,7 @@ message AskPassRequest {
   uint64 repository_id = 3;
   uint64 askpass_id = 4;
   string prompt = 5;
+  PeerId peer_id = 6;
 }
 
 message AskPassResponse {

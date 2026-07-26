@@ -30,9 +30,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, MergeOutcome,
+    MergeOutput, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -202,6 +202,7 @@ fn git_panel_context_menu(
     has_unstaged_changes: bool,
     has_new_changes: bool,
     has_stash_items: bool,
+    merge_in_progress: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut App,
@@ -224,6 +225,11 @@ fn git_panel_context_menu(
             )
             .action_disabled_when(!has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
+            .separator()
+            .action("Merge…", git::Merge::default().boxed_clone())
+            .when(merge_in_progress, |this| {
+                this.action("Abort Merge", git::MergeAbort.boxed_clone())
+            })
             .separator()
             .action_disabled_when(
                 !has_tracked_changes,
@@ -3755,6 +3761,70 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    pub(crate) fn merge(
+        &mut self,
+        source: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_write_access(cx) {
+            return;
+        }
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        telemetry::event!("Git Merged");
+        let askpass = self.askpass_delegate(format!("git merge {source}"), window, cx);
+
+        cx.spawn(async move |this, cx| {
+            let merge = repo.update(cx, |repo, _cx| repo.merge(source.clone(), askpass));
+            let result = merge.await?;
+
+            this.update(cx, |this, cx| match result {
+                Ok(output) => this.show_merge_outcome(&source, output, cx),
+                Err(error) => {
+                    log::error!("Error while merging {:?}", error);
+                    this.show_error_toast("merge", error, cx);
+                }
+            })
+            .log_err();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub(crate) fn merge_abort(&mut self, cx: &mut Context<Self>) {
+        if !self.has_write_access(cx) {
+            return;
+        }
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        if !self.merge_in_progress(cx) {
+            return;
+        }
+
+        telemetry::event!("Git Merge Aborted");
+        cx.spawn(async move |this, cx| {
+            let abort = repo.update(cx, |repo, _cx| repo.merge_abort());
+            let result = abort.await?;
+
+            this.update(cx, |this, cx| match result {
+                Ok(()) => this.show_merge_aborted_toast(cx),
+                Err(error) => {
+                    log::error!("Error while aborting merge {:?}", error);
+                    this.show_error_toast("merge --abort", error, cx);
+                }
+            })
+            .log_err();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub(crate) fn push(
         &mut self,
         force_push: bool,
@@ -4995,6 +5065,12 @@ impl GitPanel {
             .any(|entry| entry.status.is_conflicted() && entry.staging.has_unstaged())
     }
 
+    fn merge_in_progress(&self, cx: &App) -> bool {
+        self.active_repository
+            .as_ref()
+            .is_some_and(|repo| repo.read(cx).merge.is_merge_in_progress())
+    }
+
     fn show_error_toast(&self, action: impl Into<SharedString>, e: anyhow::Error, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -5156,6 +5232,108 @@ impl GitPanel {
                 }
                 .dismiss_button(true)
             });
+            workspace.toggle_status_toast(status_toast, cx)
+        });
+    }
+
+    fn show_merge_outcome(
+        &mut self,
+        source: &SharedString,
+        output: MergeOutput,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let current_branch = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch.clone())
+            .map(|branch| branch.name().to_owned())
+            .unwrap_or_else(|| "HEAD".to_string());
+        let source = source.clone();
+
+        workspace.update(cx, |workspace, cx| {
+            let workspace_weak = cx.weak_entity();
+            let output_for_log = output.clone();
+            let toast = match output.outcome {
+                MergeOutcome::Success => icon_status_toast(
+                    format!("Merged {source} into {current_branch}"),
+                    IconName::GitBranch,
+                    Color::Muted,
+                    cx,
+                ),
+                MergeOutcome::FastForward => icon_status_toast(
+                    format!("Fast-forwarded {current_branch} to {source}"),
+                    IconName::GitBranch,
+                    Color::Muted,
+                    cx,
+                ),
+                MergeOutcome::UpToDate => icon_status_toast(
+                    format!("Already up to date with {source}"),
+                    IconName::Check,
+                    Color::Muted,
+                    cx,
+                ),
+                MergeOutcome::Conflicts => StatusToast::new(
+                    "Merge has conflicts. Resolve them in the Project Diff.",
+                    cx,
+                    move |this, _cx| {
+                        let output = output_for_log.clone();
+                        this.icon(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .action("View Conflicts", move |window, cx| {
+                            window.dispatch_action(Diff.boxed_clone(), cx);
+                        })
+                        .action("View Log", move |window, cx| {
+                            let output =
+                                format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    open_output("merge", workspace, &output, window, cx)
+                                })
+                                .log_err();
+                        })
+                        .dismiss_button(true)
+                    },
+                ),
+                MergeOutcome::Failed => {
+                    StatusToast::new("git merge failed", cx, move |this, _cx| {
+                        let output = output_for_log.clone();
+                        this.icon(
+                            Icon::new(IconName::XCircle)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .action("View Log", move |window, cx| {
+                            let output =
+                                format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    open_output("merge", workspace, &output, window, cx)
+                                })
+                                .log_err();
+                        })
+                        .dismiss_button(true)
+                    })
+                }
+            };
+            workspace.toggle_status_toast(toast, cx)
+        });
+    }
+
+    fn show_merge_aborted_toast(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let status_toast =
+                icon_status_toast("Merge aborted", IconName::GitBranch, Color::Muted, cx);
             workspace.toggle_status_toast(status_toast, cx)
         });
     }
@@ -5526,13 +5704,14 @@ impl GitPanel {
     fn render_git_changes_actions_menu(
         &self,
         id: impl Into<ElementId>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let merge_in_progress = self.merge_in_progress(cx);
 
         let focus_handle = self.focus_handle.clone();
         let menu_open = self.changes_actions_menu_handle.is_deployed();
@@ -5550,6 +5729,7 @@ impl GitPanel {
                     has_unstaged_changes,
                     has_new_changes,
                     has_stash_items,
+                    merge_in_progress,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -5607,60 +5787,99 @@ impl GitPanel {
         self.active_repository.as_ref()?;
 
         let diff_stat_total = self.diff_stat_total;
+        let merge_in_progress = self.merge_in_progress(cx);
 
         Some(
-            h_flex()
-                .min_h(Tab::container_height(cx))
+            v_flex()
                 .w_full()
-                .pl_1()
-                .pr_2()
                 .flex_none()
-                .flex_wrap()
-                .gap_1()
-                .justify_between()
+                .when(merge_in_progress, |this| {
+                    this.child(
+                        h_flex()
+                            .debug_selector(|| "git-merge-in-progress".into())
+                            .w_full()
+                            .px_2()
+                            .py_1()
+                            .gap_2()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().status().warning_border)
+                            .bg(cx.theme().status().warning_background.opacity(0.5))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new("Merge in progress").size(LabelSize::Small)),
+                            )
+                            .child(
+                                Button::new("abort_merge", "Abort Merge")
+                                    .label_size(LabelSize::Small)
+                                    .on_click(|_, _, cx| {
+                                        cx.defer(|cx| {
+                                            cx.dispatch_action(&git::MergeAbort);
+                                        })
+                                    }),
+                            ),
+                    )
+                })
                 .child(
-                    ButtonLike::new("diff-button")
+                    h_flex()
+                        .min_h(Tab::container_height(cx))
+                        .w_full()
+                        .pl_1()
+                        .pr_2()
+                        .flex_none()
+                        .flex_wrap()
+                        .gap_1()
+                        .justify_between()
+                        .child(
+                            ButtonLike::new("diff-button")
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::Diff)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("View Diff")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .when(
+                                            GitPanelSettings::get_global(cx).diff_stats
+                                                && diff_stat_total != DiffStat::default(),
+                                            |this| {
+                                                this.child(ui::DiffStat::new(
+                                                    "changes-diff-stat-total",
+                                                    diff_stat_total.added as usize,
+                                                    diff_stat_total.deleted as usize,
+                                                ))
+                                            },
+                                        ),
+                                )
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "View Diff",
+                                    &Diff,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(|_, _, cx| {
+                                    cx.defer(|cx| {
+                                        cx.dispatch_action(&Diff);
+                                    })
+                                }),
+                        )
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(
-                                    Icon::new(IconName::Diff)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    Label::new("View Diff")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .when(
-                                    GitPanelSettings::get_global(cx).diff_stats
-                                        && diff_stat_total != DiffStat::default(),
-                                    |this| {
-                                        this.child(ui::DiffStat::new(
-                                            "changes-diff-stat-total",
-                                            diff_stat_total.added as usize,
-                                            diff_stat_total.deleted as usize,
-                                        ))
-                                    },
-                                ),
-                        )
-                        .tooltip(Tooltip::for_action_title_in(
-                            "View Diff",
-                            &Diff,
-                            &self.focus_handle,
-                        ))
-                        .on_click(|_, _, cx| {
-                            cx.defer(|cx| {
-                                cx.dispatch_action(&Diff);
-                            })
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(self.render_view_options_menu("view_options_menu"))
-                        .child(self.render_git_changes_actions_button(cx)),
+                                .child(self.render_view_options_menu("view_options_menu"))
+                                .child(self.render_git_changes_actions_button(cx)),
+                        ),
                 ),
         )
     }
@@ -7271,6 +7490,7 @@ impl GitPanel {
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
+        let merge_in_progress = self.merge_in_progress(cx);
 
         let context_menu = git_panel_context_menu(
             has_tracked_changes,
@@ -7278,6 +7498,7 @@ impl GitPanel {
             has_unstaged_changes,
             has_new_changes,
             has_stash_items,
+            merge_in_progress,
             self.focus_handle.clone(),
             window,
             cx,
@@ -8067,6 +8288,9 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_pop))
+                    .on_action(cx.listener(|this, _: &git::MergeAbort, _window, cx| {
+                        this.merge_abort(cx);
+                    }))
             })
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::expand_selected_entry))
@@ -8798,6 +9022,18 @@ pub(crate) fn open_output(
     workspace.add_item_to_center(Box::new(editor), window, cx);
 }
 
+fn icon_status_toast(
+    message: impl Into<SharedString>,
+    icon: IconName,
+    color: Color,
+    cx: &mut App,
+) -> Entity<StatusToast> {
+    StatusToast::new(message.into(), cx, move |this, _cx| {
+        this.icon(Icon::new(icon).size(IconSize::Small).color(color))
+            .dismiss_button(true)
+    })
+}
+
 pub(crate) fn show_error_toast(
     workspace: Entity<Workspace>,
     action: impl Into<SharedString>,
@@ -8862,7 +9098,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, point, px, size};
     use indoc::indoc;
     use project::FakeFs;
     use search::{BufferSearchBar, buffer_search::Deploy};
@@ -9045,6 +9281,124 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         (fs, project, workspace, panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_merge_outcome_toast_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "file": "content\n",
+            }),
+            &[],
+        )
+        .await;
+        let source = SharedString::from("feature");
+
+        let action_labels = |workspace: &Entity<Workspace>, cx: &VisualTestContext| {
+            let toast = workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace.active_status_toast::<StatusToast>(cx)
+                })
+                .expect("merge outcome should show a status toast");
+            toast.read_with(cx, |toast, _| {
+                toast
+                    .action_labels()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.show_merge_outcome(
+                &source,
+                MergeOutput {
+                    outcome: MergeOutcome::Conflicts,
+                    stdout: "stdout".into(),
+                    stderr: "stderr".into(),
+                },
+                cx,
+            );
+        });
+        assert_eq!(
+            action_labels(&workspace, &cx),
+            ["View Conflicts", "View Log"]
+        );
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.show_merge_outcome(
+                &source,
+                MergeOutput {
+                    outcome: MergeOutcome::Failed,
+                    stdout: "stdout".into(),
+                    stderr: "stderr".into(),
+                },
+                cx,
+            );
+        });
+        assert_eq!(action_labels(&workspace, &cx), ["View Log"]);
+    }
+
+    #[gpui::test]
+    async fn test_merge_in_progress_banner(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file": "content\n",
+            }),
+        )
+        .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            state.refs.insert("MERGE_HEAD".into(), "def".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        cx.draw(point(px(0.), px(0.)), size(px(400.), px(800.)), |_, _| {
+            panel.clone().into_any_element()
+        });
+
+        assert!(cx.debug_bounds("git-merge-in-progress").is_some());
+
+        project.update(&mut cx, |project, cx| {
+            project.mark_as_collab_for_testing();
+            project.set_role(proto::ChannelRole::Guest, cx);
+        });
+        assert!(project.read_with(&cx, |project, cx| project.is_read_only(cx)));
+
+        panel.update_in(&mut cx, |panel, _window, cx| panel.merge_abort(cx));
+        cx.run_until_parked();
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            assert!(state.refs.contains_key("MERGE_HEAD"));
+        })
+        .unwrap();
     }
 
     #[gpui::test]

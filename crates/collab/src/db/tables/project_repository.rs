@@ -16,6 +16,7 @@ pub struct Model {
     pub is_deleted: bool,
     // JSON array typed string
     pub current_merge_conflicts: Option<String>,
+    pub merge_in_progress: bool,
     // The suggested merge commit message
     pub merge_message: Option<String>,
     // A JSON object representing the current Branch values

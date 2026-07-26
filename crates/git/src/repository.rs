@@ -501,6 +501,22 @@ impl RemoteCommandOutput {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum MergeOutcome {
+    Success,
+    FastForward,
+    UpToDate,
+    Conflicts,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeOutput {
+    pub outcome: MergeOutcome,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct UpstreamTrackingStatus {
     pub ahead: u32,
     pub behind: u32,
@@ -906,6 +922,15 @@ pub trait GitRepository: Send + Sync {
     }
 
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
+
+    fn merge(
+        &self,
+        source: String,
+        askpass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<MergeOutput>>;
+
+    fn merge_abort(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
@@ -1883,6 +1908,85 @@ impl GitRepository for RealGitRepository {
         let path = self.path().join("MERGE_MSG");
         self.executor
             .spawn(async move { std::fs::read_to_string(&path).ok() })
+            .boxed()
+    }
+
+    fn merge(
+        &self,
+        source: String,
+        askpass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<MergeOutput>> {
+        let git = self.git_binary_in_worktree();
+        let executor = self.executor.clone();
+        // Do not spawn this on the background executor: signed merges may open an askpass prompt.
+        async move {
+            let git = git?.envs(env.clone());
+            let head_before = git.run(&["rev-parse", "--verify", "HEAD"]).await?;
+            let source_commit = git
+                .build_command(&["rev-parse", "--verify", &format!("{source}^{{commit}}")])
+                .output()
+                .await?;
+            let source_commit = source_commit.status.success().then(|| {
+                String::from_utf8_lossy(&source_commit.stdout)
+                    .trim()
+                    .to_string()
+            });
+
+            let mut command = git.build_command(&[
+                "merge",
+                "--no-edit",
+                "--no-squash",
+                "--commit",
+                "--",
+                &source,
+            ]);
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            let output = run_git_command_output(env, askpass, command, executor).await?;
+            let outcome = if output.status.success() {
+                let head_after = git.run(&["rev-parse", "--verify", "HEAD"]).await?;
+                if head_after == head_before {
+                    MergeOutcome::UpToDate
+                } else if source_commit.as_deref() == Some(&head_after) {
+                    MergeOutcome::FastForward
+                } else {
+                    MergeOutcome::Success
+                }
+            } else if git_has_unmerged_entries(&git).await? {
+                MergeOutcome::Conflicts
+            } else {
+                MergeOutcome::Failed
+            };
+
+            Ok(MergeOutput {
+                outcome,
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+        .boxed()
+    }
+
+    fn merge_abort(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                let output = git
+                    .build_command(&["merge", "--abort"])
+                    .envs(env.iter())
+                    .output()
+                    .await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    GitBinaryCommandError {
+                        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                        status: output.status,
+                    }
+                );
+                Ok(())
+            })
             .boxed()
     }
 
@@ -3576,7 +3680,7 @@ pub(crate) struct GitBinary {
     git_directory: PathBuf,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
-    envs: HashMap<String, String>,
+    environment: Option<Arc<HashMap<String, String>>>,
     is_trusted: bool,
 }
 
@@ -3594,7 +3698,7 @@ impl GitBinary {
             git_directory,
             executor,
             index_file_path: None,
-            envs: HashMap::default(),
+            environment: None,
             is_trusted,
         }
     }
@@ -3612,8 +3716,8 @@ impl GitBinary {
         Ok(paths)
     }
 
-    fn envs(mut self, envs: HashMap<String, String>) -> Self {
-        self.envs = envs;
+    fn envs(mut self, environment: impl Into<Arc<HashMap<String, String>>>) -> Self {
+        self.environment = Some(environment.into());
         self
     }
 
@@ -3725,7 +3829,9 @@ impl GitBinary {
         if let Some(index_file_path) = self.index_file_path.as_ref() {
             command.env("GIT_INDEX_FILE", index_file_path);
         }
-        command.envs(&self.envs);
+        if let Some(environment) = &self.environment {
+            command.envs(environment.iter());
+        }
         command
     }
 }
@@ -3741,21 +3847,33 @@ struct GitBinaryCommandError {
 async fn run_git_command(
     env: Arc<HashMap<String, String>>,
     ask_pass: AskPassDelegate,
-    mut command: util::command::Command,
+    command: util::command::Command,
     executor: BackgroundExecutor,
 ) -> Result<RemoteCommandOutput> {
+    let output = run_git_command_output(env, ask_pass, command, executor).await?;
+    anyhow::ensure!(
+        output.status.success(),
+        GitBinaryCommandError {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status: output.status,
+        }
+    );
+    Ok(RemoteCommandOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+async fn run_git_command_output(
+    env: Arc<HashMap<String, String>>,
+    ask_pass: AskPassDelegate,
+    mut command: util::command::Command,
+    executor: BackgroundExecutor,
+) -> Result<Output> {
     if env.contains_key("GIT_ASKPASS") {
         let git_process = command.spawn()?;
-        let output = git_process.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(RemoteCommandOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        })
+        Ok(git_process.output().await?)
     } else {
         let ask_pass = AskPassSession::new(executor, ask_pass).await?;
         command
@@ -3783,7 +3901,7 @@ async fn run_git_command(
 async fn run_askpass_command(
     mut ask_pass: AskPassSession,
     git_process: util::command::Child,
-) -> anyhow::Result<RemoteCommandOutput> {
+) -> anyhow::Result<Output> {
     select_biased! {
         // Git can legitimately run long without prompting (e.g. large fetches,
         // hooks), so completion is determined by the process itself.
@@ -3799,16 +3917,7 @@ async fn run_askpass_command(
             }
         }
         output = git_process.output().fuse() => {
-            let output = output?;
-            anyhow::ensure!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            Ok(RemoteCommandOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            })
+            Ok(output?)
         }
     }
 }
@@ -3992,8 +4101,26 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
     ])
 }
 
+async fn git_has_unmerged_entries(git: &GitBinary) -> Result<bool> {
+    let output = git
+        .build_command(&["ls-files", "--unmerged"])
+        .output()
+        .await?;
+    anyhow::ensure!(
+        output.status.success(),
+        GitBinaryCommandError {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status: output.status,
+        }
+    );
+    Ok(!output.stdout.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::{
         ffi::{OsStr, OsString},
         fs,
@@ -4102,6 +4229,10 @@ mod tests {
         let mut env = checkpoint_author_envs();
         env.insert("GIT_ASKPASS".to_string(), "false".to_string());
         env
+    }
+
+    fn test_askpass(cx: &mut TestAppContext) -> AskPassDelegate {
+        AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})
     }
 
     #[track_caller]
@@ -4865,6 +4996,363 @@ mod tests {
             path,
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
         );
+    }
+
+    #[gpui::test]
+    async fn test_merge_fast_forwards(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "base")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("feature.txt"), "feature")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["feature.txt"], "Feature commit").await;
+        repo.change_branch(base_branch.clone()).await.unwrap();
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::FastForward);
+        assert_eq!(
+            smol::fs::read_to_string(repo_dir.path().join("feature.txt"))
+                .await
+                .unwrap(),
+            "feature"
+        );
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.outcome, MergeOutcome::UpToDate);
+
+        git_command(repo_dir.path(), ["reset", "--hard", "HEAD^"]);
+        let merge_options_key = format!("branch.{base_branch}.mergeOptions");
+        git_command(
+            repo_dir.path(),
+            [
+                "config",
+                merge_options_key.as_str(),
+                "--no-ff --squash --no-commit",
+            ],
+        );
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.outcome, MergeOutcome::Success);
+    }
+
+    #[gpui::test]
+    async fn test_merge_reports_conflicts_without_error(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "base\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(&file_path, "feature\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(&file_path, "master\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Master commit").await;
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::Conflicts);
+        assert!(
+            repo.merge_message()
+                .await
+                .is_some_and(|message| message.contains("feature"))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_merge_treats_source_as_revision(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "base")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("feature.txt"), "feature")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["feature.txt"], "Feature commit").await;
+        repo.change_branch(base_branch.clone()).await.unwrap();
+        smol::fs::write(repo_dir.path().join("main.txt"), "main")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["main.txt"], "Main commit").await;
+        git_command(
+            repo_dir.path(),
+            ["config", &format!("branch.{base_branch}.remote"), "."],
+        );
+        git_command(
+            repo_dir.path(),
+            [
+                "config",
+                &format!("branch.{base_branch}.merge"),
+                "refs/heads/feature",
+            ],
+        );
+        let head_before = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        let output = repo
+            .merge(
+                "--no-commit".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::Failed);
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]),
+            head_before
+        );
+        assert!(
+            !repo_dir.path().join(".git/MERGE_HEAD").exists(),
+            "an option-like source must not start a merge"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_merge_uses_environment_for_outcome_classification(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "base\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(&file_path, "feature\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(&file_path, "main\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Main commit").await;
+
+        let alternate_index = repo_dir.path().join("alternate-index");
+        smol::fs::copy(repo_dir.path().join(".git/index"), &alternate_index)
+            .await
+            .unwrap();
+        let mut env = checkpoint_author_envs();
+        env.insert(
+            "GIT_INDEX_FILE".to_string(),
+            alternate_index.to_string_lossy().into_owned(),
+        );
+        let env = Arc::new(env);
+        let git = repo.git_binary_in_worktree().unwrap().envs(env.clone());
+
+        let output = repo
+            .merge("feature".to_string(), test_askpass(cx), env)
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::Conflicts);
+        assert!(git_command_output(repo_dir.path(), ["ls-files", "--unmerged"]).is_empty());
+        assert!(
+            !git.run(&["ls-files", "--unmerged"])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_merge_reports_trusted_commit_hook_failure(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "base")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("feature.txt"), "feature")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["feature.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(repo_dir.path().join("base.txt"), "base branch")
+            .await
+            .unwrap();
+        commit_paths(&repo, &["base.txt"], "Base branch commit").await;
+
+        let hook_path = repo_dir
+            .path()
+            .join(".git")
+            .join("hooks")
+            .join("commit-msg");
+        smol::fs::write(&hook_path, "#!/bin/sh\necho hook failed >&2\nexit 1\n")
+            .await
+            .unwrap();
+        let mut permissions = fs::metadata(&hook_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&hook_path, permissions).unwrap();
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output.outcome, MergeOutcome::Failed);
+        assert!(output.stderr.contains("hook failed"));
+        assert!(
+            !git_command_output(repo_dir.path(), ["rev-parse", "--verify", "MERGE_HEAD"])
+                .is_empty()
+        );
+        assert!(git_command_output(repo_dir.path(), ["ls-files", "--unmerged"]).is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_merge_abort_clears_conflicted_merge(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "base\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Initial commit").await;
+        let base_branch = current_branch_name(&repo).await;
+        repo.create_branch("feature".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(&file_path, "feature\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Feature commit").await;
+        repo.change_branch(base_branch).await.unwrap();
+        smol::fs::write(&file_path, "master\n").await.unwrap();
+        commit_paths(&repo, &["file.txt"], "Master commit").await;
+
+        let output = repo
+            .merge(
+                "feature".to_string(),
+                test_askpass(cx),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.outcome, MergeOutcome::Conflicts);
+
+        repo.merge_abort(Arc::new(checkpoint_author_envs()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            smol::fs::read_to_string(&file_path).await.unwrap(),
+            "master\n"
+        );
+        assert!(repo.merge_message().await.is_none());
     }
 
     #[gpui::test]
@@ -6046,6 +6534,44 @@ mod tests {
                 })
                 .boxed()
         }
+    }
+
+    async fn commit_paths(repo: &RealGitRepository, paths: &[&str], message: &str) {
+        repo.stage_paths(
+            paths.iter().map(|path| repo_path(*path)).collect(),
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        let output = repo
+            .git_binary_in_worktree()
+            .unwrap()
+            .build_command(&["commit", "--quiet", "-m", message])
+            .envs(checkpoint_author_envs())
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git commit failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    async fn current_branch_name(repo: &RealGitRepository) -> String {
+        repo.branches()
+            .await
+            .unwrap()
+            .branches
+            .into_iter()
+            .find(|branch| branch.is_head)
+            .and_then(|branch| {
+                branch
+                    .ref_name
+                    .strip_prefix("refs/heads/")
+                    .map(str::to_string)
+            })
+            .unwrap()
     }
 
     #[gpui::test]
