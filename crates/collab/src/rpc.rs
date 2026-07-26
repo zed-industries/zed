@@ -507,6 +507,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitMerge>)
             .add_request_handler(forward_mutating_project_request::<proto::GitMergeAbort>)
+            .add_request_handler(forward_askpass_request)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
@@ -2433,6 +2434,38 @@ where
         .host_for_mutating_project_request(project_id, session.connection_id)
         .await?;
     let payload = session.forward_request(host_connection_id, request).await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+async fn forward_askpass_request(
+    request: proto::AskPassRequest,
+    response: Response<proto::AskPassRequest>,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(request.project_id);
+    session
+        .db()
+        .await
+        .check_user_is_project_host(project_id, session.connection_id)
+        .await?;
+
+    let peer_id = request.peer_id.context("missing askpass peer id")?;
+    let peer_id = ConnectionId::from(peer_id);
+    let peer_is_collaborator = session
+        .db()
+        .await
+        .project_connection_ids(project_id, session.connection_id, false)
+        .await?
+        .contains(&peer_id);
+    if !peer_is_collaborator {
+        return Err(anyhow!("askpass peer is not a project collaborator").into());
+    }
+
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, peer_id, request)
+        .await?;
     response.send(payload)?;
     Ok(())
 }

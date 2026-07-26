@@ -46,7 +46,7 @@ The colored bars in the gutter that show added, modified, and deleted lines can 
 
 Zed wraps commit messages at 72 characters (a Git convention). To change this, search for "Git Commit" in Settings and adjust **Preferred Line Length**.
 
-## Project Diff
+## Project Diff {#project-diff}
 
 You can see all of the changes captured by Git in Zed by opening the Project Diff ({#kb git::Diff}), accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.
 
@@ -171,6 +171,12 @@ Find more information about setting the `preferred-line-length` in the [Configur
 Create a new branch using {#action git::Branch} or switch to an existing branch using {#action git::Switch} or {#action git::CheckoutBranch}.
 
 When you are working in a [Git worktree](#git-worktrees), use the branch picker after switching to the worktree to create or check out the branch you want to use there.
+
+### Merging Branches {#merging-branches}
+
+Use {#action git::Merge} to select a branch and merge it into the current branch. If the merge cannot complete, resolve the conflicts in the [Project Diff](#project-diff).
+
+While a merge is in progress, the Git Panel shows an **Abort Merge** button. You can also run {#action git::MergeAbort}.
 
 ### Deleting Branches
 
@@ -379,6 +385,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::ForcePush}                  | {#kb git::ForcePush}                  |
 | {#action git::Pull}                       | {#kb git::Pull}                       |
 | {#action git::PullRebase}                 | {#kb git::PullRebase}                 |
+| {#action git::Merge}                      | {#kb git::Merge}                      |
+| {#action git::MergeAbort}                 | {#kb git::MergeAbort}                 |
 | {#action git::Fetch}                      | {#kb git::Fetch}                      |
 | {#action git::Diff}                       | {#kb git::Diff}                       |
 | {#action git::Restore}                    | {#kb git::Restore}                    |

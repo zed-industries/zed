@@ -30,9 +30,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, MergeOptions,
-    MergeOutcome, MergeOutput, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream,
-    UpstreamTracking, UpstreamTrackingStatus, get_git_committer,
+    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, MergeOutcome,
+    MergeOutput, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -3761,16 +3761,24 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    pub(crate) fn merge(&mut self, source: SharedString, cx: &mut Context<Self>) {
+    pub(crate) fn merge(
+        &mut self,
+        source: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_write_access(cx) {
+            return;
+        }
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
 
         telemetry::event!("Git Merged");
-        let options = MergeOptions::default();
+        let askpass = self.askpass_delegate(format!("git merge {source}"), window, cx);
 
         cx.spawn(async move |this, cx| {
-            let merge = repo.update(cx, |repo, cx| repo.merge(source.clone(), options, cx));
+            let merge = repo.update(cx, |repo, _cx| repo.merge(source.clone(), askpass));
             let result = merge.await?;
 
             this.update(cx, |this, cx| match result {
@@ -3780,7 +3788,7 @@ impl GitPanel {
                     this.show_error_toast("merge", error, cx);
                 }
             })
-            .ok();
+            .log_err();
 
             anyhow::Ok(())
         })
@@ -3788,6 +3796,9 @@ impl GitPanel {
     }
 
     pub(crate) fn merge_abort(&mut self, cx: &mut Context<Self>) {
+        if !self.has_write_access(cx) {
+            return;
+        }
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -3797,7 +3808,7 @@ impl GitPanel {
 
         telemetry::event!("Git Merge Aborted");
         cx.spawn(async move |this, cx| {
-            let abort = repo.update(cx, |repo, cx| repo.merge_abort(cx));
+            let abort = repo.update(cx, |repo, _cx| repo.merge_abort());
             let result = abort.await?;
 
             this.update(cx, |this, cx| match result {
@@ -3807,7 +3818,7 @@ impl GitPanel {
                     this.show_error_toast("merge --abort", error, cx);
                 }
             })
-            .ok();
+            .log_err();
 
             anyhow::Ok(())
         })
@@ -5268,7 +5279,8 @@ impl GitPanel {
                 MergeOutcome::Conflicts => StatusToast::new(
                     "Merge has conflicts. Resolve them in the Project Diff.",
                     cx,
-                    |this, _cx| {
+                    move |this, _cx| {
+                        let output = output_for_log.clone();
                         this.icon(
                             Icon::new(IconName::Warning)
                                 .size(IconSize::Small)
@@ -5276,6 +5288,15 @@ impl GitPanel {
                         )
                         .action("View Conflicts", move |window, cx| {
                             window.dispatch_action(Diff.boxed_clone(), cx);
+                        })
+                        .action("View Log", move |window, cx| {
+                            let output =
+                                format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    open_output("merge", workspace, &output, window, cx)
+                                })
+                                .log_err();
                         })
                         .dismiss_button(true)
                     },
@@ -5295,7 +5316,7 @@ impl GitPanel {
                                 .update(cx, move |workspace, cx| {
                                     open_output("merge", workspace, &output, window, cx)
                                 })
-                                .ok();
+                                .log_err();
                         })
                         .dismiss_button(true)
                     })
@@ -5775,6 +5796,7 @@ impl GitPanel {
                 .when(merge_in_progress, |this| {
                     this.child(
                         h_flex()
+                            .debug_selector(|| "git-merge-in-progress".into())
                             .w_full()
                             .px_2()
                             .py_1()
@@ -9076,7 +9098,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, point, px, size};
     use indoc::indoc;
     use project::FakeFs;
     use search::{BufferSearchBar, buffer_search::Deploy};
@@ -9259,6 +9281,124 @@ mod tests {
         await_git_panel_entries(&panel, &mut cx).await;
 
         (fs, project, workspace, panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_merge_outcome_toast_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "file": "content\n",
+            }),
+            &[],
+        )
+        .await;
+        let source = SharedString::from("feature");
+
+        let action_labels = |workspace: &Entity<Workspace>, cx: &VisualTestContext| {
+            let toast = workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace.active_status_toast::<StatusToast>(cx)
+                })
+                .expect("merge outcome should show a status toast");
+            toast.read_with(cx, |toast, _| {
+                toast
+                    .action_labels()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+        };
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.show_merge_outcome(
+                &source,
+                MergeOutput {
+                    outcome: MergeOutcome::Conflicts,
+                    stdout: "stdout".into(),
+                    stderr: "stderr".into(),
+                },
+                cx,
+            );
+        });
+        assert_eq!(
+            action_labels(&workspace, &cx),
+            ["View Conflicts", "View Log"]
+        );
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.show_merge_outcome(
+                &source,
+                MergeOutput {
+                    outcome: MergeOutcome::Failed,
+                    stdout: "stdout".into(),
+                    stderr: "stderr".into(),
+                },
+                cx,
+            );
+        });
+        assert_eq!(action_labels(&workspace, &cx), ["View Log"]);
+    }
+
+    #[gpui::test]
+    async fn test_merge_in_progress_banner(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file": "content\n",
+            }),
+        )
+        .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            state.refs.insert("MERGE_HEAD".into(), "def".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        cx.draw(point(px(0.), px(0.)), size(px(400.), px(800.)), |_, _| {
+            panel.clone().into_any_element()
+        });
+
+        assert!(cx.debug_bounds("git-merge-in-progress").is_some());
+
+        project.update(&mut cx, |project, cx| {
+            project.mark_as_collab_for_testing();
+            project.set_role(proto::ChannelRole::Guest, cx);
+        });
+        assert!(project.read_with(&cx, |project, cx| project.is_read_only(cx)));
+
+        panel.update_in(&mut cx, |panel, _window, cx| panel.merge_abort(cx));
+        cx.run_until_parked();
+        fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+            assert!(state.refs.contains_key("MERGE_HEAD"));
+        })
+        .unwrap();
     }
 
     #[gpui::test]

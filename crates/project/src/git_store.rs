@@ -35,11 +35,11 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffStatType, DiffType, FastForwardMode, FetchOptions,
+        CommitOptions, CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions,
         FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
-        InitialGraphCommitData, LogOrder, LogSource, MergeOptions, MergeOutcome, MergeOutput,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        InitialGraphCommitData, LogOrder, LogSource, MergeOutcome, MergeOutput, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -2840,12 +2840,14 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
         let askpass_id = envelope.payload.askpass_id;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
 
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
+            peer_id,
             &mut cx,
         );
 
@@ -2870,11 +2872,13 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let askpass_id = envelope.payload.askpass_id;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
+            peer_id,
             &mut cx,
         );
 
@@ -2917,11 +2921,13 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
+            peer_id,
             &mut cx,
         );
 
@@ -2948,13 +2954,21 @@ impl GitStore {
     ) -> Result<proto::GitMergeResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
         let payload = envelope.payload;
-        let options = merge_options_from_proto(&payload);
+        let askpass = make_remote_delegate(
+            this,
+            payload.project_id,
+            repository_id,
+            payload.askpass_id,
+            peer_id,
+            &mut cx,
+        );
         let source = payload.source.into();
 
         let output = repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.merge(source, options, cx)
+            .update(&mut cx, |repository_handle, _cx| {
+                repository_handle.merge(source, askpass)
             })
             .await??;
 
@@ -2974,8 +2988,8 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.merge_abort(cx)
+            .update(&mut cx, |repository_handle, _cx| {
+                repository_handle.merge_abort()
             })
             .await??;
 
@@ -3153,12 +3167,14 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
 
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
             repository_id,
             askpass_id,
+            peer_id,
             &mut cx,
         );
 
@@ -5151,6 +5167,7 @@ fn make_remote_delegate(
     project_id: u64,
     repository_id: RepositoryId,
     askpass_id: u64,
+    peer_id: proto::PeerId,
     cx: &mut AsyncApp,
 ) -> AskPassDelegate {
     AskPassDelegate::new(cx, move |prompt, tx, cx| {
@@ -5163,6 +5180,7 @@ fn make_remote_delegate(
                 repository_id: repository_id.to_proto(),
                 askpass_id,
                 prompt,
+                peer_id: Some(peer_id),
             });
             cx.spawn(async move |_, _| {
                 let mut response = response.await?.response;
@@ -5195,33 +5213,6 @@ fn merge_outcome_from_proto(outcome: i32) -> MergeOutcome {
         Some(proto::git_merge_response::Outcome::UpToDate) => MergeOutcome::UpToDate,
         Some(proto::git_merge_response::Outcome::Conflicts) => MergeOutcome::Conflicts,
         Some(proto::git_merge_response::Outcome::Failed) | None => MergeOutcome::Failed,
-    }
-}
-
-fn merge_options_from_proto(payload: &proto::GitMerge) -> MergeOptions {
-    MergeOptions {
-        fast_forward: merge_options_ff_from_proto(payload.fast_forward()),
-        squash: payload.squash,
-        commit: !payload.no_commit,
-        message: payload.message.clone(),
-    }
-}
-
-fn merge_options_ff_to_proto(mode: FastForwardMode) -> proto::git_merge::FastForwardMode {
-    use proto::git_merge::FastForwardMode as ProtoFastForwardMode;
-
-    match mode {
-        FastForwardMode::Default => ProtoFastForwardMode::Default,
-        FastForwardMode::Only => ProtoFastForwardMode::Only,
-        FastForwardMode::Never => ProtoFastForwardMode::Never,
-    }
-}
-
-fn merge_options_ff_from_proto(mode: proto::git_merge::FastForwardMode) -> FastForwardMode {
-    match mode {
-        proto::git_merge::FastForwardMode::Default => FastForwardMode::Default,
-        proto::git_merge::FastForwardMode::Only => FastForwardMode::Only,
-        proto::git_merge::FastForwardMode::Never => FastForwardMode::Never,
     }
 }
 
@@ -5558,19 +5549,20 @@ impl MergeDetails {
             ])
             .await
             .log_err()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let merge_in_progress = heads.first().is_some_and(Option::is_some);
+        let heads = heads
             .into_iter()
             .map(|opt| opt.map(SharedString::from))
             .collect::<Vec<_>>();
 
-        let merge_in_progress = merge_heads_include_merge_head(&heads);
-        let mut conflicts_changed = self.merge_in_progress != merge_in_progress;
+        let mut merge_details_changed = self.merge_in_progress != merge_in_progress;
         self.merge_in_progress = merge_in_progress;
 
         // Record the merge state for newly conflicted paths
         for path in &current_conflicted_paths {
             if self.merge_heads_by_conflicted_path.get(&path).is_none() {
-                conflicts_changed = true;
+                merge_details_changed = true;
                 self.merge_heads_by_conflicted_path
                     .insert(path.clone(), heads.clone());
             }
@@ -5583,17 +5575,13 @@ impl MergeDetails {
                     || (old_merge_heads == &heads
                         && old_merge_heads.iter().any(|head| head.is_some()));
                 if !keep {
-                    conflicts_changed = true;
+                    merge_details_changed = true;
                 }
                 keep
             });
 
-        conflicts_changed
+        merge_details_changed
     }
-}
-
-fn merge_heads_include_merge_head(heads: &[Option<SharedString>]) -> bool {
-    heads.first().is_some_and(Option::is_some)
 }
 
 impl Repository {
@@ -7946,9 +7934,10 @@ impl Repository {
     pub fn merge(
         &mut self,
         source: SharedString,
-        options: MergeOptions,
-        _cx: &mut App,
+        askpass: AskPassDelegate,
     ) -> oneshot::Receiver<Result<MergeOutput>> {
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
         self.send_job(
@@ -7962,20 +7951,21 @@ impl Repository {
                         ..
                     }) => {
                         backend
-                            .merge(source.to_string(), options, environment.clone())
+                            .merge(source.to_string(), askpass, environment.clone())
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        askpass_delegates.lock().insert(askpass_id, askpass);
+                        let _defer = util::defer(|| {
+                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                            debug_assert!(askpass_delegate.is_some());
+                        });
                         let response = client
                             .request(proto::GitMerge {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 source: source.to_string(),
-                                fast_forward: merge_options_ff_to_proto(options.fast_forward)
-                                    as i32,
-                                squash: options.squash,
-                                no_commit: !options.commit,
-                                message: options.message.clone(),
+                                askpass_id,
                             })
                             .await?;
 
@@ -7990,7 +7980,7 @@ impl Repository {
         )
     }
 
-    pub fn merge_abort(&mut self, _cx: &mut App) -> oneshot::Receiver<Result<()>> {
+    pub fn merge_abort(&mut self) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
 
         self.send_job(
@@ -10470,25 +10460,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fs.load(&path).await.unwrap(), "*.log\nbuild/\n");
-    }
-
-    #[test]
-    fn test_merge_heads_include_only_merge_head() {
-        assert!(merge_heads_include_merge_head(&[
-            Some("feature".into()),
-            None,
-            None,
-            None,
-            None,
-        ]));
-        assert!(!merge_heads_include_merge_head(&[
-            None,
-            None,
-            Some("feature".into()),
-            None,
-            None,
-        ]));
-        assert!(!merge_heads_include_merge_head(&[]));
     }
 
     #[test]

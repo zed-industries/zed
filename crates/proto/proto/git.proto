@@ -480,17 +480,7 @@ message GitMerge {
   reserved 2;
   uint64 repository_id = 3;
   string source = 4;
-  FastForwardMode fast_forward = 5;
-  bool squash = 6;
-  // false means Git should create a merge commit when needed, matching MergeOptions::default().
-  bool no_commit = 7;
-  optional string message = 8;
-
-  enum FastForwardMode {
-    DEFAULT = 0;
-    ONLY = 1;
-    NEVER = 2;
-  }
+  uint64 askpass_id = 5;
 }
 
 message GitMergeResponse {

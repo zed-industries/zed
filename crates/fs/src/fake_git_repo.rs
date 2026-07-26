@@ -14,7 +14,7 @@ use git::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
         GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        MergeOptions, MergeOutcome, MergeOutput, PushOptions, RefEdit, Remote, RepoPath, ResetMode,
+        MergeOutcome, MergeOutput, PushOptions, RefEdit, Remote, RepoPath, ResetMode,
         SearchCommitArgs, Worktree, commit_hash_search_query,
     },
     stash::GitStash,
@@ -80,6 +80,7 @@ pub struct FakeGitRepositoryState {
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
+    pub merge_askpass_prompt: Option<String>,
 }
 
 impl FakeGitRepositoryState {
@@ -106,6 +107,7 @@ impl FakeGitRepositoryState {
             commit_history: Vec::new(),
             stash_entries: Default::default(),
             commit_template: None,
+            merge_askpass_prompt: None,
         }
     }
 }
@@ -358,23 +360,54 @@ impl GitRepository for FakeGitRepository {
     fn merge(
         &self,
         source: String,
-        _options: MergeOptions,
+        mut askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<MergeOutput>> {
-        self.with_state_async(true, move |state| {
-            let outcome = if state.unmerged_paths.is_empty() {
-                state.refs.remove("MERGE_HEAD");
-                MergeOutcome::Success
-            } else {
-                state.refs.insert("MERGE_HEAD".into(), source);
-                MergeOutcome::Conflicts
-            };
-            Ok(MergeOutput {
-                outcome,
-                stdout: String::new(),
-                stderr: String::new(),
+        let this = self.clone();
+        async move {
+            let prompt = this
+                .with_state_async(false, |state| Ok(state.merge_askpass_prompt.clone()))
+                .await?;
+            if let Some(prompt) = prompt {
+                askpass
+                    .ask_password(prompt)
+                    .await
+                    .context("merge askpass was cancelled")?;
+            }
+
+            this.with_state_async(true, move |state| {
+                let source_oid = state
+                    .refs
+                    .get(&source)
+                    .or_else(|| state.refs.get(&format!("refs/heads/{source}")))
+                    .cloned();
+                let Some(source_oid) = source_oid else {
+                    return Ok(MergeOutput {
+                        outcome: MergeOutcome::Failed,
+                        stdout: String::new(),
+                        stderr: format!("merge: {source} - not something we can merge\n"),
+                    });
+                };
+
+                let outcome = if state.refs.get("HEAD") == Some(&source_oid) {
+                    MergeOutcome::UpToDate
+                } else if state.unmerged_paths.is_empty() {
+                    state.refs.remove("MERGE_HEAD");
+                    state.refs.insert("HEAD".into(), source_oid);
+                    MergeOutcome::FastForward
+                } else {
+                    state.refs.insert("MERGE_HEAD".into(), source_oid);
+                    MergeOutcome::Conflicts
+                };
+                Ok(MergeOutput {
+                    outcome,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
             })
-        })
+            .await
+        }
+        .boxed()
     }
 
     fn merge_abort(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {

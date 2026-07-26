@@ -9,7 +9,7 @@ use zed_actions::toast;
 pub struct StatusToast {
     icon: Option<Icon>,
     text: SharedString,
-    action: Option<ToastAction>,
+    actions: Vec<ToastAction>,
     show_dismiss: bool,
     auto_dismiss: bool,
     this_handle: Entity<Self>,
@@ -29,7 +29,7 @@ impl StatusToast {
                 Self {
                     text: text.into(),
                     icon: None,
-                    action: None,
+                    actions: Vec::new(),
                     show_dismiss: false,
                     auto_dismiss: true,
                     this_handle: cx.entity(),
@@ -56,7 +56,7 @@ impl StatusToast {
         f: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         let this_handle = self.this_handle.clone();
-        self.action = Some(ToastAction::new(
+        self.actions.push(ToastAction::new(
             label.into(),
             Some(Rc::new(move |window, cx| {
                 this_handle.update(cx, |_, cx| {
@@ -72,11 +72,19 @@ impl StatusToast {
         self.show_dismiss = show;
         self
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn action_labels(&self) -> Vec<&str> {
+        self.actions
+            .iter()
+            .map(|action| action.label.as_ref())
+            .collect()
+    }
 }
 
 impl Render for StatusToast {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_action_or_dismiss = self.action.is_some() || self.show_dismiss;
+        let has_action_or_dismiss = !self.actions.is_empty() || self.show_dismiss;
 
         h_flex()
             .id("status-toast")
@@ -96,19 +104,17 @@ impl Render for StatusToast {
             .shadow_lg()
             .when_some(self.icon.clone(), |this, icon| this.child(icon))
             .child(Label::new(self.text.clone()).color(Color::Default))
-            .when_some(self.action.as_ref(), |this, action| {
-                this.child(
-                    Button::new(action.id.clone(), action.label.clone())
-                        .tooltip(Tooltip::for_action_title(
-                            action.label.clone(),
-                            &toast::RunAction,
-                        ))
-                        .color(Color::Muted)
-                        .when_some(action.on_click.clone(), |el, handler| {
-                            el.on_click(move |_click_event, window, cx| handler(window, cx))
-                        }),
-                )
-            })
+            .children(self.actions.iter().map(|action| {
+                Button::new(action.id.clone(), action.label.clone())
+                    .tooltip(Tooltip::for_action_title(
+                        action.label.clone(),
+                        &toast::RunAction,
+                    ))
+                    .color(Color::Muted)
+                    .when_some(action.on_click.clone(), |el, handler| {
+                        el.on_click(move |_click_event, window, cx| handler(window, cx))
+                    })
+            }))
             .when(self.show_dismiss, |this| {
                 let handle = self.this_handle.clone();
                 this.child(
@@ -129,7 +135,7 @@ impl Render for StatusToast {
 
 impl ToastView for StatusToast {
     fn action(&self) -> Option<ToastAction> {
-        self.action.clone()
+        self.actions.first().cloned()
     }
 
     fn auto_dismiss(&self) -> bool {

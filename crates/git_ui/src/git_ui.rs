@@ -21,6 +21,7 @@ use project_diff::ProjectDiff;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
+use util::ResultExt as _;
 use workspace::{
     ModalView, OpenMode, Workspace,
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -237,7 +238,7 @@ pub fn init(cx: &mut App) {
 
             if let Some(branch) = action.branch.clone() {
                 panel.update(cx, |panel, cx| {
-                    panel.merge(branch.into(), cx);
+                    panel.merge(branch.into(), window, cx);
                 });
                 return;
             }
@@ -246,9 +247,11 @@ pub fn init(cx: &mut App) {
             let repository = workspace.project().read(cx).active_repository(cx);
             let workspace_handle = workspace.weak_handle();
             let on_select = Arc::new(
-                move |branch: git::repository::Branch, _window: &mut Window, cx: &mut App| {
+                move |branch: git::repository::Branch, window: &mut Window, cx: &mut App| {
                     let source: SharedString = branch.name().to_owned().into();
-                    panel.update(cx, |panel, cx| panel.merge(source, cx)).ok();
+                    panel
+                        .update(cx, |panel, cx| panel.merge(source, window, cx))
+                        .log_err();
                 },
             );
             workspace.toggle_modal(window, cx, |window, cx| {

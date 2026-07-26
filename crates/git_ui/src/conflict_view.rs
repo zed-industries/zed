@@ -28,7 +28,7 @@ pub(crate) struct ConflictAddon {
 }
 
 struct BufferConflicts {
-    block_ids: Vec<(Range<Anchor>, CustomBlockId)>,
+    block_ids: Vec<(Range<Anchor>, Option<CustomBlockId>)>,
     conflict_set: Entity<ConflictSet>,
     _subscription: Subscription,
 }
@@ -153,7 +153,12 @@ pub(crate) fn buffers_removed(
     };
     conflict_addon.buffers.retain(|buffer_id, buffer| {
         if removed_buffer_ids.contains(buffer_id) {
-            removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
+            removed_block_ids.extend(
+                buffer
+                    .block_ids
+                    .iter()
+                    .filter_map(|(_, block_id)| *block_id),
+            );
             false
         } else {
             true
@@ -213,11 +218,12 @@ fn conflicts_updated(
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
-            let Some(range) = snapshot.buffer_anchor_range_to_anchor_range(conflict_range) else {
-                continue;
-            };
-            removed_highlighted_ranges.push(range.clone());
-            removed_block_ids.insert(block_id);
+            if let Some(range) = snapshot.buffer_anchor_range_to_anchor_range(conflict_range) {
+                removed_highlighted_ranges.push(range);
+            }
+            if let Some(block_id) = block_id {
+                removed_block_ids.insert(block_id);
+            }
         }
 
         editor.remove_gutter_highlights::<ConflictsOuter>(removed_highlighted_ranges.clone(), cx);
@@ -257,7 +263,7 @@ fn conflicts_updated(
             priority: 0,
         })
     }
-    let new_block_ids = editor.insert_blocks(blocks, None, cx);
+    let mut new_block_ids = editor.insert_blocks(blocks, None, cx).into_iter();
 
     let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
         return;
@@ -267,10 +273,12 @@ fn conflicts_updated(
     {
         buffer_conflicts.block_ids.splice(
             old_range,
-            new_conflicts
-                .iter()
-                .map(|conflict| conflict.range.clone())
-                .zip(new_block_ids),
+            new_conflicts.iter().map(|conflict| {
+                let block_id = snapshot
+                    .anchor_in_excerpt(conflict.range.start)
+                    .and_then(|_| new_block_ids.next());
+                (conflict.range.clone(), block_id)
+            }),
         );
     }
 }
@@ -511,7 +519,9 @@ pub(crate) fn resolve_conflict(
                 editor.remove_highlighted_rows::<ConflictsTheirs>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
-                editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+                if let Some(block_id) = block_id {
+                    editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+                }
                 Some(())
             })
             .ok();
@@ -694,5 +704,84 @@ impl StatusItemView for MergeConflictIndicator {
                 .get_or_insert_default()
                 .show_merge_conflict_indicator = Some(false);
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::EditorMode;
+    use gpui::TestAppContext;
+    use language::{Capability::ReadWrite, Point};
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    fn test_removing_conflict_outside_excerpt_does_not_panic(cx: &mut TestAppContext) {
+        // A merge abort removes conflicts even when their UI blocks were never inserted because
+        // the conflict ranges were outside the editor's current excerpt.
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                "visible\nhidden\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n",
+                cx,
+            )
+        });
+        let conflict_snapshot =
+            buffer.read_with(cx, |buffer, _| ConflictSet::parse(&buffer.snapshot()));
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 7)],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let conflict_set = cx.new(|cx| {
+            let mut conflict_set = ConflictSet::new(buffer_id, true, cx);
+            conflict_set.snapshot = conflict_snapshot;
+            conflict_set
+        });
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let mut editor = Editor::new(EditorMode::full(), multibuffer, None, window, cx);
+            editor.register_addon(ConflictAddon {
+                buffers: Default::default(),
+            });
+            buffer_ranges_updated(&mut editor, conflict_set.clone(), cx);
+            editor
+        });
+
+        assert_eq!(
+            editor.read_with(cx, |editor, _| {
+                editor
+                    .addon::<ConflictAddon>()
+                    .and_then(|addon| addon.buffers.get(&buffer_id))
+                    .map(|conflicts| {
+                        (
+                            conflicts.block_ids.len(),
+                            conflicts
+                                .block_ids
+                                .iter()
+                                .all(|(_, block_id)| block_id.is_none()),
+                        )
+                    })
+            }),
+            Some((1, true))
+        );
+
+        conflict_set.update(cx, |conflict_set, cx| {
+            assert!(conflict_set.set_has_conflict(false, cx));
+        });
     }
 }
