@@ -2339,6 +2339,7 @@ impl Sidebar {
 
         let key_for_toggle = key.clone();
         let key_for_focus = key.clone();
+        let key_for_drag_over = key.clone();
         let key_for_drop = key.clone();
 
         // The fade gradient renders as a visible patch on transparent windows,
@@ -2514,7 +2515,7 @@ impl Sidebar {
             )
             .drag_over::<DraggedProjectGroup>({
                 move |style, dragged_project_group: &DraggedProjectGroup, _window, cx| {
-                    if dragged_project_group.key == key_for_drop {
+                    if dragged_project_group.key == key_for_drag_over {
                         return style;
                     }
                     let style = style
@@ -2528,6 +2529,15 @@ impl Sidebar {
                     }
                 }
             })
+            .on_drop::<DraggedProjectGroup>(cx.listener(
+                move |this, dragged_project_group: &DraggedProjectGroup, _window, cx| {
+                    this.multi_workspace
+                        .update(cx, |mw, cx| {
+                            mw.move_project_group(&dragged_project_group.key, &key_for_drop, cx);
+                        })
+                        .ok();
+                },
+            ))
             .block_mouse_except_scroll();
 
         if !is_collapsed && !has_threads {
