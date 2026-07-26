@@ -15,7 +15,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["rand", "util_macros"]
+test-support = ["rand", "util_macros", "path/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -42,6 +42,7 @@ url.workspace = true
 percent-encoding.workspace = true
 util_macros = { workspace = true, optional = true }
 gpui_util.workspace = true
+path = { workspace = true, features = ["serde"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 smol.workspace = true
@@ -66,3 +67,4 @@ windows.workspace = true
 rand.workspace = true
 util_macros.workspace = true
 pretty_assertions.workspace = true
+path = { workspace = true, features = ["test-support"] }

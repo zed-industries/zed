@@ -1,10 +1,11 @@
 use gpui::{
-    AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
-    prelude::FluentBuilder, px, relative,
+    AnyElement, App, BoxShadow, ParentElement, RenderOnce, Styled, Window, div, hsla, prelude::*,
+    px,
 };
+
 use theme::ActiveTheme;
 
-use crate::{ElevationIndex, prelude::*};
+use crate::{Divider, ElevationIndex, prelude::*};
 
 use super::ButtonLike;
 
@@ -67,12 +68,12 @@ impl RenderOnce for SplitButton {
             SplitButtonStyle::Filled | SplitButtonStyle::Outlined
         );
 
+        let outline = BoxShadow::new(px(0.), px(0.), cx.theme().colors().border.opacity(0.8))
+            .spread_radius(px(1.))
+            .inset();
+
         h_flex()
-            .when(is_filled_or_outlined, |this| {
-                this.rounded_sm()
-                    .border_1()
-                    .border_color(cx.theme().colors().border.opacity(0.8))
-            })
+            .when(is_filled_or_outlined, |this| this.relative().rounded_sm())
             .when(self.style == SplitButtonStyle::Transparent, |this| {
                 this.gap_px()
             })
@@ -80,13 +81,19 @@ impl RenderOnce for SplitButton {
                 SplitButtonKind::ButtonLike(button) => button.into_any_element(),
                 SplitButtonKind::IconButton(icon) => icon.into_any_element(),
             }))
-            .child(
-                div()
-                    .h(relative(0.8))
-                    .w_px()
-                    .bg(cx.theme().colors().border.opacity(0.5)),
-            )
+            .child(Divider::vertical().when(is_filled_or_outlined, |s| {
+                s.h_full().color(crate::DividerColor::Border)
+            }))
             .child(self.right)
+            .when(is_filled_or_outlined, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded_sm()
+                        .shadow(vec![outline]),
+                )
+            })
             .when(self.style == SplitButtonStyle::Filled, |this| {
                 this.bg(ElevationIndex::Surface.on_elevation_bg(cx))
                     .shadow(vec![BoxShadow::new(

@@ -961,7 +961,7 @@ impl Database {
         let path_style = if project.windows_paths {
             PathStyle::Windows
         } else {
-            PathStyle::Posix
+            PathStyle::Unix
         };
         let features: Vec<String> = serde_json::from_str(&project.features).unwrap_or_default();
 

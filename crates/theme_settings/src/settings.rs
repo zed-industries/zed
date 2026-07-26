@@ -64,7 +64,7 @@ pub struct ThemeSettings {
     /// Falls back to the buffer font family if unset.
     markdown_preview_code_font_family: Option<SharedString>,
     /// The font size to use for rendering in the markdown preview.
-    /// Falls back to the buffer font size if unset.
+    /// Falls back to the UI font size if unset.
     markdown_preview_font_size: Option<Pixels>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
@@ -451,14 +451,14 @@ impl ThemeSettings {
 
     /// Returns the markdown preview font size.
     ///
-    /// Note: the fallback deliberately uses `self.buffer_font_size` instead of `buffer_font_size(cx)`,
-    /// so that temporary editor zoom does not also resize the markdown preview.
+    /// Note: the fallback deliberately uses `self.ui_font_size` instead of `ui_font_size(cx)`,
+    /// so that temporary UI zoom does not also resize the markdown preview.
     pub fn markdown_preview_font_size(&self, cx: &App) -> Pixels {
         cx.try_global::<MarkdownPreviewFontSize>()
             .map(|size| size.0)
             .or(self.markdown_preview_font_size)
             .map(clamp_font_size)
-            .unwrap_or_else(|| clamp_font_size(self.buffer_font_size))
+            .unwrap_or_else(|| clamp_font_size(self.ui_font_size))
     }
 
     /// Returns the buffer font size, read from the settings.
