@@ -164,11 +164,14 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
+            MentionUri::ContextServer { .. } => Task::ready(Ok(Mention::Text {
+                content: String::new(),
+                tracked_buffers: Vec::new(),
+            })),
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. }
-            | MentionUri::Rule { .. }
-            | MentionUri::ContextServer { .. } => {
+            | MentionUri::Rule { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
