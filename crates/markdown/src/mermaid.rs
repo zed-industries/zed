@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use ui::{CopyButton, TintColor, prelude::*};
+use ui::{Banner, CopyButton, TintColor, prelude::*};
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
@@ -50,8 +50,11 @@ impl ParsedMarkdownMermaidDiagramContents {
     }
 
     pub(crate) fn get_diagram_code(&self) -> SharedString {
-        let (_, diagram_content) = self.get_frontmatter_and_diagram_code();
-        diagram_content
+        self.get_frontmatter_and_diagram_code().1
+    }
+
+    pub(crate) fn get_frontmatter(&self) -> Option<SharedString> {
+        self.get_frontmatter_and_diagram_code().0
     }
 
 }
@@ -386,6 +389,10 @@ pub(crate) fn render_mermaid_diagram(
                         markdown.clone(),
                     ))
                 })
+                .when(
+                    show_interactive && parsed.contents.get_frontmatter().is_some(),
+                    |container| container.child(render_mermaid_frontmatter_banner()),
+                )
                 .child(body)
                 .when(show_interactive, |container| {
                     container.child(render_mermaid_copy_button(
@@ -541,6 +548,17 @@ fn render_mermaid_tab_header(
                     });
                 }),
         )
+}
+
+fn render_mermaid_frontmatter_banner() -> impl IntoElement {
+    div().mb_2p5().child(
+        Banner::new()
+            .severity(Severity::Info)
+            .child(Label::new(
+                "Ignoring custom inline styling and metadata for mermaid diagrams as it is not yet supported.",
+            ))
+            .into_any_element(),
+    )
 }
 
 fn render_mermaid_copy_button(
