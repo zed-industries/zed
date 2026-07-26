@@ -1345,6 +1345,19 @@ impl GitGraph {
         cx.notify();
     }
 
+    /// Invalidate the graph for a refresh, remembering the selected commit by SHA
+    /// so the reload can reselect it. The row index alone is not enough: once new
+    /// commits are prepended it points at a different commit, leaving the
+    /// highlighted row and the details pane showing different commits.
+    fn invalidate_preserving_selection(&mut self, cx: &mut Context<Self>) {
+        self.pending_select_sha = self
+            .selected_entry_idx
+            .and_then(|idx| self.graph_data.commits.get(idx))
+            .map(|commit| commit.data.sha);
+        self.selected_entry_idx = None;
+        self.invalidate_state(cx);
+    }
+
     /// Computes the height of a single commit row in the git graph.
     ///
     /// The returned value is snapped to the nearest physical pixel. This is
@@ -1661,15 +1674,13 @@ impl GitGraph {
                 // meaning we are not inside the initial repo loading state
                 // NOTE: this fixes an loading performance regression
                 if repository.read(cx).scan_id > 1 {
-                    self.pending_select_sha = None;
-                    self.invalidate_state(cx);
+                    self.invalidate_preserving_selection(cx);
                 }
             }
             RepositoryEvent::StashEntriesChanged if self.log_source == LogSource::All => {
                 // Stash entries initial's scan id is 2, so we don't want to invalidate the graph before that
                 if repository.read(cx).scan_id > 2 {
-                    self.pending_select_sha = None;
-                    self.invalidate_state(cx);
+                    self.invalidate_preserving_selection(cx);
                 }
             }
             RepositoryEvent::GraphEvent(_, _) => {}
@@ -6088,6 +6099,91 @@ mod tests {
             assert_eq!(
                 editor_text, "some query",
                 "search query text should be restored in editor"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_head_change_preserves_selection_by_sha(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(7);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        assert!(
+            repository.read_with(&*cx, |repo, _| repo.scan_id) > 1,
+            "the repository must have scanned before the refresh path is exercised"
+        );
+
+        // Select HEAD, then refresh as if a new commit landed outside Zed.
+        let selected_sha = commits[0].sha;
+        git_graph.update(cx, |graph, _| {
+            graph.selected_entry_idx = Some(0);
+        });
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.graph_data.commits.first().map(|c| c.data.sha),
+                Some(selected_sha),
+                "row 0 should hold the commit we think we selected"
+            );
+        });
+        git_graph.update(cx, |graph, cx| {
+            graph.on_repository_event(repository.clone(), &RepositoryEvent::HeadChanged, cx);
+        });
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.pending_select_sha,
+                Some(selected_sha),
+                "the selected commit should be remembered by SHA so the reload can reselect it"
+            );
+            assert_eq!(
+                graph.selected_entry_idx, None,
+                "the stale row index must be cleared so it can't highlight a different commit"
             );
         });
     }
