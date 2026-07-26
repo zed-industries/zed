@@ -717,6 +717,16 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         // prose size it would otherwise inherit from the container.
         code_block = code_block.text_size(settings.buffer_font_size(cx));
     }
+    let mut heading = StyleRefinement::default()
+        .font_weight(FontWeight::BOLD)
+        .text_base()
+        .mt(rems(1.))
+        .mb_0();
+    if let Some(size) = prose_font_size {
+        // `.text_base()` pins headings to 1rem; keep them on the configured
+        // prose size instead so they don't render smaller than the body.
+        heading.text.font_size = Some(size.into());
+    }
     MarkdownStyle {
         container_style,
         base_text_style,
@@ -746,13 +756,12 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: cx.theme().colors().element_selection_background,
-        heading: StyleRefinement::default()
-            .font_weight(FontWeight::BOLD)
-            .text_base()
-            .mt(rems(1.))
-            .mb_0(),
+        heading,
         table_columns_min_size: true,
         soft_break_as_hard_break: true,
+        // Paragraphs pin their line height in rems, which would not scale
+        // with a configured prose size.
+        paragraph_line_height: prose_font_size.map(|_| gpui::relative(1.3)),
         ..Default::default()
     }
 }
@@ -1342,6 +1351,11 @@ mod tests {
                     .map(|size| size.to_pixels(window.rem_size())),
                 Some(px(12.0))
             );
+            // Headings track the configured prose size rather than the 1rem
+            // set by `.text_base()`, and paragraph line height scales with
+            // the prose instead of staying pinned in rems.
+            assert_eq!(style.heading.text.font_size, Some(px(13.0).into()));
+            assert_eq!(style.paragraph_line_height, Some(gpui::relative(1.3)));
         });
     }
 
@@ -1366,6 +1380,8 @@ mod tests {
             // inheriting the surrounding text size.
             assert_eq!(style.container_style.text.font_size, None);
             assert_eq!(style.code_block.text.font_size, None);
+            assert_eq!(style.heading.text.font_size, Some(rems(1.).into()));
+            assert_eq!(style.paragraph_line_height, None);
             assert_eq!(
                 style.inline_code.font_family.as_deref(),
                 Some("Buffer Font")

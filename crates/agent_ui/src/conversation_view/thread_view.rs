@@ -3957,7 +3957,11 @@ impl ThreadView {
                                     .text_ui(cx)
                                     .child(self.render_markdown(
                                         summary,
-                                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                        MarkdownStyle::themed(
+                                            MarkdownFont::AgentResponse,
+                                            window,
+                                            cx,
+                                        ),
                                         cx,
                                     )),
                             )
@@ -6253,7 +6257,7 @@ impl ThreadView {
                 let mut is_blank = true;
                 let is_last = entry_ix + 1 == total_entries;
 
-                let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                let style = MarkdownStyle::themed(MarkdownFont::AgentResponse, window, cx);
                 let message_body = v_flex()
                     .w_full()
                     .gap_3()
@@ -7443,7 +7447,7 @@ impl ThreadView {
                                 .overflow_hidden()
                                 .child(self.render_markdown(
                                     chunk,
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    MarkdownStyle::themed(MarkdownFont::AgentResponse, window, cx),
                                     cx,
                                 )),
                         )

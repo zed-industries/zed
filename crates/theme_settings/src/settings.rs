@@ -63,8 +63,8 @@ pub struct ThemeSettings {
     /// The font family used for inline code in agent panel markdown.
     /// Falls back to the buffer font family if unset.
     agent_inline_code_font_family: Option<SharedString>,
-    /// The font size used for prose in agent panel markdown.
-    /// Falls back to the agent font size if unset.
+    /// The font size used for prose in agent responses, without affecting the
+    /// rest of the agent panel. Falls back to the agent font size if unset.
     agent_prose_font_size: Option<Pixels>,
     /// The font family used for prose in hover popups.
     /// Falls back to the UI font family if unset.
@@ -467,7 +467,7 @@ impl ThemeSettings {
             .unwrap_or(&self.buffer_font.family)
     }
 
-    /// Returns the font size to use for prose in agent panel markdown, if
+    /// Returns the font size to use for prose in agent responses, if
     /// configured.
     pub fn agent_prose_font_size(&self) -> Option<Pixels> {
         self.agent_prose_font_size.map(clamp_font_size)

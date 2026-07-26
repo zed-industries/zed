@@ -116,6 +116,9 @@ pub struct MarkdownStyle {
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
     pub soft_break_as_hard_break: bool,
+    /// Line height for paragraph and list contents. Defaults to 1.3 rems when
+    /// unset.
+    pub paragraph_line_height: Option<DefiniteLength>,
 }
 
 impl Default for MarkdownStyle {
@@ -141,13 +144,17 @@ impl Default for MarkdownStyle {
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
             soft_break_as_hard_break: false,
+            paragraph_line_height: None,
         }
     }
 }
 
 #[derive(Clone, Copy)]
 pub enum MarkdownFont {
+    /// Markdown-ish UI strings in the agent panel (tool labels, plan entries).
     Agent,
+    /// Agent response prose; additionally honors `agent_prose_font_size`.
+    AgentResponse,
     Editor,
     Preview,
 }
@@ -171,11 +178,11 @@ impl MarkdownStyle {
     ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
         let is_preview = matches!(font, MarkdownFont::Preview);
-        let is_agent = matches!(font, MarkdownFont::Agent);
+        let is_agent = matches!(font, MarkdownFont::Agent | MarkdownFont::AgentResponse);
 
         let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
-            MarkdownFont::Agent => (
+            MarkdownFont::Agent | MarkdownFont::AgentResponse => (
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
             ),
@@ -188,7 +195,10 @@ impl MarkdownStyle {
                 theme_settings.ui_font_size(cx),
             ),
         };
-        let prose_font_size_override = if is_agent {
+        // The prose size applies only to response prose: the panel also
+        // renders markdown-ish labels in fixed-height rows that must keep the
+        // panel's UI size.
+        let prose_font_size_override = if matches!(font, MarkdownFont::AgentResponse) {
             theme_settings.agent_prose_font_size()
         } else {
             None
@@ -309,43 +319,44 @@ impl MarkdownStyle {
                 }),
                 ..Default::default()
             },
-            soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
-            heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
-                HeadingLevelStyles {
-                    h1: Some(TextStyleRefinement {
-                        font_size: Some(heading_font_size(1.15)),
-                        ..Default::default()
-                    }),
-                    h2: Some(TextStyleRefinement {
-                        font_size: Some(heading_font_size(1.1)),
-                        ..Default::default()
-                    }),
-                    h3: Some(TextStyleRefinement {
-                        font_size: Some(heading_font_size(1.05)),
-                        ..Default::default()
-                    }),
-                    h4: Some(TextStyleRefinement {
-                        font_size: Some(heading_font_size(1.)),
-                        ..Default::default()
-                    }),
-                    h5: Some(TextStyleRefinement {
-                        font_size: Some(heading_font_size(0.95)),
-                        ..Default::default()
-                    }),
-                    h6: Some(TextStyleRefinement {
-                        font_size: Some(heading_font_size(0.875)),
-                        ..Default::default()
-                    }),
-                },
-            ),
+            soft_break_as_hard_break: is_agent,
+            heading_level_styles: is_agent.then_some(HeadingLevelStyles {
+                h1: Some(TextStyleRefinement {
+                    font_size: Some(heading_font_size(1.15)),
+                    ..Default::default()
+                }),
+                h2: Some(TextStyleRefinement {
+                    font_size: Some(heading_font_size(1.1)),
+                    ..Default::default()
+                }),
+                h3: Some(TextStyleRefinement {
+                    font_size: Some(heading_font_size(1.05)),
+                    ..Default::default()
+                }),
+                h4: Some(TextStyleRefinement {
+                    font_size: Some(heading_font_size(1.)),
+                    ..Default::default()
+                }),
+                h5: Some(TextStyleRefinement {
+                    font_size: Some(heading_font_size(0.95)),
+                    ..Default::default()
+                }),
+                h6: Some(TextStyleRefinement {
+                    font_size: Some(heading_font_size(0.875)),
+                    ..Default::default()
+                }),
+            }),
             ..Default::default()
         };
 
         // Rendered lines take their size from the inherited text style rather
         // than `base_text_style`, so a configured prose size must also be set
-        // on the container to take effect.
+        // on the container to take effect. Paragraphs pin their line height
+        // in rems, which would not scale with the prose size, so switch it to
+        // a relative height.
         if let Some(size) = prose_font_size_override {
             style.container_style.text.font_size = Some(size.into());
+            style.paragraph_line_height = Some(relative(1.3));
         }
 
         if is_preview {
@@ -1524,7 +1535,11 @@ impl MarkdownElement {
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
-            el.mb_2().line_height(rems(1.3))
+            el.mb_2().line_height(
+                self.style
+                    .paragraph_line_height
+                    .unwrap_or_else(|| rems(1.3).into()),
+            )
         });
 
         paragraph = match align {
@@ -1754,7 +1769,11 @@ impl MarkdownElement {
         builder.push_div(
             div()
                 .when(!self.style.height_is_multiple_of_line_height, |el| {
-                    el.mb_1().gap_1().line_height(rems(1.3))
+                    el.mb_1().gap_1().line_height(
+                        self.style
+                            .paragraph_line_height
+                            .unwrap_or_else(|| rems(1.3).into()),
+                    )
                 })
                 .h_flex()
                 .items_start()
@@ -4232,10 +4251,13 @@ mod tests {
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         cx.update(|window, cx| {
-            let agent_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
-            assert_eq!(agent_style.base_text_style.font_family.as_ref(), ".ZedSans");
+            let response_style = MarkdownStyle::themed(MarkdownFont::AgentResponse, window, cx);
             assert_eq!(
-                agent_style
+                response_style.base_text_style.font_family.as_ref(),
+                ".ZedSans"
+            );
+            assert_eq!(
+                response_style
                     .base_text_style
                     .font_size
                     .to_pixels(window.rem_size()),
@@ -4244,24 +4266,27 @@ mod tests {
             // Rendered lines read their size from the container's text style,
             // so the configured prose size must be present there.
             assert_eq!(
-                agent_style.container_style.text.font_size,
+                response_style.container_style.text.font_size,
                 Some(px(16.0).into())
             );
             assert_eq!(
-                agent_style
+                response_style
                     .base_text_style
                     .line_height
-                    .to_pixels(agent_style.base_text_style.font_size, window.rem_size()),
+                    .to_pixels(response_style.base_text_style.font_size, window.rem_size()),
                 px(28.0)
             );
+            // Paragraph line height scales with the prose size instead of
+            // staying pinned in rems.
+            assert_eq!(response_style.paragraph_line_height, Some(relative(1.3)));
             assert_eq!(
-                agent_style.inline_code.font_family.as_deref(),
+                response_style.inline_code.font_family.as_deref(),
                 Some(".ZedMono")
             );
             // Headings track the configured prose size rather than the rem
             // size.
             assert_eq!(
-                agent_style
+                response_style
                     .heading_level_styles
                     .as_ref()
                     .and_then(|headings| headings.h1.as_ref())
@@ -4270,17 +4295,36 @@ mod tests {
             );
             // Fenced code keeps the buffer font at the agent buffer size.
             assert_eq!(
-                agent_style.code_block.text.font_family.as_deref(),
+                response_style.code_block.text.font_family.as_deref(),
                 Some("Buffer Font")
             );
             assert_eq!(
-                agent_style
+                response_style
                     .code_block
                     .text
                     .font_size
                     .map(|size| size.to_pixels(window.rem_size())),
                 Some(px(12.0))
             );
+
+            // Plain Agent markdown (tool labels, plan entries) gets the
+            // families but not the prose size, which would break fixed-height
+            // rows.
+            let agent_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+            assert_eq!(agent_style.base_text_style.font_family.as_ref(), ".ZedSans");
+            assert_eq!(
+                agent_style.inline_code.font_family.as_deref(),
+                Some(".ZedMono")
+            );
+            assert_eq!(
+                agent_style
+                    .base_text_style
+                    .font_size
+                    .to_pixels(window.rem_size()),
+                px(14.0)
+            );
+            assert_eq!(agent_style.container_style.text.font_size, None);
+            assert_eq!(agent_style.paragraph_line_height, None);
 
             // Editor-flavored markdown is unaffected by the agent settings.
             let editor_style = MarkdownStyle::themed(MarkdownFont::Editor, window, cx);
@@ -4317,35 +4361,38 @@ mod tests {
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         cx.update(|window, cx| {
-            let agent_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
-            assert_eq!(agent_style.base_text_style.font_family.as_ref(), "UI Font");
-            assert_eq!(
-                agent_style
-                    .base_text_style
-                    .font_size
-                    .to_pixels(window.rem_size()),
-                px(14.0)
-            );
-            assert_eq!(agent_style.container_style.text.font_size, None);
-            assert_eq!(
-                agent_style
-                    .base_text_style
-                    .line_height
-                    .to_pixels(agent_style.base_text_style.font_size, window.rem_size()),
-                px(21.0)
-            );
-            assert_eq!(
-                agent_style.inline_code.font_family.as_deref(),
-                Some("Buffer Font")
-            );
-            assert_eq!(
-                agent_style
-                    .heading_level_styles
-                    .as_ref()
-                    .and_then(|headings| headings.h1.as_ref())
-                    .and_then(|h1| h1.font_size),
-                Some(rems(1.15).into())
-            );
+            for font in [MarkdownFont::Agent, MarkdownFont::AgentResponse] {
+                let agent_style = MarkdownStyle::themed(font, window, cx);
+                assert_eq!(agent_style.base_text_style.font_family.as_ref(), "UI Font");
+                assert_eq!(
+                    agent_style
+                        .base_text_style
+                        .font_size
+                        .to_pixels(window.rem_size()),
+                    px(14.0)
+                );
+                assert_eq!(agent_style.container_style.text.font_size, None);
+                assert_eq!(agent_style.paragraph_line_height, None);
+                assert_eq!(
+                    agent_style
+                        .base_text_style
+                        .line_height
+                        .to_pixels(agent_style.base_text_style.font_size, window.rem_size()),
+                    px(21.0)
+                );
+                assert_eq!(
+                    agent_style.inline_code.font_family.as_deref(),
+                    Some("Buffer Font")
+                );
+                assert_eq!(
+                    agent_style
+                        .heading_level_styles
+                        .as_ref()
+                        .and_then(|headings| headings.h1.as_ref())
+                        .and_then(|h1| h1.font_size),
+                    Some(rems(1.15).into())
+                );
+            }
         });
     }
 

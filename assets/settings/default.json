@@ -79,7 +79,8 @@
   "agent_prose_font_family": null,
   // The font family for inline code in agent panel markdown. Falls back to the editor font family if unset.
   "agent_inline_code_font_family": null,
-  // The font size for prose in agent panel markdown. Falls back to the agent font size if unset.
+  // The font size for prose in agent responses, without affecting the rest of the
+  // agent panel. Falls back to the agent font size if unset.
   "agent_prose_font_size": null,
   // The font family for prose in hover popups. Falls back to the UI font family if unset.
   "hover_prose_font_family": null,

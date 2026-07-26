@@ -79,7 +79,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // Controls the font family for inline code in agent panel markdown.
   // If not specified, it falls back to the editor font family.
   "agent_inline_code_font_family": null,
-  // Controls the font size for prose in agent panel markdown, without
+  // Controls the font size for prose in agent responses, without
   // affecting the rest of the agent panel's UI.
   // If not specified, it falls back to "agent_ui_font_size".
   "agent_prose_font_size": null,

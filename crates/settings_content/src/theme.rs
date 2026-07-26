@@ -156,8 +156,8 @@ pub struct ThemeSettingsContent {
     /// The name of a font to use for inline code in agent panel markdown.
     /// Falls back to the buffer font if unset.
     pub agent_inline_code_font_family: Option<FontFamilyName>,
-    /// The font size for prose in agent panel markdown.
-    /// Falls back to the agent font size if unset.
+    /// The font size for prose in agent responses, without affecting the rest
+    /// of the agent panel. Falls back to the agent font size if unset.
     pub agent_prose_font_size: Option<FontSize>,
     /// The name of a font to use for prose in hover popups.
     /// Falls back to the UI font if unset.

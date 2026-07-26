@@ -1215,7 +1215,7 @@ fn appearance_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Prose Font Size",
-                description: "Font size for prose in agent panel markdown, without affecting the rest of the agent panel. Falls back to the agent panel UI font size.",
+                description: "Font size for prose in agent responses, without affecting the rest of the agent panel. Falls back to the agent panel UI font size.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("agent_prose_font_size"),
