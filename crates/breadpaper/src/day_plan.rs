@@ -125,7 +125,7 @@ fn planner_section(lines: &[&str], heading: &str) -> Option<std::ops::Range<usiz
     Some(start + 1..end)
 }
 
-fn heading_level_and_text(line: &str) -> Option<(usize, &str)> {
+pub(crate) fn heading_level_and_text(line: &str) -> Option<(usize, &str)> {
     let trimmed = line.trim_start();
     let after_hashes = trimmed.trim_start_matches('#');
     let level = trimmed.len() - after_hashes.len();

@@ -85,6 +85,9 @@ Each skill is openable, has a plain-language description, a prompt/logic body th
 ### 5.5 **Onboarding** — teaching what's possible
 A first-run flow that (a) points BreadPaper at a new or existing folder, (b) connects an LLM, (c) lets the user pick their starting Areas from a gallery, and (d) walks them through their first ritual (e.g. create today's note, run a daily closure). The goal is that within ten minutes a new user has done one real, valuable thing — not stared at a blank editor.
 
+### 5.6 **Backlog** — the holding pen
+_(added 2026-07-24 — not part of the original plan)_ A bottom-dock checklist over a plain `backlog.md` with three sections: **Soon**, **Someday**, and a dated **Completed** history. The daily/weekly wrap rituals offer to move unfinished tasks there (always confirming — all, none, or some), so lingering work stops dying in yesterday's note. Checking an item off in the panel records it as done in today's note and files it under Completed with the date. Spec: `specs/v6-backlog.md`.
+
 ## 6. Relationship to Zed — kept / removed / added
 
 **Kept**
@@ -101,6 +104,7 @@ A first-run flow that (a) points BreadPaper at a new or existing folder, (b) con
 - The **Areas** left rail + Area gallery / enable-disable.
 - The page-aware **Context** right rail (time blocks, week calendar, finance dashboard).
 - The **Skills view** (inspect + edit rituals; declared read/write scopes).
+- The **Backlog** bottom panel — Soon / Someday / Completed over `backlog.md`, fed by the wrap rituals.
 - **Onboarding** flow.
 - **Invisible git** automation.
 - An **Area package format** — the bundle (folders + templates + right-pane view + skills + docs) that makes a domain installable.
@@ -189,7 +193,8 @@ _Source pointers:_ `zed-industries/zed` `crates/extension_api/src/extension_api.
 - [x] **Daily Closure skill** — shipped as the Timeline Area's **Wrap Today / Wrap Yesterday** skills: read the day's tasks, pull its commits (`gh` / `glab` / local git), scan the prior few daily notes for multi-day context, and append a `# Daily Closure` review to the day's note — append-only, never rewriting what the user wrote. _(shipped)_
 - [ ] **Invisible git — restore UI** — human "history / restore this version" surface; no git vocabulary. _(planned)_
 - [ ] **Checkpoint triggers** — autosave / idle / pre-AI-write commit points. _(planned)_
-- [ ] **BYO-LLM connection** — ride Zed's existing agent/console rails; user brings their own key. _(planned)_
+- [x] **BYO-LLM connection** — ride Zed's existing agent/console rails; user brings their own key.
+- [x] **Backlog pane & capture** — `backlog.md` (Soon / Someday / dated Completed) + a bottom-dock editable checklist panel: inline task editing, Soon ↔ Someday moves, reveal-in-file; mark-done appends to today's note (create-if-missing) then files the task under Completed with the date. The Timeline Area's wrap skills (v2) offer unfinished tasks for the backlog — all / none / some, user-confirmed, deduplicated. Added 2026-07-24, spec `specs/v6-backlog.md`. _(shipped)_
 
 ### Milestone 2 — Areas & Skills framework
 - [x] **Area package format** — declarative `manifest.toml` bundle (folder/file scaffold + skills + surfaces + doc), materialized create-if-missing and recorded in a per-vault `[[areas.installed]]` registry. _(shipped)_

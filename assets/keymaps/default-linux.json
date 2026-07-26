@@ -700,6 +700,7 @@
       "ctrl-shift-g": "git_panel::ToggleFocus",
       "ctrl-shift-d": "debug_panel::ToggleFocus",
       "ctrl-2": "breadpaper::ToggleFocus",
+      "ctrl-alt-u": "breadpaper::ToggleBacklogFocus",
       "ctrl-?": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
@@ -1608,6 +1609,14 @@
       "ctrl-enter": "skill_creator::SaveSkill",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "BreadPaperBacklogPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
     },
   },
 ]

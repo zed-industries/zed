@@ -8,10 +8,10 @@ tour — each section ends with something to try right now.
 
 The **Timeline** panel in the left sidebar is always on:
 
-- **Today** / **Yesterday** open daily notes (`daily/YYYY-MM-DD.md`), created
-  from `templates/daily.md` the first time.
-- **This Week** / **Last Week** open weekly notes (`weekly/GGGG-Www.md`),
-  created from `templates/weekly.md`.
+- **Today** / **Yesterday** open daily notes (`daily/YYYY-MM-DD.md` by
+  default), created from `templates/daily.md` the first time.
+- **This Week** / **Last Week** open weekly notes (`weekly/GGGG-Www.md` by
+  default), created from `templates/weekly.md`.
 - The same entries (plus **Tomorrow**) live in the command palette:
   `breadpaper: open today` and friends.
 
@@ -54,6 +54,23 @@ Every skill appends; none of them rewrite or delete what you wrote.
 
 > **Try it now:** run **Wrap Today** from the Areas rail and watch your agent
 > work in the Agent panel.
+
+## The backlog
+
+Unfinished tasks shouldn't die in yesterday's note. The vault keeps a holding
+pen at `backlog.md` with three sections: **Soon** (you mean to do it in the
+coming days), **Someday** (worth keeping, no commitment), and **Completed**
+(a dated history of what got done). The **Backlog** panel in the bottom dock
+renders it as a live checklist — click a task's text to edit it, check it off
+to record it as done in today's note and file it under Completed.
+
+The wrap skills feed it: when **Wrap Today**, **Wrap Yesterday**, or
+**Week Review** find unfinished tasks, they ask whether to move **all, none,
+or some** of them to the backlog (Soon by default — say "someday" for the
+no-rush ones). Nothing moves without your answer, and tasks already in the
+backlog are never duplicated.
+
+> **Try it now:** open the Backlog panel and add one task to Soon.
 
 ## The weekly dashboard
 

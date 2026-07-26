@@ -740,7 +740,7 @@ mod tests {
         assert_eq!(catalog.len(), 1);
         let manifest = &catalog[0].manifest;
         assert_eq!(manifest.id, TIMELINE_AREA_ID);
-        assert_eq!(manifest.version, 1);
+        assert_eq!(manifest.version, 2);
         assert_eq!(manifest.doc, "areas/Timeline.md");
         assert_eq!(manifest.skills.len(), 4);
         assert_eq!(manifest.skills[0].file, "skills/timeline/week-review.md");

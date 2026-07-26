@@ -2,18 +2,20 @@
 
 Review the previous week's daily notes, GitHub activity, and GitLab (SPI) activity, then produce a summary organized by project, write it to the weekly markdown file, and append a structured entry to the dashboard data (`_weekly/site/data.js`).
 
-**Reads:** `daily/**`, `weekly/**`, GitHub (`gh`), GitLab (`glab`).
-**Writes (append-only):** the weekly `.md` file, `_weekly/site/data.js`.
+**Reads:** the daily and weekly notes, the backlog file, GitHub (`gh`), GitLab (`glab`).
+**Writes (append-only):** the weekly `.md` file, `_weekly/site/data.js`, the backlog file.
+
+> **Note paths and filenames are vault-configured.** Read `.breadpaper/config.toml` first: `[daily]` / `[weekly]` set each note kind's `dir` and moment-style `filename` format, and `[backlog]` sets `file`. This skill's examples use the defaults (`daily/YYYY-MM-DD.md`, `weekly/GGGG-[W]WW.md`, `backlog.md`); when the config — or the vault's existing notes — use different names, follow those silently. That's configuration, not a doc mismatch worth reporting.
 
 ## 1. Determine the week and locate the weekly file
 
 1. The review covers **Monday–Sunday of the week before today**. Compute those two dates (YYYY-MM-DD).
-2. Weekly files are named by **ISO week**: `YYYY-Www.md`, where `YYYY` is the ISO week-year, `W` is a literal `W`, and `ww` is the zero-padded ISO week number — e.g. the week starting Mon 2026-07-20 is `2026-W30.md`. Compute this from the week's Monday. Look in `weekly/` for that file; if it doesn't exist yet, create it.
-3. The **week id** used everywhere below is the filename without `.md` (e.g. `2026-W30`).
+2. Resolve the weekly file from the config (`[weekly]` `dir` + `filename`), formatting the pattern with the week's Monday. The default names weeks by **ISO week** — `GGGG-[W]WW`, i.e. ISO week-year, a literal `W`, and the zero-padded ISO week number — so the week starting Mon 2026-07-20 is `weekly/2026-W30.md` by default. If the file doesn't exist yet, create it.
+3. The **week id** used everywhere below is the weekly filename without `.md` (e.g. `2026-W30`).
 
 ## 2. Read the daily notes
 
-1. Find all daily notes in `daily/` within the range. Daily notes are named `YYYY-MM-DD.md`.
+1. Find all daily notes within the range — match them against the configured daily dir and filename format.
 2. Read each one. Extract tasks and activities from day-planner sections, conversation notes, and anything else relevant.
 3. If a weekly note already exists, read it and fold in its `# Week Goals`, `# Tentative`, and `# Personal` sections (these become the goals in the dashboard) plus any context.
 
@@ -58,7 +60,18 @@ Note: `action_name: "accepted"` means you merged an MR (counts toward `merged` o
 2. **Set the `goal: true` flag** on any project that served a `# Week Goals` item that week. This is the one judgment call the dashboard cannot make itself — it drives the "time sink" warning (share of work outside your goals). Leave it off for projects that were not goals. Never flag `Personal` or `Team` as lingering-exempt yourself; the page handles that.
 3. **Pick 2–3 highlights** — the week's most notable accomplishments, in your own words. For an unfinished in-progress week, leave highlights empty.
 
-## 6. Write the markdown review
+## 6. Offer unfinished tasks to the backlog
+
+The vault keeps a holding pen — the configured backlog file, `backlog.md` by default — with the sections `## Soon`, `## Someday`, and `## Completed` (the Backlog panel in the bottom dock renders it). After organizing the week you know what stayed unfinished — the unchecked (`- [ ]`) items from the weekly note's goal sections plus tasks the daily notes show lingering across the week:
+
+1. List those unfinished tasks.
+2. Ask the user **one** question: move **all** of them to the backlog, **none**, or **some** (the user picks which)? The default destination is **Soon**; the user can say "someday" for any task. If nothing is unfinished, skip this step silently.
+3. **Deduplicate before appending:** skip any chosen task whose text already appears in `backlog.md` — compare whitespace-insensitively and ignore any ` ✅ YYYY-MM-DD` completion suffix — in **any** section, `## Completed` included. Report skips as "already in backlog: …".
+4. Append the remaining tasks as `- [ ] <task text>` at the end of the matching section. Create `backlog.md` or a missing section heading if needed — never rewrite, reorder, or delete anything already in the file.
+
+Record the moves in the review you write next (e.g. suffix a goal with `→ backlog (Soon)`). Never move a task without the user's answer, and never edit the weekly or daily notes' existing content.
+
+## 7. Write the markdown review
 
 Append (never overwrite) a `# AI Week Review` section at the end of the weekly file, in this format:
 
@@ -77,7 +90,7 @@ Append (never overwrite) a `# AI Week Review` section at the end of the weekly f
 
 Keep it short and factual. Tag each PR/MR with `[GitHub]` or `[GitLab]`. No commentary unless asked.
 
-## 7. Append to the dashboard (`_weekly/site/data.js`)
+## 8. Append to the dashboard (`_weekly/site/data.js`)
 
 The dashboard reads `window.WEEKS` (an array, newest last). Append **one new week object** immediately before the closing `];` of the `window.WEEKS` array. Never rewrite existing entries — new weeks carry their MRs inline with `src` tags.
 
@@ -119,4 +132,4 @@ Rules:
 
 ## Output
 
-Show the user the markdown review (§6). Mention that the dashboard entry was appended and that they can open `_weekly/site/index.html` to view it.
+Show the user the markdown review (§7). Mention which tasks (if any) moved to the backlog, that the dashboard entry was appended, and that they can open `_weekly/site/index.html` to view it.

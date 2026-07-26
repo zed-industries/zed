@@ -23,10 +23,13 @@ dir      = "weekly"          # weekly notes dir, relative to vault root
 filename = "GGGG-[W]WW"      # ISO week year + week number, e.g. 2026-W30
 template = "templates/weekly.md"
 
+[backlog]
+file = "backlog.md"          # the Soon / Someday / Completed holding pen
+
 [[areas.installed]]
 id      = "timeline"
 enabled = true
-version = 1
+version = 2
 "#;
 
 pub const DEFAULT_DAILY_TEMPLATE: &str = r#"# {{date:dddd, MMMM D, YYYY}}
@@ -97,6 +100,46 @@ struct VaultConfigContent {
     day_planner: DayPlannerConfigContent,
     #[serde(skip_serializing_if = "AgentConfigContent::is_unset")]
     agent: AgentConfigContent,
+    #[serde(skip_serializing_if = "BacklogConfigContent::is_unset")]
+    backlog: BacklogConfigContent,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct BacklogConfigContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
+}
+
+impl BacklogConfigContent {
+    fn resolve(self) -> BacklogConfig {
+        BacklogConfig {
+            file: self
+                .file
+                .filter(|file| !file.trim().is_empty())
+                .unwrap_or_else(|| BacklogConfig::default().file),
+        }
+    }
+
+    fn is_unset(&self) -> bool {
+        self.file.is_none()
+    }
+}
+
+/// The `[backlog]` table: where the vault's backlog file lives (spec
+/// `v6-backlog.md` §5.2). One file per vault.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BacklogConfig {
+    /// Vault-relative path of the backlog file.
+    pub file: String,
+}
+
+impl Default for BacklogConfig {
+    fn default() -> Self {
+        Self {
+            file: "backlog.md".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -413,6 +456,7 @@ pub struct VaultConfig {
     pub areas: AreasConfig,
     pub day_planner: DayPlannerConfig,
     pub agent: AgentConfig,
+    pub backlog: BacklogConfig,
 }
 
 impl Default for VaultConfig {
@@ -431,6 +475,7 @@ impl VaultConfigContent {
             areas: self.areas.resolve(),
             day_planner: self.day_planner.resolve(),
             agent: self.agent.resolve(),
+            backlog: self.backlog.resolve(),
         }
     }
 }
@@ -513,6 +558,11 @@ impl Vault {
 
     pub fn template_path(&self, kind: NoteKind) -> PathBuf {
         self.root.join(&self.notes_config(kind).template)
+    }
+
+    /// The absolute path of the vault's backlog file (spec `v6-backlog.md`).
+    pub fn backlog_path(&self) -> PathBuf {
+        self.root.join(&self.config.backlog.file)
     }
 
     /// The date of the daily note at `path`, or `None` when `path` isn't a
@@ -624,6 +674,10 @@ pub fn scaffold_vault(root: &Path) -> Result<()> {
         DEFAULT_WEEKLY_TEMPLATE,
     )?;
     write_if_missing(&root.join(WELCOME_FILE), DEFAULT_WELCOME)?;
+    write_if_missing(
+        &root.join(BacklogConfig::default().file),
+        crate::backlog::DEFAULT_BACKLOG,
+    )?;
     if install_default_areas {
         let timeline = crate::areas::catalog_area(crate::areas::TIMELINE_AREA_ID)?
             .context("the bundled Timeline Area is missing from the catalog")?;
@@ -673,13 +727,15 @@ mod tests {
         assert_eq!(vault.config.history, VaultConfig::default().history);
         assert_eq!(
             vault.config.areas.installed,
-            vec![InstalledArea::new("timeline".to_string(), true, 1)]
+            vec![InstalledArea::new("timeline".to_string(), true, 2)]
         );
         assert!(dir.path().join("daily").is_dir());
         assert!(dir.path().join("weekly").is_dir());
         assert!(dir.path().join("templates/daily.md").is_file());
         assert!(dir.path().join("templates/weekly.md").is_file());
         assert!(dir.path().join(WELCOME_FILE).is_file());
+        assert!(dir.path().join("backlog.md").is_file());
+        assert_eq!(vault.backlog_path(), dir.path().join("backlog.md"));
 
         let date = NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
         assert_eq!(
@@ -860,6 +916,42 @@ mod tests {
         .unwrap();
         match Vault::detect(dir.path()) {
             VaultStatus::Valid(vault) => assert_eq!(vault.config.agent.command, None),
+            other => panic!("expected valid vault, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn backlog_config_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(VAULT_MARKER_DIR);
+        fs::create_dir_all(&marker).unwrap();
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n[backlog]\nfile = \"lists/backlog.md\"\n",
+        )
+        .unwrap();
+        match Vault::detect(dir.path()) {
+            VaultStatus::Valid(vault) => {
+                assert_eq!(vault.config.backlog.file, "lists/backlog.md");
+                assert_eq!(
+                    vault.backlog_path(),
+                    dir.path().join("lists/backlog.md")
+                );
+            }
+            other => panic!("expected valid vault, got {other:?}"),
+        }
+
+        // A blank value falls back to the default rather than pointing the
+        // panel at the vault root itself.
+        fs::write(
+            marker.join(VAULT_CONFIG_FILE),
+            "schema = 1\n[backlog]\nfile = \" \"\n",
+        )
+        .unwrap();
+        match Vault::detect(dir.path()) {
+            VaultStatus::Valid(vault) => {
+                assert_eq!(vault.config.backlog.file, "backlog.md");
+            }
             other => panic!("expected valid vault, got {other:?}"),
         }
     }

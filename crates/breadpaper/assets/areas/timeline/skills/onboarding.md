@@ -24,10 +24,10 @@ did.
 
 ## The vault's conventions
 
-- Daily notes: `daily/YYYY-MM-DD.md` (e.g. `daily/2026-07-23.md`), created
-  from `templates/daily.md`.
-- Weekly notes: `weekly/GGGG-Www.md` ISO week (e.g. `weekly/2026-W30.md`),
-  created from `templates/weekly.md`.
+- Daily notes: `daily/YYYY-MM-DD.md` by default (e.g. `daily/2026-07-23.md`),
+  created from `templates/daily.md`.
+- Weekly notes: `weekly/GGGG-Www.md` ISO week by default (e.g.
+  `weekly/2026-W30.md`), created from `templates/weekly.md`.
 - Skills (rituals like this one): `skills/timeline/*.md`.
 - The Area's explainer doc: `areas/Timeline.md`.
 - The exact directories and filename formats are configurable in
@@ -49,9 +49,12 @@ If fresh start: skip to step 4.
 
 1. Ask for the folder's path. Survey it: filename patterns, date formats,
    folder structure, frontmatter conventions. Count what matches.
-2. Propose a mapping to `daily/YYYY-MM-DD.md` (and `weekly/GGGG-Www.md` where
-   weekly notes are detectable). Show a few concrete before → after examples
-   and the total counts.
+2. Propose a mapping to the vault's configured daily filename format (default
+   `daily/YYYY-MM-DD.md`; likewise weekly where weekly notes are detectable).
+   Show a few concrete before → after examples and the total counts. If the
+   user would rather keep their existing naming, offer the reverse instead:
+   encode their convention in `.breadpaper/config.toml` (`[daily]` /
+   `[weekly]`: `dir` + moment-style `filename`) and copy the files unrenamed.
 3. On approval, **copy** the matched files in. Never move; the source folder
    stays exactly as it was.
 4. If a destination file already exists in this vault, don't touch it — add
