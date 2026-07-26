@@ -499,6 +499,7 @@ struct AutoindentRequestEntry {
     old_row: Option<u32>,
     indent_size: IndentSize,
     original_indent_column: Option<u32>,
+    target_indent: Option<IndentSize>,
 }
 
 #[derive(Debug)]
@@ -2052,7 +2053,11 @@ impl Buffer {
                     if let Some(old_row) = entry.old_row {
                         old_to_new_rows.insert(old_row, new_row);
                     }
-                    row_ranges.push((new_row..new_end_row, entry.original_indent_column));
+                    row_ranges.push((
+                        new_row..new_end_row,
+                        entry.original_indent_column,
+                        entry.target_indent,
+                    ));
                 }
 
                 // Build a map containing the suggested indentation for each of the edited lines
@@ -2104,7 +2109,7 @@ impl Buffer {
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for (row_range, original_indent_column) in row_ranges {
+                for (row_range, original_indent_column, target_indent) in row_ranges {
                     let new_edited_row_range = if request.is_block_mode {
                         row_range.start..row_range.start + 1
                     } else {
@@ -2149,14 +2154,18 @@ impl Buffer {
                         }
                     }
 
-                    if let (true, Some(original_indent_column)) =
-                        (request.is_block_mode, original_indent_column)
+                    if let (true, Some(original_indent_column), Some(target_indent)) =
+                        (request.is_block_mode, original_indent_column, target_indent)
                     {
                         let new_indent =
                             if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
                                 *indent
                             } else {
-                                snapshot.logical_indent_size_for_line(row_range.start)
+                                indent_sizes.insert(
+                                    row_range.start,
+                                    (target_indent, request.ignore_empty_lines),
+                                );
+                                target_indent
                             };
                         let delta = new_indent.len as i64 - original_indent_column as i64;
                         if delta != 0 {
@@ -2888,20 +2897,16 @@ impl Buffer {
                     } = &mode
                     {
                         original_indent_column = Some(if new_text.starts_with('\n') {
-                            indent_size_for_text(
-                                new_text[range_of_insertion_to_indent.clone()].chars(),
-                            )
-                            .len
+                            min_common_indent(&new_text[range_of_insertion_to_indent.clone()])
                         } else {
                             original_indent_columns
                                 .get(ix)
                                 .copied()
                                 .flatten()
                                 .unwrap_or_else(|| {
-                                    indent_size_for_text(
-                                        new_text[range_of_insertion_to_indent.clone()].chars(),
+                                    min_common_indent(
+                                        &new_text[range_of_insertion_to_indent.clone()],
                                     )
-                                    .len
                                 })
                         });
 
@@ -2919,6 +2924,9 @@ impl Buffer {
                             Some(old_start.row)
                         },
                         indent_size: before_edit.language_indent_size_at(range.start, cx),
+                        target_indent: (new_text.contains('\n')
+                            || original_indent_column.is_some_and(|indent| indent > 0))
+                        .then(|| before_edit.logical_indent_size_for_line(old_start.row)),
                         range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
                             ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
                     }
@@ -2984,6 +2992,7 @@ impl Buffer {
                 old_row: None,
                 indent_size: before_edit.language_indent_size_at(range.start, cx),
                 original_indent_column: None,
+                target_indent: None,
             })
             .collect();
         self.autoindent_requests.push(Arc::new(AutoindentRequest {
@@ -3566,14 +3575,7 @@ impl BufferSnapshot {
             return physical_indent;
         };
 
-        if ![language.documentation_comment(), language.block_comment()]
-            .into_iter()
-            .flatten()
-            .any(|config| {
-                let end_tag = config.end.trim_start();
-                line_content.starts_with(end_tag) && line_content[end_tag.len()..].trim().is_empty()
-            })
-        {
+        if comment_or_string_end_tag(&language, line_content).is_none() {
             return physical_indent;
         }
 
@@ -5630,6 +5632,20 @@ fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     indent_size_for_text(text.chars_at(Point::new(row, 0)))
 }
 
+pub fn comment_or_string_end_tag<'a>(
+    language: &'a LanguageScope,
+    line_content: &str,
+) -> Option<&'a str> {
+    [language.documentation_comment(), language.block_comment()]
+        .into_iter()
+        .flatten()
+        .find_map(|config| {
+            let end_tag = config.end.trim_start();
+            (line_content.starts_with(end_tag) && line_content[end_tag.len()..].trim().is_empty())
+                .then_some(end_tag)
+        })
+}
+
 fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
     let mut result = IndentSize::spaces(0);
     for c in text {
@@ -5644,6 +5660,22 @@ fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
         result.len += 1;
     }
     result
+}
+
+fn min_common_indent(text: &str) -> u32 {
+    let mut min_indent = u32::MAX;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent = indent_size_for_text(line.chars()).len;
+        min_indent = min_indent.min(indent);
+    }
+    if min_indent == u32::MAX {
+        0
+    } else {
+        min_indent
+    }
 }
 
 impl Clone for BufferSnapshot {

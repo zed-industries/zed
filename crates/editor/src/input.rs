@@ -2655,16 +2655,10 @@ fn logical_indent_for_newline(
         .take_while(|byte| matches!(byte, b' ' | b'\t'))
         .count();
     let line_content = &line[leading_whitespace_len..];
-    if ![language.documentation_comment(), language.block_comment()]
-        .into_iter()
-        .flatten()
-        .any(|config| {
-            let end_tag = config.end.trim_start();
-            line_content.starts_with(end_tag)
-                && line_content[end_tag.len()..].trim().is_empty()
-                && start_point.column >= (leading_whitespace_len + end_tag.len()) as u32
-        })
-    {
+    let Some(end_tag) = language::comment_or_string_end_tag(language, line_content) else {
+        return (existing_indent, false);
+    };
+    if start_point.column < (leading_whitespace_len + end_tag.len()) as u32 {
         return (existing_indent, false);
     }
 
