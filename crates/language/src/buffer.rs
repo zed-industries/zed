@@ -2090,7 +2090,7 @@ impl Buffer {
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
-                                        .indent_size_for_line(suggestion.basis_row)
+                                        .logical_indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
                             old_suggestions
@@ -2131,7 +2131,7 @@ impl Buffer {
                                 .copied()
                                 .map(|e| e.0)
                                 .unwrap_or_else(|| {
-                                    snapshot.indent_size_for_line(suggestion.basis_row)
+                                    snapshot.logical_indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
@@ -2156,7 +2156,7 @@ impl Buffer {
                             if let Some((indent, _)) = indent_sizes.get(&row_range.start) {
                                 *indent
                             } else {
-                                snapshot.indent_size_for_line(row_range.start)
+                                snapshot.logical_indent_size_for_line(row_range.start)
                             };
                         let delta = new_indent.len as i64 - original_indent_column as i64;
                         if delta != 0 {
@@ -3550,6 +3550,49 @@ impl BufferSnapshot {
         indent_size_for_line(self, row)
     }
 
+    fn logical_indent_size_for_line(&self, row: u32) -> IndentSize {
+        let physical_indent = self.indent_size_for_line(row);
+        let line_len = self.line_len(row);
+        let line = self
+            .text_for_range(Point::new(row, 0)..Point::new(row, line_len))
+            .collect::<String>();
+        let leading_whitespace_len = line
+            .bytes()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        let line_content = &line[leading_whitespace_len..];
+        let Some(language) = self.language_scope_at(Point::new(row, leading_whitespace_len as u32))
+        else {
+            return physical_indent;
+        };
+
+        if ![language.documentation_comment(), language.block_comment()]
+            .into_iter()
+            .flatten()
+            .any(|config| {
+                let end_tag = config.end.trim_start();
+                line_content.starts_with(end_tag) && line_content[end_tag.len()..].trim().is_empty()
+            })
+        {
+            return physical_indent;
+        }
+
+        let line_range = Point::new(row, leading_whitespace_len as u32)..Point::new(row, line_len);
+        let Some(node) = self.syntax_ancestor(line_range) else {
+            return physical_indent;
+        };
+        if !node.kind().contains("comment") && !node.kind().contains("string") {
+            return physical_indent;
+        }
+
+        let opening_row = node.start_position().row as u32;
+        if opening_row >= row {
+            physical_indent
+        } else {
+            self.indent_size_for_line(opening_row)
+        }
+    }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
@@ -3581,7 +3624,7 @@ impl BufferSnapshot {
                     result
                         .get(&suggestion.basis_row)
                         .copied()
-                        .unwrap_or_else(|| self.indent_size_for_line(suggestion.basis_row))
+                        .unwrap_or_else(|| self.logical_indent_size_for_line(suggestion.basis_row))
                         .with_delta(suggestion.delta, single_indent_size)
                 } else {
                     self.indent_size_for_line(row)
