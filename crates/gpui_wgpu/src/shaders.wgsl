@@ -93,8 +93,8 @@ struct GammaParams {
 
 @group(0) @binding(0) var<uniform> globals: GlobalParams;
 @group(0) @binding(1) var<uniform> gamma_params: GammaParams;
-@group(1) @binding(1) var t_sprite: texture_2d<f32>;
-@group(1) @binding(2) var s_sprite: sampler;
+@group(2) @binding(0) var t_sprite: texture_2d<f32>;
+@group(2) @binding(1) var s_sprite: sampler;
 
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -175,6 +175,11 @@ fn to_device_position_impl(position: vec2<f32>) -> vec4<f32> {
 fn to_device_position(unit_vertex: vec2<f32>, bounds: Bounds) -> vec4<f32> {
     let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
     return to_device_position_impl(position);
+}
+
+// Must match `gpui::quad_depth`.
+fn quad_depth(quad_id: u32) -> f32 {
+    return saturate(f32(quad_id + 1u) * (1.0 / 16777216.0));
 }
 
 fn to_device_position_transformed(unit_vertex: vec2<f32>, bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
@@ -527,6 +532,7 @@ struct Quad {
     border_widths: Edges,
 }
 @group(1) @binding(0) var<storage, read> b_quads: array<Quad>;
+@group(1) @binding(1) var<storage, read> b_quad_indices: array<u32>;
 
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
@@ -542,10 +548,12 @@ struct QuadVarying {
 @vertex
 fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> QuadVarying {
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
-    let quad = b_quads[instance_id];
+    let quad_id = b_quad_indices[instance_id];
+    let quad = b_quads[quad_id];
 
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
+    out.position.z = quad_depth(quad_id);
 
     let gradient = prepare_gradient_color(
         quad.background.tag,
@@ -557,7 +565,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.background_color0 = gradient.color0;
     out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
-    out.quad_id = instance_id;
+    out.quad_id = quad_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
     return out;
 }
@@ -944,6 +952,91 @@ fn quarter_ellipse_sdf(point: vec2<f32>, radii: vec2<f32>) -> f32 {
 // Modulus that has the same sign as `a`.
 fn fmod(a: f32, b: f32) -> f32 {
     return a - b * trunc(a / b);
+}
+
+// --- opaque quads --- //
+
+struct OpaqueQuadVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) color: vec4<f32>,
+}
+
+fn bounds_area(bounds: Bounds) -> f32 {
+    return bounds.size.x * bounds.size.y;
+}
+
+fn intersect_bounds(a: Bounds, b: Bounds) -> Bounds {
+    let origin = max(a.origin, b.origin);
+    let bottom_right = min(a.origin + a.size, b.origin + b.size);
+    return Bounds(origin, max(bottom_right - origin, vec2<f32>(0.0)));
+}
+
+fn opaque_quad_core(quad: Quad) -> Bounds {
+    let has_rounded_corners = quad.corner_radii.top_left != 0.0
+        || quad.corner_radii.top_right != 0.0
+        || quad.corner_radii.bottom_right != 0.0
+        || quad.corner_radii.bottom_left != 0.0;
+    if (!has_rounded_corners) {
+        return quad.bounds;
+    }
+
+    let antialias_inset = 1.0;
+    let left_inset =
+        max(quad.corner_radii.top_left, quad.corner_radii.bottom_left) + antialias_inset;
+    let right_inset =
+        max(quad.corner_radii.top_right, quad.corner_radii.bottom_right) + antialias_inset;
+    let top_inset =
+        max(quad.corner_radii.top_left, quad.corner_radii.top_right) + antialias_inset;
+    let bottom_inset =
+        max(quad.corner_radii.bottom_left, quad.corner_radii.bottom_right) + antialias_inset;
+
+    // A horizontal band avoids the top and bottom corner arcs; a vertical band
+    // avoids the left and right arcs. Either is fully opaque, so use the larger.
+    let horizontal_band = Bounds(
+        quad.bounds.origin + vec2<f32>(antialias_inset, top_inset),
+        max(quad.bounds.size - vec2<f32>(2.0 * antialias_inset, top_inset + bottom_inset),
+            vec2<f32>(0.0)));
+    let vertical_band = Bounds(
+        quad.bounds.origin + vec2<f32>(left_inset, antialias_inset),
+        max(quad.bounds.size - vec2<f32>(left_inset + right_inset, 2.0 * antialias_inset),
+            vec2<f32>(0.0)));
+
+    if (bounds_area(horizontal_band) >= bounds_area(vertical_band)) {
+        return horizontal_band;
+    }
+    return vertical_band;
+}
+
+@vertex
+fn vs_opaque_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> OpaqueQuadVarying {
+    let quad_id = b_quad_indices[instance_id];
+    let quad = b_quads[quad_id];
+    // Clipping the core against the content mask up front keeps this pass free
+    // of per-fragment tests, which would otherwise need `discard` and so would
+    // defeat the early depth write this pass exists for.
+    let core = intersect_bounds(opaque_quad_core(quad), quad.content_mask);
+
+    var out = OpaqueQuadVarying();
+    if (core.size.x <= 0.0 || core.size.y <= 0.0) {
+        // Zero-area triangle: rejected before rasterization.
+        out.position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        out.color = vec4<f32>(0.0);
+        return out;
+    }
+
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    out.position = to_device_position(unit_vertex, core);
+    out.position.z = quad_depth(quad_id);
+    // Matches the blended quad shader's solid-background output exactly: tag-0
+    // quads resolve to `hsla_to_rgba(solid)`, and alpha-1 blending is an
+    // overwrite regardless of `premultiplied_alpha`.
+    out.color = hsla_to_rgba(quad.background.solid);
+    return out;
+}
+
+@fragment
+fn fs_opaque_quad(input: OpaqueQuadVarying) -> @location(0) vec4<f32> {
+    return input.color;
 }
 
 // --- shadows --- //

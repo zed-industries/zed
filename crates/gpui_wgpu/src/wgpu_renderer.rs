@@ -1,15 +1,16 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
+use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
+    ScaledPixels, Scene, Size, get_gamma_correction_ratios, quad_depth,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::cell::RefCell;
 use std::num::NonZeroU64;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -81,8 +82,11 @@ pub struct WgpuSurfaceConfig {
     pub preferred_present_mode: Option<wgpu::PresentMode>,
 }
 
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
 struct WgpuPipelines {
     quads: wgpu::RenderPipeline,
+    opaque_quads: wgpu::RenderPipeline,
     shadows: wgpu::RenderPipeline,
     path_rasterization: wgpu::RenderPipeline,
     paths: wgpu::RenderPipeline,
@@ -94,10 +98,37 @@ struct WgpuPipelines {
     surfaces: wgpu::RenderPipeline,
 }
 
+#[derive(Clone)]
+struct BufferRegion {
+    buffer: wgpu::Buffer,
+    offset: u64,
+    size: NonZeroU64,
+}
+
+impl BufferRegion {
+    fn binding(&self) -> wgpu::BindingResource<'_> {
+        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+            buffer: &self.buffer,
+            offset: self.offset,
+            size: Some(self.size),
+        })
+    }
+}
+
+struct FrameInstances {
+    quads: wgpu::BindGroup,
+    shadows: wgpu::BindGroup,
+    underlines: wgpu::BindGroup,
+    monochrome_sprites: wgpu::BindGroup,
+    subpixel_sprites: wgpu::BindGroup,
+    polychrome_sprites: wgpu::BindGroup,
+}
+
 struct WgpuBindGroupLayouts {
     globals: wgpu::BindGroupLayout,
     instances: wgpu::BindGroupLayout,
-    instances_with_texture: wgpu::BindGroupLayout,
+    quads: wgpu::BindGroupLayout,
+    texture: wgpu::BindGroupLayout,
     surfaces: wgpu::BindGroupLayout,
 }
 
@@ -116,6 +147,8 @@ struct WgpuResources {
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
+    depth_texture: Option<wgpu::Texture>,
+    depth_view: Option<wgpu::TextureView>,
     path_intermediate_texture: Option<wgpu::Texture>,
     path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
@@ -124,6 +157,8 @@ struct WgpuResources {
 
 impl WgpuResources {
     fn invalidate_intermediate_textures(&mut self) {
+        self.depth_texture = None;
+        self.depth_view = None;
         self.path_intermediate_texture = None;
         self.path_intermediate_view = None;
         self.path_msaa_texture = None;
@@ -459,6 +494,8 @@ impl WgpuRenderer {
             instance_buffer,
             // Defer intermediate texture creation to first draw call via ensure_intermediate_textures().
             // This avoids panics when the device/surface is in an invalid state during initialization.
+            depth_texture: None,
+            depth_view: None,
             path_intermediate_texture: None,
             path_intermediate_view: None,
             path_msaa_texture: None,
@@ -539,29 +576,32 @@ impl WgpuRenderer {
             entries: &[storage_buffer_entry(0)],
         });
 
-        let instances_with_texture =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("instances_with_texture_layout"),
-                entries: &[
-                    storage_buffer_entry(0),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let quads = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("quads_layout"),
+            entries: &[storage_buffer_entry(0), storage_buffer_entry(1)],
+        });
+
+        let texture = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("texture_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let surfaces = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("surfaces_layout"),
@@ -610,7 +650,8 @@ impl WgpuRenderer {
         WgpuBindGroupLayouts {
             globals,
             instances,
-            instances_with_texture,
+            quads,
+            texture,
             surfaces,
         }
     }
@@ -677,18 +718,32 @@ impl WgpuRenderer {
             write_mask: wgpu::ColorWrites::ALL,
         };
 
+        let depth_stencil = |depth_write_enabled: bool| {
+            Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(depth_write_enabled),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
+        };
+
         let create_pipeline = |name: &str,
                                vs_entry: &str,
                                fs_entry: &str,
                                globals_layout: &wgpu::BindGroupLayout,
                                data_layout: &wgpu::BindGroupLayout,
+                               texture_layout: Option<&wgpu::BindGroupLayout>,
                                topology: wgpu::PrimitiveTopology,
                                color_targets: &[Option<wgpu::ColorTargetState>],
+                               depth_stencil: Option<wgpu::DepthStencilState>,
                                sample_count: u32,
                                module: &wgpu::ShaderModule| {
+            let mut group_layouts = vec![Some(globals_layout), Some(data_layout)];
+            group_layouts.extend(texture_layout.map(Some));
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
-                bind_group_layouts: &[Some(globals_layout), Some(data_layout)],
+                bind_group_layouts: &group_layouts,
                 immediate_size: 0,
             });
 
@@ -716,7 +771,7 @@ impl WgpuRenderer {
                     unclipped_depth: false,
                     conservative: false,
                 },
-                depth_stencil: None,
+                depth_stencil,
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
@@ -732,9 +787,29 @@ impl WgpuRenderer {
             "vs_quad",
             "fs_quad",
             &layouts.globals,
-            &layouts.instances,
+            &layouts.quads,
+            None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
+            depth_stencil(false),
+            1,
+            &shader_module,
+        );
+
+        let opaque_quads = create_pipeline(
+            "opaque_quads",
+            "vs_opaque_quad",
+            "fs_opaque_quad",
+            &layouts.globals,
+            &layouts.quads,
+            None,
+            wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            depth_stencil(true),
             1,
             &shader_module,
         );
@@ -745,8 +820,10 @@ impl WgpuRenderer {
             "fs_shadow",
             &layouts.globals,
             &layouts.instances,
+            None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
+            depth_stencil(false),
             1,
             &shader_module,
         );
@@ -757,12 +834,14 @@ impl WgpuRenderer {
             "fs_path_rasterization",
             &layouts.globals,
             &layouts.instances,
+            None,
             wgpu::PrimitiveTopology::TriangleList,
             &[Some(wgpu::ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
+            None,
             path_sample_count,
             &shader_module,
         );
@@ -785,13 +864,15 @@ impl WgpuRenderer {
             "vs_path",
             "fs_path",
             &layouts.globals,
-            &layouts.instances_with_texture,
+            &layouts.instances,
+            Some(&layouts.texture),
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(wgpu::ColorTargetState {
                 format: surface_format,
                 blend: Some(paths_blend),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
+            depth_stencil(false),
             1,
             &shader_module,
         );
@@ -802,8 +883,10 @@ impl WgpuRenderer {
             "fs_underline",
             &layouts.globals,
             &layouts.instances,
+            None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
+            depth_stencil(false),
             1,
             &shader_module,
         );
@@ -813,9 +896,11 @@ impl WgpuRenderer {
             "vs_mono_sprite",
             "fs_mono_sprite",
             &layouts.globals,
-            &layouts.instances_with_texture,
+            &layouts.instances,
+            Some(&layouts.texture),
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
+            depth_stencil(false),
             1,
             &shader_module,
         );
@@ -839,13 +924,15 @@ impl WgpuRenderer {
                 "vs_subpixel_sprite",
                 "fs_subpixel_sprite",
                 &layouts.globals,
-                &layouts.instances_with_texture,
+                &layouts.instances,
+                Some(&layouts.texture),
                 wgpu::PrimitiveTopology::TriangleStrip,
                 &[Some(wgpu::ColorTargetState {
                     format: surface_format,
                     blend: Some(subpixel_blend),
                     write_mask: wgpu::ColorWrites::COLOR,
                 })],
+                depth_stencil(false),
                 1,
                 subpixel_module,
             ))
@@ -858,9 +945,11 @@ impl WgpuRenderer {
             "vs_poly_sprite",
             "fs_poly_sprite",
             &layouts.globals,
-            &layouts.instances_with_texture,
+            &layouts.instances,
+            Some(&layouts.texture),
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
+            depth_stencil(false),
             1,
             &shader_module,
         );
@@ -871,14 +960,17 @@ impl WgpuRenderer {
             "fs_surface",
             &layouts.globals,
             &layouts.surfaces,
+            None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
+            depth_stencil(false),
             1,
             &shader_module,
         );
 
         WgpuPipelines {
             quads,
+            opaque_quads,
             shadows,
             path_rasterization,
             paths,
@@ -888,6 +980,29 @@ impl WgpuRenderer {
             poly_sprites,
             surfaces,
         }
+    }
+
+    fn create_depth_texture(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
     }
 
     fn create_path_intermediate(
@@ -975,6 +1090,9 @@ impl WgpuRenderer {
             }
 
             // Destroy old textures before allocating new ones to avoid GPU memory spikes
+            if let Some(ref texture) = resources.depth_texture {
+                texture.destroy();
+            }
             if let Some(ref texture) = resources.path_intermediate_texture {
                 texture.destroy();
             }
@@ -1003,6 +1121,11 @@ impl WgpuRenderer {
         let height = self.surface_config.height;
         let path_sample_count = self.rendering_params.path_sample_count;
         let resources = self.resources_mut();
+
+        let (depth_texture, depth_view) =
+            Self::create_depth_texture(&resources.device, width, height);
+        resources.depth_texture = Some(depth_texture);
+        resources.depth_view = Some(depth_view);
 
         let (t, v) = Self::create_path_intermediate(&resources.device, format, width, height);
         resources.path_intermediate_texture = Some(t);
@@ -1155,6 +1278,11 @@ impl WgpuRenderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        let Some(depth_view) = self.resources().depth_view.clone() else {
+            log::error!("depth buffer missing after ensuring intermediate textures");
+            return false;
+        };
+
         let gamma_params = GammaParams {
             gamma_ratios: self.rendering_params.gamma_ratios,
             grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
@@ -1202,383 +1330,357 @@ impl WgpuRenderer {
             );
         }
 
-        loop {
-            let mut instance_offset: u64 = 0;
-            let mut overflow = false;
+        if let Err(error) = self.record_frame(scene, &frame_view, &depth_view) {
+            log::error!("{error:#}");
+            return false;
+        }
 
-            let mut encoder =
-                self.resources()
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("main_encoder"),
-                    });
+        frame.present();
+        true
+    }
 
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("main_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &frame_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
+    /// Records and submits the frame's commands.
+    fn record_frame(
+        &mut self,
+        scene: &Scene,
+        frame_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+    ) -> Result<()> {
+        let mut instance_offset: u64 = 0;
+        let frame_instances = self
+            .upload_frame_instances(scene, &mut instance_offset)
+            .with_context(|| {
+                format!(
+                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly",
+                    scene.paths.len(),
+                    scene.shadows.len(),
+                    scene.quads.len(),
+                    scene.underlines.len(),
+                    scene.monochrome_sprites.len(),
+                    scene.subpixel_sprites.len(),
+                    scene.polychrome_sprites.len(),
+                )
+            })?;
+
+        let mut encoder =
+            self.resources()
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("main_encoder"),
                 });
 
-                for batch in scene.batches() {
-                    let ok = match batch {
-                        PrimitiveBatch::Quads { range, .. } => {
-                            self.draw_quads(&scene.quads[range], &mut instance_offset, &mut pass)
-                        }
-                        PrimitiveBatch::Shadows(range) => self.draw_shadows(
-                            &scene.shadows[range],
-                            &mut instance_offset,
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("main_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+
+            self.draw_instances(
+                &frame_instances.quads,
+                &self.resources().pipelines.opaque_quads,
+                scene.blended_quad_indices.len() as u32
+                    ..(scene.blended_quad_indices.len() + scene.opaque_quad_indices.len()) as u32,
+                &mut pass,
+            );
+
+            let mut quad_cursor: u32 = 0;
+            for batch in scene.batches() {
+                // Quad shaders assign each quad its own depth. Every other batch
+                // is flattened onto the depth of the quad cursor by collapsing
+                // the viewport's depth range onto a single value.
+                let batch_depth = quad_depth(quad_cursor);
+                if matches!(batch, PrimitiveBatch::Quads { .. }) {
+                    self.set_pass_depth_range(&mut pass, 0.0, 1.0);
+                } else {
+                    self.set_pass_depth_range(&mut pass, batch_depth, batch_depth);
+                }
+
+                match batch {
+                    PrimitiveBatch::Quads {
+                        range,
+                        blended_range,
+                    } => {
+                        quad_cursor += range.len() as u32;
+                        self.draw_instances(
+                            &frame_instances.quads,
+                            &self.resources().pipelines.quads,
+                            instance_range(blended_range),
                             &mut pass,
-                        ),
-                        PrimitiveBatch::Paths(range) => {
-                            let paths = &scene.paths[range];
-                            if paths.is_empty() {
-                                continue;
-                            }
+                        );
+                    }
+                    PrimitiveBatch::Shadows(range) => self.draw_instances(
+                        &frame_instances.shadows,
+                        &self.resources().pipelines.shadows,
+                        instance_range(range),
+                        &mut pass,
+                    ),
+                    PrimitiveBatch::Paths(range) => {
+                        let paths = &scene.paths[range];
+                        if paths.is_empty() {
+                            continue;
+                        }
 
-                            drop(pass);
+                        drop(pass);
 
-                            let did_draw = self.draw_paths_to_intermediate(
-                                &mut encoder,
-                                paths,
-                                &mut instance_offset,
-                            );
+                        let rasterized = self.draw_paths_to_intermediate(
+                            &mut encoder,
+                            paths,
+                            &mut instance_offset,
+                        )?;
 
-                            pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                label: Some("main_pass_continued"),
-                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: &frame_view,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
+                        pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("main_pass_continued"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: frame_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: depth_view,
+                                    depth_ops: Some(wgpu::Operations {
                                         load: wgpu::LoadOp::Load,
                                         store: wgpu::StoreOp::Store,
-                                    },
-                                    depth_slice: None,
-                                })],
-                                depth_stencil_attachment: None,
-                                ..Default::default()
-                            });
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                            ..Default::default()
+                        });
+                        self.set_pass_depth_range(&mut pass, batch_depth, batch_depth);
 
-                            if did_draw {
-                                self.draw_paths_from_intermediate(
-                                    paths,
-                                    &mut instance_offset,
-                                    &mut pass,
-                                )
-                            } else {
-                                false
-                            }
+                        if rasterized {
+                            self.draw_paths_from_intermediate(
+                                paths,
+                                &mut instance_offset,
+                                &mut pass,
+                            )?;
                         }
-                        PrimitiveBatch::Underlines(range) => self.draw_underlines(
-                            &scene.underlines[range],
-                            &mut instance_offset,
-                            &mut pass,
-                        ),
-                        PrimitiveBatch::MonochromeSprites { texture_id, range } => self
-                            .draw_monochrome_sprites(
-                                &scene.monochrome_sprites[range],
-                                texture_id,
-                                &mut instance_offset,
-                                &mut pass,
-                            ),
-                        PrimitiveBatch::SubpixelSprites { texture_id, range } => self
-                            .draw_subpixel_sprites(
-                                &scene.subpixel_sprites[range],
-                                texture_id,
-                                &mut instance_offset,
-                                &mut pass,
-                            ),
-                        PrimitiveBatch::PolychromeSprites { texture_id, range } => self
-                            .draw_polychrome_sprites(
-                                &scene.polychrome_sprites[range],
-                                texture_id,
-                                &mut instance_offset,
-                                &mut pass,
-                            ),
-                        PrimitiveBatch::Surfaces(_surfaces) => {
-                            // Surfaces are macOS-only for video playback
-                            // Not implemented for Linux/wgpu
-                            true
-                        }
-                    };
-                    if !ok {
-                        overflow = true;
-                        break;
                     }
+                    PrimitiveBatch::Underlines(range) => self.draw_instances(
+                        &frame_instances.underlines,
+                        &self.resources().pipelines.underlines,
+                        instance_range(range),
+                        &mut pass,
+                    ),
+                    PrimitiveBatch::MonochromeSprites { texture_id, range } => self.draw_sprites(
+                        &frame_instances.monochrome_sprites,
+                        texture_id,
+                        &self.resources().pipelines.mono_sprites,
+                        instance_range(range),
+                        &mut pass,
+                    ),
+                    PrimitiveBatch::SubpixelSprites { texture_id, range } => {
+                        let resources = self.resources();
+                        self.draw_sprites(
+                            &frame_instances.subpixel_sprites,
+                            texture_id,
+                            resources
+                                .pipelines
+                                .subpixel_sprites
+                                .as_ref()
+                                .unwrap_or(&resources.pipelines.mono_sprites),
+                            instance_range(range),
+                            &mut pass,
+                        );
+                    }
+                    PrimitiveBatch::PolychromeSprites { texture_id, range } => self.draw_sprites(
+                        &frame_instances.polychrome_sprites,
+                        texture_id,
+                        &self.resources().pipelines.poly_sprites,
+                        instance_range(range),
+                        &mut pass,
+                    ),
+                    // Surfaces are macOS-only for video playback, and are
+                    // not implemented for Linux/wgpu.
+                    PrimitiveBatch::Surfaces(_surfaces) => {}
                 }
             }
-
-            if overflow {
-                drop(encoder);
-                if self.instance_buffer_capacity >= self.max_buffer_size {
-                    log::error!(
-                        "instance buffer size grew too large: {}",
-                        self.instance_buffer_capacity
-                    );
-                    frame.present();
-                    return true;
-                }
-                self.grow_instance_buffer();
-                continue;
-            }
-
-            self.resources()
-                .queue
-                .submit(std::iter::once(encoder.finish()));
-            frame.present();
-            return true;
         }
+
+        self.resources()
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+        Ok(())
     }
 
-    fn draw_quads(
-        &self,
-        quads: &[Quad],
+    fn upload_frame_instances(
+        &mut self,
+        scene: &Scene,
         instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let data = unsafe { Self::instance_bytes(quads) };
-        self.draw_instances(
-            data,
-            quads.len() as u32,
-            &self.resources().pipelines.quads,
+    ) -> Result<FrameInstances> {
+        let quads = self.write_to_instance_buffer(instance_offset, unsafe {
+            Self::instance_bytes(&scene.quads)
+        })?;
+        let quad_indices = self.write_parts_to_instance_buffer(
             instance_offset,
-            pass,
-        )
-    }
+            &[
+                bytemuck::cast_slice(&scene.blended_quad_indices),
+                bytemuck::cast_slice(&scene.opaque_quad_indices),
+            ],
+        )?;
+        let shadows = self.write_to_instance_buffer(instance_offset, unsafe {
+            Self::instance_bytes(&scene.shadows)
+        })?;
+        let underlines = self.write_to_instance_buffer(instance_offset, unsafe {
+            Self::instance_bytes(&scene.underlines)
+        })?;
+        let monochrome_sprites = self.write_to_instance_buffer(instance_offset, unsafe {
+            Self::instance_bytes(&scene.monochrome_sprites)
+        })?;
+        let subpixel_sprites = self.write_to_instance_buffer(instance_offset, unsafe {
+            Self::instance_bytes(&scene.subpixel_sprites)
+        })?;
+        let polychrome_sprites = self.write_to_instance_buffer(instance_offset, unsafe {
+            Self::instance_bytes(&scene.polychrome_sprites)
+        })?;
 
-    fn draw_shadows(
-        &self,
-        shadows: &[Shadow],
-        instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let data = unsafe { Self::instance_bytes(shadows) };
-        self.draw_instances(
-            data,
-            shadows.len() as u32,
-            &self.resources().pipelines.shadows,
-            instance_offset,
-            pass,
-        )
-    }
-
-    fn draw_underlines(
-        &self,
-        underlines: &[Underline],
-        instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let data = unsafe { Self::instance_bytes(underlines) };
-        self.draw_instances(
-            data,
-            underlines.len() as u32,
-            &self.resources().pipelines.underlines,
-            instance_offset,
-            pass,
-        )
-    }
-
-    fn draw_monochrome_sprites(
-        &self,
-        sprites: &[MonochromeSprite],
-        texture_id: AtlasTextureId,
-        instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
-        let data = unsafe { Self::instance_bytes(sprites) };
-        self.draw_instances_with_texture(
-            data,
-            sprites.len() as u32,
-            &tex_info.view,
-            &self.resources().pipelines.mono_sprites,
-            instance_offset,
-            pass,
-        )
-    }
-
-    fn draw_subpixel_sprites(
-        &self,
-        sprites: &[SubpixelSprite],
-        texture_id: AtlasTextureId,
-        instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
-        let data = unsafe { Self::instance_bytes(sprites) };
         let resources = self.resources();
-        let pipeline = resources
-            .pipelines
-            .subpixel_sprites
-            .as_ref()
-            .unwrap_or(&resources.pipelines.mono_sprites);
-        self.draw_instances_with_texture(
-            data,
-            sprites.len() as u32,
-            &tex_info.view,
-            pipeline,
-            instance_offset,
-            pass,
-        )
+        Ok(FrameInstances {
+            quads: resources
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("quads_bind_group"),
+                    layout: &resources.bind_group_layouts.quads,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: quads.binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: quad_indices.binding(),
+                        },
+                    ],
+                }),
+            shadows: self.create_instances_bind_group("shadows_bind_group", &shadows),
+            underlines: self.create_instances_bind_group("underlines_bind_group", &underlines),
+            monochrome_sprites: self
+                .create_instances_bind_group("monochrome_sprites_bind_group", &monochrome_sprites),
+            subpixel_sprites: self
+                .create_instances_bind_group("subpixel_sprites_bind_group", &subpixel_sprites),
+            polychrome_sprites: self
+                .create_instances_bind_group("polychrome_sprites_bind_group", &polychrome_sprites),
+        })
     }
 
-    fn draw_polychrome_sprites(
+    fn create_instances_bind_group(
         &self,
-        sprites: &[PolychromeSprite],
-        texture_id: AtlasTextureId,
-        instance_offset: &mut u64,
+        label: &str,
+        instances: &BufferRegion,
+    ) -> wgpu::BindGroup {
+        let resources = self.resources();
+        resources
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &resources.bind_group_layouts.instances,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instances.binding(),
+                }],
+            })
+    }
+
+    fn create_texture_bind_group(&self, texture_view: &wgpu::TextureView) -> wgpu::BindGroup {
+        let resources = self.resources();
+        resources
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &resources.bind_group_layouts.texture,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&resources.atlas_sampler),
+                    },
+                ],
+            })
+    }
+
+    fn set_pass_depth_range(
+        &self,
         pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
-        let data = unsafe { Self::instance_bytes(sprites) };
-        self.draw_instances_with_texture(
-            data,
-            sprites.len() as u32,
-            &tex_info.view,
-            &self.resources().pipelines.poly_sprites,
-            instance_offset,
-            pass,
-        )
+        min_depth: f32,
+        max_depth: f32,
+    ) {
+        pass.set_viewport(
+            0.0,
+            0.0,
+            self.surface_config.width as f32,
+            self.surface_config.height as f32,
+            min_depth,
+            max_depth,
+        );
     }
 
     fn draw_instances(
         &self,
-        data: &[u8],
-        instance_count: u32,
+        bind_group: &wgpu::BindGroup,
         pipeline: &wgpu::RenderPipeline,
-        instance_offset: &mut u64,
+        instances: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        if instance_count == 0 {
-            return true;
+    ) {
+        if instances.is_empty() {
+            return;
         }
-        let Some((offset, size)) = self.write_to_instance_buffer(instance_offset, data) else {
-            return false;
-        };
-        let resources = self.resources();
-        let bind_group = resources
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &resources.bind_group_layouts.instances,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.instance_binding(offset, size),
-                }],
-            });
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
-        pass.set_bind_group(1, &bind_group, &[]);
-        pass.draw(0..4, 0..instance_count);
-        true
+        pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
+        pass.set_bind_group(1, bind_group, &[]);
+        pass.draw(0..4, instances);
     }
 
-    fn draw_instances_with_texture(
+    fn draw_sprites(
         &self,
-        data: &[u8],
-        instance_count: u32,
-        texture_view: &wgpu::TextureView,
+        sprite_instances: &wgpu::BindGroup,
+        texture_id: AtlasTextureId,
         pipeline: &wgpu::RenderPipeline,
-        instance_offset: &mut u64,
+        instances: Range<u32>,
         pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        if instance_count == 0 {
-            return true;
+    ) {
+        if instances.is_empty() {
+            return;
         }
-        let Some((offset, size)) = self.write_to_instance_buffer(instance_offset, data) else {
-            return false;
-        };
-        let resources = self.resources();
-        let bind_group = resources
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &resources.bind_group_layouts.instances_with_texture,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.instance_binding(offset, size),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(texture_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&resources.atlas_sampler),
-                    },
-                ],
-            });
+        let texture_info = self.atlas.get_texture_info(texture_id);
+        let texture = self.create_texture_bind_group(&texture_info.view);
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
-        pass.set_bind_group(1, &bind_group, &[]);
-        pass.draw(0..4, 0..instance_count);
-        true
-    }
-
-    unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                instances.as_ptr() as *const u8,
-                std::mem::size_of_val(instances),
-            )
-        }
-    }
-
-    fn draw_paths_from_intermediate(
-        &self,
-        paths: &[Path<ScaledPixels>],
-        instance_offset: &mut u64,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        let first_path = &paths[0];
-        let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
-        {
-            paths
-                .iter()
-                .map(|p| PathSprite {
-                    bounds: p.clipped_bounds(),
-                })
-                .collect()
-        } else {
-            let mut bounds = first_path.clipped_bounds();
-            for path in paths.iter().skip(1) {
-                bounds = bounds.union(&path.clipped_bounds());
-            }
-            vec![PathSprite { bounds }]
-        };
-
-        let resources = self.resources();
-        let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
-            return true;
-        };
-
-        let sprite_data = unsafe { Self::instance_bytes(&sprites) };
-        self.draw_instances_with_texture(
-            sprite_data,
-            sprites.len() as u32,
-            path_intermediate_view,
-            &resources.pipelines.paths,
-            instance_offset,
-            pass,
-        )
+        pass.set_bind_group(0, &self.resources().globals_bind_group, &[]);
+        pass.set_bind_group(1, sprite_instances, &[]);
+        pass.set_bind_group(2, &texture, &[]);
+        pass.draw(0..4, instances);
     }
 
     fn draw_paths_to_intermediate(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         paths: &[Path<ScaledPixels>],
         instance_offset: &mut u64,
-    ) -> bool {
+    ) -> Result<bool> {
         let mut vertices = Vec::new();
         for path in paths {
             let bounds = path.clipped_bounds();
@@ -1589,32 +1691,18 @@ impl WgpuRenderer {
                 bounds,
             }));
         }
-
         if vertices.is_empty() {
-            return true;
+            return Ok(false);
         }
 
         let vertex_data = unsafe { Self::instance_bytes(&vertices) };
-        let Some((vertex_offset, vertex_size)) =
-            self.write_to_instance_buffer(instance_offset, vertex_data)
-        else {
-            return false;
-        };
+        let vertex_instances = self.write_to_instance_buffer(instance_offset, vertex_data)?;
+        let data_bind_group =
+            self.create_instances_bind_group("path_rasterization_bind_group", &vertex_instances);
 
         let resources = self.resources();
-        let data_bind_group = resources
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("path_rasterization_bind_group"),
-                layout: &resources.bind_group_layouts.instances,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.instance_binding(vertex_offset, vertex_size),
-                }],
-            });
-
         let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
-            return true;
+            return Ok(false);
         };
 
         let (target_view, resolve_target) = if let Some(ref msaa_view) = resources.path_msaa_view {
@@ -1645,46 +1733,124 @@ impl WgpuRenderer {
             pass.draw(0..vertices.len() as u32, 0..1);
         }
 
-        true
+        Ok(true)
     }
 
-    fn grow_instance_buffer(&mut self) {
-        let new_capacity = (self.instance_buffer_capacity * 2).min(self.max_buffer_size);
-        log::info!("increased instance buffer size to {}", new_capacity);
-        let resources = self.resources_mut();
-        resources.instance_buffer = resources.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instance_buffer"),
-            size: new_capacity,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.instance_buffer_capacity = new_capacity;
+    fn draw_paths_from_intermediate(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        instance_offset: &mut u64,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> Result<()> {
+        let first_path = &paths[0];
+        let sprites: Vec<PathSprite> = if paths.last().map(|p| &p.order) == Some(&first_path.order)
+        {
+            paths
+                .iter()
+                .map(|p| PathSprite {
+                    bounds: p.clipped_bounds(),
+                })
+                .collect()
+        } else {
+            let mut bounds = first_path.clipped_bounds();
+            for path in paths.iter().skip(1) {
+                bounds = bounds.union(&path.clipped_bounds());
+            }
+            vec![PathSprite { bounds }]
+        };
+
+        let Some(path_intermediate_view) = self.resources().path_intermediate_view.clone() else {
+            return Ok(());
+        };
+        let sprite_data = unsafe { Self::instance_bytes(&sprites) };
+        let sprite_instances = self.write_to_instance_buffer(instance_offset, sprite_data)?;
+
+        let instances =
+            self.create_instances_bind_group("path_sprites_bind_group", &sprite_instances);
+        let texture = self.create_texture_bind_group(&path_intermediate_view);
+        let resources = self.resources();
+        pass.set_pipeline(&resources.pipelines.paths);
+        pass.set_bind_group(0, &resources.globals_bind_group, &[]);
+        pass.set_bind_group(1, &instances, &[]);
+        pass.set_bind_group(2, &texture, &[]);
+        pass.draw(0..4, 0..sprites.len() as u32);
+        Ok(())
+    }
+
+    unsafe fn instance_bytes<T>(instances: &[T]) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                instances.as_ptr() as *const u8,
+                std::mem::size_of_val(instances),
+            )
+        }
     }
 
     fn write_to_instance_buffer(
-        &self,
+        &mut self,
         instance_offset: &mut u64,
         data: &[u8],
-    ) -> Option<(u64, NonZeroU64)> {
-        let offset = (*instance_offset).next_multiple_of(self.storage_buffer_alignment);
-        let size = (data.len() as u64).max(16);
-        if offset + size > self.instance_buffer_capacity {
-            return None;
-        }
-        let resources = self.resources();
-        resources
-            .queue
-            .write_buffer(&resources.instance_buffer, offset, data);
-        *instance_offset = offset + size;
-        Some((offset, NonZeroU64::new(size).expect("size is at least 16")))
+    ) -> Result<BufferRegion> {
+        self.write_parts_to_instance_buffer(instance_offset, &[data])
     }
 
-    fn instance_binding(&self, offset: u64, size: NonZeroU64) -> wgpu::BindingResource<'_> {
-        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-            buffer: &self.resources().instance_buffer,
+    fn write_parts_to_instance_buffer(
+        &mut self,
+        instance_offset: &mut u64,
+        parts: &[&[u8]],
+    ) -> Result<BufferRegion> {
+        let size = parts
+            .iter()
+            .map(|part| part.len() as u64)
+            .sum::<u64>()
+            .max(16);
+        let mut offset = (*instance_offset).next_multiple_of(self.storage_buffer_alignment);
+        if offset + size > self.instance_buffer_capacity {
+            self.grow_instance_buffer(size)?;
+            offset = 0;
+        }
+
+        let resources = self.resources();
+        let mut part_offset = offset;
+        for part in parts {
+            if part.is_empty() {
+                continue;
+            }
+            resources
+                .queue
+                .write_buffer(&resources.instance_buffer, part_offset, part);
+            part_offset += part.len() as u64;
+        }
+        *instance_offset = offset + size;
+        Ok(BufferRegion {
+            buffer: resources.instance_buffer.clone(),
             offset,
-            size: Some(size),
+            size: NonZeroU64::new(size).expect("size is at least 16"),
         })
+    }
+
+    fn grow_instance_buffer(&mut self, required: u64) -> Result<()> {
+        let capacity = (self.instance_buffer_capacity * 2)
+            .max(required.next_power_of_two())
+            .min(self.max_buffer_size);
+        anyhow::ensure!(
+            capacity >= required,
+            "instance buffer needs {required} bytes, above the device maximum of {}",
+            self.max_buffer_size
+        );
+        log::debug!(
+            "instance buffer grown from {} to {capacity}",
+            self.instance_buffer_capacity
+        );
+        let resources = self.resources_mut();
+        resources.instance_buffer = resources.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: capacity,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.instance_buffer_capacity = capacity;
+        Ok(())
     }
 
     /// Mark the surface as unconfigured so rendering is skipped until a new
@@ -1849,6 +2015,10 @@ impl WgpuRenderer {
         log::info!("GPU recovery complete");
         Ok(())
     }
+}
+
+fn instance_range(range: Range<usize>) -> Range<u32> {
+    range.start as u32..range.end as u32
 }
 
 #[cfg(not(target_family = "wasm"))]
