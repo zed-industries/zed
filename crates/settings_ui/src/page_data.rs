@@ -1130,7 +1130,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_font_section() -> [SettingsPageItem; 3] {
+    fn agent_panel_font_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Agent Panel Font"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1168,6 +1168,133 @@ fn appearance_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.theme.agent_buffer_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prose Font Family",
+                description: "Font family for prose in agent panel markdown. Falls back to the UI font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_prose_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .agent_prose_font_family
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.agent_prose_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Inline Code Font Family",
+                description: "Font family for inline code in agent panel markdown. Falls back to the editor font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_inline_code_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .agent_inline_code_font_family
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.agent_inline_code_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prose Font Size",
+                description: "Font size for prose in agent panel markdown, without affecting the rest of the agent panel. Falls back to the agent panel UI font size.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent_prose_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .agent_prose_font_size
+                            .as_ref()
+                            .or(settings_content.theme.agent_ui_font_size.as_ref())
+                            .or(settings_content.theme.ui_font_size.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.agent_prose_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn hover_popup_font_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Hover Popup Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prose Font Family",
+                description: "Font family for prose in hover popups. Falls back to the UI font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("hover_prose_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .hover_prose_font_family
+                            .as_ref()
+                            .or(settings_content.theme.ui_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.hover_prose_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Inline Code Font Family",
+                description: "Font family for inline code in hover popups. Falls back to the editor font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("hover_inline_code_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .hover_inline_code_font_family
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_family.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.hover_inline_code_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prose Font Size",
+                description: "Font size for prose in hover popups. Inherits the surrounding text size when unset.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("hover_prose_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .hover_prose_font_size
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_size.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.hover_prose_font_size = value;
                     },
                 }),
                 metadata: None,
@@ -1479,6 +1606,7 @@ fn appearance_page() -> SettingsPage {
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
+        hover_popup_font_section(),
         markdown_preview_font_section(),
         text_rendering_section(),
         cursor_section(),

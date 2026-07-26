@@ -150,6 +150,24 @@ pub struct ThemeSettingsContent {
     /// The font size for user messages in the agent panel.
     pub agent_buffer_font_size: Option<FontSize>,
     pub git_commit_buffer_font_size: Option<FontSize>,
+    /// The name of a font to use for prose in agent panel markdown.
+    /// Falls back to the UI font if unset.
+    pub agent_prose_font_family: Option<FontFamilyName>,
+    /// The name of a font to use for inline code in agent panel markdown.
+    /// Falls back to the buffer font if unset.
+    pub agent_inline_code_font_family: Option<FontFamilyName>,
+    /// The font size for prose in agent panel markdown.
+    /// Falls back to the agent font size if unset.
+    pub agent_prose_font_size: Option<FontSize>,
+    /// The name of a font to use for prose in hover popups.
+    /// Falls back to the UI font if unset.
+    pub hover_prose_font_family: Option<FontFamilyName>,
+    /// The name of a font to use for inline code in hover popups.
+    /// Falls back to the buffer font if unset.
+    pub hover_inline_code_font_family: Option<FontFamilyName>,
+    /// The font size for prose in hover popups.
+    /// Inherits the surrounding text size if unset.
+    pub hover_prose_font_size: Option<FontSize>,
     /// The name of a font to use for rendering in the markdown preview.
     /// Falls back to the UI font if unset.
     pub markdown_preview_font_family: Option<FontFamilyName>,

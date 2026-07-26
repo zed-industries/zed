@@ -73,6 +73,27 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
+  // Controls the font family for prose in agent panel markdown.
+  // If not specified, it falls back to the UI font family.
+  "agent_prose_font_family": null,
+  // Controls the font family for inline code in agent panel markdown.
+  // If not specified, it falls back to the editor font family.
+  "agent_inline_code_font_family": null,
+  // Controls the font size for prose in agent panel markdown, without
+  // affecting the rest of the agent panel's UI.
+  // If not specified, it falls back to "agent_ui_font_size".
+  "agent_prose_font_size": null,
+
+  // Controls the font family for prose in hover popups.
+  // If not specified, it falls back to the UI font family.
+  "hover_prose_font_family": null,
+  // Controls the font family for inline code in hover popups.
+  // If not specified, it falls back to the editor font family.
+  "hover_inline_code_font_family": null,
+  // Controls the font size for prose in hover popups.
+  // If not specified, it inherits the surrounding text size.
+  "hover_prose_font_size": null,
+
   // Controls the font size for the markdown preview.
   // If not specified, it falls back to the editor font size.
   "markdown_preview_font_size": null,
@@ -522,6 +543,10 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
   "agent_buffer_font_size": 12
 }
 ```
+
+The `agent_prose_font_family`, `agent_inline_code_font_family`,
+and `agent_prose_font_size` settings described in [Fonts](#fonts) style
+the markdown in agent responses independently of the rest of the panel.
 
 See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settings.
 
