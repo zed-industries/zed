@@ -2094,6 +2094,13 @@ impl Buffer {
                     row_ranges.push((new_row..new_end_row, entry.original_indent_column));
                 }
 
+                // Rows of existing lines that this batch edited in place (one per
+                // cursor in a multi-cursor edit). A line's indentation must not be
+                // driven by a sibling in this set, otherwise typing a block opener
+                // like `:` at the end of every line makes each line indent into the
+                // one above it.
+                let edited_rows: HashSet<u32> = old_to_new_rows.values().copied().collect();
+
                 // Build a map containing the suggested indentation for each of the edited lines
                 // with respect to the state of the buffer before these edits. This map is keyed
                 // by the rows for these lines in the current state of the buffer.
@@ -2174,12 +2181,17 @@ impl Buffer {
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
-                            if old_suggestions.get(&new_row).is_none_or(
-                                |(old_indentation, was_within_error)| {
-                                    suggested_indent != *old_indentation
-                                        && (!suggestion.within_error || *was_within_error)
-                                },
-                            ) {
+                            let induced_by_edited_sibling = suggestion.basis_row != new_row
+                                && edited_rows.contains(&suggestion.basis_row);
+
+                            if !induced_by_edited_sibling
+                                && old_suggestions.get(&new_row).is_none_or(
+                                    |(old_indentation, was_within_error)| {
+                                        suggested_indent != *old_indentation
+                                            && (!suggestion.within_error || *was_within_error)
+                                    },
+                                )
+                            {
                                 indent_sizes.insert(
                                     new_row,
                                     (suggested_indent, request.ignore_empty_lines),
