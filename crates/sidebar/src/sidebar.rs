@@ -4879,15 +4879,22 @@ impl Sidebar {
         }
     }
 
+    /// Opens the workspace for `folder_paths` and runs `then` once its metadata
+    /// has loaded.
+    ///
+    /// Closed linked-worktree entries need an open workspace before they can be
+    /// archived, so archive root planning can inspect repositories before the
+    /// worktree is deleted.
     fn open_workspace_for_archive(
         &mut self,
         folder_paths: PathList,
         project_group_key: ProjectGroupKey,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<(Task<anyhow::Result<Entity<Workspace>>>, Entity<Workspace>)> {
+        then: impl FnOnce(&mut Self, Entity<Workspace>, &mut Window, &mut Context<Self>) + 'static,
+    ) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-            return None;
+            return;
         };
 
         let host = project_group_key.host();
@@ -4908,62 +4915,13 @@ impl Sidebar {
             )
         });
 
-        Some((open_task, modal_workspace))
-    }
-
-    fn open_workspace_and_archive_thread(
-        &mut self,
-        session_id: acp::SessionId,
-        folder_paths: PathList,
-        project_group_key: ProjectGroupKey,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((open_task, modal_workspace)) =
-            self.open_workspace_for_archive(folder_paths, project_group_key, window, cx)
-        else {
-            return;
-        };
-
         cx.spawn_in(window, async move |this, cx| {
             let result = open_task.await;
             remote_connection::dismiss_connection_modal(&modal_workspace, cx);
             let workspace = result?;
             Self::wait_for_archive_workspace_metadata(&workspace, cx).await;
 
-            this.update_in(cx, |this, window, cx| {
-                this.update_entries(cx);
-                this.archive_thread(&session_id, window, cx);
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn open_workspace_and_close_terminal(
-        &mut self,
-        metadata: TerminalThreadMetadata,
-        folder_paths: PathList,
-        project_group_key: ProjectGroupKey,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((open_task, modal_workspace)) =
-            self.open_workspace_for_archive(folder_paths, project_group_key, window, cx)
-        else {
-            return;
-        };
-
-        cx.spawn_in(window, async move |this, cx| {
-            let result = open_task.await;
-            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
-            let workspace = result?;
-            Self::wait_for_archive_workspace_metadata(&workspace, cx).await;
-
-            this.update_in(cx, |this, window, cx| {
-                let workspace = ThreadEntryWorkspace::Open(workspace);
-                this.close_terminal(&metadata, &workspace, window, cx);
-            })?;
+            this.update_in(cx, |this, window, cx| then(this, workspace, window, cx))?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -4989,12 +4947,20 @@ impl Sidebar {
                 cx,
             )
         {
-            self.open_workspace_and_close_terminal(
-                metadata.clone(),
+            let metadata = metadata.clone();
+            self.open_workspace_for_archive(
                 folder_paths.clone(),
                 project_group_key.clone(),
                 window,
                 cx,
+                move |this, workspace, window, cx| {
+                    this.close_terminal(
+                        &metadata,
+                        &ThreadEntryWorkspace::Open(workspace),
+                        window,
+                        cx,
+                    );
+                },
             );
             return;
         }
@@ -5327,12 +5293,16 @@ impl Sidebar {
                 cx,
             )
         {
-            self.open_workspace_and_archive_thread(
-                session_id.clone(),
+            let session_id = session_id.clone();
+            self.open_workspace_for_archive(
                 folder_paths,
                 project_group_key,
                 window,
                 cx,
+                move |this, _workspace, window, cx| {
+                    this.update_entries(cx);
+                    this.archive_thread(&session_id, window, cx);
+                },
             );
             return;
         }
@@ -6668,37 +6638,6 @@ impl Sidebar {
         }
     }
 
-    /// Closed linked-worktree drafts need an open workspace so archive root
-    /// planning can inspect repositories before deleting the worktree.
-    fn open_workspace_and_remove_draft(
-        &mut self,
-        draft_id: ThreadId,
-        folder_paths: PathList,
-        project_group_key: ProjectGroupKey,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((open_task, modal_workspace)) =
-            self.open_workspace_for_archive(folder_paths, project_group_key, window, cx)
-        else {
-            return;
-        };
-
-        cx.spawn_in(window, async move |this, cx| {
-            let result = open_task.await;
-            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
-            let workspace = result?;
-            Self::wait_for_archive_workspace_metadata(&workspace, cx).await;
-
-            this.update_in(cx, |this, window, cx| {
-                let workspace = ThreadEntryWorkspace::Open(workspace);
-                this.remove_draft(draft_id, &workspace, window, cx);
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn remove_draft(
         &mut self,
         draft_id: ThreadId,
@@ -6726,12 +6665,14 @@ impl Sidebar {
                 cx,
             )
         {
-            self.open_workspace_and_remove_draft(
-                draft_id,
+            self.open_workspace_for_archive(
                 folder_paths.clone(),
                 project_group_key.clone(),
                 window,
                 cx,
+                move |this, workspace, window, cx| {
+                    this.remove_draft(draft_id, &ThreadEntryWorkspace::Open(workspace), window, cx);
+                },
             );
             return;
         }
