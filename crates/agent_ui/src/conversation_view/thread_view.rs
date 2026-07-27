@@ -41,9 +41,10 @@ use language_model::{
 };
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
+use theme_settings::ThemeSettings;
 use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
-    SplitButtonStyle, Tab, ToggleState,
+    SplitButtonStyle, Tab, ToggleState, utils::WithRemSize,
 };
 use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -4401,37 +4402,51 @@ impl ThreadView {
                             }),
                     )
                     .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .flex_none()
-                            .flex_wrap()
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .min_w_0()
-                                    .flex_wrap()
-                                    .gap_0p5()
-                                    .child(self.render_add_context_button(cx))
-                                    .child(self.render_follow_toggle(cx))
-                                    .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
-                            )
-                            .child(
-                                h_flex()
-                                    .min_w_0()
-                                    .flex_wrap()
-                                    .gap_1()
-                                    .children(self.render_token_usage(cx))
-                                    .children(self.profile_selector.clone())
-                                    .map(|this| match self.config_options_view.clone() {
-                                        Some(config_view) => this.child(config_view),
-                                        None => this
-                                            .children(self.mode_selector.clone())
-                                            .children(self.model_selector.clone()),
-                                    })
-                                    .child(self.render_send_button(cx)),
-                            ),
+                        {
+                            let theme_settings = ThemeSettings::get_global(cx);
+                            let zoom_delta = theme_settings.agent_ui_font_size(cx)
+                                - theme_settings
+                                    .agent_ui_font_size_settings()
+                                    .map(theme_settings::clamp_font_size)
+                                    .unwrap_or_else(|| theme_settings.ui_font_size(cx));
+                            WithRemSize::new(theme_settings.ui_font_size(cx) + zoom_delta)
+                                .w_full()
+                                .flex_none()
+                                .font_family(theme_settings.ui_font.family.clone())
+                        }
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .flex_none()
+                                .flex_wrap()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .min_w_0()
+                                        .flex_wrap()
+                                        .gap_0p5()
+                                        .child(self.render_add_context_button(cx))
+                                        .child(self.render_follow_toggle(cx))
+                                        .children(self.render_fast_mode_control(cx))
+                                        .children(self.render_thinking_control(cx)),
+                                )
+                                .child(
+                                    h_flex()
+                                        .min_w_0()
+                                        .flex_wrap()
+                                        .gap_1()
+                                        .children(self.render_token_usage(cx))
+                                        .children(self.profile_selector.clone())
+                                        .map(|this| match self.config_options_view.clone() {
+                                            Some(config_view) => this.child(config_view),
+                                            None => this
+                                                .children(self.mode_selector.clone())
+                                                .children(self.model_selector.clone()),
+                                        })
+                                        .child(self.render_send_button(cx)),
+                                ),
+                        ),
                     ),
             )
             .into_any()
@@ -7748,9 +7763,11 @@ impl ThreadView {
             .unwrap_or(&command_source)
             .to_string();
 
-        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
-        style.container_style.text.font_size = Some(rems_from_px(12.).into());
-        style.container_style.text.line_height = Some(rems_from_px(17.).into());
+        // Terminal command labels are parsed as plain text, so the command
+        // renders outside a code block; keep it on the buffer font.
+        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
+        style.container_style.text.font_size = Some(rems_from_px(11.).into());
+        style.container_style.text.line_height = Some(rems_from_px(16.).into());
         style.height_is_multiple_of_line_height = true;
         // Soft-wrap the command instead of horizontally scrolling it: the card is
         // narrow, and in scroll mode a long command wraps anyway but its wrapped
