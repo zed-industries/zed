@@ -1955,16 +1955,99 @@ impl MarkdownElement {
         });
     }
 
+    /// Locate `source_index` for autoscroll when its block is off-screen. Sum
+    /// the heights of the blocks above it — measuring any not yet measured, so
+    /// the top is exact even across never-rendered or volatile content — then
+    /// build the target block at that top and read the precise line position
+    /// within it. Volatile blocks are measured for the sum but not cached.
+    fn measure_and_position(
+        &self,
+        layout: &MarkdownLayout,
+        bounds: Bounds<Pixels>,
+        source_index: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<(Point<Pixels>, Pixels)> {
+        let available = gpui::size(
+            gpui::AvailableSpace::Definite(bounds.size.width),
+            gpui::AvailableSpace::MinContent,
+        );
+        let mut y = bounds.top();
+        let mut to_cache = Vec::new();
+        let mut target = None;
+        for root_block in &layout.root_blocks {
+            let range = root_block_source_range(&layout.parsed_markdown.events, root_block);
+            if range.contains(&source_index) {
+                target = Some(root_block.clone());
+                break;
+            }
+            let height = match self.markdown.read(cx).block_heights.get(&range).copied() {
+                Some((measured_width, height)) if measured_width == bounds.size.width => height,
+                _ => {
+                    let (_, height) = self.build_root_block(
+                        &layout.parsed_markdown,
+                        root_block.clone(),
+                        &layout.images,
+                        layout.active_root_block,
+                        layout.markdown_end,
+                        layout.render_mermaid_diagrams,
+                        &layout.mermaid_state,
+                        available,
+                        window,
+                        cx,
+                    );
+                    if !layout.parsed_markdown.volatile_blocks.contains(&range.start) {
+                        to_cache.push((range, height));
+                    }
+                    height
+                }
+            };
+            y += height;
+        }
+        if !to_cache.is_empty() {
+            let width = bounds.size.width;
+            self.markdown.update(cx, |markdown, _| {
+                for (range, height) in to_cache {
+                    markdown.block_heights.insert(range, (width, height));
+                }
+            });
+        }
+
+        let (mut rendered, _) = self.build_root_block(
+            &layout.parsed_markdown,
+            target?,
+            &layout.images,
+            layout.active_root_block,
+            layout.markdown_end,
+            layout.render_mermaid_diagrams,
+            &layout.mermaid_state,
+            available,
+            window,
+            cx,
+        );
+        rendered
+            .element
+            .prepaint_at(point(bounds.left(), y), window, cx);
+        rendered.text.position_for_source_index(source_index)
+    }
+
     fn autoscroll(
         &self,
+        layout: &MarkdownLayout,
         rendered_text: &RenderedText,
+        bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<()> {
         let autoscroll_index = self
             .markdown
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
-        let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
+        // On screen: read the exact line position. Off screen: measure the
+        // blocks above the target for an exact top, then build the target block
+        // to locate the precise line within it.
+        let (position, line_height) = rendered_text
+            .position_for_source_index(autoscroll_index)
+            .or_else(|| self.measure_and_position(layout, bounds, autoscroll_index, window, cx))?;
         self.apply_autoscroll(position, line_height, window);
         Some(())
     }
@@ -2891,7 +2974,13 @@ impl Element for MarkdownElement {
         let layout = match layout {
             MarkdownLayoutState::Eager(rendered) => {
                 rendered.element.prepaint(window, cx);
-                self.autoscroll(&rendered.text, window, cx);
+                if let Some(index) =
+                    self.markdown.update(cx, |markdown, _| markdown.autoscroll_request.take())
+                    && let Some((position, line_height)) =
+                        rendered.text.position_for_source_index(index)
+                {
+                    self.apply_autoscroll(position, line_height, window);
+                }
                 return MarkdownPrepaintState::Eager(hitbox);
             }
             MarkdownLayoutState::Virtualized(layout) => layout,
@@ -2982,7 +3071,7 @@ impl Element for MarkdownElement {
             source: layout.parsed_markdown.source.clone(),
             events: layout.parsed_markdown.events.clone(),
         };
-        self.autoscroll(&text, window, cx);
+        self.autoscroll(layout, &text, bounds, window, cx);
         MarkdownPrepaintState::Virtualized(MarkdownPrepaint {
             blocks,
             text,
