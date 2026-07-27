@@ -29,6 +29,7 @@ pub mod popover_menu;
 mod preview;
 mod render;
 mod shape;
+pub mod tree;
 
 use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
@@ -1263,6 +1264,16 @@ impl<D: PickerDelegate> Picker<D> {
         if let Head::Editor(editor) = &self.head {
             editor.set_text(query, window, cx);
             editor.move_selection_to_end(window, cx);
+        }
+    }
+
+    /// Grows the search field up to `max_lines` as the query wraps, instead of
+    /// keeping it to a single line. The field stays a full editor either way, so
+    /// this only changes its layout — `enter` is unbound in auto-height mode and
+    /// still reaches [`menu::Confirm`], while `shift-enter` inserts a newline.
+    pub fn set_multiline(&self, max_lines: Option<usize>, window: &mut Window, cx: &mut App) {
+        if let Head::Editor(editor) = &self.head {
+            editor.set_multiline(max_lines, window, cx);
         }
     }
 
