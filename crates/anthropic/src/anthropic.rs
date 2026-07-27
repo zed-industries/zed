@@ -560,6 +560,15 @@ pub async fn stream_completion_with_rate_limit_info(
                             .strip_prefix("data: ")
                             .or_else(|| line.strip_prefix("data:"))?;
 
+                        // Some proxies and gateways append `data: [DONE]` as a
+                        // stream-termination sentinel (an OpenAI convention).
+                        // It is not part of the Anthropic streaming spec and is
+                        // not valid JSON, so skip it to avoid a spurious
+                        // deserialization error.
+                        if line.trim() == "[DONE]" {
+                            return None;
+                        }
+
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
                             Err(error) => Some(Err(AnthropicError::DeserializeResponse(error))),
