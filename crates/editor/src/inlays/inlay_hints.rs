@@ -1020,7 +1020,7 @@ pub mod tests {
     use multi_buffer::{MultiBuffer, MultiBufferOffset, PathKey};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
-    use project::{FakeFs, Project};
+    use project::{FakeFs, InvalidationStrategy, Project};
     use serde_json::json;
     use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
     use std::ops::Range;
@@ -2209,6 +2209,128 @@ pub mod tests {
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_inlay_hint_response_after_buffer_shrinks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let (unblock_request, request_gate) = oneshot::channel::<()>();
+        let request_gate = Arc::new(Mutex::new(Some(request_gate)));
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "let value = 1;\n".repeat(500),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let request_gate = request_gate.clone();
+                    move |fake_server| {
+                        let request_gate = request_gate.clone();
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |params, _| {
+                                // Only block the request for the far-away chunk, so that any
+                                // hint requests the editor makes for the top of the file do
+                                // not consume the gate.
+                                let request_gate = if params.range.start.line >= 400 {
+                                    request_gate.lock().take()
+                                } else {
+                                    None
+                                };
+                                async move {
+                                    if let Some(request_gate) = request_gate {
+                                        request_gate.await.ok();
+                                    }
+                                    Ok(Some(Vec::new()))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        // An editor is only needed so that the language server starts for this buffer.
+        let _editor = cx.add_window(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+        });
+        cx.executor().run_until_parked();
+        let _fake_server = fake_servers.next().await.unwrap();
+
+        // Query a single chunk far into the buffer, so that its chunk id is well past the
+        // number of chunks the buffer will have once shrunk.
+        let hint_tasks = project.update(cx, |project, cx| {
+            let query_range = buffer.read_with(cx, |buffer, _| {
+                buffer.anchor_before(Point::new(460, 0))..buffer.anchor_after(Point::new(460, 0))
+            });
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.inlay_hints(
+                    InvalidationStrategy::None,
+                    buffer.clone(),
+                    vec![query_range],
+                    None,
+                    cx,
+                )
+            })
+        });
+        assert_eq!(
+            hint_tasks.len(),
+            1,
+            "Should have started a hint fetch for exactly the queried chunk"
+        );
+        cx.executor().run_until_parked();
+        assert!(
+            request_gate.lock().is_none(),
+            "Language server should have received the inlay hint request"
+        );
+
+        // Shrink the buffer while the response is still in flight, so that the buffer has
+        // far fewer chunks than the pending request's chunk id.
+        buffer.update(cx, |buffer, cx| {
+            let entire_buffer = 0..buffer.len();
+            buffer.edit([(entire_buffer, "fn main() {}")], None, cx);
+        });
+        cx.executor().run_until_parked();
+
+        // The stale response must be discarded rather than indexing the rebuilt, much
+        // shorter chunk cache with the pending request's chunk id.
+        unblock_request.send(()).unwrap();
+        for (chunk_range, hint_task) in hint_tasks {
+            let hints = hint_task
+                .await
+                .expect("Stale inlay hint response should not fail the fetch");
+            assert!(
+                hints.is_empty(),
+                "Stale response for chunk {chunk_range:?} should yield no hints, got {hints:?}"
+            );
+        }
     }
 
     #[gpui::test(iterations = 4)]
