@@ -115,6 +115,7 @@ pub struct MarkdownStyle {
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
+    pub table_overflow_x_scroll: bool,
     pub soft_break_as_hard_break: bool,
 }
 
@@ -140,6 +141,7 @@ impl Default for MarkdownStyle {
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
+            table_overflow_x_scroll: false,
             soft_break_as_hard_break: false,
         }
     }
@@ -233,6 +235,7 @@ impl MarkdownStyle {
                 }
             },
             code_block_overflow_x_scroll: true,
+            table_overflow_x_scroll: true,
             code_block: StyleRefinement {
                 padding: EdgesRefinement {
                     top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
@@ -401,6 +404,7 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
+    table_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
     context_menu_selected_markdown: Option<SharedString>,
@@ -594,6 +598,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
+            table_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
@@ -641,6 +646,17 @@ impl Markdown {
             .retain(|id, _| ids.contains(id));
     }
 
+    fn table_scroll_handle(&mut self, id: usize) -> ScrollHandle {
+        self.table_scroll_handles
+            .entry(id)
+            .or_insert_with(ScrollHandle::new)
+            .clone()
+    }
+
+    fn retain_table_scroll_handles(&mut self, ids: &HashSet<usize>) {
+        self.table_scroll_handles.retain(|id, _| ids.contains(id));
+    }
+
     pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
         if !self.options.render_mermaid_diagrams || self.parsed_markdown.mermaid_diagrams.is_empty()
         {
@@ -664,6 +680,10 @@ impl Markdown {
 
     fn clear_code_block_scroll_handles(&mut self) {
         self.code_block_scroll_handles.clear();
+    }
+
+    fn clear_table_scroll_handles(&mut self) {
+        self.table_scroll_handles.clear();
     }
 
     fn autoscroll_code_block(&self, source_index: usize, cursor_position: Point<Pixels>) {
@@ -2145,6 +2165,7 @@ impl Element for MarkdownElement {
             0
         };
         let mut code_block_ids = HashSet::default();
+        let mut table_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
@@ -2509,6 +2530,15 @@ impl Element for MarkdownElement {
                             builder.table.start(alignments.clone());
 
                             let column_count = alignments.len();
+                            let scroll_handle = if self.style.table_overflow_x_scroll {
+                                let handle = self.markdown.update(cx, |markdown, _| {
+                                    markdown.table_scroll_handle(range.start)
+                                });
+                                table_ids.insert(range.start);
+                                Some(handle)
+                            } else {
+                                None
+                            };
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
@@ -2525,7 +2555,13 @@ impl Element for MarkdownElement {
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .overflow_x_scroll(),
+                                    .map(|div| {
+                                        if let Some(scroll_handle) = scroll_handle.as_ref() {
+                                            div.overflow_x_scroll().track_scroll(scroll_handle)
+                                        } else {
+                                            div.overflow_hidden()
+                                        }
+                                    }),
                                 range,
                                 markdown_end,
                             );
@@ -2818,6 +2854,15 @@ impl Element for MarkdownElement {
         } else {
             self.markdown
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
+        }
+        if self.style.table_overflow_x_scroll {
+            let table_ids = table_ids;
+            self.markdown.update(cx, move |markdown, _| {
+                markdown.retain_table_scroll_handles(&table_ids);
+            });
+        } else {
+            self.markdown
+                .update(cx, |markdown, _| markdown.clear_table_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
