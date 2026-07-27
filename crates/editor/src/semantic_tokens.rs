@@ -309,8 +309,14 @@ impl Editor {
                                     ));
                                 }
 
+                                // Ties are broken by server id because `sort_by` is stable, so without it two
+                                // servers' tokens at the same position keep whatever order the `HashMap` gave
+                                // us and precedence varies between sessions
                                 token_highlights.sort_by(|a, b| {
-                                    a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
+                                    a.range
+                                        .start
+                                        .cmp(&b.range.start, &multi_buffer_snapshot)
+                                        .then_with(|| a.server_id.cmp(&b.server_id))
                                 });
                                 Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                                     buffer_id,
