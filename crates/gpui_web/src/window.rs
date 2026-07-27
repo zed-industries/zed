@@ -63,8 +63,6 @@ pub(crate) struct WebWindowInner {
 pub struct WebWindow {
     inner: Rc<WebWindowInner>,
     display: Rc<dyn PlatformDisplay>,
-    #[allow(dead_code)]
-    handle: AnyWindowHandle,
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
@@ -73,7 +71,7 @@ pub struct WebWindow {
 
 impl WebWindow {
     pub fn new(
-        handle: AnyWindowHandle,
+        _handle: AnyWindowHandle,
         _params: WindowParams,
         context: &WgpuContext,
         browser_window: web_sys::Window,
@@ -205,7 +203,6 @@ impl WebWindow {
         Ok(Self {
             inner,
             display,
-            handle,
             _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
