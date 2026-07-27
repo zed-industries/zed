@@ -8955,6 +8955,13 @@ impl Editor {
         self.highlighted_rows.remove(&TypeId::of::<T>());
     }
 
+    /// For a given highlight context type, reports whether any row is highlighted.
+    pub fn has_highlighted_rows<T: 'static>(&self) -> bool {
+        self.highlighted_rows
+            .get(&TypeId::of::<T>())
+            .is_some_and(|highlights| !highlights.is_empty())
+    }
+
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
     pub fn highlighted_rows<'a, T: 'static>(
         &'a self,
@@ -9070,6 +9077,14 @@ impl Editor {
             cx.notify();
         }
         Some(text_highlights)
+    }
+
+    /// Schedules a rebuild of the scrollbar markers. Needed by callers that
+    /// change row highlights the scrollbar reflects, since those are not
+    /// invalidated by buffer edits.
+    pub fn refresh_scrollbar_markers(&mut self, cx: &mut Context<Self>) {
+        self.scrollbar_marker_state.dirty = true;
+        cx.notify();
     }
 
     pub fn highlight_gutter<T: 'static>(

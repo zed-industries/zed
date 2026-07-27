@@ -1332,6 +1332,9 @@ impl EditorElement {
                 // Diagnostics
                 (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot().has_diagnostics())
                 ||
+                // Merge conflicts
+                (supports_git_diff_markers && editor.has_highlighted_rows::<ConflictsOuter>())
+                ||
                 // Cursors out of sight
                 non_visible_cursors
                 ||
@@ -6033,6 +6036,12 @@ impl EditorElement {
             let background_highlights = editor.background_highlights.clone();
             let snapshot = layout.position_map.snapshot.clone();
             let theme = cx.theme().clone();
+            // Conflicts are always marked: they only exist mid-merge, and they
+            // matter more than whichever markers would share the git column.
+            let conflict_ranges = editor
+                .highlighted_rows::<ConflictsOuter>(cx)
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>();
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
@@ -6074,6 +6083,23 @@ impl EditorElement {
                                         }
                                     });
 
+                                marker_quads.extend(
+                                    scrollbar_layout
+                                        .marker_quads_for_ranges(marker_row_ranges, Some(0)),
+                                );
+                            }
+
+                            if !conflict_ranges.is_empty() {
+                                let color = theme.colors().version_control_conflict;
+                                let marker_row_ranges = conflict_ranges.iter().map(|range| {
+                                    let start = range
+                                        .start
+                                        .to_display_point(&snapshot.display_snapshot)
+                                        .row();
+                                    let end =
+                                        range.end.to_display_point(&snapshot.display_snapshot).row();
+                                    ColoredRange { start, end, color }
+                                });
                                 marker_quads.extend(
                                     scrollbar_layout
                                         .marker_quads_for_ranges(marker_row_ranges, Some(0)),
