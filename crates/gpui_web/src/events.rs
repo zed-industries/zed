@@ -75,6 +75,7 @@ impl WebWindowInner {
         ];
         closures.extend(self.register_visibility_change());
         closures.extend(self.register_appearance_change());
+        closures.extend(self.register_fullscreen_change());
 
         WebEventListeners { closures }
     }

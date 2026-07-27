@@ -408,6 +408,30 @@ impl WebWindowInner {
         Some(closure)
     }
 
+    /// Tracks `fullscreenchange` instead of toggling a local flag: the user
+    /// can exit fullscreen with Esc, and `requestFullscreen` can be rejected,
+    /// so the document is the only reliable source of truth.
+    pub(crate) fn register_fullscreen_change(
+        self: &Rc<Self>,
+    ) -> Option<Closure<dyn FnMut(JsValue)>> {
+        let document = self.browser_window.document()?;
+        let this = Rc::clone(self);
+
+        let closure = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
+            let is_fullscreen = this
+                .browser_window
+                .document()
+                .is_some_and(|document| document.fullscreen_element().is_some());
+            this.state.borrow_mut().is_fullscreen = is_fullscreen;
+        });
+
+        document
+            .add_event_listener_with_callback("fullscreenchange", closure.as_ref().unchecked_ref())
+            .ok();
+
+        Some(closure)
+    }
+
     pub(crate) fn with_input_handler<R>(
         &self,
         f: impl FnOnce(&mut PlatformInputHandler) -> R,
@@ -607,16 +631,17 @@ impl PlatformWindow for WebWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        let mut state = self.inner.state.borrow_mut();
-        state.is_fullscreen = !state.is_fullscreen;
+        let Some(document) = self.inner.browser_window.document() else {
+            return;
+        };
 
-        if state.is_fullscreen {
+        // `is_fullscreen` is updated by the `fullscreenchange` listener once
+        // the transition actually happens (or not, if the request fails).
+        if document.fullscreen_element().is_some() {
+            document.exit_fullscreen();
+        } else {
             let canvas: &web_sys::Element = self.inner.canvas.as_ref();
             canvas.request_fullscreen().ok();
-        } else {
-            if let Some(document) = self.inner.browser_window.document() {
-                document.exit_fullscreen();
-            }
         }
     }
 
