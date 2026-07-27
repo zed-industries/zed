@@ -573,6 +573,7 @@ pub struct ThreadView {
     pub agent_icon: IconName,
     pub agent_icon_from_external_svg: Option<SharedString>,
     pub agent_id: AgentId,
+    pub agent_display_name: SharedString,
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -983,6 +984,7 @@ impl ThreadView {
             agent_icon,
             agent_icon_from_external_svg,
             agent_id,
+            agent_display_name,
             workspace,
             entry_view_state,
             title_editor,
@@ -2638,33 +2640,70 @@ impl ThreadView {
             return;
         };
 
-        let response = match mode {
+        match mode {
             acp::ElicitationMode::Form(mode) => {
-                let Some(state) = self.elicitation_form_states.get(&elicitation_id) else {
+                let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) else {
                     return;
                 };
-                match state.collect(&mode.requested_schema, cx) {
-                    Ok(content) => {
-                        acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                            acp::ElicitationAcceptAction::new().content(content),
-                        ))
-                    }
-                    Err(errors) => {
-                        if let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) {
-                            state.set_errors(errors);
+                let Some(submission) = state.begin_submission(cx) else {
+                    return;
+                };
+                let schema = mode.requested_schema;
+                let validation_task = cx.background_spawn(async move {
+                    let result = submission.validate(&schema);
+                    (submission, result)
+                });
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    let (submission, result) = validation_task.await;
+                    this.update(cx, |this, cx| {
+                        let is_current = this
+                            .elicitation_form_states
+                            .get_mut(&elicitation_id)
+                            .is_some_and(|state| {
+                                state.validation_matches_current_values(&submission, cx)
+                            });
+                        if !is_current {
+                            cx.notify();
+                            return;
                         }
-                        cx.notify();
-                        return;
-                    }
-                }
+                        match result {
+                            Ok(content) => {
+                                this.respond_to_elicitation(
+                                    elicitation_id,
+                                    acp::CreateElicitationResponse::new(
+                                        acp::ElicitationAction::Accept(
+                                            acp::ElicitationAcceptAction::new().content(content),
+                                        ),
+                                    ),
+                                    cx,
+                                );
+                            }
+                            Err(errors) => {
+                                if let Some(state) =
+                                    this.elicitation_form_states.get_mut(&elicitation_id)
+                                {
+                                    state.set_errors(errors);
+                                }
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .log_err();
+                })
+                .detach();
             }
-            acp::ElicitationMode::Url(_) => acp::CreateElicitationResponse::new(
-                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-            ),
-            _ => return,
-        };
-
-        self.respond_to_elicitation(elicitation_id, response, cx);
+            acp::ElicitationMode::Url(_) => {
+                self.respond_to_elicitation(
+                    elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                        acp::ElicitationAcceptAction::new(),
+                    )),
+                    cx,
+                );
+            }
+            _ => {}
+        }
     }
 
     fn decline_elicitation(
@@ -2691,6 +2730,19 @@ impl ThreadView {
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
             cx,
         );
+    }
+
+    fn dismiss_url_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.elicitation_form_states.remove(&elicitation_id);
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx);
+        });
+        cx.notify();
     }
 
     fn respond_to_elicitation(
@@ -6544,6 +6596,7 @@ impl ThreadView {
         ElicitationCard::new(
             entry_ix,
             elicitation,
+            self.agent_display_name.clone(),
             self.elicitation_form_states.get(&elicitation.id),
             self.elicitation_card_handlers(cx),
         )
@@ -6583,14 +6636,14 @@ impl ThreadView {
             },
             {
                 let view = view.clone();
-                move |elicitation_id, url, window, cx| {
-                    cx.open_url(&url);
+                move |elicitation_id, window, cx| {
                     view.update(cx, |this, cx| {
-                        this.submit_elicitation(elicitation_id, window, cx);
+                        this.dismiss_url_elicitation(elicitation_id, window, cx);
                     })
                     .log_err();
                 }
             },
+            move |_elicitation_id, url, _window, cx| cx.open_url(&url),
             {
                 let view = view.clone();
                 move |elicitation_id, field_name, value, cx| {
