@@ -5,6 +5,7 @@ mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;
+mod dynamic_registration;
 mod git_store;
 mod image_store;
 mod lsp_command;
@@ -26,7 +27,7 @@ use buffer_diff::{
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind, RealFs};
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
@@ -66,7 +67,7 @@ use project::{
 };
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{GlobalLspSettingsContent, SettingsStore};
 #[cfg(target_os = "linux")]
 use settings::{LocalSettingsKind, LocalSettingsPath};
 #[cfg(not(windows))]
@@ -254,7 +255,10 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             max_line_length = 120
         [*.js]
             tab_width = 10
+            trim_trailing_whitespace = false
             max_line_length = off
+        [*.json]
+            trim_trailing_whitespace = true
         "#,
         ".zed": {
             "settings.json": r#"{
@@ -264,6 +268,17 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "remove_trailing_whitespace_on_save": false,
                 "preferred_line_length": 64,
                 "soft_wrap": "editor_width",
+                "languages": {
+                    "JavaScript": {
+                        "remove_trailing_whitespace_on_save": true,
+                    },
+                    "JSON": {
+                        "remove_trailing_whitespace_on_save": true,
+                    },
+                    "Markdown": {
+                        "remove_trailing_whitespace_on_save": true,
+                    },
+                },
             }"#,
         },
         "a.rs": "fn a() {\n    A\n}",
@@ -293,6 +308,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "e.rs": "fn e() {\n    E\n}",
         },
         "README.json": "tabs are better\n",
+        "README.md": "spaces are meaningful  \n",
     }));
 
     let path = dir.path();
@@ -303,6 +319,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(js_lang());
     language_registry.add(json_lang());
+    language_registry.add(markdown_lang());
     language_registry.add(rust_lang());
 
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
@@ -325,11 +342,14 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let settings_d = settings_for("d/d.rs", cx).await;
     let settings_e = settings_for("e/e.rs", cx).await;
     let settings_readme = settings_for("README.json", cx).await;
+    let settings_markdown = settings_for("README.md", cx).await;
     // .editorconfig overrides .zed/settings
     assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
-    assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    // .editorconfig can disable trailing whitespace removal, but should not
+    // re-enable it when Zed settings have disabled it.
+    assert_eq!(settings_a.remove_trailing_whitespace_on_save, false);
     assert_eq!(settings_a.line_ending, LineEndingSetting::EnforceLf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
@@ -348,6 +368,9 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+    assert_eq!(settings_c.remove_trailing_whitespace_on_save, false);
+    assert_eq!(settings_readme.remove_trailing_whitespace_on_save, true);
+    assert_eq!(settings_markdown.remove_trailing_whitespace_on_save, true);
 
     // When max_line_length is "off", default to .zed/settings.json
     assert_eq!(settings_b.preferred_line_length, 64);
@@ -2268,131 +2291,6 @@ async fn test_rescan_fs_change_is_reported_to_language_servers_as_changed(
 }
 
 #[gpui::test]
-async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/the-root"),
-        json!({
-            "a.rs": "fn main() {}",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            name: "the-language-server",
-            // Crucially, no `semantic_tokens_provider` is advertised statically; the
-            // server only offers it through dynamic registration (as Roslyn does).
-            ..Default::default()
-        },
-    );
-
-    let _buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let fake_server = fake_servers.next().await.unwrap();
-    let server_id = fake_server.server.server_id();
-    cx.executor().run_until_parked();
-
-    let semantic_tokens_provider = |cx: &mut gpui::TestAppContext| {
-        project.read_with(cx, |project, cx| {
-            project
-                .lsp_store()
-                .read(cx)
-                .lsp_server_capabilities
-                .get(&server_id)
-                .and_then(|capabilities| capabilities.semantic_tokens_provider.clone())
-        })
-    };
-
-    assert!(
-        semantic_tokens_provider(cx).is_none(),
-        "server should not advertise semantic tokens before dynamic registration"
-    );
-
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "semantic-tokens".to_string(),
-                    method: "textDocument/semanticTokens".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::SemanticTokensRegistrationOptions {
-                            text_document_registration_options:
-                                lsp::TextDocumentRegistrationOptions {
-                                    document_selector: None,
-                                },
-                            semantic_tokens_options: lsp::SemanticTokensOptions {
-                                legend: lsp::SemanticTokensLegend {
-                                    token_types: vec!["keyword".into(), "variable".into()],
-                                    token_modifiers: vec![],
-                                },
-                                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
-                                ..Default::default()
-                            },
-                            static_registration_options: lsp::StaticRegistrationOptions {
-                                id: None,
-                            },
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    let provider = semantic_tokens_provider(cx)
-        .expect("semantic tokens provider should be set after dynamic registration");
-    // The capability round-trips through capability-sync serialization, which may
-    // normalize the registration options into plain options; either shape is fine
-    // as long as the legend survives.
-    let legend = match provider {
-        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options.legend,
-        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
-            options.semantic_tokens_options.legend
-        }
-    };
-    assert_eq!(
-        legend.token_types,
-        vec!["keyword".into(), "variable".into()],
-    );
-
-    fake_server
-        .request::<lsp::request::UnregisterCapability>(
-            lsp::UnregistrationParams {
-                unregisterations: vec![lsp::Unregistration {
-                    id: "semantic-tokens".to_string(),
-                    method: "textDocument/semanticTokens".to_string(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    assert!(
-        semantic_tokens_provider(cx).is_none(),
-        "semantic tokens provider should be cleared after unregistration"
-    );
-}
-
-#[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2696,170 +2594,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 typ: lsp::FileChangeType::CHANGED,
             },
         ]
-    );
-}
-
-#[gpui::test]
-async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/root"),
-        json!({
-            "src": {
-                "a.rs": "",
-                "b.rs": "",
-            },
-            "docs": {
-                "readme.md": "",
-            },
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            name: "the-language-server",
-            ..Default::default()
-        },
-    );
-
-    cx.executor().run_until_parked();
-
-    project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/root/src/a.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let fake_server = fake_servers.next().await.unwrap();
-    cx.executor().run_until_parked();
-
-    let file_changes = Arc::new(Mutex::new(Vec::new()));
-
-    // Register two separate watched file registrations.
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "reg-1".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/root/src/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            }],
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "reg-2".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                    register_options: serde_json::to_value(
-                        lsp::DidChangeWatchedFilesRegistrationOptions {
-                            watchers: vec![lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/root/docs/*.md").to_string(),
-                                ),
-                                kind: None,
-                            }],
-                        },
-                    )
-                    .ok(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-
-    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
-        let file_changes = file_changes.clone();
-        move |params, _| {
-            let mut file_changes = file_changes.lock();
-            file_changes.extend(params.changes);
-            file_changes.sort_by(|a, b| a.uri.cmp(&b.uri));
-        }
-    });
-
-    cx.executor().run_until_parked();
-
-    // Both registrations should match their respective patterns.
-    fs.create_file(path!("/root/src/c.rs").as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file(path!("/root/docs/guide.md").as_ref(), Default::default())
-        .await
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        &*file_changes.lock(),
-        &[
-            lsp::FileEvent {
-                uri: lsp::Uri::from_file_path(path!("/root/docs/guide.md")).unwrap(),
-                typ: lsp::FileChangeType::CREATED,
-            },
-            lsp::FileEvent {
-                uri: lsp::Uri::from_file_path(path!("/root/src/c.rs")).unwrap(),
-                typ: lsp::FileChangeType::CREATED,
-            },
-        ]
-    );
-    file_changes.lock().clear();
-
-    // Unregister the first registration.
-    fake_server
-        .request::<lsp::request::UnregisterCapability>(
-            lsp::UnregistrationParams {
-                unregisterations: vec![lsp::Unregistration {
-                    id: "reg-1".to_string(),
-                    method: "workspace/didChangeWatchedFiles".to_string(),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    // Only the second registration should still match.
-    fs.create_file(path!("/root/src/d.rs").as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file(path!("/root/docs/notes.md").as_ref(), Default::default())
-        .await
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        &*file_changes.lock(),
-        &[lsp::FileEvent {
-            uri: lsp::Uri::from_file_path(path!("/root/docs/notes.md")).unwrap(),
-            typ: lsp::FileChangeType::CREATED,
-        }]
     );
 }
 
@@ -3552,6 +3286,116 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         cancel_notification.token,
         NumberOrString::String(progress_token.into())
+    );
+}
+
+#[gpui::test]
+async fn test_long_lines_disable_language_servers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "minified.js": "x".repeat(20_001),
+            "normal.js": "const answer = 42;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut fake_js_servers = language_registry.register_fake_lsp(
+        "JavaScript",
+        FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        },
+    );
+    language_registry.add(js_lang());
+
+    let _minified_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/minified.js"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(fake_js_servers.next().now_or_never().is_none());
+
+    let _normal_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/normal.js"), cx)
+        })
+        .await
+        .unwrap();
+    let mut fake_js_server = fake_js_servers.next().await.unwrap();
+    assert_eq!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        uri!("file:///dir/normal.js")
+    );
+    cx.executor().run_until_parked();
+    assert!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .now_or_never()
+            .is_none()
+    );
+}
+
+#[gpui::test]
+async fn test_max_buffer_line_length_can_be_overridden(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "minified.js": "x".repeat(20_001) }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut fake_js_servers = language_registry.register_fake_lsp(
+        "JavaScript",
+        FakeLspAdapter {
+            name: "js-lsp",
+            ..Default::default()
+        },
+    );
+    language_registry.add(js_lang());
+
+    let _minified_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/minified.js"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(fake_js_servers.next().now_or_never().is_none());
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                    max_buffer_line_length: Some(20_001),
+                    ..Default::default()
+                });
+            });
+        })
+    });
+
+    let mut fake_js_server = fake_js_servers.next().await.unwrap();
+    assert_eq!(
+        fake_js_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        uri!("file:///dir/minified.js")
     );
 }
 
@@ -5160,6 +5004,106 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
         }
     }
     chunks
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp_with_crlf_line_endings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let text = "
+        fn a() {}
+        fn b() {}
+        fn c() {}
+    "
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": text.clone(),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a whole-document edit that uses
+    // CRLF line endings. FsAutoComplete does this when formatting via Fantomas
+    // on Windows. The buffer's text is always LF-normalized, so the differing
+    // line endings must not be treated as changes; otherwise the entire buffer
+    // is replaced and cursor positions are lost.
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: "fn a() {}\r\nfn b() {}\r\nfn c() {}\r\n".into(),
+                }],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert!(edits.is_empty(), "expected no edits, got {edits:?}");
+
+    // The same whole-document CRLF edit, but with an actual change on one
+    // line, must produce an edit for just that change.
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: "fn a() {}\r\nfn b(x: u32) {}\r\nfn c() {}\r\n".into(),
+                }],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(buffer)..range.end.to_point(buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [(Point::new(1, 5)..Point::new(1, 5), "x: u32".into())]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([(range, new_text)], None, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a() {}
+                fn b(x: u32) {}
+                fn c() {}
+            "
+            .unindent()
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -14015,6 +13959,80 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_bare_dot_git_changed_event_refreshes_git_state(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repo"),
+        json!({
+            ".git": {},
+            "file.txt": "new contents",
+        }),
+    )
+    .await;
+
+    let dot_git = Path::new(path!("/repo/.git"));
+    fs.set_head_for_repo(dot_git, &[("file.txt", "old contents".into())], "old-sha");
+    fs.set_index_for_repo(dot_git, &[("file.txt", "old contents".into())]);
+
+    let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository
+                .head_commit
+                .as_ref()
+                .map(|commit| commit.sha.as_ref()),
+            Some("old-sha")
+        );
+        assert_eq!(
+            repository
+                .status_for_path(&repo_path("file.txt"))
+                .map(|entry| entry.status),
+            Some(StatusCode::Modified.worktree())
+        );
+    });
+
+    fs.with_git_state(dot_git, false, |state| {
+        state
+            .head_contents
+            .insert(repo_path("file.txt"), "new contents".into());
+        state
+            .index_contents
+            .insert(repo_path("file.txt"), "new contents".into());
+        state.refs.insert("HEAD".into(), "new-sha".into());
+    })
+    .unwrap();
+    fs.emit_fs_event(dot_git, Some(PathEventKind::Changed));
+
+    cx.run_until_parked();
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository
+                .head_commit
+                .as_ref()
+                .map(|commit| commit.sha.as_ref()),
+            Some("new-sha")
+        );
+        assert_eq!(repository.status_for_path(&repo_path("file.txt")), None);
+    });
+}
+
+#[gpui::test]
 #[ignore]
 async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -15027,10 +15045,11 @@ fn json_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JSON".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["json".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15041,10 +15060,11 @@ fn js_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         None,
@@ -15109,10 +15129,11 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         Language::new(
             LanguageConfig {
                 name: "Python".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["py".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None, // We're not testing Python parsing with this language.
@@ -15128,10 +15149,11 @@ fn typescript_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -15142,10 +15164,11 @@ fn tsx_lang() -> Arc<Language> {
     Arc::new(Language::new(
         LanguageConfig {
             name: "tsx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

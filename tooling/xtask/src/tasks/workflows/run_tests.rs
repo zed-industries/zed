@@ -499,7 +499,7 @@ fn check_wasm() -> NamedJob {
     fn cargo_check_wasm() -> Step<Run> {
         named::bash(concat!(
             "cargo -Zbuild-std=std,panic_abort ",
-            "check --target wasm32-unknown-unknown -p gpui_platform",
+            "check --target wasm32-unknown-unknown -p gpui_platform -p cloud_api_client",
         ))
         .add_env((
             "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
@@ -801,6 +801,17 @@ pub(crate) fn check_scripts(harden: bool) -> NamedJob {
         named::bash("./script/shellcheck-scripts error")
     }
 
+    fn run_zizmor() -> Step<Use> {
+        named::uses(
+            "zizmorcore",
+            "zizmor-action",
+            "6599ee8b7a49aef6a770f63d261d214911a7ce02", // v0.6.0
+        )
+        .add_with(("advanced-security", false))
+        .add_with(("min-severity", "high"))
+        .add_with(("version", "latest"))
+    }
+
     fn check_xtask_workflows() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             cargo xtask workflows
@@ -818,10 +829,11 @@ pub(crate) fn check_scripts(harden: bool) -> NamedJob {
             .when(harden, |this| this.add_step(steps::harden_runner()))
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
+            .add_step(cache_rust_dependencies_namespace())
+            .add_step(check_xtask_workflows())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
-            .add_step(cache_rust_dependencies_namespace())
-            .add_step(check_xtask_workflows()),
+            .add_step(run_zizmor()),
     )
 }
 
