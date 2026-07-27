@@ -118,7 +118,7 @@ jobs:
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-16x32-windows-2022
+    runs-on: namespace-profile-32x64-windows-2022
     steps:
     - name: steps::setup_windows
       run: |
@@ -239,7 +239,7 @@ jobs:
     timeout-minutes: 60
   clippy_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-16x32-windows-2022
+    runs-on: namespace-profile-32x64-windows-2022
     steps:
     - name: steps::setup_windows
       run: |

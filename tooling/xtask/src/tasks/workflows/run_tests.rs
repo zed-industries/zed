@@ -547,7 +547,7 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
         _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
     });
     let job = release_job(&[])
-        .runs_on(platform.runner(RunnerSize::Default))
+        .runs_on(platform.runner(RunnerSize::Large))
         .when(harden && platform == Platform::Linux, |this| {
             this.add_step(steps::harden_runner())
         })
@@ -587,7 +587,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
-            .runs_on(platform.runner(RunnerSize::Default))
+            .runs_on(platform.runner(RunnerSize::Large))
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
