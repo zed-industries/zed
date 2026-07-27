@@ -20,6 +20,54 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
+#[test]
+fn dev_container_project_group_key_is_stable_across_rebuilds() {
+    use std::hash::{Hash, Hasher};
+
+    fn hash_of(key: &ProjectGroupKey) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    let paths = PathList::new(&[PathBuf::from(path!("/workspaces/project"))]);
+    let docker = |container_id: &str, name: &str, config_file: &str| {
+        ProjectGroupKey::new(
+            Some(RemoteConnectionOptions::Docker(
+                remote::DockerConnectionOptions {
+                    name: name.to_string(),
+                    container_id: container_id.to_string(),
+                    remote_user: "vscode".to_string(),
+                    local_folder: Some("/host/project".to_string()),
+                    config_file: Some(config_file.to_string()),
+                    upload_binary_over_docker_exec: false,
+                    use_podman: false,
+                    remote_env: Default::default(),
+                },
+            )),
+            paths.clone(),
+        )
+    };
+
+    let config = "/host/project/.devcontainer/devcontainer.json";
+    let before = docker("container-before", "project", config);
+    let after_rebuild = docker("container-after", "project-renamed", config);
+
+    // A rebuild changes the ephemeral container id (and possibly the name) but
+    // not the host labels, so the group key must stay equal and hash equally —
+    // otherwise the sidebar forks a fresh, stale group each rebuild.
+    assert_eq!(before, after_rebuild);
+    assert_eq!(hash_of(&before), hash_of(&after_rebuild));
+
+    // A different config file in the same folder is a genuinely different group.
+    let other = docker(
+        "container-before",
+        "project",
+        "/host/project/.devcontainer/backend/devcontainer.json",
+    );
+    assert_ne!(before, other);
+}
+
 #[gpui::test]
 async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContext) {
     init_test(cx);
