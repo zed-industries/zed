@@ -1910,7 +1910,18 @@ impl MarkdownElement {
             .markdown
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
+        self.apply_autoscroll(position, line_height, window);
+        Some(())
+    }
 
+    /// Adjust the scroll offset (or request an ancestor autoscroll) to bring
+    /// `position` into view.
+    fn apply_autoscroll(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+        window: &mut Window,
+    ) {
         match &self.autoscroll {
             AutoscrollBehavior::Controlled(scroll_handle) => {
                 let viewport = scroll_handle.bounds();
@@ -1943,7 +1954,27 @@ impl MarkdownElement {
                 ));
             }
         }
-        Some(())
+    }
+
+    fn register_copy_actions(&self, text: &RenderedText, window: &mut Window) {
+        window.on_action(std::any::TypeId::of::<crate::Copy>(), {
+            let entity = self.markdown.clone();
+            let text = text.clone();
+            move |_, phase, window, cx| {
+                let text = text.clone();
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, move |this, cx| this.copy(&text, window, cx))
+                }
+            }
+        });
+        window.on_action(std::any::TypeId::of::<crate::CopyAsMarkdown>(), {
+            let entity = self.markdown.clone();
+            move |_, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
+                }
+            }
+        });
     }
 
     fn on_mouse_event<T: MouseEvent>(
@@ -1962,58 +1993,33 @@ impl MarkdownElement {
             }
         });
     }
-}
 
-impl Styled for MarkdownElement {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style.container_style
-    }
-}
-
-impl Element for MarkdownElement {
-    type RequestLayoutState = RenderedMarkdown;
-    type PrepaintState = Hitbox;
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+    /// Build the element subtree for the events in `events` (an index range into
+    /// `parsed_markdown.events`).
+    fn build_blocks(
+        &self,
+        parsed_markdown: &ParsedMarkdown,
+        events: Range<usize>,
+        images: &HashMap<usize, Arc<Image>>,
+        active_root_block: Option<usize>,
+        markdown_end: usize,
+        render_mermaid_diagrams: bool,
+        mermaid_state: &MermaidState,
         window: &mut Window,
         cx: &mut App,
-    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(
+    ) -> RenderedMarkdown {
+        let mut owned_builder = MarkdownElementBuilder::new(
             &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
-            let markdown = self.markdown.read(cx);
-            (
-                markdown.parsed_markdown.clone(),
-                markdown.images_by_source_offset.clone(),
-                markdown.active_root_block,
-                markdown.options.render_mermaid_diagrams,
-                markdown.mermaid_state.clone(),
-            )
-        };
-        let markdown_end = if let Some(last) = parsed_markdown.events.last() {
-            last.0.end
-        } else {
-            0
-        };
+        let builder = &mut owned_builder;
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
-        for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
+        for index in events {
+            let (range, event) = &parsed_markdown.events[index];
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -2068,7 +2074,7 @@ impl Element for MarkdownElement {
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
-                                    &mut builder,
+                                    &mut *builder,
                                     range,
                                     image.clone().into(),
                                     dest_url.clone(),
@@ -2083,7 +2089,7 @@ impl Element for MarkdownElement {
                             {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
-                                    &mut builder,
+                                    &mut *builder,
                                     range,
                                     source,
                                     dest_url.clone(),
@@ -2099,7 +2105,7 @@ impl Element for MarkdownElement {
                                 .current_cell_alignment()
                                 .and_then(alignment_to_text_align);
                             self.push_markdown_paragraph(
-                                &mut builder,
+                                &mut *builder,
                                 range,
                                 markdown_end,
                                 text_align_override,
@@ -2111,7 +2117,7 @@ impl Element for MarkdownElement {
                                 .current_cell_alignment()
                                 .and_then(alignment_to_text_align);
                             self.push_markdown_heading(
-                                &mut builder,
+                                &mut *builder,
                                 *level,
                                 range,
                                 markdown_end,
@@ -2120,7 +2126,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::BlockQuote(kind) => {
                             self.push_markdown_block_quote(
-                                &mut builder,
+                                &mut *builder,
                                 *kind,
                                 range,
                                 markdown_end,
@@ -2144,7 +2150,7 @@ impl Element for MarkdownElement {
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
                                         mermaid_diagram,
-                                        &mermaid_state,
+                                        mermaid_state,
                                         &self.style,
                                         self.markdown.clone(),
                                         range.start,
@@ -2241,7 +2247,7 @@ impl Element for MarkdownElement {
                         MarkdownTag::HtmlBlock => {
                             builder.push_div(div(), range, markdown_end);
                             if let Some(block) = parsed_markdown.html_blocks.get(&range.start) {
-                                self.render_html_block(block, &mut builder, markdown_end, cx);
+                                self.render_html_block(block, &mut *builder, markdown_end, cx);
                                 handled_html_block = true;
                             }
                         }
@@ -2288,7 +2294,7 @@ impl Element for MarkdownElement {
                                 } else {
                                     div().child("•").into_any_element()
                                 };
-                            self.push_markdown_list_item(&mut builder, bullet, range, markdown_end);
+                            self.push_markdown_list_item(&mut *builder, bullet, range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
                             font_style: Some(FontStyle::Italic),
@@ -2356,7 +2362,7 @@ impl Element for MarkdownElement {
                                 parsed_markdown.metadata_blocks.get(&range.start)
                             {
                                 self.push_metadata_block(
-                                    &mut builder,
+                                    &mut *builder,
                                     &parsed_markdown.source,
                                     metadata_block,
                                     markdown_end,
@@ -2456,13 +2462,13 @@ impl Element for MarkdownElement {
                         current_img_block_range.take();
                     }
                     MarkdownTagEnd::Paragraph => {
-                        self.pop_markdown_paragraph(&mut builder);
+                        self.pop_markdown_paragraph(&mut *builder);
                     }
                     MarkdownTagEnd::Heading(_) => {
-                        self.pop_markdown_heading(&mut builder);
+                        self.pop_markdown_heading(&mut *builder);
                     }
                     MarkdownTagEnd::BlockQuote(_kind) => {
-                        self.pop_markdown_block_quote(&mut builder);
+                        self.pop_markdown_block_quote(&mut *builder);
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
@@ -2550,7 +2556,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Item => {
-                        self.pop_markdown_list_item(&mut builder);
+                        self.pop_markdown_list_item(&mut *builder);
                     }
                     MarkdownTagEnd::Emphasis => builder.pop_text_style(),
                     MarkdownTagEnd::Strong => builder.pop_text_style(),
@@ -2594,7 +2600,7 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::Code => {
                     self.push_markdown_code_span(
-                        &mut builder,
+                        &mut *builder,
                         &parsed_markdown.source[range.clone()],
                         range.clone(),
                         cx,
@@ -2622,7 +2628,7 @@ impl Element for MarkdownElement {
                     {
                         let code_start = range.start + "<code>".len();
                         self.push_markdown_code_span(
-                            &mut builder,
+                            &mut *builder,
                             code,
                             code_start..code_start + code.len(),
                             cx,
@@ -2669,7 +2675,57 @@ impl Element for MarkdownElement {
                 }
             }
         }
-        let mut rendered_markdown = builder.build();
+        owned_builder.build()
+    }
+}
+
+impl Styled for MarkdownElement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style.container_style
+    }
+}
+
+impl Element for MarkdownElement {
+    type RequestLayoutState = RenderedMarkdown;
+    type PrepaintState = Hitbox;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+            let markdown = self.markdown.read(cx);
+            (
+                markdown.parsed_markdown.clone(),
+                markdown.images_by_source_offset.clone(),
+                markdown.active_root_block,
+                markdown.options.render_mermaid_diagrams,
+                markdown.mermaid_state.clone(),
+            )
+        };
+        let markdown_end = parsed_markdown.events.last().map_or(0, |last| last.0.end);
+        let mut rendered_markdown = self.build_blocks(
+            &parsed_markdown,
+            0..parsed_markdown.events.len(),
+            &images,
+            active_root_block,
+            markdown_end,
+            render_mermaid_diagrams,
+            &mermaid_state,
+            window,
+            cx,
+        );
         rendered_markdown.text.source = parsed_markdown.source.clone();
         rendered_markdown.text.events = parsed_markdown.events.clone();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
@@ -2709,25 +2765,7 @@ impl Element for MarkdownElement {
         let mut context = KeyContext::default();
         context.add("Markdown");
         window.set_key_context(context);
-        window.on_action(std::any::TypeId::of::<crate::Copy>(), {
-            let entity = self.markdown.clone();
-            let text = rendered_markdown.text.clone();
-            move |_, phase, window, cx| {
-                let text = text.clone();
-                if phase == DispatchPhase::Bubble {
-                    entity.update(cx, move |this, cx| this.copy(&text, window, cx))
-                }
-            }
-        });
-        window.on_action(std::any::TypeId::of::<crate::CopyAsMarkdown>(), {
-            let entity = self.markdown.clone();
-            move |_, phase, window, cx| {
-                if phase == DispatchPhase::Bubble {
-                    entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
-                }
-            }
-        });
-
+        self.register_copy_actions(&rendered_markdown.text, window);
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
         self.paint_search_highlights(&rendered_markdown.text, window, cx);
