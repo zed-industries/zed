@@ -1,7 +1,9 @@
 use gpui::{Context, Task, WeakEntity};
 use livekit_client::{ConnectionQuality, RemoteAudioPlaybackStats};
+use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, VecDeque},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -9,19 +11,26 @@ use super::room::Room;
 
 const MAX_HISTORY_SAMPLES: usize = 600;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize)]
 pub struct CallStats {
+    #[serde(serialize_with = "serialize_connection_quality")]
     pub connection_quality: Option<ConnectionQuality>,
+    #[serde(serialize_with = "serialize_connection_quality")]
     pub effective_quality: Option<ConnectionQuality>,
     pub latency_ms: Option<f64>,
     pub jitter_ms: Option<f64>,
     pub packet_loss_pct: Option<f64>,
+    #[serde(
+        rename = "input_lag_ms",
+        serialize_with = "serialize_optional_duration_ms"
+    )]
     pub input_lag: Option<Duration>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default, Serialize)]
 pub struct RemoteAudioDiagnostics {
     pub participant_id: String,
+    #[serde(skip)]
     pub participant_name: String,
     pub track_id: String,
     pub packets_received: u64,
@@ -40,18 +49,26 @@ pub struct RemoteAudioDiagnostics {
     pub maximum_queue_depth: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct CallDiagnosticsSnapshot {
+    #[serde(rename = "elapsed_ms", serialize_with = "serialize_duration_ms")]
     pub elapsed: Duration,
     pub stats: CallStats,
     pub remote_audio: Vec<RemoteAudioDiagnostics>,
 }
 
+#[derive(Serialize)]
+pub struct CallDiagnosticsReport {
+    schema_version: u32,
+    samples: Vec<Arc<CallDiagnosticsSnapshot>>,
+}
+
 pub struct CallDiagnostics {
     stats: CallStats,
-    history: VecDeque<CallDiagnosticsSnapshot>,
+    history: VecDeque<Arc<CallDiagnosticsSnapshot>>,
     previous_inbound: HashMap<String, InboundCounters>,
     participant_ids: HashMap<u64, String>,
+    track_ids: HashMap<String, String>,
     started_at: Instant,
     room: WeakEntity<Room>,
     poll_task: Option<Task<()>>,
@@ -64,6 +81,7 @@ impl CallDiagnostics {
             history: VecDeque::with_capacity(MAX_HISTORY_SAMPLES),
             previous_inbound: HashMap::default(),
             participant_ids: HashMap::default(),
+            track_ids: HashMap::default(),
             started_at: Instant::now(),
             room,
             poll_task: None,
@@ -77,11 +95,18 @@ impl CallDiagnostics {
     }
 
     pub fn latest(&self) -> Option<&CallDiagnosticsSnapshot> {
-        self.history.back()
+        self.history.back().map(Arc::as_ref)
     }
 
-    pub fn history(&self) -> &VecDeque<CallDiagnosticsSnapshot> {
+    pub fn history(&self) -> &VecDeque<Arc<CallDiagnosticsSnapshot>> {
         &self.history
+    }
+
+    pub fn report(&self) -> CallDiagnosticsReport {
+        CallDiagnosticsReport {
+            schema_version: 1,
+            samples: self.history.iter().cloned().collect(),
+        }
     }
 
     fn start_polling(&mut self, cx: &mut Context<Self>) {
@@ -118,10 +143,17 @@ impl CallDiagnostics {
                 .or_insert_with(|| format!("participant-{next_participant_number}"))
                 .clone();
             for (track_id, (track, stream)) in &participant.audio_tracks {
+                let track_id = track_id.to_string();
+                let next_track_number = self.track_ids.len() + 1;
+                let track_id = self
+                    .track_ids
+                    .entry(track_id)
+                    .or_insert_with(|| format!("audio-track-{next_track_number}"))
+                    .clone();
                 remote_tracks.push(TrackContext {
                     participant_id: participant_id.clone(),
                     participant_name: participant.user.username.to_string(),
-                    track_id: track_id.to_string(),
+                    track_id,
                     rtc_track_id: track.rtc_track_id(),
                     playback: stream.remote_playback_stats().unwrap_or_default(),
                 });
@@ -167,7 +199,7 @@ impl CallDiagnostics {
             return;
         };
         self.stats = snapshot.stats.clone();
-        self.history.push_back(snapshot);
+        self.history.push_back(Arc::new(snapshot));
         if self.history.len() > MAX_HISTORY_SAMPLES {
             self.history.pop_front();
         }
@@ -175,6 +207,43 @@ impl CallDiagnostics {
     }
 }
 
+fn serialize_connection_quality<S>(
+    quality: &Option<ConnectionQuality>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    quality
+        .map(|quality| match quality {
+            ConnectionQuality::Excellent => "excellent",
+            ConnectionQuality::Good => "good",
+            ConnectionQuality::Poor => "poor",
+            ConnectionQuality::Lost => "lost",
+        })
+        .serialize(serializer)
+}
+
+fn serialize_duration_ms<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    duration.as_millis().serialize(serializer)
+}
+
+fn serialize_optional_duration_ms<S>(
+    duration: &Option<Duration>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    duration
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .serialize(serializer)
+}
+
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 struct TrackContext {
     participant_id: String,
     participant_name: String,
@@ -189,6 +258,7 @@ struct PollResult {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 struct InboundCounters {
     packets_received: u64,
     packets_lost: i64,
@@ -246,6 +316,7 @@ fn counter_delta(current: u64, previous: u64) -> u64 {
     current.checked_sub(previous).unwrap_or_default()
 }
 
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 fn signed_counter_delta(current: i64, previous: i64) -> i64 {
     current.checked_sub(previous).unwrap_or_default()
 }
@@ -528,5 +599,28 @@ mod tests {
         assert_eq!(average_jitter_buffer_delay_ms(1.5, 1.0, 100), Some(5.0));
         assert_eq!(average_jitter_buffer_delay_ms(0.5, 1.0, 100), None);
         assert_eq!(average_jitter_buffer_delay_ms(1.5, 1.0, 0), None);
+    }
+
+    #[test]
+    fn report_redacts_participant_names() -> anyhow::Result<()> {
+        let report = CallDiagnosticsReport {
+            schema_version: 1,
+            samples: vec![Arc::new(CallDiagnosticsSnapshot {
+                elapsed: Duration::from_secs(1),
+                stats: CallStats::default(),
+                remote_audio: vec![RemoteAudioDiagnostics {
+                    participant_id: "participant-1".to_string(),
+                    participant_name: "private-username".to_string(),
+                    track_id: "audio-track-1".to_string(),
+                    ..Default::default()
+                }],
+            })],
+        };
+
+        let serialized = serde_json::to_string(&report)?;
+        assert!(!serialized.contains("private-username"));
+        assert!(serialized.contains("participant-1"));
+        assert!(serialized.contains("audio-track-1"));
+        Ok(())
     }
 }

@@ -528,9 +528,11 @@ impl AudioMixerSource {
         self.diagnostics
             .current_queue_depth
             .store(queue_depth, Ordering::Relaxed);
-        self.diagnostics
-            .maximum_queue_depth
-            .fetch_max(queue_depth, Ordering::Relaxed);
+        if queue_depth > self.diagnostics.maximum_queue_depth.load(Ordering::Relaxed) {
+            self.diagnostics
+                .maximum_queue_depth
+                .fetch_max(queue_depth, Ordering::Relaxed);
+        }
     }
 }
 
