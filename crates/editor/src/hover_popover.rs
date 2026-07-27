@@ -1297,11 +1297,7 @@ mod tests {
         // JSDoc / Rust doc comment / Go doc style: single newlines inside a
         // paragraph. Per CommonMark §6.7 these are soft breaks and must render
         // as spaces, producing one reflowing paragraph. See issue #60777.
-        let text = concat!(
-            "This is a test\n",
-            "for tooltip\n",
-            "reflow"
-        );
+        let text = concat!("This is a test\n", "for tooltip\n", "reflow");
         let markdown = cx.new(|cx| Markdown::new(text.into(), None, None, cx));
         cx.run_until_parked();
 
@@ -1340,10 +1336,7 @@ mod tests {
             "expected two hard line breaks, got {rendered:?}"
         );
         let lines: Vec<&str> = rendered.split('\n').collect();
-        assert_eq!(
-            lines,
-            ["first line", "second line", "third line"]
-        );
+        assert_eq!(lines, ["first line", "second line", "third line"]);
     }
 
     impl InfoPopover {
