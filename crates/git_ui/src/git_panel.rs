@@ -12584,8 +12584,7 @@ mod tests {
             ],
         );
 
-        let project =
-            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = window_handle
