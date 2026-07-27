@@ -186,7 +186,10 @@ fn create_preview_branch(
 
     let (authenticate, token) = steps::authenticate_as_zippy()
         .for_repository(steps::RepositoryTarget::current())
-        .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
+        .with_permissions([
+            (steps::TokenPermissions::Contents, Level::Write),
+            (steps::TokenPermissions::Workflows, Level::Write),
+        ])
         .into();
 
     let main_sha_step = get_main_sha();
@@ -239,7 +242,10 @@ fn promote_to_stable(
 ) -> steps::NamedJob {
     let (authenticate, token) = steps::authenticate_as_zippy()
         .for_repository(steps::RepositoryTarget::current())
-        .with_permissions([(steps::TokenPermissions::Contents, Level::Write)])
+        .with_permissions([
+            (steps::TokenPermissions::Contents, Level::Write),
+            (steps::TokenPermissions::Workflows, Level::Write),
+        ])
         .into();
 
     let read_version_step = named::bash(indoc::indoc! {r#"
