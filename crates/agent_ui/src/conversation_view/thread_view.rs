@@ -7965,11 +7965,11 @@ impl ThreadView {
                     .when(tool_failed || command_failed, |card| card.border_dashed())
                     .border_color(border_color)
                     .rounded_md()
+                    .overflow_hidden()
             })
-            .overflow_hidden()
             .child(header)
-            .when(is_expanded && terminal_view.is_some(), |this| {
-                this.child(
+            .map(|this| {
+                let terminal_content = || {
                     div()
                         .pt_2()
                         .border_t_1()
@@ -7979,7 +7979,7 @@ impl ThreadView {
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
-                        .children(terminal_view.map(|terminal_view| {
+                        .children(terminal_view.clone().map(|terminal_view| {
                             let element = if terminal_view
                                 .read(cx)
                                 .content_mode(window, cx)
@@ -7997,8 +7997,24 @@ impl ThreadView {
                                 }))
                                 .child(element)
                                 .into_any_element()
-                        })),
-                )
+                        }))
+                };
+
+                if layout == ToolCallLayout::Floating {
+                    this.child(
+                        div()
+                            .id(("floating-tool-call-body", entry_ix))
+                            .max_h_40()
+                            .overflow_y_scroll()
+                            .when(is_expanded && terminal_view.is_some(), |this| {
+                                this.child(terminal_content())
+                            }),
+                    )
+                } else {
+                    this.when(is_expanded && terminal_view.is_some(), |this| {
+                        this.child(terminal_content())
+                    })
+                }
             })
             .when_some(confirmation_options, |this, options| {
                 let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
