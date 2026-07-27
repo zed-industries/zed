@@ -231,6 +231,17 @@
     },
   },
   {
+    "context": "Editor && has_conflicts",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-f8": "git::GoToNextConflict",
+      "alt-shift-f8": "git::GoToPreviousConflict",
+      "cmd-alt-g c": "git::AcceptCurrentChange",
+      "cmd-alt-g i": "git::AcceptIncomingChange",
+      "cmd-alt-g a": "git::AcceptBothChanges",
+    },
+  },
+  {
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {

@@ -195,6 +195,16 @@
     },
   },
   {
+    "context": "Editor && has_conflicts",
+    "bindings": {
+      "alt-f8": "git::GoToNextConflict",
+      "alt-shift-f8": "git::GoToPreviousConflict",
+      "alt-g c": "git::AcceptCurrentChange",
+      "alt-g i": "git::AcceptIncomingChange",
+      "alt-g a": "git::AcceptBothChanges",
+    },
+  },
+  {
     "context": "Editor && editor_agent_diff",
     "bindings": {
       "alt-y": "agent::Keep",
