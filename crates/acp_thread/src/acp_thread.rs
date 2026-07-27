@@ -436,9 +436,19 @@ impl ElicitationStore {
     }
 
     fn validate_request(request: &acp::CreateElicitationRequest) -> Result<(), acp::Error> {
-        if let acp::ElicitationMode::Url(mode) = &request.mode {
-            url::Url::parse(&mode.url)
-                .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
+        match &request.mode {
+            acp::ElicitationMode::Form(_) => {}
+            acp::ElicitationMode::Url(mode) => {
+                let url = url::Url::parse(&mode.url)
+                    .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
+                if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+                    return Err(acp::Error::invalid_params()
+                        .data("elicitation URL must use HTTP or HTTPS and include a host"));
+                }
+            }
+            _ => {
+                return Err(acp::Error::invalid_params().data("unsupported elicitation mode"));
+            }
         }
 
         Ok(())
@@ -500,17 +510,11 @@ impl ElicitationStore {
     fn complete_url_elicitation_entry(elicitation: &mut Elicitation) -> bool {
         let previous_status = mem::replace(&mut elicitation.status, ElicitationStatus::Completed);
         match previous_status {
-            ElicitationStatus::Pending { respond_tx } => {
-                respond_tx
-                    .send(acp::CreateElicitationResponse::new(
-                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-                    ))
-                    .ok();
-                true
-            }
             ElicitationStatus::Accepted => true,
-            ElicitationStatus::Completed => false,
-            previous_status @ (ElicitationStatus::Declined | ElicitationStatus::Canceled) => {
+            previous_status @ (ElicitationStatus::Pending { .. }
+            | ElicitationStatus::Declined
+            | ElicitationStatus::Canceled
+            | ElicitationStatus::Completed) => {
                 elicitation.status = previous_status;
                 false
             }
@@ -7537,16 +7541,30 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.complete_url_elicitation(&url_elicitation_id, cx);
         });
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(
+                elicitation.status,
+                ElicitationStatus::Pending { .. }
+            ));
+        });
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
         assert!(matches!(
             response_task.await.action,
             acp::ElicitationAction::Accept(_)
         ));
         thread.update(cx, |thread, cx| {
-            thread.respond_to_elicitation(
-                &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
-                cx,
-            );
+            thread.complete_url_elicitation(&url_elicitation_id, cx);
         });
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -8380,17 +8398,30 @@ mod tests {
         store.update(cx, |store, cx| {
             store.complete_url_elicitation(&url_elicitation_id, cx);
         });
-
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&entry_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(
+                elicitation.status,
+                ElicitationStatus::Pending { .. }
+            ));
+        });
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
         assert!(matches!(
             response_task.await.action,
             acp::ElicitationAction::Accept(_)
         ));
         store.update(cx, |store, cx| {
-            store.respond_to_elicitation(
-                &entry_id,
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
-                cx,
-            );
+            store.complete_url_elicitation(&url_elicitation_id, cx);
         });
         store.read_with(cx, |store, _| {
             let Some((_, elicitation)) = store.elicitation(&entry_id) else {
@@ -8568,28 +8599,92 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_url_elicitation_rejects_invalid_url(cx: &mut TestAppContext) {
+    async fn test_url_elicitation_rejects_non_browser_urls(cx: &mut TestAppContext) {
         init_test(cx);
         enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        for invalid_url in [
+            "not a url",
+            "file:///tmp/authorize",
+            "data:text/plain,authorize",
+            "mailto:user@example.com",
+            "zed://settings",
+        ] {
+            let result = thread.update(cx, |thread, cx| {
+                thread.request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationUrlMode::new(
+                            acp::ElicitationSessionScope::new(session_id.clone()),
+                            "url-1",
+                            invalid_url,
+                        ),
+                        "Complete this in the browser",
+                    ),
+                    cx,
+                )
+            });
+
+            let Err(error) = result else {
+                panic!("{invalid_url} should not be accepted for URL elicitation");
+            };
+            assert_eq!(error.code, acp::ErrorCode::InvalidParams);
+        }
+        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_elicitation_rejects_unadvertised_mode(cx: &mut TestAppContext) {
+        init_test(cx);
         let thread = new_test_thread(cx).await;
         let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let result = thread.update(cx, |thread, cx| {
             thread.request_elicitation(
                 acp::CreateElicitationRequest::new(
-                    acp::ElicitationUrlMode::new(
+                    acp::OtherElicitationMode::new(
+                        "future",
                         acp::ElicitationSessionScope::new(session_id),
-                        "url-1",
-                        "not a url",
+                        std::collections::BTreeMap::new(),
                     ),
-                    "Complete this in the browser",
+                    "Use a future input mode",
                 ),
                 cx,
             )
         });
 
-        assert!(result.is_err());
+        let Err(error) = result else {
+            panic!("unadvertised elicitation mode should be rejected");
+        };
+        assert_eq!(error.code, acp::ErrorCode::InvalidParams);
         thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_request_elicitation_store_rejects_unadvertised_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+
+        let result = store.update(cx, |store, cx| {
+            store.request_elicitation(
+                acp::CreateElicitationRequest::new(
+                    acp::OtherElicitationMode::new(
+                        "future",
+                        acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                        std::collections::BTreeMap::new(),
+                    ),
+                    "Use a future input mode",
+                ),
+                cx,
+            )
+        });
+
+        let Err(error) = result else {
+            panic!("unadvertised elicitation mode should be rejected");
+        };
+        assert_eq!(error.code, acp::ErrorCode::InvalidParams);
+        store.read_with(cx, |store, _| assert!(store.elicitations().is_empty()));
     }
 
     async fn run_until_first_tool_call(
