@@ -143,8 +143,8 @@ pub struct SandboxedTerminalToolInput {
     #[cfg_attr(
         target_os = "macos",
         doc = "Sandboxed commands can already write to the project worktree \
-        directories and a per-command temporary directory, so only list paths \
-        outside those."
+        directories and a per-thread temporary directory (exposed via \
+        `$TMPDIR`), so only list paths outside those."
     )]
     /// Provide absolute or worktree-relative paths; each
     /// directory grants write access to its whole subtree. Prefer this over
@@ -156,6 +156,13 @@ pub struct SandboxedTerminalToolInput {
         doc = "\nOn Linux, every path here must be a directory that already exists. \
         Requesting a file, or a path that does not exist yet, is an error. To create new \
         files, request write access to the existing directory that will contain them."
+    )]
+    #[cfg_attr(
+        target_os = "windows",
+        doc = "\nEvery path here must be an existing directory, given as a Windows drive \
+        path (`C:\\...`) or a WSL absolute path (`/...`); a path that does not exist \
+        cannot be granted. To write somewhere new, request write access to the nearest \
+        existing parent directory."
     )]
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
