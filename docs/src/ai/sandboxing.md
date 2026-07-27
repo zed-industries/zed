@@ -312,10 +312,11 @@ rather than WSL's `/mnt/c/...`), so a command written for the sandboxed WSL shel
 
 #### Why do NTFS objects compromise the sandbox? {#why-ntfs-compromise}
 
-In general, the security of the sandbox relies on two things matching:
+In general, the security of the filesystem sandbox relies on two things
+matching:
 
 - The path that the user was presented when they approved
-- The filesystem object to which write access was granted
+- The filesystem object to which access was granted
 
 If a user believes they granted access to `/foo/hello`, but they actually granted
 access to `/bar/world`, then the sandbox has failed.
@@ -326,21 +327,54 @@ But `/foo/hello` doesn't refer to an inode. Loosely, it refers to a location
 where an inode might exist. It may refer to one inode at one point in time,
 and another inode later. 
 
-There are various ways in which an attacker can change the inode that a given
-path refers to, but they mostly involve replacing parts of the path with a
-symlink to somewhere else. And so, on non-WSL Linux, we can protect against this
-by using a canonicalized, symlink-free path as the source of truth for the
-inode. But on its own, this is not enough, since there is a timing window
-between showing the approval prompt (or loading the persisted path) and
-constructing the sandbox during which it can be swapped for a symlink.
+And because of symlinks, it's possible for an agent with write access to `/foo`
+to change `/foo/bar` to point to `/secret`, even if they have no write access to
+`/secret`. If this happens, even though the agent has access to `/foo`, we
+cannot also grant access to `/foo/bar`, since that would grant access to
+`/secret`.
 
-To protect against that, we deal with "file descriptors", which are loosely
-"references to inodes", rather than paths, which are "places an inode could be".
-This means that replacing some component of the path with a symlink has no
-effect on which inode is pointed to by a file descriptor.
+This means that we must only refer to paths which are:
+- canonical (i.e. contain no symlinks)
+- absolute
+- unchanged since we validated the above
 
+On non-WSL-Linux, we can do this by simply opening the path to get a "file
+descriptor", which identifies the **inode** directly, so holding the file
+descriptor allows us to "pin" the correct inode. This also works just fine on
+WSL when the path in question refers to an object in the Linux filesystem.
 
+However, WSL allows accessing files stored in the Windows drive. For example,
+the file `C:\foo\bar.txt` can be accessed from Linux at `/mnt/c/foo/bar.txt`,
+using a mechanism similar to a network drive. Unfortunately, inode pinning is
+not guaranteed to work for these. While we can still pin the inode for
+`/mnt/c/foo/bar.txt`, this doesn't pin the underlying Windows filesystem object,
+and so it's possible for this to change during the lifetime of a sandbox, which
+could potentially allow writes outside the confines of the sandbox.
 
+#### How big a risk is this in practice? {#how-big-a-risk}
+
+**In our testing, we have not been able to exploit this issue to escape the
+sandbox.**
+
+In practice, the mapping tends to be quite stable. This is because the inode
+that gets generated in the Linux filesytem is derived from the *file reference*
+(very loosely, a "Windows inode"), which has similar stability to a Linux inode.
+The standard "rename a subcomponent" attack seems to produce a different inode
+number, and so the in-sandbox check would fail-closed.
+
+But, crucially, *it is not guaranteed*. This is the behaviour we observed in
+testing, but could not find documentation guaranteeing this behaviour in all
+circumstances, for all Windows/WSL versions past and present, regardless of
+configuration options.
+
+Zed's sandbox has been designed with the aim of being totally unbreakable, even
+in the presence of a motivated attacker with full control over the files in your
+project running as a standard user. It does *not* assume a
+mostly-benevolent-but-sometimes-careless agent.
+
+Given this, we cannot give the same guarantees about sandbox security as we do
+for more standard cases. However, even with this weakened guarantee, the sandbox
+still helps keep you much safer than without it, so it's worth keeping enabled.
 
 ## Choosing What to Approve {#choosing-what-to-approve}
 
