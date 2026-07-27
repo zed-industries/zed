@@ -4394,4 +4394,43 @@ mod test {
 
         cx.assert_state("const after = 2; console.log(afterˇ)", Mode::HelixNormal);
     }
+
+    #[gpui::test]
+    async fn test_helix_go_to_definition_uses_visible_cursor_position(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new_typescript(cx).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            "const before = 2; console.log(«beforeˇ»)",
+            Mode::HelixNormal,
+        );
+
+        let expected_position = cx.to_lsp(MultiBufferOffset(
+            "const before = 2; console.log(befor".len(),
+        ));
+        let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
+        let mut definition_request = cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+            move |url, params, _| async move {
+                assert_eq!(
+                    params.text_document_position_params.position,
+                    expected_position
+                );
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                    uri: url,
+                    range: def_range,
+                })))
+            },
+        );
+
+        cx.simulate_keystrokes("g d");
+        definition_request.next().await.unwrap();
+        cx.run_until_parked();
+
+        cx.assert_state(
+            "const «beforeˇ» = 2; console.log(before)",
+            Mode::HelixNormal,
+        );
+    }
 }
