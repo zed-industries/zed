@@ -55,9 +55,7 @@ impl Children {
         Self::Ready(nodes.into())
     }
 
-    pub fn deferred(
-        resolve: impl Fn(&mut App) -> Task<Result<Vec<Node>>> + 'static,
-    ) -> Self {
+    pub fn deferred(resolve: impl Fn(&mut App) -> Task<Result<Vec<Node>>> + 'static) -> Self {
         Self::Deferred(Rc::new(resolve))
     }
 }
@@ -90,7 +88,11 @@ pub struct Node {
 }
 
 impl Node {
-    fn new(id: impl Into<SharedString>, label: impl Into<SharedString>, activate: Activate) -> Self {
+    fn new(
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        activate: Activate,
+    ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -227,7 +229,9 @@ impl Stack {
     }
 
     pub fn current_mut(&mut self) -> &mut Page {
-        self.pages.last_mut().expect("stack always holds a root page")
+        self.pages
+            .last_mut()
+            .expect("stack always holds a root page")
     }
 
     pub fn nodes(&self) -> &[Node] {
@@ -348,13 +352,15 @@ mod tests {
         assert!(!section.has_child_page());
 
         let disabled = leaf("push").disabled("No upstream");
-        assert!(!disabled.is_selectable(), "disabled rows stay visible but inert");
+        assert!(
+            !disabled.is_selectable(),
+            "disabled rows stay visible but inert"
+        );
     }
 
     #[test]
     fn submenu_wins_over_activate_for_the_child_page() {
-        let with_both = leaf("main")
-            .submenu(Children::ready(vec![leaf("checkout")]));
+        let with_both = leaf("main").submenu(Children::ready(vec![leaf("checkout")]));
         assert!(with_both.has_child_page());
 
         let category = Node::page("recent", "Recent", Children::ready(vec![leaf("x")]));

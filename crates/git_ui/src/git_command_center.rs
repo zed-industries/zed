@@ -67,12 +67,8 @@ impl GitCommandCenter {
         cx: &mut Context<Self>,
     ) -> Self {
         let previous_focus_handle = window.focused(cx).unwrap_or_else(|| cx.focus_handle());
-        let delegate = GitCommandCenterDelegate::new(
-            workspace,
-            repository.clone(),
-            previous_focus_handle,
-            cx,
-        );
+        let delegate =
+            GitCommandCenterDelegate::new(workspace, repository.clone(), previous_focus_handle, cx);
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
@@ -448,12 +444,7 @@ impl PickerDelegate for GitCommandCenterDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         self.matches
             .get(ix)
             .and_then(|m| self.stack.nodes().get(m.node_index))
@@ -524,8 +515,10 @@ impl PickerDelegate for GitCommandCenterDelegate {
                 node.label.clone(),
             ));
             if let Some(keywords) = &node.keywords {
-                keyword_candidates
-                    .push(StringMatchCandidate::from_shared(node_index, keywords.clone()));
+                keyword_candidates.push(StringMatchCandidate::from_shared(
+                    node_index,
+                    keywords.clone(),
+                ));
             }
         }
 
@@ -664,25 +657,18 @@ impl PickerDelegate for GitCommandCenterDelegate {
         }
 
         let disabled = node.disabled_reason.is_some();
-        let detail = node
-            .disabled_reason
-            .clone()
-            .or_else(|| node.detail.clone());
+        let detail = node.disabled_reason.clone().or_else(|| node.detail.clone());
 
         let label = h_flex()
             .w_full()
             .min_w_0()
             .gap_2p5()
             .when_some(node.icon, |this, icon| {
-                this.child(
-                    Icon::new(icon)
-                        .size(IconSize::Small)
-                        .color(if disabled {
-                            Color::Disabled
-                        } else {
-                            node.icon_color.unwrap_or(Color::Muted)
-                        }),
-                )
+                this.child(Icon::new(icon).size(IconSize::Small).color(if disabled {
+                    Color::Disabled
+                } else {
+                    node.icon_color.unwrap_or(Color::Muted)
+                }))
             })
             .child(
                 v_flex()
@@ -750,7 +736,14 @@ impl PickerDelegate for GitCommandCenterDelegate {
                 .aria_label(node.label.clone())
                 .aria_keyshortcuts(keyshortcuts)
                 .when(selected, |this| this.aria_active_descendant())
-                .child(h_flex().w_full().min_w_0().gap_2().child(label).child(trailing))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .child(label)
+                        .child(trailing),
+                )
                 // Clicking a row runs it, so a row that also has verbs needs its
                 // own hover target to reach them — the mouse equivalent of Right.
                 .when(has_child_page && !disabled, |this| {
@@ -779,8 +772,7 @@ fn root_nodes(
     let Some(repository) = repository else {
         return vec![
             Node::section("Repository"),
-            Node::action("init", "Initialize Repository", Box::new(git::Init))
-                .icon(IconName::Plus),
+            Node::action("init", "Initialize Repository", Box::new(git::Init)).icon(IconName::Plus),
             Node::action("clone", "Clone Repository…", Box::new(git::Clone))
                 .icon(IconName::CloudDownload),
         ];
@@ -884,13 +876,21 @@ fn root_nodes(
         .icon(IconName::Pencil),
     );
     nodes.push(
-        Node::action("copy-branch-name", "Copy Branch Name", Box::new(git::CopyBranchName))
-            .icon(IconName::Copy),
+        Node::action(
+            "copy-branch-name",
+            "Copy Branch Name",
+            Box::new(git::CopyBranchName),
+        )
+        .icon(IconName::Copy),
     );
     nodes.push(
-        Node::action("compare-branches", "Compare With Branch…", Box::new(DeployBranchDiff))
-            .icon(IconName::Diff)
-            .keywords("diff branch"),
+        Node::action(
+            "compare-branches",
+            "Compare With Branch…",
+            Box::new(DeployBranchDiff),
+        )
+        .icon(IconName::Diff)
+        .keywords("diff branch"),
     );
 
     nodes.push(Node::section("History"));
@@ -926,7 +926,9 @@ fn root_nodes(
         Node::action("file-history", "File History", Box::new(git::FileHistory))
             .icon(IconName::HistoryRerun),
     );
-    nodes.push(Node::action("blame", "Blame Current File", Box::new(git::Blame)).icon(IconName::Book));
+    nodes.push(
+        Node::action("blame", "Blame Current File", Box::new(git::Blame)).icon(IconName::Book),
+    );
 
     nodes.push(Node::section("Stashes"));
     nodes.push(
@@ -954,19 +956,18 @@ fn root_nodes(
                 .icon(IconName::Bookmark),
         );
         nodes.push(
-            Node::action("stash-apply", "Apply Latest Stash", Box::new(git::StashApply))
-                .icon(IconName::Bookmark),
+            Node::action(
+                "stash-apply",
+                "Apply Latest Stash",
+                Box::new(git::StashApply),
+            )
+            .icon(IconName::Bookmark),
         );
     }
 
     nodes.push(Node::section("Remotes & Repositories"));
     nodes.push(
-        Node::page(
-            "remotes",
-            "Remotes",
-            remote_page(repository.clone()),
-        )
-        .icon(IconName::Server),
+        Node::page("remotes", "Remotes", remote_page(repository.clone())).icon(IconName::Server),
     );
     nodes.push(
         Node::action(
@@ -977,8 +978,12 @@ fn root_nodes(
         .icon(IconName::Github),
     );
     nodes.push(
-        Node::action("worktrees", "Worktrees…", Box::new(zed_actions::git::Worktree))
-            .icon(IconName::GitWorktree),
+        Node::action(
+            "worktrees",
+            "Worktrees…",
+            Box::new(zed_actions::git::Worktree),
+        )
+        .icon(IconName::GitWorktree),
     );
     nodes.push(
         Node::action(
@@ -1045,7 +1050,10 @@ fn branch_page(
         let workspace = workspace.clone();
         let repository = repository.clone();
         let snapshot = repository.read(cx);
-        let head_ref = snapshot.branch.as_ref().map(|branch| branch.ref_name.clone());
+        let head_ref = snapshot
+            .branch
+            .as_ref()
+            .map(|branch| branch.ref_name.clone());
         // `branch_list` already arrives newest-first, so the recency page is
         // just a prefix of it. Take before cloning so a 100k-ref repository
         // doesn't clone 100k branches to show twenty.
@@ -1079,7 +1087,11 @@ fn branch_node(
     let detail = branch.most_recent_commit.as_ref().map(|commit| {
         SharedString::from(format!(
             "{} · {}",
-            commit.sha.chars().take(git::SHORT_SHA_LENGTH).collect::<String>(),
+            commit
+                .sha
+                .chars()
+                .take(git::SHORT_SHA_LENGTH)
+                .collect::<String>(),
             commit.subject
         ))
     });
@@ -1094,17 +1106,13 @@ fn branch_node(
             (ahead, behind) => Some(format!("↑{ahead} ↓{behind}")),
         });
 
-    let mut node = Node::run(
-        format!("branch:{}", branch.ref_name),
-        name.clone(),
-        {
-            let repository = repository.clone();
-            let workspace = workspace.clone();
-            move |_query, _window, cx| {
-                checkout(&repository, &workspace, &name, cx);
-            }
-        },
-    )
+    let mut node = Node::run(format!("branch:{}", branch.ref_name), name.clone(), {
+        let repository = repository.clone();
+        let workspace = workspace.clone();
+        move |_query, _window, cx| {
+            checkout(&repository, &workspace, &name, cx);
+        }
+    })
     .icon(if is_head {
         IconName::Check
     } else if is_remote {
@@ -1246,8 +1254,12 @@ fn branch_verbs(
         verbs.push(Node::action("push", "Push", Box::new(git::Push)).icon(IconName::ArrowUp));
         verbs.push(Node::action("pull", "Pull", Box::new(git::Pull)).icon(IconName::ArrowDown));
         verbs.push(
-            Node::action("compare", "Compare With Branch…", Box::new(DeployBranchDiff))
-                .icon(IconName::Diff),
+            Node::action(
+                "compare",
+                "Compare With Branch…",
+                Box::new(DeployBranchDiff),
+            )
+            .icon(IconName::Diff),
         );
     }
 
@@ -1270,20 +1282,20 @@ fn new_branch_page(
             Some(base) => format!("Type a name, then press Enter. Based on {base}"),
             None => "Type a name, then press Enter. Based on the current branch".to_string(),
         };
-        Task::ready(Ok(vec![Node::run(
-            "create-branch",
-            "Create Branch",
-            move |query, _window, cx| {
-                let name = normalize_branch_name(query);
-                if name.is_empty() {
-                    return;
-                }
-                let workspace = workspace.clone();
-                let base = base.clone();
-                let receiver = repository
-                    .update(cx, |repository, _| repository.create_branch(name, base));
-                cx.spawn(async move |cx| {
-                    match receiver.await {
+        Task::ready(Ok(vec![
+            Node::run(
+                "create-branch",
+                "Create Branch",
+                move |query, _window, cx| {
+                    let name = normalize_branch_name(query);
+                    if name.is_empty() {
+                        return;
+                    }
+                    let workspace = workspace.clone();
+                    let base = base.clone();
+                    let receiver =
+                        repository.update(cx, |repository, _| repository.create_branch(name, base));
+                    cx.spawn(async move |cx| match receiver.await {
                         Ok(Ok(())) => {}
                         Ok(Err(error)) => {
                             report_in(&workspace, "create branch", error, cx).await;
@@ -1291,13 +1303,13 @@ fn new_branch_page(
                         Err(error) => {
                             report_in(&workspace, "create branch", error.into(), cx).await;
                         }
-                    }
-                })
-                .detach();
-            },
-        )
-        .icon(IconName::GitBranchPlus)
-        .detail(detail)]))
+                    })
+                    .detach();
+                },
+            )
+            .icon(IconName::GitBranchPlus)
+            .detail(detail),
+        ]))
     })
 }
 
@@ -1339,17 +1351,13 @@ fn stash_page(workspace: WeakEntity<Workspace>, repository: Entity<Repository>) 
                         StashVerb::Drop,
                     ),
                 ];
-                let mut node = Node::run(
-                    format!("stash:{index}"),
-                    format!("stash@{{{index}}}"),
-                    {
-                        let workspace = workspace.clone();
-                        let repository = repository.clone();
-                        move |_query, _window, cx| {
-                            run_stash_verb(&repository, &workspace, index, StashVerb::Pop, cx)
-                        }
-                    },
-                )
+                let mut node = Node::run(format!("stash:{index}"), format!("stash@{{{index}}}"), {
+                    let workspace = workspace.clone();
+                    let repository = repository.clone();
+                    move |_query, _window, cx| {
+                        run_stash_verb(&repository, &workspace, index, StashVerb::Pop, cx)
+                    }
+                })
                 .icon(IconName::Bookmark)
                 .detail(entry.message.clone())
                 .submenu(Children::ready(verbs));
@@ -1419,7 +1427,8 @@ fn run_stash_verb(
             .detach();
         }
         StashVerb::Drop => {
-            let receiver = repository.update(cx, |repository, cx| repository.stash_drop(Some(index), cx));
+            let receiver =
+                repository.update(cx, |repository, cx| repository.stash_drop(Some(index), cx));
             cx.spawn(async move |cx| match receiver.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => report_in(&workspace, verb.description(), error, cx).await,
