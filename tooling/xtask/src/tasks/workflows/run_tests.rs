@@ -16,7 +16,7 @@ use crate::tasks::workflows::{
 
 use super::{
     deploy_docs,
-    runners::{self, Arch, Platform},
+    runners::{self, Arch, Platform, RunnerSize},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
@@ -546,22 +546,14 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
         (Platform::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
         _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
     });
-    let runner = match platform {
-        Platform::Windows => runners::WINDOWS_DEFAULT,
-        Platform::Linux => runners::LINUX_DEFAULT,
-        Platform::Mac => runners::MAC_DEFAULT,
-    };
-    let mut job = release_job(&[])
-        .runs_on(runner)
+    let job = release_job(&[])
+        .runs_on(platform.runner(RunnerSize::Default))
         .when(harden && platform == Platform::Linux, |this| {
             this.add_step(steps::harden_runner())
         })
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_cargo_config(platform))
-        .when(
-            platform == Platform::Linux || platform == Platform::Mac,
-            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-        )
+        .add_step(steps::cache_rust_dependencies_namespace())
         .when(
             platform == Platform::Linux,
             steps::install_linux_dependencies,
@@ -571,10 +563,8 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
         })
         .add_step(steps::setup_sccache(platform))
         .add_step(steps::clippy(platform, target))
-        .add_step(steps::show_sccache_stats(platform));
-    if platform == Platform::Linux {
-        job = use_clang(job);
-    }
+        .add_step(steps::show_sccache_stats(platform))
+        .when(platform == Platform::Linux, use_clang);
     let name = match arch {
         Some(arch) => format!("clippy_{platform}_{arch}"),
         None => format!("clippy_{platform}"),
@@ -591,15 +581,10 @@ pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
 }
 
 fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bool) -> NamedJob {
-    let runner = match platform {
-        Platform::Windows => runners::WINDOWS_DEFAULT,
-        Platform::Linux => runners::LINUX_DEFAULT,
-        Platform::Mac => runners::MAC_DEFAULT,
-    };
     NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
-            .runs_on(runner)
+            .runs_on(platform.runner(RunnerSize::Default))
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -619,21 +604,14 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Mac, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
-            .when(platform == Platform::Linux, |this| {
-                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
-            })
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .when(platform == Platform::Linux, use_clang)
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |job| job.add_step(steps::cargo_install_nextest()),
-            )
+            .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(steps::setup_sccache(platform))
             .when(filter_packages, |job| {

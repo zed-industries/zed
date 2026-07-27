@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::tasks::workflows::{
     release::ReleaseBundleJobs,
-    runners::{Arch, Platform, ReleaseChannel},
+    runners::{Arch, Platform, ReleaseChannel, RunnerSize},
     steps::{
         CommonPermissionSets, FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep,
         dependant_job, named,
@@ -10,7 +10,7 @@ use crate::tasks::workflows::{
     vars::{self, assets, bundle_envs},
 };
 
-use super::{runners, steps};
+use super::steps;
 use gh_workflow::*;
 use indoc::indoc;
 
@@ -77,7 +77,7 @@ pub(crate) fn bundle_mac(
     NamedJob {
         name: format!("bundle_mac_{arch}"),
         job: bundle_job(deps)
-            .runs_on(runners::MAC_DEFAULT)
+            .runs_on(platform.runner(RunnerSize::Large))
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
@@ -86,7 +86,7 @@ pub(crate) fn bundle_mac(
             })
             .add_step(steps::setup_node())
             .add_step(steps::setup_sentry())
-            .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
+            .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(bundle_mac(arch))
             .add_step(upload_artifact(&format!(
                 "target/{arch}-apple-darwin/release/{artifact_name}"
@@ -206,9 +206,10 @@ pub(crate) fn bundle_windows(
     NamedJob {
         name: format!("bundle_windows_{arch}"),
         job: bundle_job(deps)
-            .runs_on(runners::WINDOWS_DEFAULT)
+            .runs_on(platform.runner(RunnerSize::Large))
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
