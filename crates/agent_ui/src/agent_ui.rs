@@ -947,6 +947,18 @@ fn update_active_language_model_from_settings(cx: &mut App) {
     });
 }
 
+/// The rem size for agent panel chrome that follows the global UI font size
+/// while still tracking the panel's ephemeral zoom.
+pub(crate) fn ui_chrome_rem_size(cx: &App) -> gpui::Pixels {
+    let theme_settings = theme_settings::ThemeSettings::get_global(cx);
+    let zoom_delta = theme_settings.agent_ui_font_size(cx)
+        - theme_settings
+            .agent_ui_font_size_settings()
+            .map(theme_settings::clamp_font_size)
+            .unwrap_or_else(|| theme_settings.ui_font_size(cx));
+    theme_settings.ui_font_size(cx) + zoom_delta
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

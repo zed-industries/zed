@@ -6473,7 +6473,13 @@ impl Render for AgentPanel {
                     })
                 }
             }))
-            .child(self.render_toolbar(window, cx))
+            .child(
+                WithRemSize::new(crate::ui_chrome_rem_size(cx))
+                    .w_full()
+                    .flex_none()
+                    .font_family(ThemeSettings::get_global(cx).ui_font.family.clone())
+                    .child(self.render_toolbar(window, cx)),
+            )
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
                 VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
