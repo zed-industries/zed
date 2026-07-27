@@ -90,6 +90,11 @@ impl MainThreadMailbox {
             loop {
                 js_sys::Atomics::store(&view, 0, 0).expect("Atomics.store failed");
 
+                // Items posted between the previous drain and the store above
+                // set the signal we just cleared, so their notify is lost.
+                // Drain again after re-arming to avoid missing them.
+                mailbox.drain(&window);
+
                 let result = match js_sys::Atomics::wait_async(&view, 0, 0) {
                     Ok(result) => result,
                     Err(error) => {
@@ -103,17 +108,17 @@ impl MainThreadMailbox {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                if !is_async {
-                    log::error!("Atomics.waitAsync returned synchronously; waker loop exiting");
-                    break;
+                // `async: false` means the signal changed between the store and
+                // the wait ("not-equal"): work has already arrived, so skip
+                // waiting and drain immediately.
+                if is_async {
+                    let promise: js_sys::Promise =
+                        js_sys::Reflect::get(&result, &JsValue::from_str("value"))
+                            .expect("waitAsync result missing 'value'")
+                            .unchecked_into();
+
+                    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
                 }
-
-                let promise: js_sys::Promise =
-                    js_sys::Reflect::get(&result, &JsValue::from_str("value"))
-                        .expect("waitAsync result missing 'value'")
-                        .unchecked_into();
-
-                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 
                 mailbox.drain(&window);
             }
