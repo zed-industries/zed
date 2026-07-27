@@ -555,22 +555,9 @@ async fn test_remove_fallback_via_find_or_create_skips_removed_workspaces(cx: &m
 
     let removed = multi_workspace
         .update_in(cx, |mw, window, cx| {
-            let excluded = vec![workspace_a.clone()];
             mw.remove(
-                excluded.clone(),
-                move |this, window, cx| {
-                    this.find_or_create_workspace(
-                        PathList::new(&[PathBuf::from("/root_a")]),
-                        None,
-                        None,
-                        |_options, _window, _cx| Task::ready(Ok(None)),
-                        &excluded,
-                        None,
-                        OpenMode::Activate,
-                        window,
-                        cx,
-                    )
-                },
+                vec![workspace_a.clone()],
+                RemovalIntent::CloseProject,
                 window,
                 cx,
             )
@@ -589,6 +576,52 @@ async fn test_remove_fallback_via_find_or_create_skips_removed_workspaces(cx: &m
             mw.workspaces()
                 .all(|workspace| workspace.entity_id() != workspace_a.entity_id()),
             "the removed workspace should be gone"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_remove_keeping_the_project_does_not_switch_projects(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let _workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a.clone(), None, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.remove(
+                vec![workspace_a.clone()],
+                RemovalIntent::KeepProject,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("removing the active workspace should succeed");
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        assert_eq!(
+            PathList::new(&mw.workspace().read(cx).root_paths(cx)),
+            PathList::new(&[PathBuf::from("/root_a")]),
+            "the replacement workspace should be in the removed workspace's project"
         );
     });
 }

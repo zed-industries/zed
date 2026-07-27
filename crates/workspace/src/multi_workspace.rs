@@ -284,6 +284,15 @@ pub struct ProjectGroupState {
     pub last_active_workspace: Option<WeakEntity<Workspace>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RemovalIntent {
+    /// Stay in the project, reopening its root worktrees if the removal leaves
+    /// it with no workspaces.
+    KeepProject,
+    /// Move to another project.
+    CloseProject,
+}
+
 pub struct MultiWorkspace {
     window_id: WindowId,
     retained_workspaces: Vec<Entity<Workspace>>,
@@ -929,35 +938,7 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        let group_key = workspace.read(cx).project_group_key(cx);
-        let excluded_workspace = workspace.clone();
-
-        self.remove(
-            [workspace.clone()],
-            move |this, window, cx| {
-                if let Some(workspace) = this
-                    .workspaces_for_project_group(&group_key, cx)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|candidate| candidate != &excluded_workspace)
-                {
-                    return Task::ready(Ok(workspace));
-                }
-
-                let group_index = this
-                    .project_groups
-                    .iter()
-                    .position(|group| group.key == group_key);
-                this.fallback_workspace(
-                    group_index,
-                    std::slice::from_ref(&excluded_workspace),
-                    window,
-                    cx,
-                )
-            },
-            window,
-            cx,
-        )
+        self.remove([workspace.clone()], RemovalIntent::CloseProject, window, cx)
     }
 
     pub fn remove_project_group(
@@ -966,11 +947,6 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        let group_index = self
-            .project_groups
-            .iter()
-            .position(|group| group.key == *group_key);
-
         // The active workspace can remain provisional while the sidebar is
         // closed. Retain it before removal so switching to the fallback does
         // not recreate the project group that is being removed.
@@ -984,79 +960,13 @@ impl MultiWorkspace {
         let workspaces = self
             .workspaces_for_project_group(group_key, cx)
             .unwrap_or_default();
-        let excluded_workspaces = workspaces.clone();
-        let removal_task = self.remove(
-            workspaces,
-            move |this, window, cx| {
-                this.fallback_workspace(group_index, &excluded_workspaces, window, cx)
-            },
-            window,
-            cx,
-        );
+
+        let task = self.remove(workspaces, RemovalIntent::CloseProject, window, cx);
 
         self.project_groups.retain(|group| group.key != *group_key);
         cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
 
-        removal_task
-    }
-
-    /// Finds a fallback workspace outside the project group at `group_index`.
-    ///
-    /// Prefers the nearest retained workspace in another group. If none exists,
-    /// opens the immediately neighboring group when it is local, and otherwise
-    /// creates an empty workspace.
-    fn fallback_workspace(
-        &mut self,
-        group_index: Option<usize>,
-        excluded_workspaces: &[Entity<Workspace>],
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(group_index) = group_index {
-            if let Some(workspace) =
-                self.nearest_retained_workspace(group_index, excluded_workspaces, cx)
-            {
-                return Task::ready(Ok(workspace));
-            }
-
-            let neighboring_group_key = self
-                .project_groups
-                .get(group_index + 1)
-                .or_else(|| {
-                    group_index
-                        .checked_sub(1)
-                        .and_then(|previous| self.project_groups.get(previous))
-                })
-                .map(|group| group.key.clone());
-
-            if let Some(key) = neighboring_group_key
-                && key.host().is_none()
-            {
-                return self.find_or_create_local_workspace(
-                    key.path_list().clone(),
-                    Some(key),
-                    excluded_workspaces,
-                    None,
-                    OpenMode::Activate,
-                    window,
-                    cx,
-                );
-            }
-        }
-
-        let app_state = self.workspace().read(cx).app_state().clone();
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            project::LocalProjectFlags::default(),
-            cx,
-        );
-        let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        Task::ready(Ok(new_workspace))
+        task
     }
 
     /// Returns the nearest retained workspace outside the project group at
@@ -1951,23 +1861,41 @@ impl MultiWorkspace {
         tasks
     }
 
+    fn reopen_group(
+        &mut self,
+        key: &ProjectGroupKey,
+        excluding: &[Entity<Workspace>],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Entity<Workspace>>>> {
+        // Reopening a remote project would connect to its host, which is far
+        // too much to do just to pick a workspace to fall back to.
+        if key.host().is_some() || key.path_list().is_empty() {
+            return None;
+        }
+
+        Some(self.find_or_create_local_workspace(
+            key.path_list().clone(),
+            Some(key.clone()),
+            excluding,
+            None,
+            OpenMode::Activate,
+            window,
+            cx,
+        ))
+    }
+
     /// Removes one or more workspaces from this multi-workspace.
     ///
-    /// If the active workspace is among those being removed,
-    /// `fallback_workspace` is called **synchronously before the removal
-    /// begins** to produce a `Task` that resolves to the workspace that
-    /// should become active. The fallback must not be one of the
-    /// workspaces being removed.
+    /// If the active workspace is among those being removed, its replacement is
+    /// chosen **synchronously before the removal begins**, because choosing one
+    /// depends on state that removal destroys.
     ///
     /// Returns `true` if any workspaces were actually removed.
     pub fn remove(
         &mut self,
         workspaces: impl IntoIterator<Item = Entity<Workspace>>,
-        fallback_workspace: impl FnOnce(
-            &mut Self,
-            &mut Window,
-            &mut Context<Self>,
-        ) -> Task<Result<Entity<Workspace>>>,
+        intent: RemovalIntent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
@@ -1977,10 +1905,72 @@ impl MultiWorkspace {
             return Task::ready(Ok(false));
         }
 
-        let removing_active = workspaces.iter().any(|ws| ws == self.workspace());
         let original_active = self.workspace().clone();
+        let removing_active = workspaces.contains(&original_active);
 
-        let fallback_task = removing_active.then(|| fallback_workspace(self, window, cx));
+        let fallback_task = if !removing_active {
+            None
+        } else {
+            let group_key = original_active.read(cx).project_group_key(cx);
+            Some('fallback: {
+                if let Some(workspace) = self
+                    .workspaces_for_project_group(&group_key, cx)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|candidate| !workspaces.contains(candidate))
+                {
+                    break 'fallback Task::ready(Ok(workspace));
+                }
+
+                if intent == RemovalIntent::KeepProject
+                    && let Some(task) = self.reopen_group(&group_key, &workspaces, window, cx)
+                {
+                    break 'fallback task;
+                }
+
+                if let Some(group_index) = self
+                    .project_groups
+                    .iter()
+                    .position(|group| group.key == group_key)
+                {
+                    if let Some(workspace) =
+                        self.nearest_retained_workspace(group_index, &workspaces, cx)
+                    {
+                        break 'fallback Task::ready(Ok(workspace));
+                    }
+
+                    let adjacent = self
+                        .project_groups
+                        .get(group_index + 1)
+                        .or_else(|| {
+                            group_index
+                                .checked_sub(1)
+                                .and_then(|previous| self.project_groups.get(previous))
+                        })
+                        .map(|group| group.key.clone());
+                    if let Some(key) = adjacent
+                        && let Some(task) = self.reopen_group(&key, &workspaces, window, cx)
+                    {
+                        break 'fallback task;
+                    }
+                }
+
+                let app_state = original_active.read(cx).app_state().clone();
+                let project = Project::local(
+                    app_state.client.clone(),
+                    app_state.node_runtime.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
+                    None,
+                    project::LocalProjectFlags::default(),
+                    cx,
+                );
+                Task::ready(Ok(
+                    cx.new(|cx| Workspace::new(None, project, app_state, window, cx))
+                ))
+            })
+        };
 
         cx.spawn_in(window, async move |this, cx| {
             // Run the standard workspace close lifecycle for every workspace

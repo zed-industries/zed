@@ -64,8 +64,8 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
-    NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
-    Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
+    NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, RemovalIntent,
+    SaveIntent, Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
@@ -408,7 +408,6 @@ enum ListEntry {
 enum ActivatableEntry {
     Thread {
         metadata: ThreadMetadata,
-        workspace: ThreadEntryWorkspace,
     },
     Terminal {
         metadata: TerminalThreadMetadata,
@@ -421,45 +420,12 @@ impl ActivatableEntry {
         match entry {
             ListEntry::Thread(thread) => Some(Self::Thread {
                 metadata: thread.metadata.clone(),
-                workspace: thread.workspace.clone(),
             }),
             ListEntry::Terminal(terminal) => Some(Self::Terminal {
                 metadata: terminal.metadata.clone(),
                 workspace: terminal.workspace.clone(),
             }),
             ListEntry::ProjectHeader { .. } => None,
-        }
-    }
-
-    fn project_location(&self, cx: &App) -> (PathList, ProjectGroupKey) {
-        match self {
-            Self::Thread {
-                workspace: ThreadEntryWorkspace::Open(workspace),
-                ..
-            }
-            | Self::Terminal {
-                workspace: ThreadEntryWorkspace::Open(workspace),
-                ..
-            } => (
-                PathList::new(&workspace.read(cx).root_paths(cx)),
-                workspace.read(cx).project_group_key(cx),
-            ),
-            Self::Thread {
-                workspace:
-                    ThreadEntryWorkspace::Closed {
-                        folder_paths,
-                        project_group_key,
-                    },
-                ..
-            }
-            | Self::Terminal {
-                workspace:
-                    ThreadEntryWorkspace::Closed {
-                        folder_paths,
-                        project_group_key,
-                    },
-                ..
-            } => (folder_paths.clone(), project_group_key.clone()),
         }
     }
 }
@@ -5084,42 +5050,9 @@ impl Sidebar {
                 workspace,
                 ThreadEntryWorkspace::Open(workspace) if workspaces_to_remove.contains(workspace)
             );
-            let (fallback_paths, project_group_key) = neighbor
-                .as_ref()
-                .map(|neighbor| neighbor.project_location(cx))
-                .unwrap_or_else(|| {
-                    workspaces_to_remove
-                        .first()
-                        .map(|workspace| {
-                            let key = workspace.read(cx).project_group_key(cx);
-                            (key.path_list().clone(), key)
-                        })
-                        .unwrap_or_default()
-                });
 
-            let excluded = workspaces_to_remove.clone();
             let remove_task = multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.remove(
-                    workspaces_to_remove,
-                    move |this, window, cx| {
-                        let active_workspace = this.workspace().clone();
-                        this.find_or_create_workspace(
-                            fallback_paths,
-                            project_group_key.host(),
-                            Some(project_group_key),
-                            |options, window, cx| {
-                                connect_remote(active_workspace, options, window, cx)
-                            },
-                            &excluded,
-                            None,
-                            OpenMode::Activate,
-                            window,
-                            cx,
-                        )
-                    },
-                    window,
-                    cx,
-                )
+                multi_workspace.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
             });
 
             let metadata = metadata.clone();
@@ -5470,42 +5403,8 @@ impl Sidebar {
             let multi_workspace = self.multi_workspace.upgrade().unwrap();
             let session_id = session_id.clone();
 
-            let (fallback_paths, project_group_key) = neighbor
-                .as_ref()
-                .map(|neighbor| neighbor.project_location(cx))
-                .unwrap_or_else(|| {
-                    workspaces_to_remove
-                        .first()
-                        .map(|workspace| {
-                            let key = workspace.read(cx).project_group_key(cx);
-                            (key.path_list().clone(), key)
-                        })
-                        .unwrap_or_default()
-                });
-
-            let excluded = workspaces_to_remove.clone();
             let remove_task = multi_workspace.update(cx, |mw, cx| {
-                mw.remove(
-                    workspaces_to_remove,
-                    move |this, window, cx| {
-                        let active_workspace = this.workspace().clone();
-                        this.find_or_create_workspace(
-                            fallback_paths,
-                            project_group_key.host(),
-                            Some(project_group_key),
-                            |options, window, cx| {
-                                connect_remote(active_workspace, options, window, cx)
-                            },
-                            &excluded,
-                            None,
-                            OpenMode::Activate,
-                            window,
-                            cx,
-                        )
-                    },
-                    window,
-                    cx,
-                )
+                mw.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
             });
 
             let thread_folder_paths = thread_folder_paths.clone();
@@ -6967,42 +6866,9 @@ impl Sidebar {
                 workspace,
                 ThreadEntryWorkspace::Open(workspace) if workspaces_to_remove.contains(workspace)
             );
-            let (fallback_paths, project_group_key) = neighbor
-                .as_ref()
-                .map(|neighbor| neighbor.project_location(cx))
-                .unwrap_or_else(|| {
-                    workspaces_to_remove
-                        .first()
-                        .map(|workspace| {
-                            let key = workspace.read(cx).project_group_key(cx);
-                            (key.path_list().clone(), key)
-                        })
-                        .unwrap_or_default()
-                });
 
-            let excluded = workspaces_to_remove.clone();
             let remove_task = multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.remove(
-                    workspaces_to_remove,
-                    move |this, window, cx| {
-                        let active_workspace = this.workspace().clone();
-                        this.find_or_create_workspace(
-                            fallback_paths,
-                            project_group_key.host(),
-                            Some(project_group_key),
-                            |options, window, cx| {
-                                connect_remote(active_workspace, options, window, cx)
-                            },
-                            &excluded,
-                            None,
-                            OpenMode::Activate,
-                            window,
-                            cx,
-                        )
-                    },
-                    window,
-                    cx,
-                )
+                multi_workspace.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
             });
 
             let workspace = workspace.clone();

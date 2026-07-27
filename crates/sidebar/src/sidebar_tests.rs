@@ -8746,12 +8746,10 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
     cx.run_until_parked();
 
     // Remove the worktree workspace and delete the worktree from disk.
-    let main_workspace =
-        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
     let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.remove(
             vec![worktree_workspace],
-            move |_this, _window, _cx| Task::ready(Ok(main_workspace)),
+            RemovalIntent::KeepProject,
             window,
             cx,
         )
