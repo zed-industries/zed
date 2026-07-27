@@ -2296,10 +2296,20 @@ impl DisplaySnapshot {
             .collect();
 
         let scope = snapshot.language_scope_at(Point::new(row, 0))?;
-        if scope
+        // Pairs whose `start` and `end` are identical, like Markdown's `*` or Python's `"`, cannot
+        // be told apart lexically, so require the line to match an `end` more specifically than any
+        // `start`. That keeps real closers such as Rust's `"#` while rejecting `**bold**`.
+        let matched_len =
+            |delimiter: &str| line_text.starts_with(delimiter).then_some(delimiter.len());
+        let longest_end = scope
             .brackets()
-            .any(|(pair, _)| line_text.starts_with(&pair.end))
-        {
+            .filter_map(|(pair, _)| matched_len(&pair.end))
+            .max();
+        let longest_start = scope
+            .brackets()
+            .filter_map(|(pair, _)| matched_len(&pair.start))
+            .max();
+        if longest_end > longest_start {
             return Some(indent_len);
         }
 
