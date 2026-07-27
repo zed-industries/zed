@@ -1900,4 +1900,44 @@ mod tests {
         assert_eq!(inline_count, 2, "should find 2 inline math expressions");
         assert_eq!(display_count, 1, "should find 1 display math expression");
     }
+
+    #[test]
+    fn test_math_with_nested_braces() {
+        let input = "$f(x) = { x^2 \\text{ if } x > 0 }$";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let math_events: Vec<_> = parsed
+            .events
+            .iter()
+            .filter_map(|(range, event)| match event {
+                MarkdownEvent::InlineMath(latex) => Some(latex.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(math_events.len(), 1);
+        assert!(math_events[0].contains("f(x)"));
+    }
+
+    #[test]
+    fn test_adjacent_math_expressions() {
+        let input = "$a$$b$";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let math_count = parsed
+            .events
+            .iter()
+            .filter(|(_, event)| matches!(event, MarkdownEvent::InlineMath(_)))
+            .count();
+        assert_eq!(math_count, 2, "adjacent math expressions should each be parsed");
+    }
+
+    #[test]
+    fn test_math_preserves_surrounding_markdown() {
+        let input = "**bold** and $x^2$ and *italic*";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let has_bold = parsed.events.iter().any(|(_, e)| matches!(e, MarkdownEvent::Start(MarkdownTag::Strong)));
+        let has_italic = parsed.events.iter().any(|(_, e)| matches!(e, MarkdownEvent::Start(MarkdownTag::Emphasis)));
+        let has_math = parsed.events.iter().any(|(_, e)| matches!(e, MarkdownEvent::InlineMath(_)));
+        assert!(has_bold, "bold should still be parsed");
+        assert!(has_italic, "italic should still be parsed");
+        assert!(has_math, "math should be parsed");
+    }
 }
