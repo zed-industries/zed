@@ -5044,90 +5044,40 @@ impl Sidebar {
             cx,
         );
 
-        if !workspaces_to_remove.is_empty() {
-            let multi_workspace = self.multi_workspace.upgrade().unwrap();
-            let terminal_workspace_removed = matches!(
-                workspace,
-                ThreadEntryWorkspace::Open(workspace) if workspaces_to_remove.contains(workspace)
-            );
+        let terminal_workspace_removed = matches!(
+            workspace,
+            ThreadEntryWorkspace::Open(workspace) if workspaces_to_remove.contains(workspace)
+        );
+        let metadata = metadata.clone();
+        let workspace = workspace.clone();
 
-            let remove_task = multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
-            });
-
-            let metadata = metadata.clone();
-            let workspace = workspace.clone();
-            cx.spawn_in(window, async move |this, cx| {
-                if !remove_task.await? {
-                    return anyhow::Ok(());
-                }
-
-                for task in close_item_tasks {
-                    let result: anyhow::Result<()> = task.await;
-                    result.log_err();
-                }
-
-                this.update_in(cx, |this, window, cx| {
-                    if terminal_workspace_removed {
-                        this.delete_empty_drafts_for_archive_paths(
-                            metadata.folder_paths(),
-                            metadata.remote_connection.as_ref(),
-                            cx,
-                        );
-                    }
-                    // If the terminal's workspace has already been removed,
-                    // don't synthesize a fallback draft in the detached
-                    // AgentPanel.
-                    this.close_terminal_entry(
-                        &metadata,
-                        &workspace,
-                        is_active,
-                        neighbor.as_ref(),
-                        !terminal_workspace_removed,
-                        roots_to_archive,
-                        window,
+        self.remove_workspaces_then(
+            workspaces_to_remove,
+            close_item_tasks,
+            window,
+            cx,
+            move |this, window, cx| {
+                if terminal_workspace_removed {
+                    this.delete_empty_drafts_for_archive_paths(
+                        metadata.folder_paths(),
+                        metadata.remote_connection.as_ref(),
                         cx,
                     );
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else if !close_item_tasks.is_empty() {
-            let metadata = metadata.clone();
-            let workspace = workspace.clone();
-            cx.spawn_in(window, async move |this, cx| {
-                for task in close_item_tasks {
-                    let result: anyhow::Result<()> = task.await;
-                    result.log_err();
                 }
-
-                this.update_in(cx, |this, window, cx| {
-                    this.close_terminal_entry(
-                        &metadata,
-                        &workspace,
-                        is_active,
-                        neighbor.as_ref(),
-                        true,
-                        roots_to_archive,
-                        window,
-                        cx,
-                    );
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else {
-            self.close_terminal_entry(
-                metadata,
-                workspace,
-                is_active,
-                neighbor.as_ref(),
-                true,
-                roots_to_archive,
-                window,
-                cx,
-            );
-        }
+                // If the terminal's workspace has already been removed, don't
+                // synthesize a fallback draft in the detached AgentPanel.
+                this.close_terminal_entry(
+                    &metadata,
+                    &workspace,
+                    is_active,
+                    neighbor.as_ref(),
+                    !terminal_workspace_removed,
+                    roots_to_archive,
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 
     fn close_terminal_entry(
@@ -5187,6 +5137,53 @@ impl Sidebar {
             self.sync_active_entry_from_active_workspace(cx);
         }
         self.update_entries(cx);
+    }
+
+    /// Removes `workspaces_to_remove`, waits for `close_item_tasks`, then runs
+    /// `finish` to update the sidebar's own bookkeeping.
+    ///
+    /// `finish` runs synchronously when there is nothing to wait for, so
+    /// callers that only need bookkeeping stay on the current stack.
+    fn remove_workspaces_then(
+        &mut self,
+        workspaces_to_remove: Vec<Entity<Workspace>>,
+        close_item_tasks: Vec<Task<anyhow::Result<()>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        finish: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        if workspaces_to_remove.is_empty() && close_item_tasks.is_empty() {
+            finish(self, window, cx);
+            return;
+        }
+
+        let remove_task = if workspaces_to_remove.is_empty() {
+            None
+        } else {
+            let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+                return;
+            };
+            Some(multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
+            }))
+        };
+
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(remove_task) = remove_task
+                && !remove_task.await?
+            {
+                return anyhow::Ok(());
+            }
+
+            for task in close_item_tasks {
+                let result: anyhow::Result<()> = task.await;
+                result.log_err();
+            }
+
+            this.update_in(cx, |this, window, cx| finish(this, window, cx))?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn close_items_for_archived_worktrees(
@@ -5399,99 +5396,40 @@ impl Sidebar {
             cx,
         );
 
-        if !workspaces_to_remove.is_empty() {
-            let multi_workspace = self.multi_workspace.upgrade().unwrap();
-            let session_id = session_id.clone();
+        let removed_workspace = !workspaces_to_remove.is_empty();
+        let session_id = session_id.clone();
+        let thread_remote_connection = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.remote_connection.clone());
 
-            let remove_task = multi_workspace.update(cx, |mw, cx| {
-                mw.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
-            });
-
-            let thread_folder_paths = thread_folder_paths.clone();
-            let thread_remote_connection = metadata
-                .as_ref()
-                .and_then(|metadata| metadata.remote_connection.clone());
-            cx.spawn_in(window, async move |this, cx| {
-                if !remove_task.await? {
-                    return anyhow::Ok(());
-                }
-
-                for task in close_item_tasks {
-                    let result: anyhow::Result<()> = task.await;
-                    result.log_err();
-                }
-
-                this.update_in(cx, |this, window, cx| {
-                    if let Some(thread_folder_paths) = thread_folder_paths.as_ref() {
-                        this.delete_empty_drafts_for_archive_paths(
-                            thread_folder_paths,
-                            thread_remote_connection.as_ref(),
-                            cx,
-                        );
-                    }
-                    let in_flight = thread_id.and_then(|tid| {
-                        this.start_archive_worktree_task(tid, roots_to_archive, cx)
-                    });
-                    this.archive_and_activate(
-                        &session_id,
-                        thread_id,
-                        neighbor.as_ref(),
-                        thread_folder_paths.as_ref(),
+        self.remove_workspaces_then(
+            workspaces_to_remove,
+            close_item_tasks,
+            window,
+            cx,
+            move |this, window, cx| {
+                if removed_workspace && let Some(thread_folder_paths) = thread_folder_paths.as_ref()
+                {
+                    this.delete_empty_drafts_for_archive_paths(
+                        thread_folder_paths,
                         thread_remote_connection.as_ref(),
-                        in_flight,
-                        window,
                         cx,
                     );
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else if !close_item_tasks.is_empty() {
-            let session_id = session_id.clone();
-            let thread_folder_paths = thread_folder_paths.clone();
-            let thread_remote_connection = metadata
-                .as_ref()
-                .and_then(|metadata| metadata.remote_connection.clone());
-            cx.spawn_in(window, async move |this, cx| {
-                for task in close_item_tasks {
-                    let result: anyhow::Result<()> = task.await;
-                    result.log_err();
                 }
-
-                this.update_in(cx, |this, window, cx| {
-                    let in_flight = thread_id.and_then(|tid| {
-                        this.start_archive_worktree_task(tid, roots_to_archive, cx)
-                    });
-                    this.archive_and_activate(
-                        &session_id,
-                        thread_id,
-                        neighbor.as_ref(),
-                        thread_folder_paths.as_ref(),
-                        thread_remote_connection.as_ref(),
-                        in_flight,
-                        window,
-                        cx,
-                    );
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else {
-            let in_flight = thread_id
-                .and_then(|tid| self.start_archive_worktree_task(tid, roots_to_archive, cx));
-            self.archive_and_activate(
-                session_id,
-                thread_id,
-                neighbor.as_ref(),
-                thread_folder_paths.as_ref(),
-                metadata
-                    .as_ref()
-                    .and_then(|metadata| metadata.remote_connection.as_ref()),
-                in_flight,
-                window,
-                cx,
-            );
-        }
+                let in_flight = thread_id
+                    .and_then(|tid| this.start_archive_worktree_task(tid, roots_to_archive, cx));
+                this.archive_and_activate(
+                    &session_id,
+                    thread_id,
+                    neighbor.as_ref(),
+                    thread_folder_paths.as_ref(),
+                    thread_remote_connection.as_ref(),
+                    in_flight,
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 
     /// Archive a thread and activate the nearest neighbor or a draft.
@@ -6858,89 +6796,39 @@ impl Sidebar {
             cx,
         );
 
-        if !workspaces_to_remove.is_empty() {
-            let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-                return;
-            };
-            let draft_workspace_removed = matches!(
-                workspace,
-                ThreadEntryWorkspace::Open(workspace) if workspaces_to_remove.contains(workspace)
-            );
+        let draft_workspace_removed = matches!(
+            workspace,
+            ThreadEntryWorkspace::Open(workspace) if workspaces_to_remove.contains(workspace)
+        );
+        let workspace = workspace.clone();
 
-            let remove_task = multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.remove(workspaces_to_remove, RemovalIntent::KeepProject, window, cx)
-            });
-
-            let workspace = workspace.clone();
-            cx.spawn_in(window, async move |this, cx| {
-                if !remove_task.await? {
-                    return anyhow::Ok(());
-                }
-
-                for task in close_item_tasks {
-                    let result: anyhow::Result<()> = task.await;
-                    result.log_err();
-                }
-
-                this.update_in(cx, |this, window, cx| {
-                    if draft_workspace_removed {
-                        if let Some(draft_folder_paths) = draft_folder_paths.as_ref() {
-                            this.delete_empty_drafts_for_archive_paths(
-                                draft_folder_paths,
-                                draft_remote_connection.as_ref(),
-                                cx,
-                            );
-                        }
-                    }
-                    this.remove_draft_entry(
-                        draft_id,
-                        &workspace,
-                        was_active,
-                        neighbor.as_ref(),
-                        !draft_workspace_removed,
-                        roots_to_archive,
-                        window,
+        self.remove_workspaces_then(
+            workspaces_to_remove,
+            close_item_tasks,
+            window,
+            cx,
+            move |this, window, cx| {
+                if draft_workspace_removed
+                    && let Some(draft_folder_paths) = draft_folder_paths.as_ref()
+                {
+                    this.delete_empty_drafts_for_archive_paths(
+                        draft_folder_paths,
+                        draft_remote_connection.as_ref(),
                         cx,
                     );
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else if !close_item_tasks.is_empty() {
-            let workspace = workspace.clone();
-            cx.spawn_in(window, async move |this, cx| {
-                for task in close_item_tasks {
-                    let result: anyhow::Result<()> = task.await;
-                    result.log_err();
                 }
-
-                this.update_in(cx, |this, window, cx| {
-                    this.remove_draft_entry(
-                        draft_id,
-                        &workspace,
-                        was_active,
-                        neighbor.as_ref(),
-                        true,
-                        roots_to_archive,
-                        window,
-                        cx,
-                    );
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else {
-            self.remove_draft_entry(
-                draft_id,
-                workspace,
-                was_active,
-                neighbor.as_ref(),
-                true,
-                roots_to_archive,
-                window,
-                cx,
-            );
-        }
+                this.remove_draft_entry(
+                    draft_id,
+                    &workspace,
+                    was_active,
+                    neighbor.as_ref(),
+                    !draft_workspace_removed,
+                    roots_to_archive,
+                    window,
+                    cx,
+                );
+            },
+        );
     }
 
     fn remove_draft_entry(
