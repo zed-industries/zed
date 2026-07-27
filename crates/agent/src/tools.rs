@@ -47,17 +47,29 @@ where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    let raw = serde_json::Value::deserialize(deserializer)
-        .map_err(|e| D::Error::custom(format!("invalid JSON: {e}")))?;
-
-    // If the model stringified the argument, parse the inner JSON.
-    if let Ok(string) = String::deserialize(&raw) {
-        return serde_json::from_str::<T>(&string)
-            .map_err(|e| D::Error::custom(format!("failed to parse stringified value: {e}")));
+    fn to_custom_error<E>(e: serde_json::Error) -> E
+    where
+        E: serde::de::Error,
+    {
+        E::custom(format!("{e}"))
     }
 
-    // Otherwise, deserialize directly and pass errors through.
-    T::deserialize(&raw).map_err(|e| D::Error::custom(format!("{e}")))
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RawInput<'a> {
+        #[serde(borrow)]
+        String(&'a str),
+        #[serde(borrow)]
+        Value(&'a RawValue),
+    }
+
+    let raw_input = RawInput::deserialize(deserializer)
+        .map_err(|e| D::Error::custom(format!("invalid JSON: {e}")))?;
+
+    match raw_input {
+        RawInput::String(s) => serde_json::from_str(s).map_err(to_custom_error),
+        RawInput::Value(v) => T::deserialize(v).map_err(to_custom_error),
+    }
 }
 
 pub use apply_code_action_tool::*;
@@ -79,6 +91,7 @@ pub use list_directory_tool::*;
 pub use move_path_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
+use serde_json::value::RawValue;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
