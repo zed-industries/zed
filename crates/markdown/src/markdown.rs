@@ -2525,7 +2525,7 @@ impl Element for MarkdownElement {
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .overflow_hidden(),
+                                    .overflow_x_scroll(),
                                 range,
                                 markdown_end,
                             );
