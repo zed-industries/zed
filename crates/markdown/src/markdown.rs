@@ -13,6 +13,7 @@ use gpui::UnderlineStyle;
 use language::LanguageName;
 
 use log::Level;
+use math::{MathState, render_math_expression};
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
 };
@@ -410,6 +411,7 @@ pub struct Markdown {
     mermaid_state: MermaidState,
     _mermaid_theme_subscription: Option<Subscription>,
     mermaid_showing_code: HashSet<usize>,
+    math_state: MathState,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -606,6 +608,7 @@ impl Markdown {
             mermaid_state: MermaidState::default(),
             _mermaid_theme_subscription: theme_subscription,
             mermaid_showing_code: HashSet::default(),
+            math_state: MathState::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -1137,6 +1140,12 @@ impl Markdown {
                 } else {
                     this.mermaid_state.clear();
                     this.mermaid_showing_code.clear();
+                }
+                if this.options.render_math {
+                    let parsed_markdown = this.parsed_markdown.clone();
+                    this.math_state.update(&parsed_markdown, cx);
+                } else {
+                    this.math_state.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
