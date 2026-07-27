@@ -2269,39 +2269,50 @@ pub fn into_bedrock(
         }
     }
 
+    let thinking = if request.thinking_allowed {
+        match thinking_mode {
+            BedrockModelMode::Thinking { budget_tokens } => {
+                Some(bedrock::Thinking::Enabled { budget_tokens })
+            }
+            BedrockModelMode::AdaptiveThinking {
+                effort: default_effort,
+            } => {
+                let effort = request
+                    .thinking_effort
+                    .as_deref()
+                    .and_then(|e| match e {
+                        "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
+                        "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
+                        "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                        "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
+                        "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                        _ => None,
+                    })
+                    .unwrap_or(default_effort);
+                Some(bedrock::Thinking::Adaptive { effort })
+            }
+            BedrockModelMode::Default => None,
+        }
+    } else if model.contains(ConverseModel::ClaudeOpus5.request_id()) {
+        // On Claude Opus 5, omitting the `thinking` field no longer means
+        // "off": the model runs adaptive thinking by default, so features
+        // that suppress thinking (e.g. inline assist) must opt out
+        // explicitly. Earlier Claude models treat omission as "off" and must
+        // keep omitting the field. No effort accompanies the opt-out because
+        // `disabled` combined with effort `xhigh`/`max` is a 400.
+        // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+        Some(bedrock::Thinking::Disabled)
+    } else {
+        None
+    };
+
     Ok(bedrock::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: system_blocks,
         tools: tool_config,
-        thinking: if request.thinking_allowed {
-            match thinking_mode {
-                BedrockModelMode::Thinking { budget_tokens } => {
-                    Some(bedrock::Thinking::Enabled { budget_tokens })
-                }
-                BedrockModelMode::AdaptiveThinking {
-                    effort: default_effort,
-                } => {
-                    let effort = request
-                        .thinking_effort
-                        .as_deref()
-                        .and_then(|e| match e {
-                            "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
-                            "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
-                            "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
-                            "xhigh" => Some(bedrock::BedrockAdaptiveThinkingEffort::XHigh),
-                            "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
-                            _ => None,
-                        })
-                        .unwrap_or(default_effort);
-                    Some(bedrock::Thinking::Adaptive { effort })
-                }
-                BedrockModelMode::Default => None,
-            }
-        } else {
-            None
-        },
+        thinking,
         metadata: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
@@ -2898,6 +2909,54 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_thinking_disallowed_sends_explicit_opt_out_only_on_opus_5() {
+        // Claude Opus 5 runs adaptive thinking by default when the `thinking`
+        // field is omitted, so suppressing thinking requires an explicit
+        // `disabled` opt-out. Earlier Claude models treat omission as "off".
+        for (model, expects_explicit_opt_out) in [
+            ("us.anthropic.claude-opus-5", true),
+            ("global.anthropic.claude-opus-5", true),
+            ("us.anthropic.claude-opus-4-8", false),
+        ] {
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text("Hi".into())],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    thinking_allowed: false,
+                    ..Default::default()
+                },
+                model.to_string(),
+                1.0,
+                128_000,
+                BedrockModelMode::AdaptiveThinking {
+                    effort: bedrock::BedrockAdaptiveThinkingEffort::High,
+                },
+                true,
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+
+            if expects_explicit_opt_out {
+                assert!(
+                    matches!(request.thinking, Some(bedrock::Thinking::Disabled)),
+                    "{model} should send an explicit thinking opt-out"
+                );
+            } else {
+                assert!(
+                    request.thinking.is_none(),
+                    "{model} should omit the thinking field entirely"
+                );
+            }
+        }
     }
 
     #[test]
