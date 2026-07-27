@@ -23,6 +23,16 @@
     },
   },
   {
+    // Only bound while the search field is empty, so these keys keep their
+    // normal editing behavior as soon as there is a query to edit.
+    "context": "(GitCommandCenter && empty_query) > Picker > Editor",
+    "bindings": {
+      "backspace": "git_command_center::NavigateBack",
+      "left": "git_command_center::NavigateBack",
+      "right": "git_command_center::NavigateForward",
+    },
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrevious",

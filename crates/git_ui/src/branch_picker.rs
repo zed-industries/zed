@@ -898,7 +898,7 @@ fn branch_matches_ref(branch: &Branch, branch_ref: &SharedString) -> bool {
 // Git branch names can't contain whitespace, so we replace spaces with dashes,
 // but we need to first trim because a branch name can't start or end with a
 // dash.
-fn normalize_branch_name(query: &str) -> String {
+pub(crate) fn normalize_branch_name(query: &str) -> String {
     query.trim().replace(' ', "-")
 }
 

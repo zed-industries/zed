@@ -44,6 +44,7 @@ mod conflict_view;
 pub mod created_worktrees;
 mod diff_multibuffer;
 pub mod file_diff_view;
+pub mod git_command_center;
 pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
@@ -99,6 +100,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
+        git_command_center::register(workspace);
 
         workspace.register_action(
             |workspace, action: &zed_actions::CreateWorktree, window, cx| {

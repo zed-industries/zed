@@ -356,6 +356,8 @@ pub mod git {
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
+            /// Opens the hierarchical git command center.
+            CommandCenter,
             /// Shows uncommitted changes across the project.
             ViewUncommittedChanges,
             /// Shows unstaged changes across the project.
