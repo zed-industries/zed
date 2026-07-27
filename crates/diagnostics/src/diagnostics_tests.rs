@@ -2075,7 +2075,10 @@ async fn test_diagnostics_hint_markdown(cx: &mut TestAppContext) {
                         related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                             location: lsp::Location::new(
                                 uri.clone(),
-                                lsp::Range::new(lsp::Position::new(1, 4), lsp::Position::new(1, 12)),
+                                lsp::Range::new(
+                                    lsp::Position::new(1, 4),
+                                    lsp::Position::new(1, 12),
+                                ),
                             ),
                             message: "immutable borrow `x` occurs here".to_string(),
                         }]),
@@ -2088,7 +2091,7 @@ async fn test_diagnostics_hint_markdown(cx: &mut TestAppContext) {
                 &[],
                 cx,
             )
-    		.unwrap();
+            .unwrap();
     });
 
     let diagnostics = window.build_entity(cx, |window, cx| {
