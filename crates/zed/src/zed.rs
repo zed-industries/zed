@@ -5702,6 +5702,18 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_bundled_keymaps_load(cx: &mut App) {
+        // `load_default_keymap` unwraps these, so a malformed context predicate
+        // or a binding to an unregistered action panics on startup rather than
+        // failing anywhere a test would otherwise notice.
+        settings::init(cx);
+        for path in [DEFAULT_KEYMAP_PATH, SPECIFIC_OVERRIDES_KEYMAP_PATH] {
+            KeymapFile::load_asset(path, Some(KeybindSource::Default), cx)
+                .unwrap_or_else(|error| panic!("{path} failed to load: {error:?}"));
+        }
+    }
+
+    #[gpui::test]
     fn test_bundled_settings_and_themes(cx: &mut App) {
         cx.text_system()
             .add_fonts(vec![
