@@ -395,6 +395,19 @@ pub struct Markdown {
     context_menu_selected_text: Option<String>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
+    /// Measured (width, height) per block, keyed by source range so it survives
+    /// append-only reparses (only changed tail blocks get new ranges). Lets the
+    /// renderer size the document and place off-screen blocks without laying them
+    /// out. The stored width tags each height with the wrap width it was measured
+    /// at: an entry whose width differs from the current one is a miss, so a
+    /// resize can't reuse a stale (wrong-width) height. Reparsable blocks are
+    /// never stored — their render can change.
+    block_heights: HashMap<Range<usize>, (Pixels, Pixels)>,
+    /// Last width prepaint drew at, used only as an estimate hint: request_layout
+    /// has no bounds and so can't know this frame's width, so it sizes the
+    /// container from the cache filtered at this width. Purely a hint — the
+    /// per-width tag on `block_heights` is what enforces correctness.
+    last_known_width: Option<Pixels>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -587,6 +600,8 @@ impl Markdown {
             context_menu_selected_text: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
+            block_heights: HashMap::default(),
+            last_known_width: None,
         };
         this.parse(cx);
         this
@@ -725,6 +740,7 @@ impl Markdown {
 
     pub fn replace(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.source = source.into();
+        self.block_heights.clear();
         self.parse(cx);
     }
 
@@ -770,6 +786,9 @@ impl Markdown {
         self.should_reparse = false;
         self.search_highlights.clear();
         self.active_search_highlight = None;
+        // Revised content can reuse the same byte ranges with different rendering,
+        // so drop cached heights; append-only growth keeps its cache elsewhere.
+        self.block_heights.clear();
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
@@ -926,6 +945,7 @@ impl Markdown {
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
+                        volatile_blocks: HashSet::default(),
                     },
                     Default::default(),
                 );
@@ -945,6 +965,7 @@ impl Markdown {
             let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
+            let volatile_blocks = parsed.volatile_blocks;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -1014,6 +1035,7 @@ impl Markdown {
                     mermaid_diagrams,
                     heading_slugs,
                     footnote_definitions,
+                    volatile_blocks,
                 },
                 images_by_source_offset,
             )
@@ -1153,6 +1175,9 @@ pub struct ParsedMarkdown {
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    /// Source offsets of blocks with an unresolved reference, whose render can
+    /// change once a later chunk defines it — so their heights are never reused.
+    pub(crate) volatile_blocks: HashSet<usize>,
 }
 
 impl ParsedMarkdown {
@@ -1166,6 +1191,21 @@ impl ParsedMarkdown {
 
     pub fn root_block_starts(&self) -> &Arc<[usize]> {
         &self.root_block_starts
+    }
+
+    /// Event-index range of each top-level block. `RootStart`/`RootEnd` fire only
+    /// at depth 0, so each range is a balanced subtree: building it alone renders
+    /// exactly that block — the basis for building only the on-screen ones.
+    fn root_block_event_ranges(&self) -> Vec<Range<usize>> {
+        let mut ranges = Vec::with_capacity(self.root_block_starts.len());
+        let mut start = 0;
+        for (index, (_, event)) in self.events.iter().enumerate() {
+            if let MarkdownEvent::RootEnd(_) = event {
+                ranges.push(start..index + 1);
+                start = index + 1;
+            }
+        }
+        ranges
     }
 
     pub fn root_block_for_source_index(&self, source_index: usize) -> Option<usize> {
@@ -1200,6 +1240,7 @@ pub struct MarkdownElement {
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
+    virtualized: bool,
 }
 
 impl MarkdownElement {
@@ -1219,6 +1260,7 @@ impl MarkdownElement {
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
+            virtualized: false,
         }
     }
 
@@ -1230,12 +1272,16 @@ impl MarkdownElement {
     ) -> String {
         use gpui::size;
 
-        let (text, _) = cx.draw(
+        let (layout, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |window, cx| Self::new(markdown, style(window, cx)),
         );
-        text.text
+        let MarkdownLayoutState::Eager(rendered) = layout else {
+            unreachable!("rendered_text builds an eager element");
+        };
+        rendered
+            .text
             .lines
             .iter()
             .map(|line| line.layout.wrapped_text())
@@ -1295,6 +1341,15 @@ impl MarkdownElement {
 
     pub fn scroll_handle(mut self, scroll_handle: ScrollHandle) -> Self {
         self.autoscroll = AutoscrollBehavior::Controlled(scroll_handle);
+        self
+    }
+
+    /// Render only the on-screen blocks and fill the parent width, for long
+    /// scrollable documents (e.g. the agent panel). The default eager mode
+    /// builds the whole document and shrink-wraps to content width, which is
+    /// what inline/tooltip/popover callers need.
+    pub fn virtualized(mut self) -> Self {
+        self.virtualized = true;
         self
     }
 
@@ -1915,7 +1970,7 @@ impl MarkdownElement {
     }
 
     /// Adjust the scroll offset (or request an ancestor autoscroll) to bring
-    /// `position` into view.
+    /// `position` into view. Shared by both render modes.
     fn apply_autoscroll(
         &self,
         position: Point<Pixels>,
@@ -1995,7 +2050,10 @@ impl MarkdownElement {
     }
 
     /// Build the element subtree for the events in `events` (an index range into
-    /// `parsed_markdown.events`).
+    /// `parsed_markdown.events`). Each root block is a balanced subtree (see
+    /// `root_block_event_ranges`), so building per-block matches building the
+    /// whole document — the basis for both eager whole-document build and
+    /// per-block virtualized build.
     fn build_blocks(
         &self,
         parsed_markdown: &ParsedMarkdown,
@@ -2677,6 +2735,38 @@ impl MarkdownElement {
         }
         owned_builder.build()
     }
+
+    /// Build one block and measure its height (lays it out, no paint).
+    fn build_root_block(
+        &self,
+        parsed_markdown: &ParsedMarkdown,
+        events: Range<usize>,
+        images: &HashMap<usize, Arc<Image>>,
+        active_root_block: Option<usize>,
+        markdown_end: usize,
+        render_mermaid_diagrams: bool,
+        mermaid_state: &MermaidState,
+        available: gpui::Size<gpui::AvailableSpace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (RenderedMarkdown, Pixels) {
+        let mut rendered = self.build_blocks(
+            parsed_markdown,
+            events,
+            images,
+            active_root_block,
+            markdown_end,
+            render_mermaid_diagrams,
+            mermaid_state,
+            window,
+            cx,
+        );
+        let height = rendered
+            .element
+            .layout_as_root(available, window, cx)
+            .height;
+        (rendered, height)
+    }
 }
 
 impl Styled for MarkdownElement {
@@ -2686,8 +2776,8 @@ impl Styled for MarkdownElement {
 }
 
 impl Element for MarkdownElement {
-    type RequestLayoutState = RenderedMarkdown;
-    type PrepaintState = Hitbox;
+    type RequestLayoutState = MarkdownLayoutState;
+    type PrepaintState = MarkdownPrepaintState;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -2715,22 +2805,73 @@ impl Element for MarkdownElement {
             )
         };
         let markdown_end = parsed_markdown.events.last().map_or(0, |last| last.0.end);
-        let mut rendered_markdown = self.build_blocks(
-            &parsed_markdown,
-            0..parsed_markdown.events.len(),
-            &images,
-            active_root_block,
-            markdown_end,
-            render_mermaid_diagrams,
-            &mermaid_state,
-            window,
-            cx,
+
+        if !self.virtualized {
+            // Eager: build the whole document and let taffy size it, so it
+            // shrink-wraps to content width (inline/tooltip/popover callers).
+            let mut rendered = self.build_blocks(
+                &parsed_markdown,
+                0..parsed_markdown.events.len(),
+                &images,
+                active_root_block,
+                markdown_end,
+                render_mermaid_diagrams,
+                &mermaid_state,
+                window,
+                cx,
+            );
+            // Fill the document-wide source/events so copy/search can reconstruct
+            // text (the builder leaves them empty for the virtualized assembly).
+            rendered.text.source = parsed_markdown.source.clone();
+            rendered.text.events = parsed_markdown.events.clone();
+            let child_layout_id = rendered.element.request_layout(window, cx);
+            let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
+            return (layout_id, MarkdownLayoutState::Eager(rendered));
+        }
+
+        // Each depth-0 block is wrapped in RootStart/RootEnd, so these ranges
+        // cover every event contiguously — there are never gaps between
+        // top-level blocks. prepaint builds only the on-screen ones.
+        let root_blocks = parsed_markdown.root_block_event_ranges();
+        // Contiguity and a zero start are guaranteed by construction (each range
+        // begins where the previous ended). The one remaining invariant is that
+        // no events trail the final RootEnd, so the last range reaches the end.
+        debug_assert!(
+            match root_blocks.last() {
+                Some(last) => last.end == parsed_markdown.events.len(),
+                None => true,
+            },
+            "events must not trail the final root block"
         );
-        rendered_markdown.text.source = parsed_markdown.source.clone();
-        rendered_markdown.text.events = parsed_markdown.events.clone();
-        let child_layout_id = rendered_markdown.element.request_layout(window, cx);
-        let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
-        (layout_id, rendered_markdown)
+
+        // Per-root_block heights (estimating unmeasured blocks) to set the extent
+        // without laying anything out. request_layout has no bounds, so it can't
+        // know this frame's width; it estimates from the cache at the last drawn
+        // width. prepaint recomputes at the true width, so the extent here may lag
+        // a frame on resize (accepted — a tighter fix needs request_measured_layout).
+        let width = self.markdown.read(cx).last_known_width.unwrap_or_default();
+        let heights = {
+            let block_heights = &self.markdown.read(cx).block_heights;
+            root_block_heights(block_heights, &parsed_markdown.events, &root_blocks, width)
+        };
+        let total_height: Pixels = heights.iter().map(|(_, height)| *height).sum();
+
+        let mut style = gpui::Style::default();
+        style.size.width = Length::Definite(gpui::relative(1.));
+        style.size.height = Length::Definite(total_height.into());
+        let layout_id = window.request_layout(style, [], cx);
+        (
+            layout_id,
+            MarkdownLayoutState::Virtualized(MarkdownLayout {
+                parsed_markdown,
+                root_blocks,
+                images,
+                active_root_block,
+                markdown_end,
+                render_mermaid_diagrams,
+                mermaid_state,
+            }),
+        )
     }
 
     fn prepaint(
@@ -2738,18 +2879,115 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
-        rendered_markdown: &mut Self::RequestLayoutState,
+        layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         let focus_handle = self.markdown.read(cx).focus_handle.clone();
         window.set_focus_handle(&focus_handle, cx);
         window.set_view_id(self.markdown.entity_id());
-
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        rendered_markdown.element.prepaint(window, cx);
-        self.autoscroll(&rendered_markdown.text, window, cx);
-        hitbox
+
+        let layout = match layout {
+            MarkdownLayoutState::Eager(rendered) => {
+                rendered.element.prepaint(window, cx);
+                self.autoscroll(&rendered.text, window, cx);
+                return MarkdownPrepaintState::Eager(hitbox);
+            }
+            MarkdownLayoutState::Virtualized(layout) => layout,
+        };
+
+        let viewport = window.content_mask().bounds;
+        let visible_top = viewport.top() - BLOCK_OVERSCAN;
+        let visible_bottom = viewport.bottom() + BLOCK_OVERSCAN;
+
+        let available = gpui::size(
+            gpui::AvailableSpace::Definite(bounds.size.width),
+            gpui::AvailableSpace::MinContent,
+        );
+
+        let mut blocks = Vec::new();
+        let mut lines = Vec::new();
+        let mut links = Vec::new();
+        let mut footnote_refs = Vec::new();
+        let mut measured = Vec::new();
+
+        // Recompute per-block heights at this frame's true width — the cache is
+        // width-tagged, so a resize reads mismatched entries as unmeasured. The
+        // heights snapshot from request_layout was estimated at the last drawn
+        // width and would mis-position blocks on the resize frame.
+        let block_heights = {
+            let cache = &self.markdown.read(cx).block_heights;
+            root_block_heights(
+                cache,
+                &layout.parsed_markdown.events,
+                &layout.root_blocks,
+                bounds.size.width,
+            )
+        };
+
+        let mut y = bounds.top();
+        for (root_block, (range, height)) in layout.root_blocks.iter().zip(&block_heights) {
+            let height = *height;
+            let block_top = y;
+            if block_top + height >= visible_top && block_top <= visible_bottom {
+                let (mut rendered, measured_height) = self.build_root_block(
+                    &layout.parsed_markdown,
+                    root_block.clone(),
+                    &layout.images,
+                    layout.active_root_block,
+                    layout.markdown_end,
+                    layout.render_mermaid_diagrams,
+                    &layout.mermaid_state,
+                    available,
+                    window,
+                    cx,
+                );
+                rendered
+                    .element
+                    .prepaint_at(point(bounds.left(), block_top), window, cx);
+                // Don't cache volatile blocks: a later definition can
+                // re-render them at the same range.
+                if !layout
+                    .parsed_markdown
+                    .volatile_blocks
+                    .contains(&range.start)
+                {
+                    measured.push((range.clone(), measured_height));
+                }
+                lines.extend(rendered.text.lines.iter().cloned());
+                links.extend(rendered.text.links.iter().cloned());
+                footnote_refs.extend(rendered.text.footnote_refs.iter().cloned());
+                blocks.push(rendered.element);
+                y = block_top + measured_height;
+                #[cfg(test)]
+                BLOCKS_BUILT.with(|count| count.set(count.get() + 1));
+            } else {
+                y = block_top + height;
+            }
+        }
+
+        let width = bounds.size.width;
+        self.markdown.update(cx, |markdown, _| {
+            markdown.last_known_width = Some(width);
+            for (range, height) in measured {
+                markdown.block_heights.insert(range, (width, height));
+            }
+        });
+
+        let text = RenderedText {
+            lines: lines.into(),
+            links: links.into(),
+            footnote_refs: footnote_refs.into(),
+            source: layout.parsed_markdown.source.clone(),
+            events: layout.parsed_markdown.events.clone(),
+        };
+        self.autoscroll(&text, window, cx);
+        MarkdownPrepaintState::Virtualized(MarkdownPrepaint {
+            blocks,
+            text,
+            hitbox,
+        })
     }
 
     fn paint(
@@ -2757,20 +2995,130 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         _bounds: Bounds<Pixels>,
-        rendered_markdown: &mut Self::RequestLayoutState,
-        hitbox: &mut Self::PrepaintState,
+        layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
         let mut context = KeyContext::default();
         context.add("Markdown");
         window.set_key_context(context);
-        self.register_copy_actions(&rendered_markdown.text, window);
-        self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
-        rendered_markdown.element.paint(window, cx);
-        self.paint_search_highlights(&rendered_markdown.text, window, cx);
-        self.paint_selection(&rendered_markdown.text, window, cx);
+        match prepaint {
+            MarkdownPrepaintState::Eager(hitbox) => {
+                let MarkdownLayoutState::Eager(rendered) = layout else {
+                    return;
+                };
+                self.register_copy_actions(&rendered.text, window);
+                self.paint_mouse_listeners(hitbox, &rendered.text, window, cx);
+                rendered.element.paint(window, cx);
+                self.paint_search_highlights(&rendered.text, window, cx);
+                self.paint_selection(&rendered.text, window, cx);
+            }
+            MarkdownPrepaintState::Virtualized(prepaint) => {
+                self.register_copy_actions(&prepaint.text, window);
+                self.paint_mouse_listeners(&prepaint.hitbox, &prepaint.text, window, cx);
+                for block in &mut prepaint.blocks {
+                    block.paint(window, cx);
+                }
+                self.paint_search_highlights(&prepaint.text, window, cx);
+                self.paint_selection(&prepaint.text, window, cx);
+            }
+        }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn eager_rendered(layout: MarkdownLayoutState) -> RenderedMarkdown {
+    match layout {
+        MarkdownLayoutState::Eager(rendered) => rendered,
+        MarkdownLayoutState::Virtualized(_) => unreachable!("expected an eager layout"),
+    }
+}
+
+/// Per-mode request-layout state. Eager holds the whole built document (taffy
+/// sizes it, shrink-wrapping to content width); Virtualized holds the per-block
+/// context for building only the on-screen blocks in prepaint.
+pub enum MarkdownLayoutState {
+    Eager(RenderedMarkdown),
+    Virtualized(MarkdownLayout),
+}
+
+/// Per-mode prepaint state.
+pub enum MarkdownPrepaintState {
+    Eager(Hitbox),
+    Virtualized(MarkdownPrepaint),
+}
+
+/// The root blocks plus the context to build each on demand. `request_layout`
+/// produces it without building; `prepaint` builds only the on-screen ones.
+pub struct MarkdownLayout {
+    parsed_markdown: ParsedMarkdown,
+    root_blocks: Vec<Range<usize>>,
+    images: HashMap<usize, Arc<Image>>,
+    active_root_block: Option<usize>,
+    markdown_end: usize,
+    render_mermaid_diagrams: bool,
+    mermaid_state: MermaidState,
+}
+
+/// The on-screen blocks built this frame, plus the assembled `RenderedText`
+/// (visible lines/links/footnotes) used for selection, search, and hit-testing.
+pub struct MarkdownPrepaint {
+    blocks: Vec<AnyElement>,
+    text: RenderedText,
+    hitbox: Hitbox,
+}
+
+/// Fallback height for a block that hasn't been measured yet.
+const ESTIMATED_BLOCK_HEIGHT: Pixels = px(40.);
+
+/// How far above/below the visible viewport to keep blocks laid out, so quick
+/// scrolls don't reveal unpainted gaps.
+const BLOCK_OVERSCAN: Pixels = px(800.);
+
+/// Source byte range of a root block — the height cache key (stable across
+/// append-only reparses).
+fn root_block_source_range(
+    events: &[(Range<usize>, MarkdownEvent)],
+    root_block: &Range<usize>,
+) -> Range<usize> {
+    let start = events.get(root_block.start).map_or(0, |(range, _)| range.start);
+    let end = root_block
+        .end
+        .checked_sub(1)
+        .and_then(|index| events.get(index))
+        .map_or(start, |(range, _)| range.end);
+    start..end
+}
+
+/// Per-root_block (source range, height), substituting `ESTIMATED_BLOCK_HEIGHT`
+/// for any block not yet measured at `width`. A cached entry measured at a
+/// different width is treated as a miss, since heights depend on wrap width.
+/// Shared by the extent sum, block positioning, and scroll-target estimation.
+fn root_block_heights(
+    block_heights: &HashMap<Range<usize>, (Pixels, Pixels)>,
+    events: &[(Range<usize>, MarkdownEvent)],
+    root_blocks: &[Range<usize>],
+    width: Pixels,
+) -> Vec<(Range<usize>, Pixels)> {
+    root_blocks
+        .iter()
+        .map(|root_block| {
+            let range = root_block_source_range(events, root_block);
+            let height = block_heights
+                .get(&range)
+                .filter(|(measured_width, _)| *measured_width == width)
+                .map_or(ESTIMATED_BLOCK_HEIGHT, |(_, height)| *height);
+            (range, height)
+        })
+        .collect()
+}
+
+// Top-level blocks built (on-screen) this draw, so tests can assert per-frame
+// build cost is viewport-bounded, not document-length-bounded.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BLOCKS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn collect_image_alt_text(
@@ -3413,7 +3761,8 @@ impl MarkdownElementBuilder {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
-                // Filled in by the element, which has the parsed document.
+                // Set by prepaint when assembling the document-wide text; empty
+                // for per-block builds.
                 source: SharedString::default(),
                 events: Arc::from([]),
             },
@@ -3421,6 +3770,7 @@ impl MarkdownElementBuilder {
     }
 }
 
+#[derive(Clone)]
 struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
@@ -3615,8 +3965,8 @@ struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
-    /// Full-document source + events, so copy can reconstruct the rendered
-    /// text from the source instead of slicing laid-out lines.
+    /// Full-document source + events, so copy/search can recover the text of
+    /// off-screen blocks (absent from `lines`).
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
 }
@@ -4086,6 +4436,14 @@ mod tests {
         );
     }
 
+    fn drawn_text(layout: MarkdownLayoutState, prepaint: MarkdownPrepaintState) -> RenderedText {
+        match (layout, prepaint) {
+            (MarkdownLayoutState::Eager(rendered), _) => rendered.text,
+            (_, MarkdownPrepaintState::Virtualized(prepaint)) => prepaint.text,
+            _ => unreachable!("layout and prepaint modes always match"),
+        }
+    }
+
     fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
         render_markdown_with_language_registry(markdown, None, cx)
     }
@@ -4188,7 +4546,7 @@ mod tests {
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (layout, prepaint) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -4201,7 +4559,7 @@ mod tests {
                     })
             },
         );
-        rendered.text
+        drawn_text(layout, prepaint)
     }
 
     fn render_markdown_with_language_registry(
@@ -4239,7 +4597,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (layout, prepaint) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -4252,7 +4610,7 @@ mod tests {
                 )
             },
         );
-        rendered.text
+        drawn_text(layout, prepaint)
     }
 
     #[gpui::test]
