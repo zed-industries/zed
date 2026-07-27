@@ -2272,12 +2272,12 @@ impl DisplaySnapshot {
         (buffer_row.0 + 1..=max_row.0)
             .find_map(|next_row| {
                 let next_line_indent = self.line_indent_for_buffer_row(MultiBufferRow(next_row));
-                if next_line_indent.raw_len() > line_indent.raw_len() {
-                    Some(true)
-                } else if !next_line_indent.is_line_blank() {
-                    Some(false)
-                } else {
+                // A whitespace-only line is blank but has a non-zero indent length, so it must
+                // be skipped before comparing indents.
+                if next_line_indent.is_line_blank() {
                     None
+                } else {
+                    Some(next_line_indent.raw_len() > line_indent.raw_len())
                 }
             })
             .unwrap_or(false)
@@ -3988,6 +3988,35 @@ pub mod tests {
 
             map
         });
+    }
+
+    #[gpui::test]
+    fn test_starts_indent_with_whitespace_only_blank_lines(cx: &mut gpui::App) {
+        init_test(cx, &|_| {});
+
+        // The lines holding a single space are deliberate: a whitespace-only line is blank
+        // but still has a non-zero indent length, so comparing indents before checking for
+        // blankness makes it look like the following line is indented.
+        let buffer = MultiBuffer::build_simple("aaa\n \nbbb\nccc\n \n    ddd", cx);
+        let font_size = px(14.0);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert!(!snapshot.starts_indent(MultiBufferRow(0)));
+        assert!(snapshot.crease_for_buffer_row(MultiBufferRow(0)).is_none());
+        assert!(snapshot.starts_indent(MultiBufferRow(3)));
     }
 
     #[gpui::test]
