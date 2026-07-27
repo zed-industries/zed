@@ -121,6 +121,7 @@ impl Platform for WebPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         let wgpu_context = self.wgpu_context.clone();
+        let browser_window = self.browser_window.clone();
         wasm_bindgen_futures::spawn_local(async move {
             match WgpuContext::new_web().await {
                 Ok(context) => {
@@ -129,8 +130,11 @@ impl Platform for WebPlatform {
                     on_finish_launching();
                 }
                 Err(err) => {
+                    // Without a GPU context nothing can ever render, so
+                    // launching the app would only produce confusing
+                    // downstream errors. Leave a message in the page instead.
                     log::error!("Failed to initialize WebGPU context: {err:#}");
-                    on_finish_launching();
+                    show_webgpu_unavailable_message(&browser_window);
                 }
             }
         });
@@ -416,6 +420,22 @@ fn cursor_restore_listeners(
     add_listener(document_target, "visibilitychange");
 
     handles
+}
+
+fn show_webgpu_unavailable_message(browser_window: &web_sys::Window) {
+    let Some(document) = browser_window.document() else {
+        return;
+    };
+    let Some(body) = document.body() else {
+        return;
+    };
+    let Ok(message) = document.create_element("p") else {
+        return;
+    };
+    message.set_text_content(Some(
+        "Failed to initialize WebGPU. This application requires a browser with WebGPU support.",
+    ));
+    body.append_child(&message).ok();
 }
 
 fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {
