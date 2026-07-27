@@ -103,6 +103,7 @@ pub struct MarkdownStyle {
     pub code_block: StyleRefinement,
     pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
+    pub inline_math: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub link_callback: Option<LinkStyleCallback>,
@@ -128,6 +129,7 @@ impl Default for MarkdownStyle {
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
+            inline_math: Default::default(),
             block_quote: Default::default(),
             link: Default::default(),
             link_callback: None,
@@ -274,6 +276,15 @@ impl MarkdownStyle {
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
+                ..Default::default()
+            },
+            inline_math: TextStyleRefinement {
+                font_family: Some(body_font_family),
+                font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+                font_features: Some(theme_settings.ui_font.features.clone()),
+                font_size: Some(ui_font_size.into()),
+                font_weight: Some(buffer_font_weight),
+                color: Some(colors.text),
                 ..Default::default()
             },
             link: TextStyleRefinement {
