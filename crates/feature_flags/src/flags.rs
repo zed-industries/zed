@@ -130,6 +130,10 @@ impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
 
+    fn enabled_for_all() -> bool {
+        true
+    }
+
     fn enabled_for_staff() -> bool {
         false
     }
