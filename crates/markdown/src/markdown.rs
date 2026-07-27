@@ -401,6 +401,7 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
+    table_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
     context_menu_selected_markdown: Option<SharedString>,
@@ -594,6 +595,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
+            table_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
@@ -638,6 +640,18 @@ impl Markdown {
 
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
         self.code_block_scroll_handles
+            .retain(|id, _| ids.contains(id));
+    }
+
+    fn table_scroll_handle(&mut self, id: usize) -> ScrollHandle {
+        self.table_scroll_handles
+            .entry(id)
+            .or_insert_with(ScrollHandle::new)
+            .clone()
+    }
+
+    fn retain_table_scroll_handles(&mut self, ids: &HashSet<usize>) {
+        self.table_scroll_handles
             .retain(|id, _| ids.contains(id));
     }
 
@@ -2145,6 +2159,7 @@ impl Element for MarkdownElement {
             0
         };
         let mut code_block_ids = HashSet::default();
+        let mut table_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
@@ -2507,28 +2522,50 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
-
                             let column_count = alignments.len();
-                            builder.push_div(
+
+                            let scroll_handle = self.markdown.update(cx, |markdown, _| {
+                                markdown.table_scroll_handle(range.start)
+                            });
+                            table_ids.insert(range.start);
+
+                            let table_container: AnyDiv = {
+                                let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
+                                    .id(("markdown-table-scrollbar", range.start))
+                                    .tracked_scroll_handle(&scroll_handle)
+                                    .with_track_along(
+                                        ScrollAxes::Horizontal,
+                                        cx.theme().colors().editor_background,
+                                    )
+                                    .notify_content();
+
                                 div()
-                                    .id(("table", range.start))
-                                    .grid()
-                                    .grid_cols(column_count as u16)
-                                    .when(self.style.table_columns_min_size, |this| {
-                                        this.grid_cols_min_content(column_count as u16)
-                                    })
-                                    .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols(column_count as u16)
-                                    })
                                     .w_full()
-                                    .mb_2()
-                                    .border(px(1.5))
-                                    .border_color(cx.theme().colors().border)
-                                    .rounded_sm()
-                                    .overflow_x_scroll(),
-                                range,
-                                markdown_end,
-                            );
+                                    .custom_scrollbars(scrollbars, window, cx)
+                                    .into()
+                            };
+                            builder.push_div(table_container, range, markdown_end);
+
+                            let table_div = div()
+                                .id(("table", range.start))
+                                .grid()
+                                .grid_cols(column_count as u16)
+                                .when(self.style.table_columns_min_size, |this| {
+                                    this.grid_cols_min_content(column_count as u16)
+                                })
+                                .when(!self.style.table_columns_min_size, |this| {
+                                    this.grid_cols(column_count as u16)
+                                })
+                                .w_full()
+                                .mb_2()
+                                .border(px(1.5))
+                                .border_color(cx.theme().colors().border)
+                                .rounded_sm()
+                                .map(|mut div| {
+                                    div.style().restrict_scroll_to_axis = Some(true);
+                                    div.overflow_x_scroll().track_scroll(&scroll_handle)
+                                });
+                            builder.push_div(table_div, range, markdown_end);
                         }
                         MarkdownTag::TableHead => {
                             builder.table.start_head();
@@ -2703,6 +2740,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
+                        builder.pop_div();
                         builder.table.end();
                     }
                     MarkdownTagEnd::TableHead => {
@@ -2818,6 +2856,12 @@ impl Element for MarkdownElement {
         } else {
             self.markdown
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
+        }
+        {
+            let table_ids = table_ids;
+            self.markdown.update(cx, move |markdown, _| {
+                markdown.retain_table_scroll_handles(&table_ids);
+            });
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
@@ -5888,6 +5932,112 @@ mod tests {
             assert_eq!(
                 ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
                 px(24.0)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_table_scroll_handle_created_on_render(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| {
+            Markdown::new("| a | b |\n|---|---|\n| c | d |".into(), None, None, cx)
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert!(
+                markdown.table_scroll_handles.is_empty(),
+                "no handles before rendering"
+            );
+        });
+
+        let _ = render_markdown_entity_in_view(
+            markdown.clone(),
+            MarkdownStyle::default(),
+            None,
+            cx,
+        );
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown.table_scroll_handles.len(),
+                1,
+                "one handle after rendering a single table"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_multiple_tables_get_independent_scroll_handles(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "| a | b |\n|---|---|\n| c | d |\n\n| e | f |\n|---|---|\n| g | h |"
+                    .into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let _ = render_markdown_entity_in_view(
+            markdown.clone(),
+            MarkdownStyle::default(),
+            None,
+            cx,
+        );
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown.table_scroll_handles.len(),
+                2,
+                "two handles for two tables"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_table_scroll_handles_discarded_on_content_change(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| {
+            Markdown::new("| a | b |\n|---|---|\n| c | d |".into(), None, None, cx)
+        });
+        cx.run_until_parked();
+
+        let _ = render_markdown_entity_in_view(
+            markdown.clone(),
+            MarkdownStyle::default(),
+            None,
+            cx,
+        );
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown.table_scroll_handles.len(),
+                1,
+                "handle exists after rendering a table"
+            );
+        });
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.source = "No table here, just plain text".into();
+            markdown.parse(cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let _ = render_markdown_entity_in_view(
+            markdown.clone(),
+            MarkdownStyle::default(),
+            None,
+            cx,
+        );
+
+        markdown.read_with(cx, |markdown, _| {
+            assert!(
+                markdown.table_scroll_handles.is_empty(),
+                "handles discarded when tables are removed"
             );
         });
     }
