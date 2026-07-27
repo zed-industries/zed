@@ -7758,8 +7758,8 @@ impl ThreadView {
         // Terminal command labels are parsed as plain text, so the command
         // renders outside a code block; keep it on the buffer font.
         let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
-        style.container_style.text.font_size = Some(rems_from_px(11.).into());
-        style.container_style.text.line_height = Some(rems_from_px(16.).into());
+        style.container_style.text.font_size = Some(rems_from_px(12.).into());
+        style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
         // Soft-wrap the command instead of horizontally scrolling it: the card is
         // narrow, and in scroll mode a long command wraps anyway but its wrapped
