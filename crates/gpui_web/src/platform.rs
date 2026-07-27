@@ -1,5 +1,6 @@
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
+use crate::events::EventListenerHandle;
 use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
@@ -381,23 +382,6 @@ impl Platform for WebPlatform {
     }
 }
 
-struct EventListenerHandle {
-    target: web_sys::EventTarget,
-    event_name: &'static str,
-    closure: Closure<dyn FnMut(JsValue)>,
-}
-
-impl Drop for EventListenerHandle {
-    fn drop(&mut self) {
-        self.target
-            .remove_event_listener_with_callback(
-                self.event_name,
-                self.closure.as_ref().unchecked_ref(),
-            )
-            .ok();
-    }
-}
-
 fn cursor_restore_listeners(
     browser_window: &web_sys::Window,
     cursor_visible: Rc<Cell<bool>>,
@@ -408,26 +392,19 @@ fn cursor_restore_listeners(
         return handles;
     };
 
-    let make_restore_handler = |browser_window: web_sys::Window| {
+    let mut add_listener = |target: &web_sys::EventTarget, event_name: &'static str| {
+        let browser_window = browser_window.clone();
         let cursor_visible = cursor_visible.clone();
         let last_cursor_css = last_cursor_css.clone();
-        Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-            if !cursor_visible.replace(true) {
-                set_body_cursor(&browser_window, last_cursor_css.get());
-            }
-        })
-    };
-
-    let mut add_listener = |target: &web_sys::EventTarget, event_name: &'static str| {
-        let closure = make_restore_handler(browser_window.clone());
-        target
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
-            .ok();
-        handles.push(EventListenerHandle {
-            target: target.clone(),
+        handles.push(EventListenerHandle::add(
+            target,
             event_name,
-            closure,
-        });
+            move |_event: JsValue| {
+                if !cursor_visible.replace(true) {
+                    set_body_cursor(&browser_window, last_cursor_css.get());
+                }
+            },
+        ));
     };
 
     let document_target: &web_sys::EventTarget = document.as_ref();

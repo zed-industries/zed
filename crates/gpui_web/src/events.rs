@@ -12,8 +12,76 @@ use wasm_bindgen::prelude::*;
 use crate::window::WebWindowInner;
 
 pub struct WebEventListeners {
-    #[allow(dead_code)]
-    closures: Vec<Closure<dyn FnMut(JsValue)>>,
+    _handles: Vec<EventListenerHandle>,
+}
+
+/// A DOM event listener that is removed from its target when dropped.
+///
+/// Dropping the `Closure` alone would leave the listener attached to the DOM
+/// pointing at a freed function; the next event would then throw "closure
+/// invoked after being dropped". Keeping the target alongside the closure
+/// lets `Drop` unregister the listener first.
+pub(crate) struct EventListenerHandle {
+    target: web_sys::EventTarget,
+    event_name: &'static str,
+    closure: Closure<dyn FnMut(JsValue)>,
+}
+
+impl EventListenerHandle {
+    pub(crate) fn add(
+        target: &web_sys::EventTarget,
+        event_name: &'static str,
+        handler: impl FnMut(JsValue) + 'static,
+    ) -> Self {
+        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        target
+            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
+            .ok();
+        Self {
+            target: target.clone(),
+            event_name,
+            closure,
+        }
+    }
+
+    /// Registers with `{passive: false}` so that `preventDefault()` works.
+    /// Needed for events like `wheel` which are passive by default in modern
+    /// browsers. Removal does not need to match the `passive` option, so
+    /// `Drop` works the same as for [`EventListenerHandle::add`].
+    fn add_non_passive(
+        target: &web_sys::EventTarget,
+        event_name: &'static str,
+        handler: impl FnMut(JsValue) + 'static,
+    ) -> Self {
+        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        let target_js: &JsValue = target.as_ref();
+        let callback_js: &JsValue = closure.as_ref();
+        let options = js_sys::Object::new();
+        js_sys::Reflect::set(&options, &"passive".into(), &false.into()).ok();
+        if let Ok(add_fn_val) = js_sys::Reflect::get(target_js, &"addEventListener".into()) {
+            if let Ok(add_fn) = add_fn_val.dyn_into::<js_sys::Function>() {
+                add_fn
+                    .call3(target_js, &event_name.into(), callback_js, &options)
+                    .ok();
+            }
+        }
+        Self {
+            target: target.clone(),
+            event_name,
+            closure,
+        }
+    }
+}
+
+impl Drop for EventListenerHandle {
+    fn drop(&mut self) {
+        self.target
+            .remove_event_listener_with_callback(
+                self.event_name,
+                self.closure.as_ref().unchecked_ref(),
+            )
+            .ok();
+    }
 }
 
 pub(crate) struct ClickState {
@@ -52,7 +120,7 @@ impl ClickState {
 
 impl WebWindowInner {
     pub fn register_event_listeners(self: &Rc<Self>) -> WebEventListeners {
-        let mut closures = vec![
+        let mut handles = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
             self.register_pointer_move(),
@@ -73,57 +141,35 @@ impl WebWindowInner {
             self.register_pointer_enter(),
             self.register_pointer_leave_hover(),
         ];
-        closures.extend(self.register_visibility_change());
-        closures.extend(self.register_appearance_change());
-        closures.extend(self.register_fullscreen_change());
+        handles.extend(self.register_visibility_change());
+        handles.extend(self.register_appearance_change());
+        handles.extend(self.register_fullscreen_change());
 
-        WebEventListeners { closures }
+        WebEventListeners { _handles: handles }
     }
 
     fn listen(
         self: &Rc<Self>,
-        event_name: &str,
+        event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
-    ) -> Closure<dyn FnMut(JsValue)> {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
-        self.canvas
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
-            .ok();
-        closure
+    ) -> EventListenerHandle {
+        EventListenerHandle::add(self.canvas.as_ref(), event_name, handler)
     }
 
     fn listen_input(
         self: &Rc<Self>,
-        event_name: &str,
+        event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
-    ) -> Closure<dyn FnMut(JsValue)> {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
-        self.input_element
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
-            .ok();
-        closure
+    ) -> EventListenerHandle {
+        EventListenerHandle::add(self.input_element.as_ref(), event_name, handler)
     }
 
-    /// Registers a listener with `{passive: false}` so that `preventDefault()` works.
-    /// Needed for events like `wheel` which are passive by default in modern browsers.
     fn listen_non_passive(
         self: &Rc<Self>,
-        event_name: &str,
+        event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
-    ) -> Closure<dyn FnMut(JsValue)> {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
-        let canvas_js: &JsValue = self.canvas.as_ref();
-        let callback_js: &JsValue = closure.as_ref();
-        let options = js_sys::Object::new();
-        js_sys::Reflect::set(&options, &"passive".into(), &false.into()).ok();
-        if let Ok(add_fn_val) = js_sys::Reflect::get(canvas_js, &"addEventListener".into()) {
-            if let Ok(add_fn) = add_fn_val.dyn_into::<js_sys::Function>() {
-                add_fn
-                    .call3(canvas_js, &event_name.into(), callback_js, &options)
-                    .ok();
-            }
-        }
-        closure
+    ) -> EventListenerHandle {
+        EventListenerHandle::add_non_passive(self.canvas.as_ref(), event_name, handler)
     }
 
     fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
@@ -131,7 +177,7 @@ impl WebWindowInner {
         borrowed.input.as_mut().map(|callback| callback(input))
     }
 
-    fn register_pointer_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_down(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -168,7 +214,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_up(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_up(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerup", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -196,7 +242,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_move(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_move(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointermove", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -220,7 +266,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_leave(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_leave(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerleave", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -243,7 +289,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_wheel(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_wheel(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_non_passive("wheel", move |event: JsValue| {
             let event: web_sys::WheelEvent = event.unchecked_into();
@@ -277,14 +323,14 @@ impl WebWindowInner {
         })
     }
 
-    fn register_context_menu(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_context_menu(self: &Rc<Self>) -> EventListenerHandle {
         self.listen("contextmenu", move |event: JsValue| {
             let event: web_sys::Event = event.unchecked_into();
             event.prevent_default();
         })
     }
 
-    fn register_dragover(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_dragover(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("dragover", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
@@ -302,7 +348,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_drop(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_drop(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("drop", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
@@ -327,14 +373,14 @@ impl WebWindowInner {
         })
     }
 
-    fn register_dragleave(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_dragleave(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("dragleave", move |_event: JsValue| {
             this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Exited));
         })
     }
 
-    fn register_key_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_key_down(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("keydown", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
@@ -401,7 +447,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_key_up(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_key_up(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("keyup", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
@@ -448,7 +494,7 @@ impl WebWindowInner {
     /// read API cannot fit that synchronous signature, while `ClipboardEvent`
     /// exposes `clipboardData` synchronously inside the event. It fires for
     /// any browser-initiated paste (keyboard, menu bar, context menu).
-    fn register_paste(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_paste(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("paste", move |event: JsValue| {
             let event: web_sys::ClipboardEvent = event.unchecked_into();
@@ -469,14 +515,14 @@ impl WebWindowInner {
         })
     }
 
-    fn register_composition_start(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_composition_start(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("compositionstart", move |_event: JsValue| {
             this.is_composing.set(true);
         })
     }
 
-    fn register_composition_update(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_composition_update(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("compositionupdate", move |event: JsValue| {
             let event: web_sys::CompositionEvent = event.unchecked_into();
@@ -488,7 +534,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_composition_end(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_composition_end(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("compositionend", move |event: JsValue| {
             let event: web_sys::CompositionEvent = event.unchecked_into();
@@ -502,7 +548,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_focus(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_focus(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("focus", move |_event: JsValue| {
             {
@@ -516,7 +562,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_blur(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_blur(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("blur", move |_event: JsValue| {
             {
@@ -530,7 +576,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_enter(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_enter(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerenter", move |_event: JsValue| {
             {
@@ -544,7 +590,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_leave_hover(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_leave_hover(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerleave", move |_event: JsValue| {
             {
