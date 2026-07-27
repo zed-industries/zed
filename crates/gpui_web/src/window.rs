@@ -259,15 +259,16 @@ impl WebWindow {
 
             // Skip rendering to a zero-size canvas (e.g. display:none).
             if physical_width == 0 || physical_height == 0 {
-                let mut s = inner.state.borrow_mut();
-                s.bounds.size = Size::default();
-                s.scale_factor = dpr_f32;
-                // Still fire the callback so GPUI knows the window is gone.
-                drop(s);
-                let mut cbs = inner.callbacks.borrow_mut();
-                if let Some(ref mut callback) = cbs.resize {
-                    callback(Size::default(), dpr_f32);
+                {
+                    let mut s = inner.state.borrow_mut();
+                    s.bounds.size = Size::default();
+                    s.scale_factor = dpr_f32;
                 }
+                // Still fire the callback so GPUI knows the window is gone.
+                inner.with_callback(
+                    |callbacks| &mut callbacks.resize,
+                    |callback| callback(Size::default(), dpr_f32),
+                );
                 return;
             }
 
@@ -293,30 +294,48 @@ impl WebWindow {
                 height: px(logical_height),
             };
 
-            let mut cbs = inner.callbacks.borrow_mut();
-            if let Some(ref mut callback) = cbs.resize {
-                callback(new_size, dpr_f32);
-            }
+            inner.with_callback(
+                |callbacks| &mut callbacks.resize,
+                |callback| callback(new_size, dpr_f32),
+            );
         })
     }
 }
 
 impl WebWindowInner {
+    /// Invokes a registered callback with take/call/restore semantics.
+    ///
+    /// The callback is removed from the slot for the duration of the call, so
+    /// the `RefCell` is not borrowed while user code runs: a callback that
+    /// re-enters the platform window (dispatching input, registering
+    /// handlers) would otherwise panic with a `BorrowMutError`. A re-entrant
+    /// invocation of the same callback finds the slot empty and is a no-op.
+    pub(crate) fn with_callback<C, R>(
+        &self,
+        select: impl Fn(&mut WebWindowCallbacks) -> &mut Option<C>,
+        invoke: impl FnOnce(&mut C) -> R,
+    ) -> Option<R> {
+        let mut callback = select(&mut self.callbacks.borrow_mut()).take()?;
+        let result = invoke(&mut callback);
+        *select(&mut self.callbacks.borrow_mut()) = Some(callback);
+        Some(result)
+    }
+
     fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
         let raf_handle: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
         let raf_handle_inner = Rc::clone(&raf_handle);
 
         let this = Rc::clone(self);
         let closure = Closure::new(move || {
-            {
-                let mut callbacks = this.callbacks.borrow_mut();
-                if let Some(ref mut callback) = callbacks.request_frame {
+            this.with_callback(
+                |callbacks| &mut callbacks.request_frame,
+                |callback| {
                     callback(RequestFrameOptions {
                         require_presentation: true,
                         force_render: false,
-                    });
-                }
-            }
+                    })
+                },
+            );
 
             // Re-schedule for the next frame
             if let Some(ref func) = *raf_handle_inner.borrow() {
@@ -402,10 +421,10 @@ impl WebWindowInner {
                     let mut state = this.state.borrow_mut();
                     state.is_active = is_visible;
                 }
-                let mut callbacks = this.callbacks.borrow_mut();
-                if let Some(ref mut callback) = callbacks.active_status_change {
-                    callback(is_visible);
-                }
+                this.with_callback(
+                    |callbacks| &mut callbacks.active_status_change,
+                    |callback| callback(is_visible),
+                );
             },
         ))
     }
@@ -451,10 +470,10 @@ impl WebWindowInner {
             mql.as_ref(),
             "change",
             move |_event: JsValue| {
-                let mut callbacks = this.callbacks.borrow_mut();
-                if let Some(ref mut callback) = callbacks.appearance_changed {
-                    callback();
-                }
+                this.with_callback(
+                    |callbacks| &mut callbacks.appearance_changed,
+                    |callback| callback(),
+                );
             },
         ))
     }

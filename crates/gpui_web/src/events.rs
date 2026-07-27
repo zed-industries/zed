@@ -173,8 +173,7 @@ impl WebWindowInner {
     }
 
     fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
-        let mut borrowed = self.callbacks.borrow_mut();
-        borrowed.input.as_mut().map(|callback| callback(input))
+        self.with_callback(|callbacks| &mut callbacks.input, |callback| callback(input))
     }
 
     fn register_pointer_down(self: &Rc<Self>) -> EventListenerHandle {
@@ -555,10 +554,10 @@ impl WebWindowInner {
                 let mut state = this.state.borrow_mut();
                 state.is_active = true;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.active_status_change {
-                callback(true);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.active_status_change,
+                |callback| callback(true),
+            );
         })
     }
 
@@ -569,10 +568,10 @@ impl WebWindowInner {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.active_status_change {
-                callback(false);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.active_status_change,
+                |callback| callback(false),
+            );
         })
     }
 
@@ -583,10 +582,10 @@ impl WebWindowInner {
                 let mut state = this.state.borrow_mut();
                 state.is_hovered = true;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.hover_status_change {
-                callback(true);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.hover_status_change,
+                |callback| callback(true),
+            );
         })
     }
 
@@ -597,10 +596,10 @@ impl WebWindowInner {
                 let mut state = this.state.borrow_mut();
                 state.is_hovered = false;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.hover_status_change {
-                callback(false);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.hover_status_change,
+                |callback| callback(false),
+            );
         })
     }
 }
