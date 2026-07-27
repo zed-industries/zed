@@ -951,11 +951,15 @@ fn update_active_language_model_from_settings(cx: &mut App) {
 /// while still tracking the panel's ephemeral zoom.
 pub(crate) fn ui_chrome_rem_size(cx: &App) -> gpui::Pixels {
     let theme_settings = theme_settings::ThemeSettings::get_global(cx);
-    let zoom_delta = theme_settings.agent_ui_font_size(cx)
-        - theme_settings
+    // The baseline comes from the configured sizes rather than the resolved
+    // ones, so that an ephemeral agent zoom composes with the global UI zoom
+    // instead of cancelling it.
+    let baseline = theme_settings::clamp_font_size(
+        theme_settings
             .agent_ui_font_size_settings()
-            .map(theme_settings::clamp_font_size)
-            .unwrap_or_else(|| theme_settings.ui_font_size(cx));
+            .unwrap_or_else(|| theme_settings.ui_font_size_settings()),
+    );
+    let zoom_delta = theme_settings.agent_ui_font_size(cx) - baseline;
     theme_settings.ui_font_size(cx) + zoom_delta
 }
 
