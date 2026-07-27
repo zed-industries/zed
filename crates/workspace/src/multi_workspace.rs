@@ -1685,21 +1685,22 @@ impl MultiWorkspace {
     }
 
     pub fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
-        // If a dock panel is zoomed, focus it instead of the center pane.
-        // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
-        // which closes the zoomed dock.
+        // If a dock panel's fullscreen overlay is currently showing, focus it instead
+        // of the center pane so we don't drop the user out of it. A panel can be
+        // zoomed but not overlaid (e.g. after focus moved to another panel while it
+        // stayed zoomed - see dismiss_zoomed_items_to_reveal), in which case there's
+        // nothing to preserve and we should focus the center pane as usual.
         let focus_handle = {
             let workspace = self.workspace().read(cx);
             let mut target = None;
             for dock in workspace.all_docks() {
                 let dock = dock.read(cx);
-                if dock.is_open() {
-                    if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(window, cx) {
-                            target = Some(panel.panel_focus_handle(cx));
-                            break;
-                        }
-                    }
+                if dock.is_open()
+                    && workspace.zoomed_position == Some(dock.position())
+                    && let Some(panel) = dock.active_panel()
+                {
+                    target = Some(panel.panel_focus_handle(cx));
+                    break;
                 }
             }
             target.unwrap_or_else(|| {
