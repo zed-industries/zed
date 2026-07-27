@@ -133,6 +133,10 @@ pub struct GlobalLspSettings {
     ///
     /// Default: `120`
     pub request_timeout: u64,
+    /// The maximum line length a buffer may contain before language server features are disabled for the entire buffer.
+    ///
+    /// Default: `20000`
+    pub max_buffer_line_length: u32,
     pub notifications: LspNotificationSettings,
 
     /// Rules for highlighting semantic tokens.
@@ -144,6 +148,7 @@ impl Default for GlobalLspSettings {
         Self {
             button: true,
             request_timeout: DEFAULT_LSP_REQUEST_TIMEOUT_SECS,
+            max_buffer_line_length: 20_000,
             notifications: LspNotificationSettings::default(),
             semantic_token_rules: SemanticTokenRules::default(),
         }
@@ -737,6 +742,12 @@ impl Settings for ProjectSettings {
                     .unwrap()
                     .request_timeout
                     .unwrap(),
+                max_buffer_line_length: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .max_buffer_line_length
+                    .unwrap(),
                 notifications: LspNotificationSettings {
                     dismiss_timeout_ms: content
                         .global_lsp_settings
@@ -1023,7 +1034,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: path.to_proto(),
+                        path: path.as_unix_str().to_owned(),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
@@ -1206,7 +1217,7 @@ impl SettingsObserver {
                     .unwrap()
                     .into();
                 (settings_dir, LocalSettingsKind::Debug)
-            } else if path.ends_with(RelPath::unix(EDITORCONFIG_NAME).unwrap()) {
+            } else if path.ends_with(RelPath::from_unix_str(EDITORCONFIG_NAME).unwrap()) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };

@@ -262,7 +262,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let path = match &symbol.path {
             SymbolLocation::InProject(project_path) => {
                 let project = self.project.read(cx);
-                let mut path = project_path.path.clone();
+                let mut path = project_path.path.to_rel_path_buf();
                 if self.show_worktree_root_name
                     && let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
                 {
@@ -358,10 +358,11 @@ mod tests {
         language_registry.add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,
@@ -511,10 +512,11 @@ mod tests {
         language_registry.add(Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,

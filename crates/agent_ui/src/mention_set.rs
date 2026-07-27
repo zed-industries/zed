@@ -263,7 +263,7 @@ impl MentionSet {
                 .read(cx)
                 .project_path_for_absolute_path(&abs_path, cx)
             else {
-                log::error!("project path not found");
+                log::error!("project path not found for image mention {abs_path:?}");
                 return Task::ready(());
             };
             let image_task = project.update(cx, |project, cx| project.open_image(project_path, cx));
@@ -395,7 +395,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for file mention {abs_path:?}"
+            )));
         };
 
         if is_raster_image_path(&abs_path) {
@@ -422,7 +424,12 @@ impl MentionSet {
 
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
-            let buffer = buffer.await?;
+            let buffer = match buffer.await {
+                Ok(buffer) => buffer,
+                Err(_error) => {
+                    return Ok(Mention::Link);
+                }
+            };
             let buffer_content = outline::get_buffer_content_or_outline(
                 buffer.clone(),
                 Some(&abs_path.to_string_lossy()),
@@ -465,7 +472,9 @@ impl MentionSet {
             .read(cx)
             .project_path_for_absolute_path(&abs_path, cx)
         else {
-            return Task::ready(Err(anyhow!("project path not found")));
+            return Task::ready(Err(anyhow!(
+                "project path not found for symbol mention {abs_path:?}"
+            )));
         };
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
@@ -516,6 +525,7 @@ impl MentionSet {
         source_range: Range<text::Anchor>,
         selections: Vec<(Entity<Buffer>, Range<text::Anchor>, Range<usize>)>,
         editor: Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -555,6 +565,8 @@ impl MentionSet {
                 selection_name(abs_path.as_deref(), &line_range).into(),
                 uri.icon_path(cx),
                 uri.tooltip_text(),
+                Some(uri.clone()),
+                Some(workspace.clone()),
                 range,
                 editor.downgrade(),
             );
@@ -1139,11 +1151,20 @@ pub(crate) fn crease_for_mention(
     label: SharedString,
     icon_path: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     editor_entity: WeakEntity<Editor>,
 ) -> Crease<Anchor> {
     let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path.clone(), label.clone(), tooltip, editor_entity),
+        render: render_fold_icon_button(
+            icon_path.clone(),
+            label.clone(),
+            tooltip,
+            mention_uri,
+            workspace,
+            editor_entity,
+        ),
         merge_adjacent: false,
         ..Default::default()
     };
@@ -1158,6 +1179,8 @@ fn render_fold_icon_button(
     icon_path: SharedString,
     label: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
@@ -1167,6 +1190,8 @@ fn render_fold_icon_button(
                 .unwrap_or_default();
 
             MentionCrease::new(fold_id, icon_path.clone(), label.clone())
+                .mention_uri(mention_uri.clone())
+                .workspace(workspace.clone())
                 .is_toggled(is_in_text_selection)
                 .when_some(tooltip.clone(), |this, tooltip_text| {
                     this.tooltip(tooltip_text)
@@ -1222,7 +1247,9 @@ fn full_mention_for_directory(
         .read(cx)
         .project_path_for_absolute_path(&abs_path, cx)
     else {
-        return Task::ready(Err(anyhow!("project path not found")));
+        return Task::ready(Err(anyhow!(
+            "project path not found for directory mention {abs_path:?}"
+        )));
     };
     let Some(entry) = project.read(cx).entry_for_path(&project_path, cx) else {
         return Task::ready(Err(anyhow!("project entry not found")));
@@ -1242,8 +1269,7 @@ fn full_mention_for_directory(
                 |(worktree_path, full_path): (Arc<RelPath>, String)| {
                     let rel_path = worktree_path
                         .strip_prefix(&directory_path)
-                        .log_err()
-                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
+                        .map_or_else(|_| worktree_path.clone(), |rel_path| rel_path.into());
 
                     let open_task = project.update(cx, |project, cx| {
                         project.buffer_store().update(cx, |buffer_store, cx| {

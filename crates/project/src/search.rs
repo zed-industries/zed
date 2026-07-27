@@ -118,7 +118,7 @@ impl SearchQuery {
                 include_ignored,
                 files_to_include,
                 files_to_exclude,
-                false,
+                match_full_paths,
                 buffers,
             );
         }
