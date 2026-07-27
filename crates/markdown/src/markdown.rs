@@ -2197,7 +2197,7 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state, render_math, math_state) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -2205,6 +2205,8 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.options.render_math,
+                markdown.math_state.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -2876,26 +2878,44 @@ impl Element for MarkdownElement {
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
                 }
-                MarkdownEvent::InlineMath(latex) => {
-                    // Placeholder: render as styled inline code until math renderer is wired up.
-                    let mut code_style = self.style.inline_code.clone();
-                    if builder.link_depth > 0 {
-                        code_style.color = self.style.link.color.or(code_style.color);
+                MarkdownEvent::InlineMath(_) => {
+                    if render_math {
+                        if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
+                            builder.push_sourced_element(
+                                range.clone(),
+                                render_math_expression(expr, &math_state, &self.style),
+                            );
+                        }
+                    } else {
+                        // Fallback: render as styled inline code.
+                        let mut code_style = self.style.inline_code.clone();
+                        if builder.link_depth > 0 {
+                            code_style.color = self.style.link.color.or(code_style.color);
+                        }
+                        builder.push_text_style(code_style);
+                        builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                        builder.pop_text_style();
                     }
-                    builder.push_text_style(code_style);
-                    builder.push_text(&format!("${}$", latex), range.clone());
-                    builder.pop_text_style();
                 }
-                MarkdownEvent::DisplayMath(latex) => {
-                    // Placeholder: render as centered code block until math renderer is wired up.
-                    builder.push_div(
-                        div().centered().py_2().px_4().child(
-                            div().child(format!("$${}$$", latex)),
-                        ),
-                        range,
-                        markdown_end,
-                    );
-                    builder.pop_div();
+                MarkdownEvent::DisplayMath(_) => {
+                    if render_math {
+                        if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
+                            builder.push_sourced_element(
+                                range.clone(),
+                                render_math_expression(expr, &math_state, &self.style),
+                            );
+                        }
+                    } else {
+                        // Fallback: render as centered code block.
+                        builder.push_div(
+                            div().centered().py_2().px_4().child(
+                                div().child(parsed_markdown.source[range.clone()].to_string()),
+                            ),
+                            range,
+                            markdown_end,
+                        );
+                        builder.pop_div();
+                    }
                 }
             }
         }
