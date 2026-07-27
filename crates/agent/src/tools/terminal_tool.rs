@@ -808,12 +808,19 @@ async fn run_terminal_tool(
                 {
                     Ok(()) => Some(wrap),
                     Err(error) => {
-                        // The probe can't fail off Linux; keep failing open just
-                        // in case a future platform's probe ever does.
+                        // Off Linux the probe only fails when the policy itself
+                        // can't be built (e.g. an approved write grant no longer
+                        // exists or fails its verifying reopen). Running the
+                        // command anyway would silently drop access the user
+                        // approved — or, worse, run unsandboxed — so fail
+                        // closed with the reason instead.
                         log::warn!(
                             "Failed to create a sandbox for an agent terminal command: {error:?}"
                         );
-                        None
+                        return Err(format!(
+                            "Cannot create a sandbox for this command: {}",
+                            error.user_facing_message()
+                        ));
                     }
                 }
             }

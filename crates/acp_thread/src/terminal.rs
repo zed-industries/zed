@@ -187,6 +187,12 @@ pub fn granted_write_path_to_location(
 /// security-relevant event, so it must be logged rather than silently
 /// swallowed. The grant is dropped (the command runs without it) rather than
 /// bound unverified.
+///
+/// Only for **display** policies (the sandbox-status UI), where a stale grant
+/// should simply not be shown. Enforcement must not drop grants silently — a
+/// command would run with less access than the user approved with no signal —
+/// so [`SandboxWrap::to_policy`] uses the erroring
+/// [`granted_write_path_to_location`] instead.
 pub fn granted_write_path_to_location_or_log(
     granted: &settings::GrantedWritePath,
 ) -> Option<sandbox::HostFilesystemLocation> {
@@ -211,54 +217,86 @@ impl SandboxWrap {
     /// Linux, so call it off the main thread. On platforms whose sandbox can't
     /// fail to set up this way it always returns `Ok`.
     pub fn can_create_sandbox(&self) -> Result<(), LinuxWslSandboxError> {
-        sandbox::Sandbox::can_create(&self.to_policy()).map_err(LinuxWslSandboxError::from)
+        let policy = self
+            .to_policy()
+            .map_err(|error| LinuxWslSandboxError::Other(format!("{error:#}")))?;
+        sandbox::Sandbox::can_create(&policy).map_err(LinuxWslSandboxError::from)
     }
 
     /// Translate this request into the cross-platform [`sandbox::SandboxPolicy`].
     ///
     /// This is the enforcement-policy construction point, so it **captures** each
     /// grant as a [`sandbox::HostFilesystemLocation`] (pinning the inode / canonical
-    /// path) rather than passing a re-resolvable path. A location that can't be
-    /// captured (e.g. it doesn't exist) is dropped from the grant — fail-closed.
+    /// path) rather than passing a re-resolvable path.
     ///
-    /// This function has **no filesystem side effects**: it never creates paths.
+    /// This function has **no filesystem side effects**: it never creates paths,
+    /// and it **fails** (rather than silently narrowing the policy) when a
+    /// writable path or approved grant can't be captured — running anyway would
+    /// give the command silently less access than the model and user were told
+    /// it has. On Linux a writable grant that doesn't exist can't be captured
+    /// (bwrap can't bind a missing path); the sanctioned way to get a grant to a
+    /// new directory is the `create_directory` tool, which creates it (pinning
+    /// the inode) before the grant is recorded. On macOS a missing leaf still
+    /// canonicalizes, so such grants are captured directly.
+    ///
     /// It is used both by the side-effect-free [`Self::can_create_sandbox`] probe
-    /// and by real sandbox construction, and must behave identically. On Linux a
-    /// writable grant that doesn't exist yet simply can't be captured (bwrap
-    /// can't bind a missing path), so it's dropped here — the sanctioned way to
-    /// get a grant to a new directory is the `create_directory` tool, which
-    /// creates it (pinning the inode) before the grant is recorded. On macOS a
-    /// missing leaf still canonicalizes, so such grants are captured directly.
-    fn to_policy(&self) -> sandbox::SandboxPolicy {
-        let protected_paths = self
-            .protected_paths
-            .iter()
-            .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
-            .collect();
+    /// and by real sandbox construction, and must behave identically.
+    ///
+    /// A grant failure here can also be the symlink-TOCTOU defense firing: the
+    /// grant's canonical was redirected or replaced by a symlink since approval,
+    /// so the verifying reopen refuses it. Failing the command surfaces that
+    /// security-relevant event instead of running with the grant quietly
+    /// missing.
+    ///
+    /// Protected paths are the one exception: a protected path that no longer
+    /// exists protects nothing, so `NotFound` skips it; any other capture error
+    /// still fails (dropping a protection that might exist would fail *open*).
+    fn to_policy(&self) -> Result<sandbox::SandboxPolicy> {
+        let mut protected_paths = Vec::new();
+        for path in &self.protected_paths {
+            match sandbox::HostFilesystemLocation::capture(path) {
+                Ok(location) => protected_paths.push(location),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(anyhow::anyhow!(error).context(format!(
+                        "cannot capture protected sandbox path `{}`",
+                        path.display()
+                    )));
+                }
+            }
+        }
         let fs = if self.allow_fs_write {
             sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
         } else {
             // Project worktree paths are captured fresh; user-approved grants are
             // rebuilt via the verifying reopen (or captured when legacy bare
             // strings) through `granted_write_path_to_location`.
-            //
-            // Capture only — never create anything here (see the doc comment):
-            // materializing an approved-but-missing grant is deferred to
-            // `Sandbox::new` so it can never happen during the `can_create`
-            // probe, before the user has approved the grant.
+            let mut locations = Vec::new();
+            for path in &self.writable_paths {
+                let location = sandbox::HostFilesystemLocation::capture(path).map_err(|error| {
+                    anyhow::anyhow!(error).context(format!(
+                        "cannot capture writable sandbox path `{}`",
+                        path.display()
+                    ))
+                })?;
+                locations.push(location);
+            }
+            for granted in &self.extra_write_paths {
+                let location = granted_write_path_to_location(granted).map_err(|error| {
+                    anyhow::anyhow!(error).context(format!(
+                        "cannot re-verify approved sandbox write grant `{}` (if the \
+                         directory was removed, remove the grant or recreate the \
+                         directory)",
+                        granted.requested.display()
+                    ))
+                })?;
+                locations.push(location);
+            }
             // Dedupe to a minimal cover on the captured canonical paths, so a
             // grant nested under a worktree root (or another grant) is dropped
             // rather than bound redundantly.
-            let writable_paths = sandbox::normalize_host_filesystem_locations(
-                self.writable_paths
-                    .iter()
-                    .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
-                    .chain(
-                        self.extra_write_paths
-                            .iter()
-                            .filter_map(granted_write_path_to_location_or_log),
-                    ),
-            );
+            let writable_paths =
+                sandbox::normalize_host_filesystem_locations(locations.into_iter());
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,
@@ -275,7 +313,7 @@ impl SandboxWrap {
                     .collect(),
             },
         };
-        sandbox::SandboxPolicy { fs, network }
+        Ok(sandbox::SandboxPolicy { fs, network })
     }
 }
 
@@ -336,8 +374,7 @@ pub(crate) async fn prepare_sandbox_wrap(
         return Ok((program, args, env, None));
     };
 
-    let mut sandbox =
-        sandbox::Sandbox::new(sandbox_wrap.to_policy()).map_err(anyhow::Error::new)?;
+    let mut sandbox = sandbox::Sandbox::new(sandbox_wrap.to_policy()?).map_err(anyhow::Error::new)?;
     // Windows/WSL only: tell the sandbox which Linux `zed` to provision inside
     // WSL as its `--wsl-sandbox-helper`. A no-op (and a no-op setter) elsewhere.
     #[cfg(target_os = "windows")]
@@ -624,4 +661,83 @@ pub async fn create_terminal_entity(
             )
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for the bug where enforcement-policy construction
+    /// *created* missing write grants — famously turning a granted
+    /// `~/.config/zed/AGENTS.md` file path into a directory. A grant whose
+    /// target no longer exists must fail policy construction with an error
+    /// naming it, and nothing may be created.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn to_policy_fails_on_missing_grant_and_never_creates_it() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let missing = temp_dir.path().join("AGENTS.md");
+
+        let wrap = SandboxWrap {
+            extra_write_paths: vec![settings::GrantedWritePath::resolved(
+                missing.clone(),
+                missing.clone(),
+            )],
+            ..Default::default()
+        };
+
+        let error = wrap
+            .to_policy()
+            .expect_err("a grant to a missing path must fail policy construction");
+        assert!(
+            format!("{error:#}").contains("AGENTS.md"),
+            "error should name the failing grant: {error:#}"
+        );
+        assert!(
+            !missing.exists(),
+            "policy construction must never create the granted path"
+        );
+    }
+
+    /// A baseline writable path (worktree root / scratch dir) that doesn't
+    /// exist must also fail: silently narrowing the sandbox would hand the
+    /// command less access than the model was told it has.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn to_policy_fails_on_missing_writable_path() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let missing = temp_dir.path().join("gone");
+
+        let wrap = SandboxWrap {
+            writable_paths: vec![missing.clone()],
+            ..Default::default()
+        };
+
+        wrap.to_policy()
+            .expect_err("a missing writable path must fail policy construction");
+        assert!(
+            !missing.exists(),
+            "policy construction must never create a writable path"
+        );
+    }
+
+    /// Protected paths are the exception: a protected path that no longer
+    /// exists protects nothing, so it is skipped rather than failing the whole
+    /// policy.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn to_policy_skips_missing_protected_path() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let writable = temp_dir.path().join("writable");
+        std::fs::create_dir(&writable).expect("create writable dir");
+
+        let wrap = SandboxWrap {
+            writable_paths: vec![writable],
+            protected_paths: vec![temp_dir.path().join("no-such-.git")],
+            ..Default::default()
+        };
+
+        wrap.to_policy()
+            .expect("a missing protected path must be skipped, not fail the policy");
+    }
 }

@@ -609,22 +609,21 @@ pub fn wrap_invocation(
         );
     }
 
-    // Create the requested writable directories up front, with the agent's
-    // ambient permissions, so each can be bind-mounted at its exact path (see
-    // `build_bwrap_args`): `bwrap` can't bind a nonexistent source, and the
-    // command can't create it either (its parent is read-only inside the
-    // sandbox). If a path still doesn't exist afterwards we can't grant the
-    // write access the agent asked for, and running anyway would give the
-    // command silently less access than it believes it has — so fail closed with
-    // a clear error instead. (An existing *file* makes `create_dir_all` error
-    // but is fine: it exists and the `--bind` below handles it.)
+    // Every writable path must already exist: `bwrap` can't bind a nonexistent
+    // source, and the command can't create it either (its parent is read-only
+    // inside the sandbox). Callers hand us captured canonical paths whose
+    // inodes were pinned at policy-construction time, so a missing path here
+    // means the location vanished since capture. Never create it with the
+    // agent's ambient permissions — recreating from path text would bind a
+    // fresh, unapproved object in place of the pinned one (and historically
+    // this materialized bogus paths, e.g. a granted *file* path springing into
+    // existence as a directory). Running anyway would give the command silently
+    // less access than it believes it has — so fail closed with a clear error.
     if !permissions.allow_fs_write {
         for directory in writable_dirs {
-            if let Err(error) = std::fs::create_dir_all(directory)
-                && !directory.exists()
-            {
+            if !directory.exists() {
                 bail!(
-                    "failed to provide writable sandbox path {}: {error}",
+                    "failed to provide writable sandbox path {}: it no longer exists",
                     directory.display()
                 );
             }
@@ -1941,11 +1940,11 @@ mod tests {
         );
     }
 
-    // A requested writable path that can't be created (here, under an existing
-    // file, so `create_dir_all` errors and the path never exists) must fail the
-    // whole invocation — not run the command with silently less write access
-    // than the agent asked for. This check runs before `resolve_bwrap`, so the
-    // test needs no real `bwrap`.
+    // A requested writable path that doesn't exist must fail the whole
+    // invocation — never be created with the agent's ambient permissions, and
+    // never run the command with silently less write access than the agent
+    // asked for. This check runs before `resolve_bwrap`, so the test needs no
+    // real `bwrap`.
     #[test]
     fn test_wrap_invocation_fails_when_writable_path_cannot_be_provided() {
         let file = tempfile::NamedTempFile::new().unwrap();
@@ -1968,6 +1967,10 @@ mod tests {
         assert!(
             error.to_string().contains("writable sandbox path"),
             "unexpected error: {error:#}"
+        );
+        assert!(
+            !unbindable.exists(),
+            "wrap_invocation must never create a missing writable path"
         );
     }
 }
