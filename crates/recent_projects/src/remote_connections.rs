@@ -8,7 +8,7 @@ use askpass::EncryptedPassword;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
+use gpui::{AppContext, AsyncApp, Entity, PromptLevel, WindowHandle};
 
 use project::trusted_worktrees;
 use remote::{
@@ -128,8 +128,246 @@ impl Settings for RemoteSettings {
     }
 }
 
+/// How the caller should retry a remote connection after showing the
+/// connection-failure prompt.
+enum ConnectionFailureChoice {
+    /// Retry with the same connection options.
+    Retry,
+    /// Retry, but against freshly rebuilt connection options. A rebuild mints a
+    /// new container id, so the originals can no longer be reached.
+    RetryWith(RemoteConnectionOptions),
+    Cancel,
+}
+
+/// An in-place dev-container recovery offered on the connection-failure prompt,
+/// in ascending order of disruption. See the connected-surface equivalents in
+/// `dev_container_lifecycle`.
+#[derive(Clone, Copy)]
+enum DevContainerRecoveryOp {
+    /// `docker start` the container if it stopped, then reconnect.
+    Reconnect,
+    /// `docker stop` + `start`, clearing a wedged in-container server, then
+    /// reconnect.
+    Restart,
+    /// Destroy and rebuild the container from scratch, then reconnect.
+    Rebuild,
+}
+
+impl DevContainerRecoveryOp {
+    /// Status shown in the connection modal while the operation runs, so a slow
+    /// `docker` step (especially a rebuild) doesn't look like a frozen window.
+    fn status(self) -> &'static str {
+        match self {
+            Self::Reconnect => "Starting dev container\u{2026}",
+            Self::Restart => "Restarting dev container\u{2026}",
+            Self::Rebuild => "Rebuilding dev container\u{2026}",
+        }
+    }
+
+    fn error_title(self) -> &'static str {
+        match self {
+            Self::Reconnect => "Failed to start Dev Container",
+            Self::Restart => "Failed to restart Dev Container",
+            Self::Rebuild => "Failed to rebuild Dev Container",
+        }
+    }
+
+    fn error_detail(self) -> &'static str {
+        match self {
+            Self::Reconnect => {
+                "The container could not be started. It may have been removed, in which case you can rebuild it."
+            }
+            Self::Restart => {
+                "The container could not be restarted. It may have been removed, in which case you can rebuild it."
+            }
+            Self::Rebuild => "The container could not be rebuilt.",
+        }
+    }
+}
+
+/// Shows the remote connection-failure prompt and reports how to retry.
+///
+/// For a dev container it offers the same recovery vocabulary used on the
+/// connected surfaces - Reconnect / Restart / Rebuild - in ascending order of
+/// disruption. Rebuild is only offered when the connection carries the host
+/// labels needed to recover the build config. Each operation runs the
+/// corresponding `docker` work (surfacing progress in the connection modal)
+/// before retrying, and only ever on a deliberate user click.
+async fn prompt_connection_failure(
+    window: WindowHandle<MultiWorkspace>,
+    workspace: &Entity<Workspace>,
+    connection_options: &RemoteConnectionOptions,
+    error: &anyhow::Error,
+    cx: &mut AsyncApp,
+) -> Result<ConnectionFailureChoice> {
+    let dev_container_options = match connection_options {
+        RemoteConnectionOptions::Docker(options) => Some(options.clone()),
+        _ => None,
+    };
+    // Rebuild recovers its build config from the host labels; older label-less
+    // connections can only reconnect/restart.
+    let can_rebuild = dev_container_options
+        .as_ref()
+        .is_some_and(|options| options.local_folder.is_some() && options.config_file.is_some());
+
+    let answers: &[&str] = match (dev_container_options.is_some(), can_rebuild) {
+        (true, true) => &[
+            "Reconnect Dev Container",
+            "Restart Dev Container",
+            "Rebuild Dev Container",
+            "Cancel",
+        ],
+        (true, false) => &["Reconnect Dev Container", "Restart Dev Container", "Cancel"],
+        (false, _) => &["Retry", "Cancel"],
+    };
+    let title = match connection_options {
+        RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
+        RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+        RemoteConnectionOptions::Docker(_) => "Failed to connect to Dev Container",
+        #[cfg(any(test, feature = "test-support"))]
+        RemoteConnectionOptions::Mock(_) => "Failed to connect to mock server",
+    };
+    let detail = format!("{error:#}");
+    let response = window
+        .update(cx, |_, window, cx| {
+            window.prompt(PromptLevel::Critical, title, Some(&detail), answers, cx)
+        })?
+        .await;
+
+    let Some(options) = dev_container_options else {
+        return Ok(if response == Ok(0) {
+            ConnectionFailureChoice::Retry
+        } else {
+            ConnectionFailureChoice::Cancel
+        });
+    };
+
+    let op = match response {
+        Ok(0) => DevContainerRecoveryOp::Reconnect,
+        Ok(1) => DevContainerRecoveryOp::Restart,
+        Ok(2) if can_rebuild => DevContainerRecoveryOp::Rebuild,
+        _ => return Ok(ConnectionFailureChoice::Cancel),
+    };
+
+    run_dev_container_recovery(window, workspace, connection_options, &options, op, cx).await
+}
+
+/// Runs a dev-container recovery operation while showing the connection modal
+/// with a status label, then reports how the caller should retry. On failure it
+/// surfaces an error (pointing at rebuild as the fallback) but still retries, so
+/// the user lands back on the connection-failure prompt rather than a silent
+/// dead end.
+async fn run_dev_container_recovery(
+    window: WindowHandle<MultiWorkspace>,
+    workspace: &Entity<Workspace>,
+    connection_options: &RemoteConnectionOptions,
+    options: &DockerConnectionOptions,
+    op: DevContainerRecoveryOp,
+    cx: &mut AsyncApp,
+) -> Result<ConnectionFailureChoice> {
+    show_connection_status(window, workspace, connection_options, op.status(), cx);
+
+    let result = match op {
+        DevContainerRecoveryOp::Reconnect => {
+            crate::dev_container_lifecycle::start_dev_container(options)
+                .await
+                .map(|()| None)
+        }
+        DevContainerRecoveryOp::Restart => {
+            crate::dev_container_lifecycle::restart_dev_container(options)
+                .await
+                .map(|()| None)
+        }
+        DevContainerRecoveryOp::Rebuild => {
+            crate::dev_container_lifecycle::rebuild_dev_container_connection(
+                workspace.downgrade(),
+                options,
+                cx,
+            )
+            .await
+            .map(Some)
+        }
+    };
+
+    match result {
+        Ok(Some(new_options)) => Ok(ConnectionFailureChoice::RetryWith(new_options)),
+        Ok(None) => Ok(ConnectionFailureChoice::Retry),
+        Err(error) => {
+            log::error!("{}: {error:#}", op.error_title());
+            dismiss_connection_status(window, workspace, cx);
+            window
+                .update(cx, |_, window, cx| {
+                    window.prompt(
+                        PromptLevel::Critical,
+                        op.error_title(),
+                        Some(&format!("{}\n\n{error:#}", op.error_detail())),
+                        &["OK"],
+                        cx,
+                    )
+                })?
+                .await
+                .ok();
+            Ok(ConnectionFailureChoice::Retry)
+        }
+    }
+}
+
+/// Shows the connection modal on `workspace` with `status`, giving feedback
+/// while a slow dev-container operation runs. The retry that follows a
+/// successful recovery reuses this same modal for its connect phase (it is a
+/// `RemoteConnectionModal`, which stays open until marked finished), so the
+/// spinner carries straight over. Best-effort: does nothing if the window or
+/// workspace has gone away.
+fn show_connection_status(
+    window: WindowHandle<MultiWorkspace>,
+    workspace: &Entity<Workspace>,
+    connection_options: &RemoteConnectionOptions,
+    status: &str,
+    cx: &mut AsyncApp,
+) {
+    let workspace = workspace.clone();
+    let connection_options = connection_options.clone();
+    let status = status.to_string();
+    window
+        .update(cx, move |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                if workspace
+                    .active_modal::<RemoteConnectionModal>(cx)
+                    .is_none()
+                {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+                    });
+                }
+                if let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                    let prompt = modal.read(cx).prompt.clone();
+                    prompt.update(cx, |prompt, cx| prompt.set_status(Some(status), cx));
+                }
+            });
+        })
+        .ok();
+}
+
+/// Dismisses the connection modal previously shown by [`show_connection_status`].
+fn dismiss_connection_status(
+    window: WindowHandle<MultiWorkspace>,
+    workspace: &Entity<Workspace>,
+    cx: &mut AsyncApp,
+) {
+    let workspace = workspace.clone();
+    window
+        .update(cx, move |_, _window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                    modal.update(cx, |modal, cx| modal.finished(cx));
+                }
+            });
+        })
+        .ok();
+}
+
 pub async fn open_remote_project(
-    connection_options: RemoteConnectionOptions,
+    mut connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
@@ -312,30 +550,21 @@ pub async fn open_remote_project(
                     }
                 });
                 log::error!("Failed to open project: {e:#}");
-                let response = window
-                    .update(cx, |_, window, cx| {
-                        window.prompt(
-                            PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
-                            Some(&format!("{e:#}")),
-                            &["Retry", "Cancel"],
-                            cx,
-                        )
-                    })?
-                    .await;
-
-                if response == Ok(0) {
-                    continue;
+                match prompt_connection_failure(
+                    window,
+                    &initial_workspace,
+                    &connection_options,
+                    &e,
+                    cx,
+                )
+                .await?
+                {
+                    ConnectionFailureChoice::Retry => continue,
+                    ConnectionFailureChoice::RetryWith(new_options) => {
+                        connection_options = new_options;
+                        continue;
+                    }
+                    ConnectionFailureChoice::Cancel => {}
                 }
 
                 if created_new_window {
@@ -373,29 +602,21 @@ pub async fn open_remote_project(
         match opened_items {
             Err(e) => {
                 log::error!("Failed to open project: {e:#}");
-                let response = window
-                    .update(cx, |_, window, cx| {
-                        window.prompt(
-                            PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
-                            Some(&format!("{e:#}")),
-                            &["Retry", "Cancel"],
-                            cx,
-                        )
-                    })?
-                    .await;
-                if response == Ok(0) {
-                    continue;
+                match prompt_connection_failure(
+                    window,
+                    &initial_workspace,
+                    &connection_options,
+                    &e,
+                    cx,
+                )
+                .await?
+                {
+                    ConnectionFailureChoice::Retry => continue,
+                    ConnectionFailureChoice::RetryWith(new_options) => {
+                        connection_options = new_options;
+                        continue;
+                    }
+                    ConnectionFailureChoice::Cancel => {}
                 }
 
                 if created_new_window {

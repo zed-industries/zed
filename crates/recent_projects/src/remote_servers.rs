@@ -1432,6 +1432,7 @@ impl RemoteServerProjects {
         configs: Vec<DevContainerConfig>,
         app_state: Arc<AppState>,
         dev_container_context: Option<DevContainerContext>,
+        force_rebuild: bool,
         window: &mut Window,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
@@ -1450,6 +1451,7 @@ impl RemoteServerProjects {
             workspace,
             cx,
         );
+        this.force_rebuild = force_rebuild;
 
         if configs.len() > 1 {
             let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
