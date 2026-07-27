@@ -137,7 +137,6 @@ impl WebWindowInner {
             self.register_focus(),
             self.register_blur(),
             self.register_pointer_enter(),
-            self.register_pointer_leave_hover(),
         ];
         handles.extend(self.register_visibility_change());
         handles.extend(self.register_appearance_change());
@@ -287,6 +286,7 @@ impl WebWindowInner {
                 let mut current_state = this.state.borrow_mut();
                 current_state.mouse_position = position;
                 current_state.modifiers = modifiers;
+                current_state.is_hovered = false;
             }
 
             this.dispatch_input(PlatformInput::MouseExited(MouseExitEvent {
@@ -294,6 +294,11 @@ impl WebWindowInner {
                 pressed_button: current_pressed,
                 modifiers,
             }));
+
+            this.with_callback(
+                |callbacks| &mut callbacks.hover_status_change,
+                |callback| callback(false),
+            );
         })
     }
 
@@ -556,20 +561,6 @@ impl WebWindowInner {
             this.with_callback(
                 |callbacks| &mut callbacks.hover_status_change,
                 |callback| callback(true),
-            );
-        })
-    }
-
-    fn register_pointer_leave_hover(self: &Rc<Self>) -> EventListenerHandle {
-        let this = Rc::clone(self);
-        self.listen("pointerleave", move |_event: JsValue| {
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_hovered = false;
-            }
-            this.with_callback(
-                |callbacks| &mut callbacks.hover_status_change,
-                |callback| callback(false),
             );
         })
     }
