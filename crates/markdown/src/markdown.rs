@@ -2856,6 +2856,27 @@ impl Element for MarkdownElement {
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
                 }
+                MarkdownEvent::InlineMath(latex) => {
+                    // Placeholder: render as styled inline code until math renderer is wired up.
+                    let mut code_style = self.style.inline_code.clone();
+                    if builder.link_depth > 0 {
+                        code_style.color = self.style.link.color.or(code_style.color);
+                    }
+                    builder.push_text_style(code_style);
+                    builder.push_text(&format!("${}$", latex), range.clone());
+                    builder.pop_text_style();
+                }
+                MarkdownEvent::DisplayMath(latex) => {
+                    // Placeholder: render as centered code block until math renderer is wired up.
+                    builder.push_div(
+                        div().centered().py_2().px_4().child(
+                            div().child(format!("$${}$$", latex)),
+                        ),
+                        range,
+                        markdown_end,
+                    );
+                    builder.pop_div();
+                }
             }
         }
         if self.style.code_block_overflow_x_scroll {

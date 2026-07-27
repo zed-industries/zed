@@ -20,7 +20,8 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM)
     .union(Options::ENABLE_SUPERSCRIPT)
-    .union(Options::ENABLE_SUBSCRIPT);
+    .union(Options::ENABLE_SUBSCRIPT)
+    .union(Options::ENABLE_MATH);
 
 #[derive(Default)]
 struct ParseState {
@@ -666,7 +667,12 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(content) => {
+                state.push_event(range, MarkdownEvent::InlineMath(content.to_string()));
+            }
+            pulldown_cmark::Event::DisplayMath(content) => {
+                state.push_event(range, MarkdownEvent::DisplayMath(content.to_string()));
+            }
         }
     }
 
@@ -771,6 +777,12 @@ pub enum MarkdownEvent {
     Code,
     /// An inline code node that differs from the markdown source due to escape decoding.
     SubstitutedCode(String),
+    /// An inline math expression (LaTeX content without delimiters).
+    /// Produced by `$...$` or `\(...\)` syntax.
+    InlineMath(String),
+    /// A display math expression (LaTeX content without delimiters).
+    /// Produced by `$$...$$` or `\[...\]` syntax.
+    DisplayMath(String),
     /// An HTML node.
     Html,
     /// An inline HTML node.
@@ -944,8 +956,7 @@ mod tests {
     use super::*;
 
     const CONDITIONAL_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
-    const UNWANTED_OPTIONS: Options = Options::ENABLE_MATH
-        .union(Options::ENABLE_DEFINITION_LIST)
+    const UNWANTED_OPTIONS: Options = Options::ENABLE_DEFINITION_LIST
         .union(Options::ENABLE_WIKILINKS);
 
     #[test]
@@ -1827,5 +1838,66 @@ mod tests {
                 "unrecognized inline HTML \"{input}\" should not emit HardBreak"
             );
         }
+    }
+
+    #[test]
+    fn test_inline_math_parsing() {
+        let input = "Hello $x^2 + y^2 = z^2$ world";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let math_events: Vec<_> = parsed
+            .events
+            .iter()
+            .filter_map(|(range, event)| match event {
+                MarkdownEvent::InlineMath(latex) => Some((range.clone(), latex.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(math_events.len(), 1);
+        assert_eq!(math_events[0].1, "x^2 + y^2 = z^2");
+    }
+
+    #[test]
+    fn test_display_math_parsing() {
+        let input = "$$\\frac{a}{b}$$";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let math_events: Vec<_> = parsed
+            .events
+            .iter()
+            .filter_map(|(range, event)| match event {
+                MarkdownEvent::DisplayMath(latex) => Some((range.clone(), latex.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(math_events.len(), 1);
+        assert_eq!(math_events[0].1, "\\frac{a}{b}");
+    }
+
+    #[test]
+    fn test_math_not_inside_code_blocks() {
+        let input = "```\n$x^2$\n```";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let has_math = parsed
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, MarkdownEvent::InlineMath(_)));
+        assert!(!has_math, "math inside code blocks should not be parsed as math");
+    }
+
+    #[test]
+    fn test_multiple_math_expressions() {
+        let input = "Let $a$ and $b$ be variables. Then $$a + b = c$$";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let inline_count = parsed
+            .events
+            .iter()
+            .filter(|(_, event)| matches!(event, MarkdownEvent::InlineMath(_)))
+            .count();
+        let display_count = parsed
+            .events
+            .iter()
+            .filter(|(_, event)| matches!(event, MarkdownEvent::DisplayMath(_)))
+            .count();
+        assert_eq!(inline_count, 2, "should find 2 inline math expressions");
+        assert_eq!(display_count, 1, "should find 1 display math expression");
     }
 }
