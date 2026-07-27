@@ -8,6 +8,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use collections::HashSet;
 use fuzzy_nucleo::StringMatchCandidate;
 use git::repository::Branch;
 use gpui::{
@@ -553,8 +554,9 @@ impl PickerDelegate for GitCommandCenterDelegate {
                 .into_iter()
                 .map(|m| (m.candidate_id, m.score, m.positions))
                 .collect();
+            let matched_labels: HashSet<usize> = scored.iter().map(|(id, _, _)| *id).collect();
             for m in keyword_matches {
-                if !scored.iter().any(|(id, _, _)| *id == m.candidate_id) {
+                if !matched_labels.contains(&m.candidate_id) {
                     // A keyword-only hit has no positions in the label, so it
                     // renders unhighlighted rather than highlighting nonsense.
                     scored.push((m.candidate_id, m.score, Vec::new()));
@@ -752,7 +754,7 @@ impl PickerDelegate for GitCommandCenterDelegate {
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::text("Open Actions"))
                             .on_click(cx.listener(move |picker, _, window, cx| {
-                                picker.delegate.selected_index = ix;
+                                picker.delegate.set_selected_index(ix, window, cx);
                                 picker.delegate.descend_into_selected(window, cx);
                             })),
                     )
@@ -994,7 +996,35 @@ fn root_nodes(
         .icon(IconName::Folder),
     );
 
+    if !remote_actions_available(workspace, cx) {
+        nodes.retain(|node| {
+            !matches!(
+                node.id.as_ref(),
+                "push"
+                    | "push-to"
+                    | "force-push"
+                    | "pull"
+                    | "pull-rebase"
+                    | "fetch"
+                    | "fetch-from"
+                    | "remotes"
+                    | "create-pull-request"
+            )
+        });
+    }
+
     nodes
+}
+
+/// Whether the actions that talk to a remote have handlers. `git_ui::init`
+/// registers them only for a project that isn't a collab guest, so on a guest
+/// these rows would dispatch into nothing.
+fn remote_actions_available(workspace: &WeakEntity<Workspace>, cx: &App) -> bool {
+    workspace
+        .read_with(cx, |workspace, cx| {
+            !workspace.project().read(cx).is_via_collab()
+        })
+        .unwrap_or(true)
 }
 
 fn push_node(ahead: u32, head: Option<&Branch>) -> Node {
@@ -1049,6 +1079,7 @@ fn branch_page(
     Children::deferred(move |cx| {
         let workspace = workspace.clone();
         let repository = repository.clone();
+        let remotes = remote_actions_available(&workspace, cx);
         let snapshot = repository.read(cx);
         let head_ref = snapshot
             .branch
@@ -1068,7 +1099,7 @@ fn branch_page(
             .filter(|branch| scope.includes(branch))
             .take(limit)
             .cloned()
-            .map(|branch| branch_node(&workspace, &repository, branch, head_ref.as_ref()))
+            .map(|branch| branch_node(&workspace, &repository, branch, head_ref.as_ref(), remotes))
             .collect();
         Task::ready(Ok(nodes))
     })
@@ -1079,6 +1110,7 @@ fn branch_node(
     repository: &Entity<Repository>,
     branch: Branch,
     head_ref: Option<&SharedString>,
+    remotes: bool,
 ) -> Node {
     let name: SharedString = branch.name().to_string().into();
     let is_head = head_ref.is_some_and(|head| *head == branch.ref_name);
@@ -1126,6 +1158,7 @@ fn branch_node(
         repository.clone(),
         branch,
         is_head,
+        remotes,
     ));
 
     if is_head {
@@ -1145,6 +1178,7 @@ fn branch_verbs(
     repository: Entity<Repository>,
     branch: Branch,
     is_head: bool,
+    remotes: bool,
 ) -> Children {
     let name: SharedString = branch.name().to_string().into();
     let is_remote = branch.is_remote();
@@ -1251,8 +1285,10 @@ fn branch_verbs(
     // Push and pull act on HEAD, so they are only honest verbs on the branch
     // that is actually checked out.
     if is_head {
-        verbs.push(Node::action("push", "Push", Box::new(git::Push)).icon(IconName::ArrowUp));
-        verbs.push(Node::action("pull", "Pull", Box::new(git::Pull)).icon(IconName::ArrowDown));
+        if remotes {
+            verbs.push(Node::action("push", "Push", Box::new(git::Push)).icon(IconName::ArrowUp));
+            verbs.push(Node::action("pull", "Pull", Box::new(git::Pull)).icon(IconName::ArrowDown));
+        }
         verbs.push(
             Node::action(
                 "compare",

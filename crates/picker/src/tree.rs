@@ -360,8 +360,15 @@ mod tests {
 
     #[test]
     fn submenu_wins_over_activate_for_the_child_page() {
-        let with_both = leaf("main").submenu(Children::ready(vec![leaf("checkout")]));
-        assert!(with_both.has_child_page());
+        let with_both = Node::page("main", "main", Children::ready(vec![leaf("from-activate")]))
+            .submenu(Children::ready(vec![leaf("from-submenu")]));
+        match with_both.child_page() {
+            Some(Children::Ready(nodes)) => assert_eq!(
+                nodes.first().map(|node| node.id.as_ref()),
+                Some("from-submenu")
+            ),
+            _ => panic!("expected the submenu's children"),
+        }
 
         let category = Node::page("recent", "Recent", Children::ready(vec![leaf("x")]));
         assert!(category.has_child_page());

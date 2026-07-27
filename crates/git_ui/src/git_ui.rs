@@ -100,7 +100,6 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
-        git_command_center::register(workspace);
 
         workspace.register_action(
             |workspace, action: &zed_actions::CreateWorktree, window, cx| {
@@ -164,6 +163,10 @@ pub fn init(cx: &mut App) {
         if project.is_read_only(cx) {
             return;
         }
+        // Registered past the read-only guard: none of the actions its rows
+        // dispatch are registered in a read-only project, so the palette would
+        // be a page of rows that do nothing.
+        git_command_center::register(workspace);
         if !project.is_via_collab() {
             workspace.register_action(
                 |workspace, _: &zed_actions::git::CreatePullRequest, window, cx| {
