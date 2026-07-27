@@ -1566,7 +1566,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 let branch = branch.clone();
                 cx.spawn(async move |_, cx| {
-                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
+                    repo.update(cx, |repo, cx| repo.change_branch(branch.name().to_string(), cx))
                         .await??;
 
                     anyhow::Ok(())
