@@ -215,6 +215,13 @@ pub fn cargo_install_nextest() -> Step<Use> {
     taiki_install_action("nextest")
 }
 
+pub fn setup_windows() -> Step<Run> {
+    named::pwsh(indoc::indoc! {r#"
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+        git config --global core.longpaths true
+    "#})
+}
+
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh(indoc::indoc! {r#"

@@ -389,6 +389,11 @@ jobs:
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
+    - name: steps::setup_windows
+      run: |
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+        git config --global core.longpaths true
+      shell: pwsh
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -405,7 +410,6 @@ jobs:
         Write-Host "Publishing version: $version on release channel nightly"
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -416,7 +420,6 @@ jobs:
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -448,6 +451,11 @@ jobs:
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
+    - name: steps::setup_windows
+      run: |
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+        git config --global core.longpaths true
+      shell: pwsh
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -464,7 +472,6 @@ jobs:
         Write-Host "Publishing version: $version on release channel nightly"
         "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -475,7 +482,6 @@ jobs:
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
-      working-directory: ${{ env.ZED_WORKSPACE }}
     - name: run_bundling::upload_artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:

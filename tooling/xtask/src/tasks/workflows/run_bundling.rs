@@ -189,11 +189,10 @@ pub(crate) fn bundle_windows(
 ) -> NamedJob {
     let platform = Platform::Windows;
     pub fn bundle_windows(arch: Arch) -> Step<Run> {
-        let step = match arch {
+        match arch {
             Arch::X86_64 => named::pwsh("script/bundle-windows.ps1 -Architecture x86_64"),
             Arch::AARCH64 => named::pwsh("script/bundle-windows.ps1 -Architecture aarch64"),
-        };
-        step.working_directory("${{ env.ZED_WORKSPACE }}")
+        }
     }
     let artifact_name = match arch {
         Arch::X86_64 => assets::WINDOWS_X86_64,
@@ -208,6 +207,7 @@ pub(crate) fn bundle_windows(
         job: bundle_job(deps)
             .runs_on(platform.runner(RunnerSize::Large))
             .envs(bundle_envs(platform))
+            .add_step(steps::setup_windows())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {
@@ -242,7 +242,6 @@ fn set_release_channel_to_nightly(platform: Platform) -> Step<Run> {
             $version = git rev-parse --short HEAD
             Write-Host "Publishing version: $version on release channel nightly"
             "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
-        "#})
-        .working_directory("${{ env.ZED_WORKSPACE }}"),
+        "#}),
     }
 }

@@ -551,6 +551,9 @@ pub(crate) fn clippy(platform: Platform, arch: Option<Arch>, harden: bool) -> Na
         .when(harden && platform == Platform::Linux, |this| {
             this.add_step(steps::harden_runner())
         })
+        .when(platform == Platform::Windows, |job| {
+            job.add_step(steps::setup_windows())
+        })
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_cargo_config(platform))
         .add_step(steps::cache_rust_dependencies_namespace())
@@ -601,6 +604,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool, harden: bo
             })
             .when(harden && platform == Platform::Linux, |this| {
                 this.add_step(steps::harden_runner())
+            })
+            .when(platform == Platform::Windows, |job| {
+                job.add_step(steps::setup_windows())
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
