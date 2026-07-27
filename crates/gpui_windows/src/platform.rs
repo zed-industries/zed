@@ -69,6 +69,9 @@ pub(crate) struct WindowsPlatformState {
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
+    /// Shared with each window to coordinate draws across windows on the UI
+    /// thread; see [`DrawCoordinator`].
+    pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
@@ -95,6 +98,7 @@ impl WindowsPlatformState {
             jump_list: RefCell::new(jump_list),
             current_cursor: Cell::new(current_cursor),
             cursor_visible: Arc::new(AtomicBool::new(true)),
+            draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
@@ -239,6 +243,7 @@ impl WindowsPlatform {
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
             invalidate_devices: self.invalidate_devices.clone(),
+            draw_coordinator: self.inner.state.draw_coordinator.clone(),
         }
     }
 
@@ -1132,6 +1137,8 @@ pub(crate) struct WindowCreationInfo {
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub(crate) invalidate_devices: Arc<AtomicBool>,
+    /// Shared with [`WindowsPlatformState::draw_coordinator`] and every other window.
+    pub(crate) draw_coordinator: Rc<DrawCoordinator>,
 }
 
 struct PlatformWindowCreateContext {
