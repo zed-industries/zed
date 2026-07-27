@@ -1978,140 +1978,146 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
 static BLUR_UNAVAILABLE_ONCE: Once = Once::new();
 static KDE_BLUR_FALLBACK_ONCE: Once = Once::new();
 
-/// Applies the background blur for the window via the cross-compositor
-/// `ext-background-effect` protocol, if the compositor supports it.
+/// Syncs the background blur for the window. Prefers the cross-compositor
+/// `ext-background-effect` protocol; falls back to the deprecated KDE blur
+/// protocol for compositors that don't support it yet.
 fn update_blur(state: &mut RefMut<WaylandWindowState>) {
-    let Some(manager) = state.globals.ext_background_effect_manager.clone() else {
-        return;
-    };
+    let wants_blur = state.background_appearance == WindowBackgroundAppearance::Blurred;
 
-    if state.background_appearance == WindowBackgroundAppearance::Blurred {
-        let effect = match state.blur.as_ref() {
-            Some(BlurSurface::ExtBackgroundEffect(effect)) => effect.clone(),
-            _ => {
-                let effect = manager.get_background_effect(&state.surface, &state.globals.qh, ());
-                state.blur = Some(BlurSurface::ExtBackgroundEffect(effect.clone()));
-                effect
+    if wants_blur {
+        // Prefer ext-background-effect over the KDE protocol.
+        if let Some(manager) = state.globals.ext_background_effect_manager.clone() {
+            let effect = match state.blur.as_ref() {
+                Some(BlurSurface::ExtBackgroundEffect(effect)) => effect.clone(),
+                _ => {
+                    let effect =
+                        manager.get_background_effect(&state.surface, &state.globals.qh, ());
+                    state.blur = Some(BlurSurface::ExtBackgroundEffect(effect.clone()));
+                    effect
+                }
+            };
+            let region = state
+                .globals
+                .compositor
+                .create_region(&state.globals.qh, ());
+            let rounding = if state.decorations == WindowDecorations::Client {
+                f32::from(theme::CLIENT_SIDE_DECORATION_ROUNDING) as i32
+            } else {
+                0
+            };
+            let full_surface = state
+                .bounds
+                .map_origin(|_| px(0.0))
+                .map(|v| f32::from(v) as i32);
+            add_rounded_region(&region, full_surface, rounding, state.tiling);
+            effect.set_blur_region(Some(&region));
+            region.destroy();
+            return;
+        }
+
+        // Fall back to the deprecated KDE blur protocol for older compositors
+        // (e.g. pre-6.7 Plasma) where ext-background-effect is not available.
+        if let Some(ref blur_manager) = state.globals.blur_manager {
+            if state.blur.is_none() {
+                KDE_BLUR_FALLBACK_ONCE.call_once(|| {
+                    log::debug!("Using KDE blur protocol (ext-background-effect unavailable)")
+                });
+                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                state.blur = Some(BlurSurface::KdeBlur(blur));
             }
-        };
-        let region = state
-            .globals
-            .compositor
-            .create_region(&state.globals.qh, ());
-        // The blur region covers the entire visible surface so that the title
-        // bar and decoration-shadow areas also receive blur. Rounding is
-        // applied to match the client-side decoration corners.
-        let rounding = if state.decorations == WindowDecorations::Client {
-            f32::from(theme::CLIENT_SIDE_DECORATION_ROUNDING) as i32
-        } else {
-            0
-        };
-        let full_surface = state
-            .bounds
-            .map_origin(|_| px(0.0))
-            .map(|v| f32::from(v) as i32);
-        add_rounded_region(&region, full_surface, rounding, state.tiling);
-        effect.set_blur_region(Some(&region));
-        region.destroy();
-    } else if let Some(BlurSurface::ExtBackgroundEffect(effect)) = state.blur.take() {
-        // Destroying the effect removes the blur region on the next commit.
-        effect.destroy();
+            if let BlurSurface::KdeBlur(blur) = state.blur.as_ref().unwrap() {
+                blur.commit();
+            }
+            return;
+        }
+
+        BLUR_UNAVAILABLE_ONCE.call_once(|| {
+            log::warn!("Background blur requested but no blur protocol is available")
+        });
+    }
+
+    // Not blurred: tear down whichever effect is active.
+    match state.blur.take() {
+        Some(BlurSurface::ExtBackgroundEffect(effect)) => effect.destroy(),
+        Some(BlurSurface::KdeBlur(blur)) => {
+            if let Some(ref blur_manager) = state.globals.blur_manager {
+                blur_manager.unset(&state.surface);
+            }
+            blur.release();
+        }
+        None => {}
     }
 }
 
 /// Adds `bounds` to `region` as a rounded rectangle. Each corner is only rounded
 /// when both of its adjacent edges are untiled, mirroring
-/// `theme::ClientDecorationsExt::rounded_client_corners`. The rounded corners are
-/// approximated by subtracting the area outside each corner's quarter circle one
-/// scanline at a time, since `wl_region` only supports rectangles.
+/// `theme::ClientDecorationsExt::rounded_client_corners`. The shape is built
+/// entirely with `wl_region.add` calls — one horizontal strip per scanline in
+/// the corner bands and a single rectangle for the middle body — to avoid
+/// relying on `wl_region.subtract`, which some compositors handle incorrectly.
 fn add_rounded_region(
     region: &wl_region::WlRegion,
     bounds: Bounds<i32>,
     rounding: i32,
     tiling: Tiling,
 ) {
-    region.add(
-        bounds.origin.x,
-        bounds.origin.y,
-        bounds.size.width,
-        bounds.size.height,
-    );
-
     let radius = rounding
         .min(bounds.size.width / 2)
         .min(bounds.size.height / 2);
     if radius <= 0 {
+        region.add(
+            bounds.origin.x,
+            bounds.origin.y,
+            bounds.size.width,
+            bounds.size.height,
+        );
         return;
     }
 
     let left = bounds.origin.x;
     let top = bounds.origin.y;
-    let right = bounds.origin.x + bounds.size.width;
-    let bottom = bounds.origin.y + bounds.size.height;
+    let width = bounds.size.width;
+    let bottom = top + bounds.size.height;
 
-    if !tiling.top && !tiling.left {
-        subtract_corner(region, left, top, left + radius, top + radius, radius);
-    }
-    if !tiling.top && !tiling.right {
-        subtract_corner(
-            region,
-            right - radius,
-            top,
-            right - radius,
-            top + radius,
-            radius,
-        );
-    }
-    if !tiling.bottom && !tiling.left {
-        subtract_corner(
-            region,
-            left,
-            bottom - radius,
-            left + radius,
-            bottom - radius,
-            radius,
-        );
-    }
-    if !tiling.bottom && !tiling.right {
-        subtract_corner(
-            region,
-            right - radius,
-            bottom - radius,
-            right - radius,
-            bottom - radius,
-            radius,
-        );
-    }
-}
+    let round_left_top = !tiling.top && !tiling.left;
+    let round_right_top = !tiling.top && !tiling.right;
+    let round_left_bottom = !tiling.bottom && !tiling.left;
+    let round_right_bottom = !tiling.bottom && !tiling.right;
 
-/// Subtracts the part of a `radius`×`radius` corner square that lies outside the
-/// corner's quarter circle. The square's top-left is (`square_x`, `square_y`) and
-/// `center` is the arc center (the square corner adjacent to the window body).
-fn subtract_corner(
-    region: &wl_region::WlRegion,
-    square_x: i32,
-    square_y: i32,
-    center_x: i32,
-    center_y: i32,
-    radius: i32,
-) {
     let radius_squared = (radius * radius) as f32;
+
+    // Top corner band: one strip per scanline, trimmed by the active corners.
     for row in 0..radius {
-        let y = square_y + row;
-        let dy = (y - center_y) as f32;
+        let dy = (row - radius) as f32;
         let half_chord = (radius_squared - dy * dy).max(0.0).sqrt().round() as i32;
         let gap = radius - half_chord;
-        if gap <= 0 {
-            continue;
+
+        let left_gap = if round_left_top { gap } else { 0 };
+        let right_gap = if round_right_top { gap } else { 0 };
+        let strip_width = width - left_gap - right_gap;
+        if strip_width > 0 {
+            region.add(left + left_gap, top + row, strip_width, 1);
         }
-        // When the arc opens to the right the gap hugs the left edge of the
-        // square; otherwise it hugs the right edge.
-        let x = if center_x == square_x {
-            square_x + half_chord
-        } else {
-            square_x
-        };
-        region.subtract(x, y, gap, 1);
+    }
+
+    // Middle body: full width, no corner interference.
+    let middle_height = bounds.size.height.saturating_sub(2 * radius);
+    if middle_height > 0 {
+        region.add(left, top + radius, width, middle_height);
+    }
+
+    // Bottom corner band: same idea, dy grows from 0 at the center of the arc.
+    for row in 0..radius {
+        let dy = row as f32;
+        let half_chord = (radius_squared - dy * dy).max(0.0).sqrt().round() as i32;
+        let gap = radius - half_chord;
+
+        let left_gap = if round_left_bottom { gap } else { 0 };
+        let right_gap = if round_right_bottom { gap } else { 0 };
+        let strip_width = width - left_gap - right_gap;
+        if strip_width > 0 {
+            region.add(left + left_gap, bottom - radius + row, strip_width, 1);
+        }
     }
 }
 
@@ -2156,36 +2162,6 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     region.destroy();
 
     update_blur(&mut state);
-
-    if let Some(ref blur_manager) = state.globals.blur_manager {
-        // Fallback to the deprecated KDE blur protocol for older compositors
-        // (e.g. pre-6.7 Plasma) where ext-background-effect is not available.
-        if state.background_appearance == WindowBackgroundAppearance::Blurred {
-            if state.blur.is_none() {
-                KDE_BLUR_FALLBACK_ONCE.call_once(|| {
-                    log::debug!("Using KDE blur protocol (ext-background-effect unavailable)")
-                });
-                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                state.blur = Some(BlurSurface::KdeBlur(blur));
-            }
-            if let BlurSurface::KdeBlur(blur) = state.blur.as_ref().unwrap() {
-                blur.commit();
-            }
-        } else {
-            blur_manager.unset(&state.surface);
-            if let Some(mut blur) = state.blur.take() {
-                blur.destroy();
-            }
-        }
-    }
-
-    if state.background_appearance == WindowBackgroundAppearance::Blurred {
-        if state.blur.is_none() {
-            BLUR_UNAVAILABLE_ONCE.call_once(|| {
-                log::warn!("Background blur requested but no blur protocol is available")
-            });
-        }
-    }
 }
 
 pub(crate) trait WindowDecorationsExt {
