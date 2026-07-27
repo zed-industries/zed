@@ -427,13 +427,25 @@ pub(crate) fn render_mermaid_diagram(
     }
 }
 
+/// `merman` lays diagrams out against a 16px base font (see `inject_css.rs`), so
+/// one rem of diagram matches one rem of surrounding text. Sizing the image in
+/// rems (rather than the pixels it was rasterized at) is what lets `Ctrl +/-`,
+/// which only changes the window's rem size, scale diagrams too.
+const MERMAID_BASE_REM_SIZE: f32 = 16.0;
+
+fn mermaid_image_width(render_image: &RenderImage) -> Rems {
+    rems(f32::from(render_image.render_size(0).width) / MERMAID_BASE_REM_SIZE)
+}
+
 /// Renders a mermaid diagram image, scrolling at intrinsic size in preview or fit-to-pane elsewhere.
 fn render_mermaid_image(
     render_image: Arc<RenderImage>,
     allow_overflow_x: bool,
     source_offset: usize,
 ) -> AnyElement {
+    let width = mermaid_image_width(&render_image);
     let image = img(ImageSource::Render(render_image))
+        .w(width)
         .with_fallback(|| Label::new("Failed to Load Mermaid Diagram").into_any_element());
 
     if allow_overflow_x {
@@ -550,7 +562,8 @@ fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
 mod tests {
     use super::{
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, mermaid_image_width,
+        parse_mermaid_info,
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
@@ -669,6 +682,20 @@ mod tests {
             super::mermaid_font_family("Custom Font, sans-serif"),
             "Custom Font, sans-serif"
         );
+    }
+
+    #[gpui::test]
+    fn test_mermaid_image_width_scales_with_rem_base(cx: &mut TestAppContext) {
+        let render_image = cx.update(|cx| {
+            cx.svg_renderer()
+                .render_single_frame(
+                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"></svg>"#,
+                    1.0,
+                )
+                .unwrap()
+        });
+
+        assert_eq!(mermaid_image_width(&render_image), gpui::rems(12.5));
     }
 
     #[test]
