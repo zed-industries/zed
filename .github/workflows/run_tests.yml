@@ -192,7 +192,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
-    runs-on: namespace-profile-32x64-windows-2022
+    runs-on: namespace-profile-16x32-windows-2022
     steps:
     - name: steps::setup_windows
       run: |
@@ -338,7 +338,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
-    runs-on: namespace-profile-32x64-windows-2022
+    runs-on: namespace-profile-16x32-windows-2022
     steps:
     - name: steps::setup_windows
       run: |
