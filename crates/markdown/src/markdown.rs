@@ -612,6 +612,7 @@ impl Markdown {
     fn toggle_code_block_wrap(&mut self, id: usize) {
         if !self.wrapped_code_blocks.remove(&id) {
             self.wrapped_code_blocks.insert(id);
+            self.code_block_scroll_handles.remove(&id);
         }
     }
 
@@ -624,6 +625,7 @@ impl Markdown {
         })
     }
 
+    /// Drop scroll handles for code blocks that no longer exist after a reparse.
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
         self.code_block_scroll_handles
             .retain(|id, _| ids.contains(id));
@@ -648,10 +650,6 @@ impl Markdown {
         if !self.mermaid_showing_code.remove(&source_offset) {
             self.mermaid_showing_code.insert(source_offset);
         }
-    }
-
-    fn clear_code_block_scroll_handles(&mut self) {
-        self.code_block_scroll_handles.clear();
     }
 
     fn autoscroll_code_block(&self, source_index: usize, cursor_position: Point<Pixels>) {
@@ -1026,6 +1024,16 @@ impl Markdown {
 
             this.update(cx, |this, cx| {
                 this.parsed_markdown = parsed;
+                let code_block_ids = this
+                    .parsed_markdown
+                    .events
+                    .iter()
+                    .filter_map(|(range, event)| {
+                        matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. }))
+                            .then_some(range.start)
+                    })
+                    .collect();
+                this.retain_code_block_scroll_handles(&code_block_ids);
                 this.images_by_source_offset = images_by_source_offset;
                 if this.active_root_block.is_some_and(|block_index| {
                     block_index >= this.parsed_markdown.root_block_starts.len()
@@ -2001,8 +2009,6 @@ impl Element for MarkdownElement {
         } else {
             0
         };
-        let mut code_block_ids = HashSet::default();
-
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
@@ -2170,9 +2176,6 @@ impl Element for MarkdownElement {
                             } else {
                                 None
                             };
-                            if scroll_handle.is_some() {
-                                code_block_ids.insert(range.start);
-                            }
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
@@ -2665,15 +2668,6 @@ impl Element for MarkdownElement {
                     builder.pop_text_style();
                 }
             }
-        }
-        if self.style.code_block_overflow_x_scroll {
-            let code_block_ids = code_block_ids;
-            self.markdown.update(cx, move |markdown, _| {
-                markdown.retain_code_block_scroll_handles(&code_block_ids);
-            });
-        } else {
-            self.markdown
-                .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
         rendered_markdown.text.source = parsed_markdown.source.clone();
@@ -4085,9 +4079,14 @@ mod tests {
 
         markdown.update(cx, |markdown, _| {
             assert!(markdown.code_block_scroll_handle(0).is_some());
+            assert!(markdown.code_block_scroll_handles.contains_key(&0));
 
             markdown.toggle_code_block_wrap(0);
             assert!(markdown.code_block_scroll_handle(0).is_none());
+            assert!(
+                !markdown.code_block_scroll_handles.contains_key(&0),
+                "wrapping should evict the stored scroll handle, not just hide it"
+            );
 
             markdown.toggle_code_block_wrap(0);
             assert!(markdown.code_block_scroll_handle(0).is_some());
