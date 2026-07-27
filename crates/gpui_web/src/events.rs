@@ -1,12 +1,11 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, DispatchEventResult, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, point, px,
+    Capslock, DispatchEventResult, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    TouchPhase, point, px,
 };
-use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
 
 use crate::window::WebWindowInner;
@@ -129,7 +128,6 @@ impl WebWindowInner {
             self.register_context_menu(),
             self.register_dragover(),
             self.register_drop(),
-            self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
             self.register_paste(),
@@ -329,53 +327,23 @@ impl WebWindowInner {
         })
     }
 
+    /// Browsers only expose dropped files as `File` objects, never as
+    /// filesystem paths, so no `FileDrop` input can be synthesized: GPUI's
+    /// `ExternalPaths` consumers would try to read paths that don't exist.
+    /// The events are still intercepted so the browser doesn't navigate to
+    /// the dropped file. Delivering actual file drops would require plumbing
+    /// `File` contents through a web-specific channel.
     fn register_dragover(self: &Rc<Self>) -> EventListenerHandle {
-        let this = Rc::clone(self);
         self.listen("dragover", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
             event.prevent_default();
-
-            let mouse_event: &web_sys::MouseEvent = event.as_ref();
-            let position = mouse_position_in_element(mouse_event);
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-            }
-
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
         })
     }
 
     fn register_drop(self: &Rc<Self>) -> EventListenerHandle {
-        let this = Rc::clone(self);
         self.listen("drop", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
             event.prevent_default();
-
-            let mouse_event: &web_sys::MouseEvent = event.as_ref();
-            let position = mouse_position_in_element(mouse_event);
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-            }
-
-            let paths = extract_file_paths_from_drag(&event);
-
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Entered {
-                position,
-                paths: ExternalPaths(paths),
-            }));
-
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
-        })
-    }
-
-    fn register_dragleave(self: &Rc<Self>) -> EventListenerHandle {
-        let this = Rc::clone(self);
-        self.listen("dragleave", move |_event: JsValue| {
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Exited));
         })
     }
 
@@ -747,23 +715,4 @@ fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     // offset_x/offset_y give position relative to the target element's padding edge
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
-}
-
-fn extract_file_paths_from_drag(
-    event: &web_sys::DragEvent,
-) -> smallvec::SmallVec<[std::path::PathBuf; 2]> {
-    let mut paths = smallvec![];
-    let Some(data_transfer) = event.data_transfer() else {
-        return paths;
-    };
-    let file_list = data_transfer.files();
-    let Some(files) = file_list else {
-        return paths;
-    };
-    for index in 0..files.length() {
-        if let Some(file) = files.get(index) {
-            paths.push(std::path::PathBuf::from(file.name()));
-        }
-    }
-    paths
 }
