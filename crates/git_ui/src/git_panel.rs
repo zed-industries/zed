@@ -2021,10 +2021,19 @@ impl GitPanel {
             let prompt = if skip_prompt {
                 Task::ready(Ok(0))
             } else {
+                let (message, confirm_text) = if entry.status.is_deleted() {
+                    ("Are you sure you want to restore ", "Restore File")
+                } else {
+                    (
+                        "Are you sure you want to discard changes to ",
+                        "Discard Changes",
+                    )
+                };
                 let prompt = window.prompt(
                     PromptLevel::Warning,
                     &format!(
-                        "Are you sure you want to discard changes to {}?",
+                        "{}{}?",
+                        message,
                         MarkdownInlineCode(
                             entry
                                 .repo_path
@@ -2033,7 +2042,7 @@ impl GitPanel {
                         ),
                     ),
                     None,
-                    &["Discard Changes", "Cancel"],
+                    &[confirm_text, "Cancel"],
                     cx,
                 );
                 cx.background_spawn(prompt)
@@ -2263,7 +2272,9 @@ impl GitPanel {
     ) {
         let entries = self
             .change_entries_by_path()
-            .filter(|status_entry| !status_entry.status.is_created())
+            .filter(|status_entry| {
+                !status_entry.status.is_created() && status_entry.status.staging().has_staged()
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -7223,6 +7234,8 @@ impl GitPanel {
         };
         let restore_title = if entry.status.is_created() {
             "Trash File"
+        } else if entry.status.is_deleted() {
+            "Restore File"
         } else {
             "Discard Changes"
         };
@@ -7308,7 +7321,7 @@ impl GitPanel {
                         .focus_handle(cx)
                         .contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -8153,12 +8166,8 @@ impl Render for GitPanel {
 }
 
 impl Focusable for GitPanel {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        if self.entries.is_empty() || self.commit_editor_expanded {
-            self.commit_editor.focus_handle(cx)
-        } else {
-            self.focus_handle.clone()
-        }
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -8192,6 +8201,14 @@ impl editor::Addon for GitPanelAddon {
 }
 
 impl Panel for GitPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.entries.is_empty() || self.commit_editor_expanded {
+            self.commit_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+
     fn persistent_name() -> &'static str {
         "GitPanel"
     }
@@ -12554,5 +12571,85 @@ mod tests {
         panel.update_in(&mut cx, |panel, window, cx| {
             assert!(panel.commit_editor.focus_handle(cx).is_focused(window));
         });
+    }
+
+    #[gpui::test]
+    async fn test_discard_tracked_changes_respects_staging(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "staged_a.rs": "staged a content\n",
+                    "staged_b.rs": "staged b content\n",
+                    "unstaged.rs": "unstaged content\n",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("staged_a.rs", FileStatus::index(StatusCode::Modified)),
+                ("staged_b.rs", FileStatus::index(StatusCode::Modified)),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.executor().run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.restore_tracked_files(&RestoreTrackedFiles, window, cx);
+        });
+
+        let (message, detail) = cx
+            .pending_prompt()
+            .expect("discard tracked should show a confirmation prompt");
+        assert_eq!(message, "Discard changes to these files?");
+        assert!(
+            detail.contains("staged_a.rs"),
+            "prompt should list staged_a.rs, got: {detail}"
+        );
+        assert!(
+            detail.contains("staged_b.rs"),
+            "prompt should list staged_b.rs, got: {detail}"
+        );
+        assert!(
+            !detail.contains("unstaged.rs"),
+            "prompt should NOT list unstaged.rs, got: {detail}"
+        );
     }
 }
