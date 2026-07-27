@@ -258,6 +258,11 @@ pub struct AgentSettingsContent {
     pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
+    /// Model to use for context compaction (`/compact` and auto-compaction).
+    /// Falls back to the thread's currently selected model when not specified.
+    /// If the configured model is unavailable (provider not registered, model
+    /// not found), the thread's current model is used instead.
+    pub compaction_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     pub inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// The default profile to use in the Agent.
@@ -484,12 +489,6 @@ impl AgentSettingsContent {
         self.sandbox_permissions
             .get_or_insert_default()
             .allow_fs_write_all = Some(true);
-    }
-
-    pub fn allow_sandbox_git_access(&mut self) {
-        self.sandbox_permissions
-            .get_or_insert_default()
-            .allow_git_access = Some(true);
     }
 
     pub fn allow_sandbox_unsandboxed(&mut self) {
@@ -800,11 +799,6 @@ pub struct SandboxPermissionsContent {
     /// Default: []
     pub network_hosts: Option<ExtendingVec<String>>,
 
-    /// Whether sandboxed terminal commands may always access protected Git
-    /// metadata paths without prompting.
-    /// Default: false
-    pub allow_git_access: Option<bool>,
-
     /// Whether sandboxed terminal commands may always write anywhere on the
     /// filesystem without prompting.
     /// Default: false
@@ -823,6 +817,14 @@ pub struct SandboxPermissionsContent {
     /// to without prompting. Paths written by Zed are absolute.
     /// Default: []
     pub write_paths: Option<ExtendingVec<PathBuf>>,
+
+    /// Whether to warn when a sandbox escalation prompt requests a domain or
+    /// write path that contains potentially confusable Unicode characters
+    /// (homoglyphs, invisible characters, or bidirectional overrides). When
+    /// enabled, such prompts show a warning that must be acknowledged before
+    /// the request can be allowed.
+    /// Default: true
+    pub warn_confusable_unicode: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -1145,7 +1147,6 @@ mod tests {
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
         settings.allow_sandbox_fs_write_all();
-        settings.allow_sandbox_git_access();
         settings.allow_sandbox_unsandboxed();
         settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
 
@@ -1160,7 +1161,6 @@ mod tests {
                 .as_slice(),
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
-        assert_eq!(sandbox_permissions.allow_git_access, Some(true));
         assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
         assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
         assert_eq!(

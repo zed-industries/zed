@@ -64,13 +64,6 @@ We'd love your help making Zed available for everyone. If Zed is not yet availab
 
 The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
 
-#### Debian and Ubuntu
-
-Zed is available in [this community-maintained repository](https://debian.griffo.io/).
-
-Instructions for each version are available in the README of the repository where packages are built.
-Build, packaging and instructions for each version are available in the README of the [repository](https://github.com/dariogriffo/zed-debian)
-
 ### Downloading manually
 
 If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
@@ -134,7 +127,7 @@ If Zed was installed using a package manager, please consult the documentation f
 
 ## Troubleshooting
 
-Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
+Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use. That said, we do expect it to work on a wide variety of machines.
 
 ### Zed fails to start
 

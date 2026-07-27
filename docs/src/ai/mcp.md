@@ -51,7 +51,7 @@ Popular servers available as an extension include:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect both local and remote MCP servers easily utilizing the MCP server modal, which you can open by invoking the {#action agent::AddContextServer} action. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
+You can connect both local and remote MCP servers from **Settings → AI → MCP Servers** (also accessible via the {#action agent::OpenSettings} action, then selecting `MCP Servers`). Click `Add Server` in the page header, then choose `Add Local Server` or `Add Remote Server`. Your specified configuration will create entries in your settings file (which you can open with {#action zed::OpenSettingsFile}) similar to the ones below:
 
 ```json [settings]
 {
@@ -72,8 +72,6 @@ You can connect both local and remote MCP servers easily utilizing the MCP serve
 }
 ```
 
-Alternatively, you can open the modal from **Settings → AI → MCP Servers** (also accessible via the {#action agent::OpenSettings} action, then selecting `MCP Servers`) and clicking the `Add Server` button in the page header, then choosing `Add Local Server` or `Add Remote Server`.
-
 > Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
 ## Using MCP Servers
@@ -82,7 +80,7 @@ Alternatively, you can open the modal from **Settings → AI → MCP Servers** (
 
 Most MCP servers require configuration after installation.
 
-In the case of extensions, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
+In the case of an extension, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
 For example, the GitHub MCP extension requires you to add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
 In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.

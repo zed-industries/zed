@@ -100,7 +100,7 @@ impl Render for ImageShowcase {
                             .items_center()
                             .gap_8()
                             .child(ImageContainer::new(
-                                "Image loaded from a local file",
+                                "Image loaded from a local file with EXIF orientation",
                                 self.local_resource.clone(),
                             ))
                             .child(ImageContainer::new(
@@ -202,7 +202,9 @@ fn run_example() {
         cx.open_window(window_options, |_, cx| {
             cx.new(|_| ImageShowcase {
                 // Relative path to your root project path
-                local_resource: manifest_dir.join("examples/image/app-icon.png").into(),
+                local_resource: manifest_dir
+                    .join("examples/image/exif-orientation-rotate-180.jpg")
+                    .into(),
                 remote_resource: "https://picsum.photos/800/400".into(),
                 asset_resource: "image/color.svg".into(),
             })
