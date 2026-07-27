@@ -276,6 +276,20 @@ impl WebWindow {
             let clamped_width = physical_width.min(max_texture_dimension);
             let clamped_height = physical_height.min(max_texture_dimension);
 
+            // Recompute the logical size from the clamped physical size so
+            // that scale_factor still maps GPUI's logical bounds exactly onto
+            // the surface; otherwise clamping would silently distort the
+            // effective scale.
+            let (logical_width, logical_height) =
+                if (clamped_width, clamped_height) != (physical_width, physical_height) {
+                    (
+                        (clamped_width as f64 / dpr) as f32,
+                        (clamped_height as f64 / dpr) as f32,
+                    )
+                } else {
+                    (logical_width, logical_height)
+                };
+
             inner
                 .pending_physical_size
                 .set(Some((clamped_width, clamped_height)));
