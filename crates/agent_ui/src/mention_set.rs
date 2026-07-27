@@ -424,7 +424,12 @@ impl MentionSet {
 
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
-            let buffer = buffer.await?;
+            let buffer = match buffer.await {
+                Ok(buffer) => buffer,
+                Err(_error) => {
+                    return Ok(Mention::Link);
+                }
+            };
             let buffer_content = outline::get_buffer_content_or_outline(
                 buffer.clone(),
                 Some(&abs_path.to_string_lossy()),
