@@ -75,7 +75,6 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         &mut self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        _debounce: bool,
         debounce_duration: Option<DelayMs>,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
