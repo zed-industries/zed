@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId, Point};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project,
+    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
@@ -555,7 +555,7 @@ fn render_conflict_buttons(
         .into_any()
 }
 
-fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
+fn collect_conflicted_project_paths(project: &Project, cx: &App) -> Vec<ProjectPath> {
     let git_store = project.git_store().read(cx);
     let mut paths = Vec::new();
 
@@ -569,18 +569,73 @@ fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
                 continue;
             }
             if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
-                paths.push(
-                    project_path
-                        .path
-                        .as_std_path()
-                        .to_string_lossy()
-                        .to_string(),
-                );
+                paths.push(project_path);
             }
         }
     }
 
+    // Repositories are stored in a hash map, so the paths have to be sorted for
+    // navigation between them to be stable across calls.
+    paths.sort();
     paths
+}
+
+fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
+    collect_conflicted_project_paths(project, cx)
+        .into_iter()
+        .map(|project_path| {
+            project_path
+                .path
+                .as_std_path()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect()
+}
+
+pub(crate) fn go_to_conflicted_file(
+    workspace: &mut Workspace,
+    direction: Direction,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+    let paths = collect_conflicted_project_paths(project.read(cx), cx);
+    let Some(last_index) = paths.len().checked_sub(1) else {
+        return;
+    };
+
+    let current = workspace
+        .active_item(cx)
+        .and_then(|item| item.project_path(cx));
+    let current_index = current
+        .as_ref()
+        .and_then(|current| paths.iter().position(|path| path == current));
+    let destination = match (current_index, direction) {
+        (Some(index), Direction::Next) => &paths[(index + 1) % paths.len()],
+        (Some(index), Direction::Prev) => &paths[(index + last_index) % paths.len()],
+        (None, Direction::Next) => &paths[0],
+        (None, Direction::Prev) => &paths[last_index],
+    };
+
+    let open = workspace.open_path(destination.clone(), None, true, window, cx);
+    cx.spawn_in(window, async move |_, cx| {
+        let Some(editor) = open.await?.downcast::<Editor>() else {
+            return anyhow::Ok(());
+        };
+        // Conflicts are parsed asynchronously once the buffer opens, so there is
+        // nothing to select until the conflict set has been loaded.
+        let buffer = editor.read_with(cx, |editor, cx| editor.buffer().read(cx).as_singleton());
+        if let Some(buffer) = buffer {
+            let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+            git_store
+                .update(cx, |git_store, cx| git_store.open_conflict_set(buffer, cx))
+                .await;
+        }
+        editor.update_in(cx, select_first_conflict)?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 #[derive(Clone, Copy)]
@@ -641,7 +696,25 @@ fn go_to_conflict(
     let Some(destination) = destination.copied() else {
         return;
     };
+    select_conflict_at(editor, destination, window, cx);
+}
 
+pub(crate) fn select_first_conflict(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if let Some(destination) = conflict_starts(editor, cx).into_iter().min() {
+        select_conflict_at(editor, destination, window, cx);
+    }
+}
+
+fn select_conflict_at(
+    editor: &mut Editor,
+    destination: Point,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
     editor.unfold_ranges(&[destination..destination], false, false, cx);
     editor.change_selections(
         SelectionEffects::scroll(Autoscroll::center()),
@@ -923,12 +996,13 @@ mod tests {
         repository::repo_path,
         status::{UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
     use unindent::Unindent as _;
     use util::path;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         zlog::init_test();
@@ -947,6 +1021,91 @@ mod tests {
             .newest::<Point>(&editor.display_snapshot(cx))
             .head()
             .row
+    }
+
+    fn mark_unmerged(fs: &FakeFs, dot_git: &str, paths: &[&str]) {
+        fs.with_git_state(dot_git.as_ref(), true, |state| {
+            for path in paths {
+                state.unmerged_paths.insert(
+                    repo_path(path),
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    },
+                );
+            }
+            state.refs.insert("MERGE_HEAD".into(), "123".into());
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_go_to_conflicted_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let text = "
+            before
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> feature
+        "
+        .unindent();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": text,
+                "b.txt": text,
+                "c.txt": "no conflicts here\n",
+            }),
+        )
+        .await;
+        mark_unmerged(&fs, path!("/project/.git"), &["a.txt", "b.txt"]);
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        cx.run_until_parked();
+
+        let go_to = |direction, cx: &mut VisualTestContext| {
+            workspace.update_in(cx, |workspace, window, cx| {
+                go_to_conflicted_file(workspace, direction, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.update(cx, |workspace, cx| {
+                let item = workspace.active_item(cx).expect("an item is active");
+                let path = item.project_path(cx).expect("the active item has a path");
+                let editor = item
+                    .downcast::<Editor>()
+                    .expect("a conflicted file opens in an editor");
+                let row = editor.update(cx, |editor, cx| cursor_row(editor, cx));
+                (path.path.as_std_path().to_string_lossy().to_string(), row)
+            })
+        };
+
+        assert_eq!(
+            go_to(Direction::Next, cx),
+            ("a.txt".to_string(), 1),
+            "opens the first conflicted file with the cursor on its conflict"
+        );
+        assert_eq!(go_to(Direction::Next, cx), ("b.txt".to_string(), 1));
+        assert_eq!(
+            go_to(Direction::Next, cx),
+            ("a.txt".to_string(), 1),
+            "wraps around to the first conflicted file"
+        );
+        assert_eq!(
+            go_to(Direction::Prev, cx),
+            ("b.txt".to_string(), 1),
+            "previous wraps backwards, skipping the file without conflicts"
+        );
     }
 
     #[gpui::test]

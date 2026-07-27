@@ -242,6 +242,14 @@
     },
   },
   {
+    "context": "Workspace",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-g n": "git::GoToNextConflictedFile",
+      "cmd-alt-g p": "git::GoToPreviousConflictedFile",
+    },
+  },
+  {
     "context": "AgentDiff",
     "use_key_equivalents": true,
     "bindings": {

@@ -205,6 +205,13 @@
     },
   },
   {
+    "context": "Workspace",
+    "bindings": {
+      "alt-g n": "git::GoToNextConflictedFile",
+      "alt-g p": "git::GoToPreviousConflictedFile",
+    },
+  },
+  {
     "context": "Editor && editor_agent_diff",
     "bindings": {
       "alt-y": "agent::Keep",

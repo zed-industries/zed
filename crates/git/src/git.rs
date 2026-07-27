@@ -66,6 +66,10 @@ actions!(
         AcceptIncomingChange,
         /// Resolves the merge conflict at the cursor by keeping both sides.
         AcceptBothChanges,
+        /// Opens the next file with merge conflicts and moves to its first conflict.
+        GoToNextConflictedFile,
+        /// Opens the previous file with merge conflicts and moves to its first conflict.
+        GoToPreviousConflictedFile,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
