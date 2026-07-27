@@ -4377,8 +4377,10 @@ impl AcpThread {
         };
         let env = cx.spawn(async move |_, _| {
             let mut env = env.await.unwrap_or_default();
-            // Disables paging for `git` and hopefully other commands
+            // Disable pagers so agent commands don't hang behind interactive UIs
             env.insert("PAGER".into(), "".into());
+            // Override user core.pager (e.g. delta) which Git prefers over PAGER
+            env.insert("GIT_PAGER".into(), "cat".into());
             for var in extra_env {
                 env.insert(var.name, var.value);
             }
