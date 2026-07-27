@@ -115,7 +115,6 @@ pub struct MarkdownStyle {
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
-    pub table_overflow_x_scroll: bool,
     pub soft_break_as_hard_break: bool,
 }
 
@@ -141,7 +140,6 @@ impl Default for MarkdownStyle {
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
-            table_overflow_x_scroll: false,
             soft_break_as_hard_break: false,
         }
     }
@@ -235,7 +233,6 @@ impl MarkdownStyle {
                 }
             },
             code_block_overflow_x_scroll: true,
-            table_overflow_x_scroll: true,
             code_block: StyleRefinement {
                 padding: EdgesRefinement {
                     top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
@@ -404,7 +401,6 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
-    table_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<SharedString>,
     context_menu_selected_markdown: Option<SharedString>,
@@ -598,7 +594,6 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
-            table_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
@@ -646,17 +641,6 @@ impl Markdown {
             .retain(|id, _| ids.contains(id));
     }
 
-    fn table_scroll_handle(&mut self, id: usize) -> ScrollHandle {
-        self.table_scroll_handles
-            .entry(id)
-            .or_insert_with(ScrollHandle::new)
-            .clone()
-    }
-
-    fn retain_table_scroll_handles(&mut self, ids: &HashSet<usize>) {
-        self.table_scroll_handles.retain(|id, _| ids.contains(id));
-    }
-
     pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
         if !self.options.render_mermaid_diagrams || self.parsed_markdown.mermaid_diagrams.is_empty()
         {
@@ -680,10 +664,6 @@ impl Markdown {
 
     fn clear_code_block_scroll_handles(&mut self) {
         self.code_block_scroll_handles.clear();
-    }
-
-    fn clear_table_scroll_handles(&mut self) {
-        self.table_scroll_handles.clear();
     }
 
     fn autoscroll_code_block(&self, source_index: usize, cursor_position: Point<Pixels>) {
@@ -2165,7 +2145,6 @@ impl Element for MarkdownElement {
             0
         };
         let mut code_block_ids = HashSet::default();
-        let mut table_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
@@ -2530,15 +2509,6 @@ impl Element for MarkdownElement {
                             builder.table.start(alignments.clone());
 
                             let column_count = alignments.len();
-                            let scroll_handle = if self.style.table_overflow_x_scroll {
-                                let handle = self.markdown.update(cx, |markdown, _| {
-                                    markdown.table_scroll_handle(range.start)
-                                });
-                                table_ids.insert(range.start);
-                                Some(handle)
-                            } else {
-                                None
-                            };
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))
@@ -2555,13 +2525,7 @@ impl Element for MarkdownElement {
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .map(|div| {
-                                        if let Some(scroll_handle) = scroll_handle.as_ref() {
-                                            div.overflow_x_scroll().track_scroll(scroll_handle)
-                                        } else {
-                                            div.overflow_hidden()
-                                        }
-                                    }),
+                                    .overflow_x_scroll(),
                                 range,
                                 markdown_end,
                             );
@@ -2854,15 +2818,6 @@ impl Element for MarkdownElement {
         } else {
             self.markdown
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
-        }
-        if self.style.table_overflow_x_scroll {
-            let table_ids = table_ids;
-            self.markdown.update(cx, move |markdown, _| {
-                markdown.retain_table_scroll_handles(&table_ids);
-            });
-        } else {
-            self.markdown
-                .update(cx, |markdown, _| markdown.clear_table_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
@@ -4212,6 +4167,106 @@ mod tests {
         }
     }
 
+    struct MarkdownTestView {
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for MarkdownTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut markdown_element =
+                MarkdownElement::new(self.markdown.clone(), self.style.clone());
+            if let Some(code_span_link) = self.code_span_link.clone() {
+                markdown_element =
+                    markdown_element.on_code_span_link(move |text, cx| code_span_link(text, cx));
+            }
+            CapturingMarkdownElement {
+                markdown_element: markdown_element.code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                ),
+                rendered_text: self.rendered_text.clone(),
+            }
+        }
+    }
+
+    struct CapturingMarkdownElement {
+        markdown_element: MarkdownElement,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl IntoElement for CapturingMarkdownElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for CapturingMarkdownElement {
+        type RequestLayoutState = RenderedMarkdown;
+        type PrepaintState = Hitbox;
+
+        fn id(&self) -> Option<ElementId> {
+            self.markdown_element.id()
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            self.markdown_element.source_location()
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+            self.markdown_element
+                .request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            self.markdown_element
+                .prepaint(id, inspector_id, bounds, rendered_markdown, window, cx)
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            hitbox: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.markdown_element.paint(
+                id,
+                inspector_id,
+                bounds,
+                rendered_markdown,
+                hitbox,
+                window,
+                cx,
+            );
+            *self.rendered_text.borrow_mut() = Some(rendered_markdown.text.clone());
+        }
+    }
+
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
             if !cx.has_global::<settings::SettingsStore>() {
@@ -4221,6 +4276,30 @@ mod tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
+    }
+
+    fn render_markdown_entity_in_view(
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style,
+                code_span_link,
+                rendered_text,
+            }
+        });
+        cx.run_until_parked();
+
+        rendered_text
+            .borrow()
+            .clone()
+            .expect("markdown should be rendered in the test view")
     }
 
     #[gpui::test]
@@ -4404,23 +4483,9 @@ mod tests {
     ) -> RenderedText {
         ensure_theme_initialized(cx);
 
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, style)
-                    .on_code_span_link(callback)
-                    .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    })
-            },
-        );
-        rendered.text
+        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), cx)
     }
 
     fn render_markdown_with_language_registry(
@@ -4439,7 +4504,6 @@ mod tests {
     ) -> RenderedText {
         ensure_theme_initialized(cx);
 
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| {
             Markdown::new_with_options(
                 markdown.to_string().into(),
@@ -4450,20 +4514,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
-                    CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    },
-                )
-            },
-        );
-        rendered.text
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, cx)
     }
 
     fn render_markdown_with_image_resolver(
