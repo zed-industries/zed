@@ -137,6 +137,12 @@ impl WebWindowInner {
             event.prevent_default();
             this.input_element.focus().ok();
 
+            // Capture the pointer so drags that leave the canvas keep
+            // delivering pointermove/pointerup here; otherwise a release
+            // outside the canvas is never seen and `pressed_button` stays
+            // stuck. The capture is released implicitly on pointerup.
+            this.canvas.set_pointer_capture(event.pointer_id()).ok();
+
             let button = dom_mouse_button_to_gpui(event.button());
             let position = pointer_position_in_element(&event);
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
