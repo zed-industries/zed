@@ -2676,6 +2676,8 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
+        rendered_markdown.text.source = parsed_markdown.source.clone();
+        rendered_markdown.text.events = parsed_markdown.events.clone();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
@@ -3379,6 +3381,9 @@ impl MarkdownElementBuilder {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
+                // Filled in by the element, which has the parsed document.
+                source: SharedString::default(),
+                events: Arc::from([]),
             },
         }
     }
@@ -3578,6 +3583,10 @@ struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
+    /// Full-document source + events, so copy can reconstruct the rendered
+    /// text from the source instead of slicing laid-out lines.
+    source: SharedString,
+    events: Arc<[(Range<usize>, MarkdownEvent)]>,
 }
 
 struct WrappedLineSegment {
@@ -3867,37 +3876,97 @@ impl RenderedText {
     }
 
     fn text_for_range(&self, range: Range<usize>) -> String {
-        let mut accumulator = String::new();
+        // Reconstruct from the source events rather than the on-screen lines, so
+        // copy yields the same text regardless of what is scrolled into view (and
+        // works for off-screen blocks, which have no laid-out lines).
+        self.text_from_source(range)
+    }
 
-        for line in self.lines.iter() {
-            if range.start > line.source_end {
-                continue;
+    /// Recover the rendered text for `range` from the source events, so copying a
+    /// selection across off-screen blocks still yields their text.
+    fn text_from_source(&self, range: Range<usize>) -> String {
+        let mut out = String::new();
+        // The renderer flushes a new line on every block-level container
+        // (`push_div`), so break on those same boundaries plus block ends. The
+        // break is queued and emitted before the next text, which collapses
+        // adjacent boundaries and drops leading/trailing breaks.
+        let mut pending_break = false;
+        let flush = |out: &mut String, pending_break: &mut bool| {
+            // Collapse a queued break into a newline the content already ends
+            // with (e.g. a fenced code block carries a trailing newline), so a
+            // block boundary never doubles it.
+            if *pending_break {
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                *pending_break = false;
             }
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            if range.end < line_source_start {
+        };
+        let in_range = |event_range: &Range<usize>| {
+            event_range.start >= range.start && event_range.start < range.end
+        };
+        for (event_range, event) in self.events.iter() {
+            if event_range.start >= range.end {
                 break;
             }
-
-            let text = line.layout.text();
-
-            let start = if range.start < line_source_start {
-                0
-            } else {
-                line.rendered_index_for_source_index(range.start)
-            };
-            let end = if range.end > line.source_end {
-                line.rendered_index_for_source_index(line.source_end)
-            } else {
-                line.rendered_index_for_source_index(range.end)
+            match event {
+                MarkdownEvent::Start(tag)
+                    if !matches!(
+                        tag,
+                        MarkdownTag::Emphasis
+                            | MarkdownTag::Strong
+                            | MarkdownTag::Strikethrough
+                            | MarkdownTag::Superscript
+                            | MarkdownTag::Subscript
+                            | MarkdownTag::Link { .. }
+                            | MarkdownTag::Image { .. }
+                    ) =>
+                {
+                    if !out.is_empty() {
+                        pending_break = true;
+                    }
+                }
+                // The renderer shows raw HTML as literal text (it does not render
+                // it), so copy it verbatim too. Block HTML comments render to
+                // nothing, so skip them.
+                MarkdownEvent::Html if self.source[event_range.clone()].starts_with("<!--") => {}
+                MarkdownEvent::Text
+                | MarkdownEvent::Code
+                | MarkdownEvent::Html
+                | MarkdownEvent::InlineHtml => {
+                    let start = event_range.start.max(range.start);
+                    let end = event_range.end.min(range.end);
+                    if start < end {
+                        flush(&mut out, &mut pending_break);
+                        out.push_str(&self.source[start..end]);
+                    }
+                }
+                MarkdownEvent::SubstitutedText(text) => {
+                    if event_range.start < range.end && event_range.end > range.start {
+                        flush(&mut out, &mut pending_break);
+                        out.push_str(text);
+                    }
+                }
+                MarkdownEvent::SoftBreak if in_range(event_range) => out.push(' '),
+                MarkdownEvent::HardBreak if in_range(event_range) => out.push('\n'),
+                MarkdownEvent::FootnoteReference(label) if in_range(event_range) => {
+                    flush(&mut out, &mut pending_break);
+                    out.push_str(&format!("[{label}]"));
+                }
+                MarkdownEvent::RootEnd(_) => {
+                    if !out.is_empty() {
+                        pending_break = true;
+                    }
+                }
+                _ => {}
             }
-            .min(text.len());
-
-            accumulator.push_str(&text[start..end]);
-            accumulator.push('\n');
         }
-        // Remove trailing newline
-        accumulator.pop();
-        accumulator
+        // Match the on-screen path, which drops a trailing line break (e.g. the
+        // newline a fenced code block carries before its closing fence).
+        while out.ends_with('\n') {
+            out.pop();
+        }
+        out
     }
 
     fn link_for_source_index(&self, source_index: usize) -> Option<&RenderedLink> {
@@ -4036,7 +4105,9 @@ mod tests {
             },
             cx,
         );
-        assert_eq!(rendered.text_for_range(0..24), "title\nPost\nBody");
+        // With the single source-based copy path, a metadata block yields its raw
+        // source line rather than the rendered key/value table.
+        assert_eq!(rendered.text_for_range(0..24), "title: Post\nBody");
     }
 
     #[gpui::test]
