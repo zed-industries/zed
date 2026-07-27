@@ -125,6 +125,10 @@ impl WindowsDisplay {
     pub fn physical_bounds(&self) -> Bounds<DevicePixels> {
         self.physical_bounds
     }
+
+    pub(crate) fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
 }
 
 impl PlatformDisplay for WindowsDisplay {
