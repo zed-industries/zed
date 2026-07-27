@@ -2601,6 +2601,16 @@ impl LocalLspStore {
         );
 
         let stdout = String::from_utf8(output.stdout)?;
+        if stdout.is_empty() && !text.is_empty() {
+            // Some formatters (e.g. `cargo fmt`) rewrite files on disk instead of
+            // printing the formatted contents to stdout. Treating empty stdout as the
+            // new buffer contents would erase the buffer, so leave it untouched.
+            log::warn!(
+                "External formatter `{command}` produced no output on stdout; leaving the buffer unchanged"
+            );
+            return Ok(None);
+        }
+
         Ok(Some(
             buffer
                 .handle

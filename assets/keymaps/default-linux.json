@@ -1012,7 +1012,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList && !GitBranchSelector",
+    "context": "GitPanel && ChangesList && !GitBranchSelector && !GitRepositorySelector",
     "bindings": {
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",

@@ -573,6 +573,7 @@ pub struct ThreadView {
     pub agent_icon: IconName,
     pub agent_icon_from_external_svg: Option<SharedString>,
     pub agent_id: AgentId,
+    pub agent_display_name: SharedString,
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -646,7 +647,13 @@ pub struct ThreadView {
     pub(crate) thread_search_visible: bool,
 }
 impl Focusable for ThreadView {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl ThreadView {
+    pub(crate) fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
         if self.parent_session_id.is_some() {
             self.focus_handle.clone()
         } else {
@@ -983,6 +990,7 @@ impl ThreadView {
             agent_icon,
             agent_icon_from_external_svg,
             agent_id,
+            agent_display_name,
             workspace,
             entry_view_state,
             title_editor,
@@ -2055,7 +2063,7 @@ impl ThreadView {
             this.update_in(cx, |thread, window, cx| {
                 cx.emit(AcpThreadViewEvent::Interacted);
                 thread.send_impl(message_editor, window, cx);
-                thread.focus_handle(cx).focus(window, cx);
+                thread.activation_focus_handle(cx).focus(window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -2638,33 +2646,70 @@ impl ThreadView {
             return;
         };
 
-        let response = match mode {
+        match mode {
             acp::ElicitationMode::Form(mode) => {
-                let Some(state) = self.elicitation_form_states.get(&elicitation_id) else {
+                let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) else {
                     return;
                 };
-                match state.collect(&mode.requested_schema, cx) {
-                    Ok(content) => {
-                        acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                            acp::ElicitationAcceptAction::new().content(content),
-                        ))
-                    }
-                    Err(errors) => {
-                        if let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) {
-                            state.set_errors(errors);
+                let Some(submission) = state.begin_submission(cx) else {
+                    return;
+                };
+                let schema = mode.requested_schema;
+                let validation_task = cx.background_spawn(async move {
+                    let result = submission.validate(&schema);
+                    (submission, result)
+                });
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    let (submission, result) = validation_task.await;
+                    this.update(cx, |this, cx| {
+                        let is_current = this
+                            .elicitation_form_states
+                            .get_mut(&elicitation_id)
+                            .is_some_and(|state| {
+                                state.validation_matches_current_values(&submission, cx)
+                            });
+                        if !is_current {
+                            cx.notify();
+                            return;
                         }
-                        cx.notify();
-                        return;
-                    }
-                }
+                        match result {
+                            Ok(content) => {
+                                this.respond_to_elicitation(
+                                    elicitation_id,
+                                    acp::CreateElicitationResponse::new(
+                                        acp::ElicitationAction::Accept(
+                                            acp::ElicitationAcceptAction::new().content(content),
+                                        ),
+                                    ),
+                                    cx,
+                                );
+                            }
+                            Err(errors) => {
+                                if let Some(state) =
+                                    this.elicitation_form_states.get_mut(&elicitation_id)
+                                {
+                                    state.set_errors(errors);
+                                }
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .log_err();
+                })
+                .detach();
             }
-            acp::ElicitationMode::Url(_) => acp::CreateElicitationResponse::new(
-                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-            ),
-            _ => return,
-        };
-
-        self.respond_to_elicitation(elicitation_id, response, cx);
+            acp::ElicitationMode::Url(_) => {
+                self.respond_to_elicitation(
+                    elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                        acp::ElicitationAcceptAction::new(),
+                    )),
+                    cx,
+                );
+            }
+            _ => {}
+        }
     }
 
     fn decline_elicitation(
@@ -2691,6 +2736,19 @@ impl ThreadView {
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
             cx,
         );
+    }
+
+    fn dismiss_url_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.elicitation_form_states.remove(&elicitation_id);
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx);
+        });
+        cx.notify();
     }
 
     fn respond_to_elicitation(
@@ -6544,6 +6602,7 @@ impl ThreadView {
         ElicitationCard::new(
             entry_ix,
             elicitation,
+            self.agent_display_name.clone(),
             self.elicitation_form_states.get(&elicitation.id),
             self.elicitation_card_handlers(cx),
         )
@@ -6583,14 +6642,14 @@ impl ThreadView {
             },
             {
                 let view = view.clone();
-                move |elicitation_id, url, window, cx| {
-                    cx.open_url(&url);
+                move |elicitation_id, window, cx| {
                     view.update(cx, |this, cx| {
-                        this.submit_elicitation(elicitation_id, window, cx);
+                        this.dismiss_url_elicitation(elicitation_id, window, cx);
                     })
                     .log_err();
                 }
             },
+            move |_elicitation_id, url, _window, cx| cx.open_url(&url),
             {
                 let view = view.clone();
                 move |elicitation_id, field_name, value, cx| {
@@ -7695,7 +7754,8 @@ impl ThreadView {
             .unwrap_or(&command_source)
             .to_string();
 
-        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
+        let mut style =
+            MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_agent_buffer_font(cx);
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
@@ -8303,8 +8363,13 @@ impl ThreadView {
                             .iter()
                             .enumerate()
                             .map(|(content_ix, content)| {
-                                div().id(("tool-call-output", entry_ix)).child(
-                                    self.render_tool_call_content(
+                                let output_id = SharedString::from(format!(
+                                    "tool-call-output-{entry_ix}-{content_ix}"
+                                ));
+                                div()
+                                    .id(output_id.clone())
+                                    .debug_selector(move || output_id.to_string())
+                                    .child(self.render_tool_call_content(
                                         active_session_id,
                                         entry_ix,
                                         content,
@@ -8315,8 +8380,7 @@ impl ThreadView {
                                         focus_handle,
                                         window,
                                         cx,
-                                    ),
-                                )
+                                    ))
                             }),
                     )
                     .when(!use_card_layout, |this| {
