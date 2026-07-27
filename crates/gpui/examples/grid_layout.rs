@@ -6,14 +6,13 @@ use gpui::{
 };
 use gpui_platform::application;
 
-// https://en.wikipedia.org/wiki/Holy_grail_(web_design)
-//
+
 // Resize the window: the layout is chosen by `container_query` based on the
 // measured size of the container, collapsing to a single stacked column when
 // it becomes too narrow for the three-column grid.
-struct HolyGrailExample {}
+struct ResponsiveLayoutExample {}
 
-impl Render for HolyGrailExample {
+impl Render for ResponsiveLayoutExample {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         container_query(|container_size, _window, _cx| {
             let block = |color: Hsla| {
@@ -69,7 +68,7 @@ fn run_example() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| HolyGrailExample {}),
+            |_, cx| cx.new(|_| ResponsiveLayoutExample {}),
         )
         .unwrap();
         cx.activate(true);
