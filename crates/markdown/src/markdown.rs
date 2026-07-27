@@ -4474,6 +4474,368 @@ mod tests {
         });
     }
 
+    /// A doc of `blocks` blank-line-separated top-level blocks (headings, prose,
+    /// code, lists, quotes), like a long agent response.
+    fn perf_doc(blocks: usize) -> String {
+        let mut out = String::new();
+        for i in 0..blocks {
+            match i % 6 {
+                0 => out.push_str(&format!("## Heading {i}")),
+                1 | 2 => out.push_str(&format!(
+                    "Paragraph {i} with **bold**, `code`, and a [link](https://example.com) plus \
+                     filler words to make it wrap across the viewport at least once or twice over."
+                )),
+                3 => out.push_str(&format!("- bullet {i} a\n- bullet {i} b")),
+                4 => out.push_str(&format!("```rust\nfn f_{i}() {{ let x = {i}; x + 1 }}\n```")),
+                _ => out.push_str(&format!("> quote {i} with a little extra text so it wraps")),
+            }
+            out.push_str("\n\n");
+        }
+        out
+    }
+
+    struct EmptyView;
+
+    impl Render for EmptyView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// An 800x600 window plus a parsed `Markdown` entity, for virtualized tests.
+    fn virtualized_setup(
+        cx: &mut TestAppContext,
+        source: String,
+    ) -> (Entity<Markdown>, &mut gpui::VisualTestContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| EmptyView);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+        (markdown, cx)
+    }
+
+    /// Draw virtualized, scrolled down by `scroll` px, in a `width` x 600 viewport.
+    fn draw_virtualized(
+        cx: &mut gpui::VisualTestContext,
+        markdown: &Entity<Markdown>,
+        scroll: f32,
+        width: f32,
+    ) -> (MarkdownLayoutState, MarkdownPrepaintState) {
+        let markdown = markdown.clone();
+        cx.draw(
+            point(px(0.), px(-scroll)),
+            size(px(width), px(600.)),
+            move |_, _| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .virtualized()
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        )
+    }
+
+    /// Whatever is scrolled into view is laid out and hit-testable; content never
+    /// scrolled to has no geometry yet.
+    #[gpui::test]
+    fn scrolling_into_a_message_keeps_visible_text_hit_testable(cx: &mut TestAppContext) {
+        let source = perf_doc(2000);
+        let source_len = source.len();
+        let (markdown, cx) = virtualized_setup(cx, source);
+
+        // Hit-test the viewport center after scrolling down by `scroll` px, and
+        // check whether content near the message end has geometry.
+        let mut sample = |scroll: f32| -> (usize, bool) {
+            let (layout, prepaint) = draw_virtualized(cx, &markdown, scroll, 800.);
+            let rendered = drawn_text(layout, prepaint);
+            let hit = rendered
+                .source_index_for_position(point(px(400.), px(300.)))
+                .unwrap_or_else(|fallback| fallback);
+            let end_has_geometry = rendered
+                .position_for_source_index(source_len.saturating_sub(50))
+                .is_some();
+            (hit, end_has_geometry)
+        };
+
+        let (top, top_sees_end) = sample(0.0);
+        let (mid, _) = sample(20_000.0);
+        let (deep, _) = sample(60_000.0);
+
+        // Interaction follows the viewport: scrolling reveals progressively
+        // later hit-testable content.
+        assert!(
+            top < mid && mid < deep,
+            "scrolling should reveal and locate later content: {top} < {mid} < {deep}"
+        );
+        assert!(
+            !top_sees_end,
+            "off-screen content should have no geometry until scrolled into view"
+        );
+    }
+
+    /// Copying a range spanning the whole (tall) message must include far
+    /// off-screen blocks.
+    #[gpui::test]
+    fn copy_spans_offscreen_blocks(cx: &mut TestAppContext) {
+        let source = format!("para one\n\npara two\n\n{}", "filler block\n\n".repeat(500));
+        let source_len = source.len();
+        let (markdown, cx) = virtualized_setup(cx, source);
+        let (layout, prepaint) = draw_virtualized(cx, &markdown, 0., 800.);
+        let full = drawn_text(layout, prepaint).text_for_range(0..source_len);
+        assert!(
+            full.contains("para one") && full.contains("para two"),
+            "copy lost early blocks"
+        );
+        assert!(
+            full.lines().count() >= 100,
+            "copy lost off-screen blocks (got {} lines)",
+            full.lines().count()
+        );
+    }
+
+    /// O(viewport) build must hold at every scroll position: sweeping a tall doc
+    /// never builds more than a viewport's worth of blocks per frame.
+    #[gpui::test]
+    fn build_stays_viewport_bounded_while_scrolling(cx: &mut TestAppContext) {
+        let (markdown, cx) = virtualized_setup(cx, perf_doc(2000));
+        let mut max_built = 0;
+        for step in 0..40 {
+            BLOCKS_BUILT.with(|count| count.set(0));
+            draw_virtualized(cx, &markdown, step as f32 * 2000.0, 800.);
+            max_built = max_built.max(BLOCKS_BUILT.with(|count| count.get()));
+        }
+        assert!(
+            max_built < 100,
+            "build not viewport-bounded while scrolling: peaked at {max_built} blocks/frame"
+        );
+    }
+
+    #[test]
+    fn unresolved_reference_flags_block_as_volatile() {
+        let unresolved =
+            parse_markdown_with_options("Text with [a link][ref] inside.", true, false, false);
+        assert!(
+            !unresolved.volatile_blocks.is_empty(),
+            "an unresolved reference should flag its block"
+        );
+
+        let resolved = parse_markdown_with_options(
+            "Text with [a link][ref] inside.\n\n[ref]: https://example.com",
+            true,
+            false,
+            false,
+        );
+        assert!(
+            resolved.volatile_blocks.is_empty(),
+            "a resolved reference should not flag its block"
+        );
+    }
+
+    /// A block measured before an append-only reparse keeps its cached height
+    /// afterward, even while off-screen.
+    #[gpui::test]
+    fn height_cache_survives_append_reparse(cx: &mut TestAppContext) {
+        let (markdown, cx) = virtualized_setup(cx, perf_doc(30));
+        draw_virtualized(cx, &markdown, 0.0, 800.);
+        let (range, height) = cx.update(|_, cx| {
+            markdown
+                .read(cx)
+                .block_heights
+                .iter()
+                .min_by_key(|(range, _)| range.start)
+                .map(|(range, height)| (range.clone(), *height))
+                .expect("top blocks should have been measured")
+        });
+
+        // Append, then redraw scrolled far down so the top block is off-screen
+        // and not re-measured.
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.append("\n\n## a freshly appended heading\n\n", cx)
+            })
+        });
+        cx.run_until_parked();
+        draw_virtualized(cx, &markdown, 5000.0, 800.);
+
+        let survived = cx.update(|_, cx| markdown.read(cx).block_heights.get(&range).copied());
+        assert_eq!(
+            survived,
+            Some(height),
+            "the top block's measured height was lost across the reparse"
+        );
+    }
+
+    /// A resize changes wrap width. Cache entries are tagged with the width they
+    /// were measured at, so a mismatch reads as unmeasured rather than reusing a
+    /// stale wrong-width height.
+    #[gpui::test]
+    fn resize_invalidates_height_cache(cx: &mut TestAppContext) {
+        let (markdown, cx) = virtualized_setup(cx, perf_doc(100));
+
+        // Measure top blocks wide, then scroll them off-screen: their cached
+        // heights persist.
+        draw_virtualized(cx, &markdown, 0., 800.);
+        let top_range = cx.update(|_, cx| {
+            markdown
+                .read(cx)
+                .block_heights
+                .keys()
+                .min_by_key(|range| range.start)
+                .cloned()
+                .expect("top blocks measured")
+        });
+        draw_virtualized(cx, &markdown, 2000., 800.);
+        assert!(
+            cx.update(|_, cx| markdown.read(cx).block_heights.contains_key(&top_range)),
+            "off-screen block should keep its cached height across a scroll"
+        );
+
+        // Resize narrower while it's off-screen: the entry stays tagged at the
+        // old width, so it no longer counts as measured at the new width.
+        draw_virtualized(cx, &markdown, 2000., 300.);
+        let cached_width = cx.update(|_, cx| {
+            markdown
+                .read(cx)
+                .block_heights
+                .get(&top_range)
+                .map(|(width, _)| *width)
+        });
+        assert_ne!(
+            cached_width,
+            Some(px(300.)),
+            "resize should not revalidate the off-screen block at the new width"
+        );
+    }
+
+    /// reset() swaps in revised content that can reuse byte ranges with different
+    /// rendering, so cached heights must be dropped.
+    #[gpui::test]
+    fn reset_invalidates_height_cache(cx: &mut TestAppContext) {
+        let (markdown, cx) = virtualized_setup(cx, perf_doc(30));
+        draw_virtualized(cx, &markdown, 0., 800.);
+        assert!(
+            cx.update(|_, cx| markdown.read(cx).block_heights.len()) > 0,
+            "the initial draw should have measured some blocks"
+        );
+
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, cx| markdown.reset(perf_doc(40).into(), cx))
+        });
+        assert_eq!(
+            cx.update(|_, cx| markdown.read(cx).block_heights.len()),
+            0,
+            "reset should drop cached heights so revised content re-measures"
+        );
+    }
+
+    /// Scrolling to a target in never-rendered content measures the intervening
+    /// blocks on demand, so the jump is exact rather than landing short.
+    #[gpui::test]
+    fn autoscroll_measures_never_rendered_blocks(cx: &mut TestAppContext) {
+        // At scroll 0 only the first ~30 of 100 blocks fall in viewport +
+        // overscan, so deep blocks are never measured.
+        let (markdown, cx) = virtualized_setup(cx, perf_doc(100));
+        let target = cx.update(|_, cx| markdown.read(cx).parsed_markdown.root_block_starts[90]);
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.request_autoscroll_to_source_index(target, cx)
+            })
+        });
+
+        draw_virtualized(cx, &markdown, 0., 800.);
+        let measured = cx.update(|_, cx| markdown.read(cx).block_heights.len());
+        assert!(
+            measured >= 60,
+            "autoscroll should measure the off-screen blocks above the target on demand, \
+             only {measured} blocks measured"
+        );
+    }
+
+    // Autoscroll must land on the target LINE, not just the target block's top.
+    // Both targets sit inside one tall off-screen code block; with line
+    // granularity the last line scrolls much further than the first, whereas
+    // block granularity would land both at the block top (equal offsets).
+    #[gpui::test]
+    fn autoscroll_targets_line_within_tall_block(cx: &mut TestAppContext) {
+        struct TestView {
+            markdown: Entity<Markdown>,
+            scroll: ScrollHandle,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(
+                        MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                            .virtualized()
+                            .scroll_handle(self.scroll.clone()),
+                    )
+            }
+        }
+        ensure_theme_initialized(cx);
+        // Push a tall code block well past the viewport + overscan.
+        let before: String = (0..40)
+            .map(|i| format!("Filler paragraph number {i} goes here.\n\n"))
+            .collect();
+        let code = (0..80)
+            .map(|i| format!("    let value_{i} = compute({i});"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!("{before}```rust\n{code}\n```\n\ndone");
+        let first = source.find("value_0").unwrap();
+        let last = source.find("value_79").unwrap();
+
+        let scroll = ScrollHandle::new();
+        let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
+        let (_view, cx) = cx.add_window_view({
+            let markdown = markdown.clone();
+            let scroll = scroll.clone();
+            |_, _| TestView { markdown, scroll }
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let mut scroll_to = |index: usize| {
+            cx.update(|_, cx| {
+                markdown.update(cx, |m, cx| m.request_autoscroll_to_source_index(index, cx))
+            });
+            cx.run_until_parked();
+            scroll.offset().y
+        };
+        let to_first = scroll_to(first);
+        let to_last = scroll_to(last);
+
+        assert!(
+            to_last < to_first - px(500.),
+            "autoscroll landed at block granularity, not line: \
+             first={to_first:?} last={to_last:?}"
+        );
+    }
+
+    // Copying a selection that ends inside a substituted glyph (smart
+    // punctuation is on by default, so "..." renders as a single "…") must not
+    // panic and must yield the source text up to the cut.
+    #[gpui::test]
+    fn copy_selection_inside_substituted_glyph(cx: &mut TestAppContext) {
+        let src = "Loading the file took a while... then it finished.";
+        let rendered = render_markdown(src, cx);
+        let dots = src.find("...").unwrap();
+        // Ending exactly before the glyph yields the clean prefix.
+        assert_eq!(rendered.text_for_range(0..dots), &src[..dots]);
+        // Ending inside the "…" includes the whole glyph (can't copy half), and
+        // crucially does not panic.
+        let with_glyph = format!("{}…", &src[..dots]);
+        for cut in [dots + 1, dots + 2, dots + 3] {
+            assert_eq!(rendered.text_for_range(0..cut), with_glyph);
+        }
+    }
+
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
         // Formatting.
