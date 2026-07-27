@@ -34,17 +34,19 @@ impl AgentModelSelector {
                     },
                     {
                         let fs = fs.clone();
-                        move |model, cx| {
+                        move |model, save_to_settings, cx| {
                             let provider = model.provider_id().0.to_string();
                             let model_id = model.id().0.to_string();
                             match &model_usage_context {
                                 ModelUsageContext::InlineAssistant => {
-                                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                        settings
-                                            .agent
-                                            .get_or_insert_default()
-                                            .set_inline_assistant_model(provider.clone(), model_id);
-                                    });
+                                    if save_to_settings {
+                                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                            settings
+                                                .agent
+                                                .get_or_insert_default()
+                                                .set_inline_assistant_model(provider.clone(), model_id);
+                                        });
+                                    }
                                 }
                             }
                         }

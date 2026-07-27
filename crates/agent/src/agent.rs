@@ -2398,7 +2398,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         })
     }
 
-    fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>> {
+    fn select_model(&self, model_id: AgentModelId, save_to_settings: bool, cx: &mut App) -> Task<Result<()>> {
         log::debug!(
             "Setting model for session {}: {}",
             self.session_id,
@@ -2444,26 +2444,28 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             }
         });
 
-        update_settings_file(
-            self.connection.0.read(cx).fs.clone(),
-            cx,
-            move |settings, cx| {
-                let provider = model.provider_id().0.to_string();
-                let model = model.id().0.to_string();
-                let enable_thinking = thread.read(cx).thinking_enabled();
-                let speed = thread.read(cx).speed();
-                settings
-                    .agent
-                    .get_or_insert_default()
-                    .set_model(LanguageModelSelection {
-                        provider: provider.into(),
-                        model,
-                        enable_thinking,
-                        effort,
-                        speed,
-                    });
-            },
-        );
+        if save_to_settings {
+            update_settings_file(
+                self.connection.0.read(cx).fs.clone(),
+                cx,
+                move |settings, cx| {
+                    let provider = model.provider_id().0.to_string();
+                    let model = model.id().0.to_string();
+                    let enable_thinking = thread.read(cx).thinking_enabled();
+                    let speed = thread.read(cx).speed();
+                    settings
+                        .agent
+                        .get_or_insert_default()
+                        .set_model(LanguageModelSelection {
+                            provider: provider.into(),
+                            model,
+                            enable_thinking,
+                            effort,
+                            speed,
+                        });
+                },
+            );
+        }
 
         Task::ready(Ok(()))
     }
@@ -5648,7 +5650,7 @@ mod internal_tests {
         // Select a model
         let selector = connection.model_selector(&session_id).unwrap();
         let model_id = AgentModelId::new("fake/fake");
-        cx.update(|cx| selector.select_model(model_id.clone(), cx))
+        cx.update(|cx| selector.select_model(model_id.clone(), true, cx))
             .await
             .unwrap();
 
@@ -5698,7 +5700,7 @@ mod internal_tests {
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), true, cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -5772,7 +5774,7 @@ mod internal_tests {
 
         // Select the thinking model via select_model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), true, cx))
             .await
             .unwrap();
 
@@ -5789,7 +5791,7 @@ mod internal_tests {
 
         // Switch back to the non-thinking model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), true, cx))
             .await
             .unwrap();
 
@@ -5906,7 +5908,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), true, cx))
             .await
             .unwrap();
 
@@ -6009,7 +6011,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), true, cx))
             .await
             .unwrap();
 
@@ -6119,7 +6121,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), true, cx))
             .await
             .unwrap();
 
@@ -6248,7 +6250,7 @@ mod internal_tests {
         cx.run_until_parked();
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(AgentModelId::new("other-corp/other-model-id"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("other-corp/other-model-id"), true, cx))
             .await
             .unwrap();
 
