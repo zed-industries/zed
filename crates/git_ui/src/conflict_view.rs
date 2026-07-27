@@ -1040,6 +1040,161 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_navigation_in_a_heavily_conflicted_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Every conflict gets a block and five row highlights, and navigation
+        // scans them all, so a file with this many is the shape worth checking.
+        const CONFLICTS: u32 = 1000;
+        const LINES_PER_CONFLICT: u32 = 6;
+
+        let mut text = String::new();
+        for index in 0..CONFLICTS {
+            text.push_str(&format!(
+                "line-{index}\n<<<<<<< HEAD\nours-{index}\n=======\ntheirs-{index}\n>>>>>>> feature\n"
+            ));
+        }
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": text,
+            }),
+        )
+        .await;
+        mark_unmerged(&fs, path!("/project/.git"), &["a.txt"]);
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.run_until_parked();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        let conflict_count = |editor: &Editor, cx: &App| {
+            editor
+                .addon::<ConflictAddon>()
+                .expect("conflict addon should be registered")
+                .all_conflicts(cx)
+                .count()
+        };
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(conflict_count(editor, cx), CONFLICTS as usize);
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            go_to_conflict(editor, Direction::Next, window, cx);
+            assert_eq!(cursor_row(editor, cx), 1);
+
+            go_to_conflict(editor, Direction::Prev, window, cx);
+            assert_eq!(
+                cursor_row(editor, cx),
+                (CONFLICTS - 1) * LINES_PER_CONFLICT + 1,
+                "wrapping backwards reaches the last conflict"
+            );
+
+            accept_conflict_at_cursor(editor, ConflictSide::Ours, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(conflict_count(editor, cx), CONFLICTS as usize - 1);
+        });
+    }
+
+    /// The project diff builds its own multibuffer and wires the conflict set up
+    /// from `diff_multibuffer`, bypassing the singleton path in `register_editor`.
+    #[gpui::test]
+    async fn test_conflict_resolution_in_project_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let text = "
+            before
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> feature
+            after
+        "
+        .unindent();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": text,
+            }),
+        )
+        .await;
+        mark_unmerged(&fs, path!("/project/.git"), &["a.txt"]);
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(crate::project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let project_diff = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<crate::project_diff::ProjectDiff>(cx)
+                .expect("the project diff is the active item")
+        });
+        cx.focus(&project_diff);
+        let editor = project_diff
+            .read_with(cx, |project_diff, cx| {
+                project_diff.editor(cx).read(cx).rhs_editor().clone()
+            });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            let conflicts = editor
+                .addon::<ConflictAddon>()
+                .expect("the conflict addon is registered on the project diff editor")
+                .all_conflicts(cx)
+                .count();
+            assert_eq!(conflicts, 1);
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            go_to_conflict(editor, Direction::Next, window, cx);
+            accept_conflict_at_cursor(editor, ConflictSide::Theirs, window, cx);
+        });
+        cx.run_until_parked();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "before\ntheirs\nafter\n",
+            "accepting the incoming side works through the multibuffer's excerpt anchors"
+        );
+    }
+
+    #[gpui::test]
     async fn test_go_to_conflicted_file(cx: &mut TestAppContext) {
         init_test(cx);
 
