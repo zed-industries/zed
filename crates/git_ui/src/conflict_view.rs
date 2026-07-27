@@ -1118,12 +1118,20 @@ mod tests {
     async fn test_conflict_resolution_in_project_diff(cx: &mut TestAppContext) {
         init_test(cx);
 
+        // Two conflicts, so that each one becomes its own excerpt and the
+        // buffer-anchor-to-multibuffer-anchor conversion has to pick the right one.
         let text = "
             before
             <<<<<<< HEAD
-            ours
+            ours-1
             =======
-            theirs
+            theirs-1
+            >>>>>>> feature
+            middle
+            <<<<<<< HEAD
+            ours-2
+            =======
+            theirs-2
             >>>>>>> feature
             after
         "
@@ -1172,12 +1180,20 @@ mod tests {
                 .expect("the conflict addon is registered on the project diff editor")
                 .all_conflicts(cx)
                 .count();
-            assert_eq!(conflicts, 1);
+            assert_eq!(conflicts, 2);
         });
+
+        // The second conflict is the one that would break if every conflict in a
+        // buffer mapped back to that buffer's first excerpt.
+        editor.update_in(cx, |editor, window, cx| {
+            go_to_conflict(editor, Direction::Prev, window, cx);
+            accept_conflict_at_cursor(editor, ConflictSide::Theirs, window, cx);
+        });
+        cx.run_until_parked();
 
         editor.update_in(cx, |editor, window, cx| {
             go_to_conflict(editor, Direction::Next, window, cx);
-            accept_conflict_at_cursor(editor, ConflictSide::Theirs, window, cx);
+            accept_conflict_at_cursor(editor, ConflictSide::Ours, window, cx);
         });
         cx.run_until_parked();
 
@@ -1189,8 +1205,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "before\ntheirs\nafter\n",
-            "accepting the incoming side works through the multibuffer's excerpt anchors"
+            "before\nours-1\nmiddle\ntheirs-2\nafter\n",
+            "each conflict resolves through its own excerpt's anchors"
         );
     }
 
