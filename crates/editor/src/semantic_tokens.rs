@@ -8,10 +8,7 @@ use gpui::{
 use itertools::Itertools;
 use language::language_settings::LanguageSettings;
 use project::{
-    lsp_store::{
-        BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer,
-        TokenType,
-    },
+    lsp_store::{BufferSemanticToken, BufferSemanticTokens, SemanticTokenStylizer, TokenType},
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -103,7 +100,7 @@ impl Editor {
     ) {
         self.semantic_token_state.toggle_enabled();
         self.invalidate_semantic_tokens(None);
-        self.refresh_semantic_tokens(None, None, cx);
+        self.refresh_semantic_tokens(None, false, cx);
     }
 
     pub(super) fn invalidate_semantic_tokens(&mut self, for_buffer: Option<BufferId>) {
@@ -116,7 +113,7 @@ impl Editor {
     pub(super) fn refresh_semantic_tokens(
         &mut self,
         buffer_id: Option<BufferId>,
-        for_server: Option<RefreshForServer>,
+        server_refreshed: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
@@ -133,7 +130,7 @@ impl Editor {
         }
 
         let mut invalidate_semantic_highlights_for_buffers = HashSet::default();
-        if for_server.is_some() {
+        if server_refreshed {
             invalidate_semantic_highlights_for_buffers.extend(
                 self.semantic_token_state
                     .fetched_for_buffers
@@ -216,9 +213,9 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                sema.semantic_tokens(buffer, for_server, cx).map(
-                                    |task| async move { (buffer_id, query_version, task.await) },
-                                )
+                                sema.semantic_tokens(buffer, cx).map(|task| async move {
+                                    (buffer_id, query_version, task.await)
+                                })
                             }
                         })
                         .collect::<Vec<_>>()
@@ -862,10 +859,11 @@ mod tests {
         let toml_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "TOML".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1089,10 +1087,11 @@ mod tests {
         let toml_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "TOML".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1100,10 +1099,11 @@ mod tests {
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1378,10 +1378,11 @@ mod tests {
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,

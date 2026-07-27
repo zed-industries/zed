@@ -1,7 +1,7 @@
 use crate::prelude::*;
 
 use documented::Documented;
-use gpui::{AnyElement, Hsla, ImageSource, Img, IntoElement, Styled, img};
+use gpui::{AnyElement, AnyView, Hsla, ImageSource, Img, IntoElement, Styled, img};
 
 /// An element that renders a user avatar with customizable appearance options.
 ///
@@ -108,8 +108,6 @@ impl RenderOnce for Avatar {
     }
 }
 
-use gpui::AnyView;
-
 /// The audio status of an player, for use in representing
 /// their status visually on their avatar.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -191,6 +189,7 @@ pub enum CollaboratorAvailability {
 pub struct AvatarAvailabilityIndicator {
     availability: CollaboratorAvailability,
     avatar_size: Option<Pixels>,
+    border_color: Option<Hsla>,
 }
 
 impl AvatarAvailabilityIndicator {
@@ -199,12 +198,18 @@ impl AvatarAvailabilityIndicator {
         Self {
             availability,
             avatar_size: None,
+            border_color: None,
         }
     }
 
     /// Sets the size of the [`Avatar`](crate::Avatar) this indicator appears on.
     pub fn avatar_size(mut self, size: impl Into<Option<Pixels>>) -> Self {
         self.avatar_size = size.into();
+        self
+    }
+
+    pub fn border_color(mut self, color: impl Into<Hsla>) -> Self {
+        self.border_color = Some(color.into());
         self
     }
 }
@@ -216,12 +221,22 @@ impl RenderOnce for AvatarAvailabilityIndicator {
         // HACK: non-integer sizes result in oval indicators.
         let indicator_size = (avatar_size * 0.4).round();
 
+        let border_width = if self.border_color.is_some() {
+            px(2.)
+        } else {
+            px(0.)
+        };
+        let container_size = indicator_size + border_width * 2.;
+
         div()
             .absolute()
-            .bottom_0()
-            .right_0()
-            .size(indicator_size)
-            .rounded(indicator_size)
+            .bottom(-border_width)
+            .right(-border_width)
+            .size(container_size)
+            .rounded(container_size)
+            .when_some(self.border_color, |this, color| {
+                this.border(border_width).border_color(color)
+            })
             .bg(match self.availability {
                 CollaboratorAvailability::Free => cx.theme().status().created,
                 CollaboratorAvailability::Busy => cx.theme().status().deleted,

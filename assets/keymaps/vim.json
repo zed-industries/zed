@@ -1091,7 +1091,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList && !GitBranchSelector",
+    "context": "GitPanel && ChangesList && !GitBranchSelector && !GitRepositorySelector",
     "use_key_equivalents": true,
     "bindings": {
       "k": "menu::SelectPrevious",
@@ -1133,6 +1133,13 @@
     "bindings": {
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
+    },
+  },
+  {
+    "context": "CommitEditor > Editor && VimControl && !menu",
+    "bindings": {
+      "tab": "git_panel::FocusChanges",
+      "shift-tab": "git_panel::FocusChanges",
     },
   },
   {
