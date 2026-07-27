@@ -10738,7 +10738,7 @@ pub fn open_remote_project_with_new_connection(
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
-) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+) -> Task<Result<(Option<Entity<Workspace>>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
@@ -10757,7 +10757,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok(Vec::new()),
+            None => return Ok((None, Vec::new())),
         };
 
         let project = cx.update(|cx| {
@@ -10773,7 +10773,7 @@ pub fn open_remote_project_with_new_connection(
             )
         });
 
-        open_remote_project_inner(
+        let (workspace, items) = open_remote_project_inner(
             project,
             paths,
             workspace_id,
@@ -10784,7 +10784,8 @@ pub fn open_remote_project_with_new_connection(
             None,
             cx,
         )
-        .await
+        .await?;
+        Ok((Some(workspace), items))
     })
 }
 
@@ -10797,7 +10798,7 @@ pub fn open_remote_project_with_existing_connection(
     provisional_project_group_key: Option<ProjectGroupKey>,
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
-) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
+) -> Task<Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             deserialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
@@ -10827,7 +10828,7 @@ async fn open_remote_project_inner(
     provisional_project_group_key: Option<ProjectGroupKey>,
     source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
-) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+) -> Result<(Entity<Workspace>, Vec<Option<Box<dyn ItemHandle>>>)> {
     let mut project_paths_to_open = vec![];
     let mut project_path_errors = vec![];
 
@@ -10926,7 +10927,10 @@ async fn open_remote_project_inner(
         }
     });
 
-    Ok(items.into_iter().map(|item| item?.ok()).collect())
+    Ok((
+        workspace,
+        items.into_iter().map(|item| item?.ok()).collect(),
+    ))
 }
 
 fn deserialize_remote_project(
