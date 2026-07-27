@@ -10,7 +10,6 @@ use web_time::Instant;
 #[cfg(feature = "multithreaded")]
 const MIN_BACKGROUND_THREADS: usize = 2;
 
-#[cfg(feature = "multithreaded")]
 fn shared_memory_supported() -> bool {
     let global = js_sys::global();
     let has_shared_array_buffer =
@@ -150,14 +149,12 @@ impl WebDispatcher {
 
         let main_thread_mailbox = Arc::new(MainThreadMailbox::new());
 
-        #[cfg(feature = "multithreaded")]
-        let supports_threads = allow_threads && shared_memory_supported();
-        #[cfg(not(feature = "multithreaded"))]
-        let supports_threads = false;
+        let supports_threads =
+            cfg!(feature = "multithreaded") && allow_threads && shared_memory_supported();
 
         if supports_threads {
             main_thread_mailbox.run_waker_loop(browser_window.clone());
-        } else {
+        } else if cfg!(feature = "multithreaded") && allow_threads {
             log::warn!(
                 "SharedArrayBuffer not available; falling back to single-threaded dispatcher"
             );
