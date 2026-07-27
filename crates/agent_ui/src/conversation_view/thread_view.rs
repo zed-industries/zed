@@ -10,7 +10,7 @@ use std::cell::RefCell;
 
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, PlanEntry, SandboxAuthorizationDetails,
-    SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
+    SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason, decode_path_escapes,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -45,6 +45,7 @@ use ui::{
     ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
     SplitButtonStyle, Tab, ToggleState,
 };
+use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
@@ -572,6 +573,7 @@ pub struct ThreadView {
     pub agent_icon: IconName,
     pub agent_icon_from_external_svg: Option<SharedString>,
     pub agent_id: AgentId,
+    pub agent_display_name: SharedString,
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -982,6 +984,7 @@ impl ThreadView {
             agent_icon,
             agent_icon_from_external_svg,
             agent_id,
+            agent_display_name,
             workspace,
             entry_view_state,
             title_editor,
@@ -2637,33 +2640,70 @@ impl ThreadView {
             return;
         };
 
-        let response = match mode {
+        match mode {
             acp::ElicitationMode::Form(mode) => {
-                let Some(state) = self.elicitation_form_states.get(&elicitation_id) else {
+                let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) else {
                     return;
                 };
-                match state.collect(&mode.requested_schema, cx) {
-                    Ok(content) => {
-                        acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
-                            acp::ElicitationAcceptAction::new().content(content),
-                        ))
-                    }
-                    Err(errors) => {
-                        if let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) {
-                            state.set_errors(errors);
+                let Some(submission) = state.begin_submission(cx) else {
+                    return;
+                };
+                let schema = mode.requested_schema;
+                let validation_task = cx.background_spawn(async move {
+                    let result = submission.validate(&schema);
+                    (submission, result)
+                });
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    let (submission, result) = validation_task.await;
+                    this.update(cx, |this, cx| {
+                        let is_current = this
+                            .elicitation_form_states
+                            .get_mut(&elicitation_id)
+                            .is_some_and(|state| {
+                                state.validation_matches_current_values(&submission, cx)
+                            });
+                        if !is_current {
+                            cx.notify();
+                            return;
                         }
-                        cx.notify();
-                        return;
-                    }
-                }
+                        match result {
+                            Ok(content) => {
+                                this.respond_to_elicitation(
+                                    elicitation_id,
+                                    acp::CreateElicitationResponse::new(
+                                        acp::ElicitationAction::Accept(
+                                            acp::ElicitationAcceptAction::new().content(content),
+                                        ),
+                                    ),
+                                    cx,
+                                );
+                            }
+                            Err(errors) => {
+                                if let Some(state) =
+                                    this.elicitation_form_states.get_mut(&elicitation_id)
+                                {
+                                    state.set_errors(errors);
+                                }
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .log_err();
+                })
+                .detach();
             }
-            acp::ElicitationMode::Url(_) => acp::CreateElicitationResponse::new(
-                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-            ),
-            _ => return,
-        };
-
-        self.respond_to_elicitation(elicitation_id, response, cx);
+            acp::ElicitationMode::Url(_) => {
+                self.respond_to_elicitation(
+                    elicitation_id,
+                    acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                        acp::ElicitationAcceptAction::new(),
+                    )),
+                    cx,
+                );
+            }
+            _ => {}
+        }
     }
 
     fn decline_elicitation(
@@ -2690,6 +2730,19 @@ impl ThreadView {
             acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
             cx,
         );
+    }
+
+    fn dismiss_url_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.elicitation_form_states.remove(&elicitation_id);
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx);
+        });
+        cx.notify();
     }
 
     fn respond_to_elicitation(
@@ -3215,7 +3268,7 @@ impl ThreadView {
                                     .size(IconSize::Small)
                             });
 
-                        let file_stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+                        let file_stats = DiffStats::single_file(diff.read(cx));
 
                         let buttons = self.render_edited_files_buttons(
                             index,
@@ -4298,6 +4351,7 @@ impl ThreadView {
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
+                    .min_w_0()
                     .when(fills_container, |this| this.h_full())
                     .px_2()
                     .flex_shrink_1()
@@ -4349,11 +4403,14 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .w_full()
+                            .min_w_0()
                             .flex_none()
                             .flex_wrap()
                             .justify_between()
                             .child(
                                 h_flex()
+                                    .min_w_0()
+                                    .flex_wrap()
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
@@ -4362,6 +4419,7 @@ impl ThreadView {
                             )
                             .child(
                                 h_flex()
+                                    .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
                                     .children(self.render_token_usage(cx))
@@ -5080,7 +5138,7 @@ impl ThreadView {
             (
                 "Disable Thinking Mode",
                 IconName::ThinkingMode,
-                Color::Muted,
+                Color::Accent,
             )
         } else {
             (
@@ -5226,7 +5284,7 @@ impl ThreadView {
                     .child(
                         Icon::new(IconName::ThinkingMode)
                             .size(IconSize::Small)
-                            .color(label_color),
+                            .color(Color::Accent),
                     )
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
@@ -6442,9 +6500,12 @@ impl ThreadView {
             primary
         };
 
-        let primary = if matches!(entry, AgentThreadEntry::AssistantMessage(_))
-            && !assistant_message_is_blank
-        {
+        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+
+        let is_turn_end = Self::entry_is_finalized_turn_end(thread.read(cx).entries(), entry_ix)
+            .unwrap_or(!is_generating);
+
+        let primary = if is_turn_end && !assistant_message_is_blank {
             let user_message_index = thread
                 .read(cx)
                 .entries()
@@ -6535,6 +6596,7 @@ impl ThreadView {
         ElicitationCard::new(
             entry_ix,
             elicitation,
+            self.agent_display_name.clone(),
             self.elicitation_form_states.get(&elicitation.id),
             self.elicitation_card_handlers(cx),
         )
@@ -6574,14 +6636,14 @@ impl ThreadView {
             },
             {
                 let view = view.clone();
-                move |elicitation_id, url, window, cx| {
-                    cx.open_url(&url);
+                move |elicitation_id, window, cx| {
                     view.update(cx, |this, cx| {
-                        this.submit_elicitation(elicitation_id, window, cx);
+                        this.dismiss_url_elicitation(elicitation_id, window, cx);
                     })
                     .log_err();
                 }
             },
+            move |_elicitation_id, url, _window, cx| cx.open_url(&url),
             {
                 let view = view.clone();
                 move |elicitation_id, field_name, value, cx| {
@@ -6660,6 +6722,30 @@ impl ThreadView {
             )
     }
 
+    /// A turn ends when no further assistant output (message or tool call)
+    /// follows before the next user message, and it's finalized once a user
+    /// message follows it.
+    fn entry_is_finalized_turn_end(entries: &[AgentThreadEntry], entry_ix: usize) -> Option<bool> {
+        if !matches!(
+            entries.get(entry_ix),
+            Some(AgentThreadEntry::AssistantMessage(_))
+        ) {
+            return Some(false);
+        }
+
+        for entry in &entries[entry_ix + 1..] {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return Some(true),
+                AgentThreadEntry::AssistantMessage(_) | AgentThreadEntry::ToolCall(_) => {
+                    return Some(false);
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     fn render_thread_controls(
         &self,
         thread: &Entity<AcpThread>,
@@ -6702,13 +6788,15 @@ impl ThreadView {
             this.scroll_to_user_message_index(user_message_index, cx);
         }));
 
-        let scroll_to_top = IconButton::new(("scroll_to_top", entry_ix), IconName::ArrowUp)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .tooltip(Tooltip::text("Scroll to Top"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.scroll_to_top(cx);
-            }));
+        let scroll_to_top = is_thread_bottom.then(|| {
+            IconButton::new(("scroll_to_top", entry_ix), IconName::ArrowUp)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Scroll to Top"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_top(cx);
+                }))
+        });
 
         let show_stats = is_thread_bottom && AgentSettings::get_global(cx).show_turn_stats;
 
@@ -6797,6 +6885,13 @@ impl ThreadView {
             })
             .flatten();
 
+        let separator_dots = || {
+            Label::new("•")
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .alpha(0.5)
+        };
+
         h_flex()
             .w_full()
             .py_1p5()
@@ -6812,21 +6907,18 @@ impl ThreadView {
                             .px_1()
                             .gap_1()
                             .when_some(last_turn_tokens_label, |this, label| {
-                                this.child(label).child(
-                                    Label::new("•")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .alpha(0.5),
-                                )
+                                this.child(label).child(separator_dots())
                             })
-                            .when_some(last_turn_clock, |this, label| this.child(label)),
+                            .when_some(last_turn_clock, |this, label| {
+                                this.child(label).child(separator_dots())
+                            }),
                     )
                 },
             )
             .when_some(feedback_buttons, |this, buttons| this.child(buttons))
             .when_some(copy_response_button, |this, button| this.child(button))
             .child(scroll_to_recent_user_prompt)
-            .child(scroll_to_top)
+            .when_some(scroll_to_top, |this, button| this.child(button))
             .into_any_element()
     }
 
@@ -7656,7 +7748,7 @@ impl ThreadView {
             .unwrap_or(&command_source)
             .to_string();
 
-        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
+        let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
@@ -12249,6 +12341,33 @@ pub(crate) fn open_link(
     };
 
     let path_style = workspace.read(cx).path_style(cx);
+    let (relative_path, fragment) = split_local_url_fragment(&url);
+    if let Some(fragment) = fragment
+        && !relative_path.is_empty()
+        && !path_style.is_absolute(relative_path)
+    {
+        let project = workspace.read(cx).project().clone();
+        let decoded_path = decode_path_escapes(relative_path);
+        let abs_path = project.update(cx, |project, cx| {
+            let resolve_path = |path: &str| {
+                let project_path = project.find_project_path(path, cx)?;
+                project.entry_for_path(&project_path, cx)?;
+                project.absolute_path(&project_path, cx)
+            };
+            resolve_path(&decoded_path).or_else(|| resolve_path(relative_path))
+        });
+        if let Some(abs_path) = abs_path {
+            let point = fragment
+                .strip_prefix('L')
+                .and_then(source_position_from_fragment)
+                .map(|(row, _)| Point::new(row, 0));
+            workspace.update(cx, |workspace, cx| {
+                open_abs_path_at_point(workspace, abs_path, point, window, cx);
+            });
+            return;
+        }
+    }
+
     if let Some(mention) = MentionUri::parse_hyperlink(&url, path_style).log_err() {
         // Percent escapes in bare paths are ambiguous: prefer the decoded
         // interpretation, falling back to the literal one (e.g. a file
@@ -12465,8 +12584,11 @@ mod tests {
         crate::test_support::init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
-            .await;
+        fs.insert_tree(
+            path!("/project"),
+            json!({"src": {"main.rs": "first\nsecond\nthird\n"}}),
+        )
+        .await;
 
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         let (multi_workspace, cx) =
@@ -12485,6 +12607,21 @@ mod tests {
                 .and_then(|item| item.project_path(cx))
                 .expect("file should be open");
             assert!(*active.path == *"src/main.rs");
+        });
+
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link("src/main.rs#L2".into(), &workspace_weak, window, cx);
+        });
+        cx.run_until_parked();
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("file should be open in an editor")
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
         });
 
         // Absolute path
@@ -12510,10 +12647,10 @@ mod tests {
         fs.insert_tree(
             path!("/project"),
             json!({
-                "a%20b.rs": "literal",
-                "a b.rs": "decoded",
-                "c d.rs": "",
-                "e%20f.rs": "",
+                "a%20b.rs": "literal\nsecond\n",
+                "a b.rs": "decoded\nsecond\n",
+                "c d.rs": "first\nsecond\n",
+                "e%20f.rs": "first\nsecond\n",
             }),
         )
         .await;
@@ -12549,6 +12686,25 @@ mod tests {
         // Only the literally-named file exists: fall back to it.
         let path = open_link_and_active_path(path!("/project/e%20f.rs").to_string(), cx);
         assert_eq!(*path, *"e%20f.rs");
+
+        let path = open_link_and_active_path("a%20b.rs#L2".to_string(), cx);
+        assert_eq!(*path, *"a b.rs");
+
+        let path = open_link_and_active_path("c%20d.rs#L2".to_string(), cx);
+        assert_eq!(*path, *"c d.rs");
+
+        let path = open_link_and_active_path("e%20f.rs#L2".to_string(), cx);
+        assert_eq!(*path, *"e%20f.rs");
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("file should be open in an editor")
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
+        });
     }
 
     #[gpui::test]

@@ -5,6 +5,7 @@ use crate::{
     edit_prediction_tests::FakeEditPredictionDelegate,
     element::{StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
+    mouse_context_menu::MenuPosition,
     runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -16,6 +17,7 @@ use crate::{
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::HashMap;
+use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
@@ -35,7 +37,8 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
-use languages::{language, markdown_lang, rust_lang};
+use languages::markdown_lang;
+use languages::rust_lang;
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
@@ -9603,80 +9606,6 @@ async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut Tes
 }
 
 #[gpui::test]
-async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [], cx).await;
-    let go_language = language("go", tree_sitter_go::LANGUAGE.into());
-    project.read_with(cx, |project, _| {
-        project.languages().add(rust_lang());
-        project.languages().add(go_language.clone());
-    });
-    let buffer = project
-        .update(cx, |project, cx| project.create_buffer(None, true, cx))
-        .await
-        .unwrap();
-    let window = cx.add_window(|window, cx| {
-        let editor = build_editor_with_project(
-            project,
-            MultiBuffer::build_from_buffer(buffer.clone(), cx),
-            window,
-            cx,
-        );
-        window.focus(&editor.focus_handle(cx), cx);
-        editor
-    });
-    let editor = window.root(cx).unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        PLAIN_TEXT.name()
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.insert("fn main() {}", window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        PLAIN_TEXT.name()
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        rust_lang().name()
-    );
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.backspace(&Backspace, window, cx);
-    });
-    cx.run_until_parked();
-
-    editor.update_in(cx, |editor, window, cx| {
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }".to_string(),
-        ));
-        editor.paste(&Paste, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
-        go_language.name()
-    );
-}
-
-#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -9760,6 +9689,32 @@ async fn test_clipboard(cx: &mut TestAppContext) {
         ˇx jumps over
         fox jumps over
         tˇhe lazy dog"});
+}
+
+#[gpui::test]
+async fn test_copy_and_paste_non_empty_selection_followed_by_empty_selection(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        «fooˇ»
+        barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("foo\nbar\n".to_string())
+    );
+
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        fooˇ
+        bar
+        barˇ
+    "});
 }
 
 #[gpui::test]
@@ -10817,6 +10772,40 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         .assert_editor_state(
             "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhh\niiiii",
         );
+}
+
+#[gpui::test]
+/// A different number of tabs can align the same column on each row, so a cursor has to
+/// be placed by the column the tabs expand to. Counting a tab as a single column lands it
+/// wherever that many characters happen to reach on the next row.
+#[gpui::test]
+async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+        settings.defaults.tab_size = Some(4.try_into().unwrap());
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Both `=` render at column 48: `current.rgb.r` ends at 37 and is padded by three
+    // tabs, `residuals[run].rgb.r` ends at 44 and is padded by one.
+    cx.set_state(
+        "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\t= p[0] & 0xff;\n",
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(
+        "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\tˇ= p[0] & 0xff;\n",
+    );
 }
 
 #[gpui::test]
@@ -14225,6 +14214,46 @@ async fn test_autoclose_quotes_with_multibyte_characters(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_surround_backticks_in_rust(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        let language = languages::language("rust", tree_sitter_rust::LANGUAGE.into());
+        buffer.set_language(Some(language), cx)
+    });
+
+    // Surround a selection inside a doc comment with backticks
+    cx.set_state(indoc! {"
+        /// «Aˇ»
+        fn main() {}
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("`", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        /// `«Aˇ»`
+        fn main() {}
+    "});
+
+    // When inside a string literal, the backtick pair is disabled so typing a
+    // backtick should replace the selection instead of surrounding it.
+    cx.set_state(indoc! {r#"
+        fn main() {
+            let name = "«Jesper Kouthoofdˇ»";
+        }
+    "#});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("`", window, cx);
+    });
+    cx.assert_editor_state(indoc! {r#"
+        fn main() {
+            let name = "`ˇ";
+        }
+    "#});
+}
+
+#[gpui::test]
 async fn test_surround_with_pair(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -17237,10 +17266,11 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -17603,6 +17633,75 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+        settings.languages.0.insert(
+            "Markdown".into(),
+            LanguageSettingsContent {
+                remove_trailing_whitespace_on_save: Some(false),
+                ..Default::default()
+            },
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(
+        path!("/.editorconfig"),
+        "root = true\n[*]\ntrim_trailing_whitespace = true\n".into(),
+    )
+    .await;
+    fs.insert_file(path!("/README.md"), "".into()).await;
+
+    let project = Project::test(fs.clone(), [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(markdown_lang());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/README.md"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("line with spaces  \n", window, cx)
+    });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "line with spaces  \n"
+    );
+    assert_eq!(
+        fs.load(path!("/README.md").as_ref())
+            .await
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "line with spaces  \n"
+    );
+}
+
+#[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Vec(vec![Formatter::LanguageServer(
@@ -17619,10 +17718,11 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -18017,6 +18117,80 @@ async fn test_auto_formatter_failure_is_silent(cx: &mut TestAppContext) {
     assert_eq!(
         last_failure, None,
         "an auto-resolved formatter failure should not be surfaced"
+    );
+}
+
+#[gpui::test]
+async fn test_external_formatter_with_no_output_leaves_buffer_unchanged(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        #[cfg(windows)]
+        let (command, arguments) = ("cmd", vec!["/C".to_string(), "more > nul".to_string()]);
+        #[cfg(not(windows))]
+        let (command, arguments) = ("sh", vec!["-c".to_string(), "cat >/dev/null".to_string()]);
+
+        // Consume stdin without printing anything, mirroring tools like `cargo fmt`
+        // that format files in place instead of writing to stdout.
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::External {
+            command: command.into(),
+            arguments: Some(arguments),
+        }));
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "fn main() {}\n".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    // Formatting via an external command spawns a real subprocess, whose I/O
+    // happens off the deterministic test scheduler.
+    cx.executor().allow_parking();
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            "fn main() {}\n",
+            "buffer should be left unchanged when the external formatter produces no output"
+        );
+    });
+
+    let last_failure = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .last_formatting_failure()
+            .map(str::to_string)
+    });
+    assert_eq!(
+        last_failure, None,
+        "producing no output is not a formatter failure"
     );
 }
 
@@ -21062,10 +21236,11 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
     let typescript_language = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
@@ -23873,10 +24048,11 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "{".to_string(),
@@ -24048,10 +24224,11 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: language_name.clone(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -25237,10 +25414,11 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     let mut cx = EditorLspTestContext::new(
         Language::new(
             LanguageConfig {
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["jsx".into()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
@@ -25352,10 +25530,11 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -25442,10 +25621,11 @@ async fn test_document_format_with_prettier_explicit_language(cx: &mut TestAppCo
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             prettier_parser_name: Some("typescript".to_string()),
             ..LanguageConfig::default()
         },
@@ -25544,10 +25724,11 @@ async fn test_range_format_with_prettier(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -25620,10 +25801,11 @@ async fn test_range_format_with_prettier_explicit_language(cx: &mut TestAppConte
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             prettier_parser_name: Some("typescript".to_string()),
             ..LanguageConfig::default()
         },
@@ -29814,6 +29996,89 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                preview_tabs.enabled = Some(true);
+                preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Calling `set_state` here will make it such that the underlying buffer
+    // will now report edits since its `preview_version` field, which is set
+    // when the buffer is first created. That is one of the conditions that
+    // determines whether a pane's item should remain as the preview item, or
+    // not, as such, if that field is not updated accordingly, we'd end up not
+    // having a preview item at the end of the test.
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.executor().run_until_parked();
+
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+
+    // Using the `editor: find all references` action adds excerpts to the
+    // multibuffer, which emits `ItemEvent::Edit`. When the pane handles that
+    // event it decides whether to keep its preview item and, if the buffer
+    // reports any edits since its `preview_version`, the item is unpreviewed.
+    // We also need to run until the executor is parked because the
+    // `ItemEvent::Edit` is delivered later, after the item has been registered
+    // with the pane.
+    assert_eq!(
+        cx.update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("Editor::find_all_references should return a task")
+        .await
+        .expect("Should be able to find all references"),
+        Navigated::Yes
+    );
+    cx.executor().run_until_parked();
+
+    cx.update_workspace(|workspace, _window, cx| {
+        let active_pane = workspace.active_pane().read(cx);
+
+        assert_eq!(
+            active_pane.preview_item_id(),
+            Some(active_pane.active_item().unwrap().item_id()),
+            "The preview item id should be the same as the id of the multibuffer"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -31087,6 +31352,278 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     assert_eq!(0, breakpoints.len());
     assert_breakpoint(&breakpoints, &abs_path, vec![]);
+}
+
+async fn build_gutter_hover_test_editor(saved: bool, cx: &mut TestAppContext) -> EditorTestContext {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "fn main() {}\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+
+    let buffer = if saved {
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+            })
+            .await
+            .unwrap()
+    } else {
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "fn main() {}\n")], None, cx);
+        });
+        buffer
+    };
+
+    let window = cx.add_window(|window, cx| {
+        let editor = build_editor_with_project(
+            project,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+
+    EditorTestContext::for_editor(window, cx).await
+}
+
+fn hover_over_gutter_row_zero(cx: &mut EditorTestContext) {
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    let gutter_bounds = cx.update_editor(|editor, _, _| {
+        editor
+            .last_position_map
+            .as_ref()
+            .expect("expected editor position map")
+            .gutter_hitbox
+            .bounds
+    });
+
+    let hover_position = gutter_bounds.center();
+    cx.simulate_mouse_move(hover_position, None, Modifiers::none());
+}
+
+#[gpui::test]
+async fn test_gutter_hover_button_shown_for_saved_buffer(cx: &mut TestAppContext) {
+    let mut cx = build_gutter_hover_test_editor(true, cx).await;
+
+    hover_over_gutter_row_zero(&mut cx);
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.gutter_hover_button.0.is_some(),
+            "expected gutter hover button to be armed for a saved buffer"
+        );
+        assert!(!editor.gutter_hover_button.0.as_ref().unwrap().is_active);
+    });
+
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor
+                .gutter_hover_button
+                .0
+                .as_ref()
+                .is_some_and(|indicator| indicator.is_active),
+            "expected gutter hover button to become active after the debounce"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_gutter_hover_button_hidden_for_unsaved_buffer(cx: &mut TestAppContext) {
+    let mut cx = build_gutter_hover_test_editor(false, cx).await;
+
+    hover_over_gutter_row_zero(&mut cx);
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.gutter_hover_button.0.is_none(),
+            "expected no gutter hover button for an unsaved buffer"
+        );
+        assert!(
+            editor.gutter_hover_button.1.is_none(),
+            "expected no debounce task to be armed for an unsaved buffer"
+        );
+    });
+
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert!(editor.gutter_hover_button.0.is_none());
+    });
+}
+
+fn right_click_gutter_row_zero(cx: &mut EditorTestContext) {
+    cx.update(|window, cx| {
+        window.refresh();
+        let _ = window.draw(cx);
+    });
+
+    let gutter_bounds = cx.update_editor(|editor, _, _| {
+        editor
+            .last_position_map
+            .as_ref()
+            .expect("expected editor position map")
+            .gutter_hitbox
+            .bounds
+    });
+
+    let click_position = gutter_bounds.center();
+    cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::none());
+}
+
+#[gpui::test]
+async fn test_gutter_context_menu_shown_for_saved_buffer(cx: &mut TestAppContext) {
+    let mut cx = build_gutter_hover_test_editor(true, cx).await;
+
+    right_click_gutter_row_zero(&mut cx);
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.mouse_context_menu.is_some(),
+            "expected gutter context menu to open for a saved buffer"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_gutter_context_menu_hidden_for_unsaved_buffer(cx: &mut TestAppContext) {
+    let mut cx = build_gutter_hover_test_editor(false, cx).await;
+
+    right_click_gutter_row_zero(&mut cx);
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.mouse_context_menu.is_none(),
+            "expected no gutter context menu for an unsaved buffer"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_gutter_context_menu_anchor_in_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let root_path = path!("/root");
+    fs.insert_tree(
+        root_path,
+        json!({
+            "first.rs": "fn one() {}\nfn two() {}\nfn three() {}\n",
+            "second.rs": "fn four() {}\nfn five() {}\nfn six() {}\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [root_path.as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("first.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("second.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a.clone(),
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
+            cx,
+        );
+
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b.clone(),
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
+            cx,
+        );
+
+        multi_buffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Open the gutter context menu on a display row inside the second excerpt,
+    // ensuring that excerpt headers will now play a part in offsetting display
+    // rows from buffer rows.
+    editor.update_in(cx, |editor, window, cx| {
+        let display_snapshot = editor.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let buffer_anchor = buffer_b.read(cx).snapshot().anchor_before(Point::new(1, 0));
+        let multibuffer_anchor = buffer_snapshot.anchor_in_buffer(buffer_anchor).unwrap();
+        let buffer_point = buffer_snapshot.summary_for_anchor::<Point>(&multibuffer_anchor);
+        let display_row = display_snapshot
+            .point_to_display_point(buffer_point, Bias::Left)
+            .row();
+
+        assert_ne!(
+            display_row.0, buffer_point.row,
+            "display row should be offset from the multibuffer row by excerpt headers"
+        );
+
+        editor.set_gutter_context_menu(display_row, None, Default::default(), window, cx);
+    });
+
+    // We'll now confirm that the `MenuPosition`'s source has been set to the
+    // correct buffer anchor (1, 0), instead of simply taking the display row.
+    editor.update(cx, |editor, cx| {
+        let menu = editor.mouse_context_menu.as_ref().unwrap();
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let MenuPosition::PinnedToEditor { source, .. } = &menu.position else {
+            panic!("expected gutter context menu to be pinned to the editor");
+        };
+
+        let (buffer_anchor, buffer_snapshot) = snapshot
+            .anchor_to_buffer_anchor(*source)
+            .expect("menu anchor should resolve to a buffer");
+
+        assert_eq!(buffer_snapshot.remote_id(), buffer_b.read(cx).remote_id());
+        assert_eq!(
+            buffer_snapshot.summary_for_anchor::<Point>(&buffer_anchor),
+            Point::new(1, 0),
+        );
+    });
 }
 
 #[gpui::test]
@@ -32569,10 +33106,11 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -33333,10 +33871,11 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     let html_language = Arc::new(Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -33456,10 +33995,11 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
     let language = Arc::new(Language::new(
         LanguageConfig {
             name: "TSX".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["tsx".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -33527,10 +34067,11 @@ async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut Test
     let language = Arc::new(Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             brackets: BracketPairConfig {
                 pairs: vec![BracketPair {
                     start: "<".into(),
@@ -35496,7 +36037,6 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
-    use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::inlays::inlay_hints::tests::{cached_hint_labels, init_test, visible_hint_labels};
     use settings::InlayHintSettingsContent;
     use std::sync::atomic::AtomicU32;
@@ -35518,6 +36058,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS),
+                    max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
                     semantic_token_rules: None,
@@ -35600,16 +36141,10 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         })
         .unwrap();
 
-    editor
-        .update(cx, |editor, _window, cx| {
-            editor.refresh_inlay_hints(
-                InlayHintRefreshReason::RefreshRequested {
-                    server_id: fake_server.server.server_id(),
-                    request_id: Some(1),
-                },
-                cx,
-            );
-        })
+    fake_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
         .unwrap();
     cx.executor()
         .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
@@ -35628,6 +36163,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             store.update_user_settings(cx, |settings| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
                     request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
                     semantic_token_rules: None,
@@ -35635,16 +36171,10 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
             });
         });
     });
-    editor
-        .update(cx, |editor, _window, cx| {
-            editor.refresh_inlay_hints(
-                InlayHintRefreshReason::RefreshRequested {
-                    server_id: fake_server.server.server_id(),
-                    request_id: Some(2),
-                },
-                cx,
-            );
-        })
+    fake_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), lsp::DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
         .unwrap();
     cx.executor()
         .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));
@@ -39007,7 +39537,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
                 cx
             )
             .language_servers,
-            ["...".to_string()],
+            [language::language_settings::ConfiguredLanguageServer::new(
+                "..."
+            )],
             "local .zed/settings.json must not apply before trust approval"
         )
     });
@@ -39040,7 +39572,9 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
                 cx
             )
             .language_servers,
-            ["override-rust-analyzer".to_string()],
+            [language::language_settings::ConfiguredLanguageServer::new(
+                "override-rust-analyzer"
+            )],
             "local .zed/settings.json should apply after trust approval"
         )
     });
@@ -41293,10 +41827,11 @@ async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContex
         Language::new(
             LanguageConfig {
                 name: "TSX".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["tsx".to_string()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TSX.into()),

@@ -14,7 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, LanguageSettings},
+    language_settings::{ConfiguredLanguageServer, Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -180,7 +180,7 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_b.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()]
+            [ConfiguredLanguageServer::new("override-rust-analyzer")]
         )
     });
 
@@ -686,10 +686,11 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -1441,7 +1442,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
-            ["...".to_string()],
+            [ConfiguredLanguageServer::new("...")],
             "remote .zed/settings.json must not sync before trust approval"
         )
     });
@@ -1469,7 +1470,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.read(|cx| {
         assert_eq!(
             LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
-            ["override-rust-analyzer".to_string()],
+            [ConfiguredLanguageServer::new("override-rust-analyzer")],
             "remote .zed/settings.json should sync after trust approval"
         )
     });

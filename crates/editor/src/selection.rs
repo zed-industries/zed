@@ -1937,10 +1937,11 @@ impl Editor {
             display_map.max_point().row()
         };
 
-        // When `skip_soft_wrap` is true, we use UTF-16 columns instead of pixel
-        // positions to place new selections, so we need to keep track of the
-        // column range of the oldest selection in each group, because
-        // intermediate selections may have been clamped to shorter lines.
+        // When `skip_soft_wrap` is true, we place new selections by column rather than
+        // pixel position, so we need to keep track of the column range of the oldest
+        // selection in each group, because intermediate selections may have been
+        // clamped to shorter lines. Columns are counted with tabs expanded so that
+        // tab-aligned code lines up the way it renders.
         let mut goal_columns_by_selection_id = if skip_soft_wrap {
             let mut map = HashMap::default();
             for group in state.groups.iter() {
@@ -1948,10 +1949,8 @@ impl Editor {
                     if let Some(oldest_selection) =
                         columnar_selections.iter().find(|s| s.id == *oldest_id)
                     {
-                        let snapshot = display_map.buffer_snapshot();
-                        let start_col =
-                            snapshot.point_to_point_utf16(oldest_selection.start).column;
-                        let end_col = snapshot.point_to_point_utf16(oldest_selection.end).column;
+                        let start_col = display_map.tab_expanded_column(oldest_selection.start);
+                        let end_col = display_map.tab_expanded_column(oldest_selection.end);
                         let goal_columns = start_col.min(end_col)..start_col.max(end_col);
                         for id in &group.stack {
                             map.insert(*id, goal_columns.clone());
@@ -1992,10 +1991,8 @@ impl Editor {
                         let goal_columns = goal_columns_by_selection_id
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
-                                let snapshot = display_map.buffer_snapshot();
-                                let start_col =
-                                    snapshot.point_to_point_utf16(selection.start).column;
-                                let end_col = snapshot.point_to_point_utf16(selection.end).column;
+                                let start_col = display_map.tab_expanded_column(selection.start);
+                                let end_col = display_map.tab_expanded_column(selection.end);
                                 start_col.min(end_col)..start_col.max(end_col)
                             });
                         self.selections.find_next_columnar_selection_by_buffer_row(
