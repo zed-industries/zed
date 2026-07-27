@@ -766,7 +766,9 @@ impl ConverseModel {
             // Canada has no Claude-specific `ca.` profiles. AWS instead lists
             // ca-central-1 and ca-west-1 as source regions of the US geo
             // profiles for these models, which keep data within US and Canada
-            // regions.
+            // regions:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
             (Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7, "ca") => Ok(format!("us.{}", model_id)),
 
             // EU region inference profiles
