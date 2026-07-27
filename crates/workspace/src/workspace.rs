@@ -8184,7 +8184,7 @@ impl Workspace {
         fn dock_content_handle(dock: &Entity<Dock>, cx: &App) -> FocusHandle {
             let dock = dock.read(cx);
             dock.active_panel()
-                .map(|panel| panel.panel_focus_handle(cx))
+                .map(|panel| panel.activation_focus_handle(cx))
                 .unwrap_or_else(|| dock.focus_handle(cx))
         }
 
@@ -13428,7 +13428,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_panel_activation_focuses_activation_handle(cx: &mut gpui::TestAppContext) {
+    async fn test_panel_activation_and_region_navigation_focus_activation_handle(
+        cx: &mut gpui::TestAppContext,
+    ) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -13448,7 +13450,7 @@ mod tests {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
-        workspace.update_in(cx, |_workspace, window, cx| {
+        let activation_focus_handle = workspace.update_in(cx, |_workspace, window, cx| {
             let activation_focus_handle = panel
                 .read(cx)
                 .activation_focus_handle
@@ -13456,6 +13458,15 @@ mod tests {
                 .expect("test panel should have an activation child");
             assert!(activation_focus_handle.is_focused(window));
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            activation_focus_handle
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().focus_handle(cx).focus(window, cx);
+            workspace.move_part_focus(true, window, cx);
+        });
+        workspace.update_in(cx, |_workspace, window, _cx| {
+            assert!(activation_focus_handle.is_focused(window));
         });
     }
 
