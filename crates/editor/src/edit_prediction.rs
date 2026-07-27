@@ -278,7 +278,6 @@ impl Editor {
         self.edit_prediction_provider()?.refresh(
             buffer,
             cursor_buffer_position,
-            debounce,
             debounce_duration,
             trigger,
             cx,

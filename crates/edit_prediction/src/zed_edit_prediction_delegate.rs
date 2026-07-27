@@ -142,12 +142,10 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &mut self,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
-        debounce: bool,
         debounce_duration: Option<DelayMs>,
         trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
-        let debounce_duration = if debounce { debounce_duration } else { None };
         let store = self.store.read(cx);
 
         if store.user_store.read_with(cx, |user_store, _cx| {
