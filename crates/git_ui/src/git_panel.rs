@@ -7097,6 +7097,20 @@ impl GitPanel {
             && self.conflicted_count > 0
             && self.conflicted_staged_count == self.conflicted_count;
 
+        // A merge can leave dozens of files conflicted, and the per-row checkboxes
+        // only say whether one file is done. The header carries the tally.
+        let title: SharedString = if section == Section::Conflict && self.conflicted_count > 0 {
+            format!(
+                "{} ({} of {} resolved)",
+                header.title(),
+                self.conflicted_staged_count,
+                self.conflicted_count
+            )
+            .into()
+        } else {
+            header.title().into()
+        };
+
         let section_is_empty = !self
             .entries
             .get(ix + 1)
@@ -7117,11 +7131,7 @@ impl GitPanel {
             })
             .border_1()
             .border_r_2()
-            .child(
-                Label::new(header.title())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
-            )
+            .child(Label::new(title).color(Color::Muted).size(LabelSize::Small))
             .child(if section_is_empty {
                 gpui::Empty.into_any_element()
             } else {
@@ -10308,6 +10318,11 @@ mod tests {
 
         // The resolved conflict stays in the Conflict section, staged.
         panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                (panel.conflicted_staged_count, panel.conflicted_count),
+                (1, 1),
+                "the Conflicts header reports the file as resolved"
+            );
             assert_eq!(
                 panel.section_for_entry_index(
                     panel

@@ -219,7 +219,7 @@ When you encounter merge conflicts after a merge, rebase, or pull, Zed highlight
 
 ### Viewing Conflicts
 
-Conflicting files appear in the Git Panel with a warning icon. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
+Conflicting files appear in the Git Panel under a **Conflicts** section that tracks how many of them you have resolved. You can also see conflicts in the Project Diff view, where each conflict region is highlighted:
 
 - Changes from your current branch are highlighted in green
 - Changes from the incoming branch are highlighted in blue
@@ -228,10 +228,14 @@ Conflict regions are also marked on the scrollbar, and the header above each con
 
 ### Navigating Conflicts
 
-| Command                      | Default Shortcut                                     |
-| ---------------------------- | ---------------------------------------------------- |
-| `git: go to next conflict`     | {#kb git::GoToNextConflict}     |
-| `git: go to previous conflict` | {#kb git::GoToPreviousConflict} |
+| Command                             | Default Shortcut                     |
+| ----------------------------------- | ------------------------------------ |
+| `git: go to next conflict`          | {#kb git::GoToNextConflict}          |
+| `git: go to previous conflict`      | {#kb git::GoToPreviousConflict}      |
+| `git: go to next conflicted file`   | {#kb git::GoToNextConflictedFile}    |
+| `git: go to previous conflicted file` | {#kb git::GoToPreviousConflictedFile} |
+
+The first two move the cursor within the current file and wrap at its last conflict. The other two open the next or previous conflicted file in the project and put the cursor on its first conflict, so you can work through a merge without returning to the Git Panel.
 
 ### Resolving Conflicts
 
