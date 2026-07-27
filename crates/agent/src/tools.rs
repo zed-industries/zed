@@ -54,21 +54,18 @@ where
         E::custom(format!("{e}"))
     }
 
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum RawInput<'a> {
-        #[serde(borrow)]
-        String(&'a str),
-        #[serde(borrow)]
-        Value(&'a RawValue),
-    }
+    let raw_value = serde_json::Value::deserialize(deserializer)
+        .map_err(|error| D::Error::custom(format!("invalid JSON: {error}")))?;
 
-    let raw_input = RawInput::deserialize(deserializer)
-        .map_err(|e| D::Error::custom(format!("invalid JSON: {e}")))?;
+    match T::deserialize(&raw_value) {
+        Ok(value) => Ok(value),
+        Err(original_error) => {
+            let Some(string) = raw_value.as_str() else {
+                return Err(to_custom_error(original_error));
+            };
 
-    match raw_input {
-        RawInput::String(s) => serde_json::from_str(s).map_err(to_custom_error),
-        RawInput::Value(v) => T::deserialize(v).map_err(to_custom_error),
+            serde_json::from_str(string).map_err(to_custom_error)
+        }
     }
 }
 
@@ -91,7 +88,6 @@ pub use list_directory_tool::*;
 pub use move_path_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
-use serde_json::value::RawValue;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
