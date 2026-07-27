@@ -174,6 +174,17 @@ impl WebWindowInner {
         self.with_callback(|callbacks| &mut callbacks.input, |callback| callback(input))
     }
 
+    /// Records the latest modifier state and reports whether it changed, so
+    /// that `ModifiersChanged` is only dispatched on actual transitions
+    /// rather than for every key event.
+    fn update_modifiers(&self, modifiers: Modifiers, capslock: Capslock) -> bool {
+        let mut current_state = self.state.borrow_mut();
+        let changed = current_state.modifiers != modifiers || current_state.capslock != capslock;
+        current_state.modifiers = modifiers;
+        current_state.capslock = capslock;
+        changed
+    }
+
     fn register_pointer_down(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerdown", move |event: JsValue| {
@@ -355,16 +366,12 @@ impl WebWindowInner {
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
             let capslock = capslock_from_keyboard_event(&event);
 
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.modifiers = modifiers;
-                current_state.capslock = capslock;
+            if this.update_modifiers(modifiers, capslock) {
+                this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers,
+                    capslock,
+                }));
             }
-
-            this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                modifiers,
-                capslock,
-            }));
 
             let key = dom_key_to_gpui_key(&event);
 
@@ -422,16 +429,12 @@ impl WebWindowInner {
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
             let capslock = capslock_from_keyboard_event(&event);
 
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.modifiers = modifiers;
-                current_state.capslock = capslock;
+            if this.update_modifiers(modifiers, capslock) {
+                this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers,
+                    capslock,
+                }));
             }
-
-            this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                modifiers,
-                capslock,
-            }));
 
             let key = dom_key_to_gpui_key(&event);
 
