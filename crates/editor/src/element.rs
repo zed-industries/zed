@@ -91,11 +91,11 @@ use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{ButtonLike, POPOVER_Y_PADDING, Tooltip, prelude::*, scrollbars::ShowScrollbar};
 use unicode_segmentation::UnicodeSegmentation;
-use util::{ResultExt, debug_panic, rel_path::RelPath};
+use util::{ResultExt, debug_panic, paths::compare_rel_paths, rel_path::RelPath};
 use workspace::{
     CollaboratorId, ItemHandle, Workspace,
     item::{Item, ItemBufferKind},
-    notifications::DetachAndPromptErr as _,
+    notifications::NotifyTaskExt as _,
 };
 
 /// Determines what kinds of highlights should be applied to a lines background.
@@ -6839,10 +6839,11 @@ fn append_breadcrumb_menu_entries(
     }
 
     entries.sort_by(
-        |(left_label, _, _, left_is_dir), (right_label, _, _, right_is_dir)| {
-            right_is_dir
-                .cmp(left_is_dir)
-                .then_with(|| left_label.as_ref().cmp(right_label.as_ref()))
+        |(_, left_path, _, left_is_dir), (_, right_path, _, right_is_dir)| {
+            compare_rel_paths(
+                (left_path.path.as_ref(), !*left_is_dir),
+                (right_path.path.as_ref(), !*right_is_dir),
+            )
         },
     );
 
@@ -6882,15 +6883,14 @@ fn append_breadcrumb_menu_entries(
             let mut menu_entry = ui::ContextMenuEntry::new(label)
                 .icon_color(Color::Muted)
                 .handler(move |window, cx| {
-                    if let Some(workspace) = workspace.upgrade() {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.open_path(project_path.clone(), None, true, window, cx)
-                            })
-                            .detach_and_prompt_err("Failed to open file", window, cx, |_, _, _| {
-                                None
-                            });
-                    }
+                    let Some(workspace_entity) = workspace.upgrade() else {
+                        return;
+                    };
+                    workspace_entity
+                        .update(cx, |workspace, cx| {
+                            workspace.open_path(project_path.clone(), None, true, window, cx)
+                        })
+                        .detach_and_notify_err(workspace.clone(), window, cx);
                 });
             menu_entry = if let Some(icon_path) = icon_path {
                 menu_entry.custom_icon_path(icon_path)
@@ -6906,6 +6906,11 @@ fn append_breadcrumb_menu_entries(
     }
 
     menu
+}
+
+fn single_line_breadcrumb_text(text: &str) -> String {
+    // Both characters are one byte, so byte-offset highlight ranges remain valid.
+    text.replace('\n', " ")
 }
 
 fn render_plain_breadcrumb_segment(
@@ -6926,7 +6931,7 @@ fn render_plain_breadcrumb_segment(
         return styled_element;
     }
 
-    StyledText::new(segment.text.replace('\n', " "))
+    StyledText::new(single_line_breadcrumb_text(segment.text.as_ref()))
         .with_default_highlights(&text_style, segment.highlights)
         .into_any()
 }
@@ -6941,10 +6946,10 @@ fn render_symbol_breadcrumb_segment(
     cx: &App,
 ) -> AnyElement {
     let text_style = breadcrumb_text_style(breadcrumb_font, window, cx);
-    let text = StyledText::new(segment.text.replace('\n', " "))
+    let text = StyledText::new(single_line_breadcrumb_text(segment.text.as_ref()))
         .with_default_highlights(&text_style, segment.highlights);
-    let tooltip_focus_handle = focus_handle.clone();
-    let click_editor = editor.clone();
+    let tooltip_focus_handle = focus_handle;
+    let click_editor = editor;
 
     ButtonLike::new(("breadcrumb-symbol", index))
         .style(ButtonStyle::Transparent)
@@ -6990,10 +6995,10 @@ fn render_breadcrumb_path_component(
         text_style.color = Color::Default.color(cx);
     }
 
-    let label = component.label.clone();
-    let menu_workspace = workspace.clone();
-    let menu_root = component.menu_root.clone();
-    let right_click_editor = editor.clone();
+    let label = component.label;
+    let menu_workspace = workspace;
+    let menu_root = component.menu_root;
+    let right_click_editor = editor;
     let mut label_element = div()
         .text_color(text_style.color)
         .group_hover("", |style| style.text_color(Color::Default.color(cx)))
@@ -7026,7 +7031,7 @@ fn render_breadcrumb_path_component(
                     append_breadcrumb_menu_entries(
                         menu,
                         menu_workspace.clone(),
-                        menu_root.clone(),
+                        menu_root,
                         window,
                         cx,
                     )
@@ -7047,21 +7052,18 @@ pub fn render_breadcrumb_text(
     cx: &App,
 ) -> gpui::AnyElement {
     let element = h_flex().flex_grow_1().text_ui(cx);
-    let editor = active_item
-        .downcast::<Editor>()
-        .map(|editor| editor.downgrade());
+    let editor = active_item.downcast::<Editor>();
     let has_project_path = active_item.project_path(cx).is_some();
 
     if !multibuffer_header
         && let Some(editor) = editor.as_ref()
-        && let Some(editor_entity) = editor.upgrade()
-        && let Some(workspace) = editor_entity.read(cx).workspace()
+        && let Some(workspace) = editor.read(cx).workspace()
         && let Some(project_path) = active_item.project_path(cx)
         && let Some(path_components) = breadcrumb_path_components(&project_path, &workspace, cx)
     {
         let workspace = workspace.downgrade();
         let active_item_is_dirty = active_item.is_dirty(cx);
-        let focus_handle = editor_entity.focus_handle(cx);
+        let focus_handle = editor.focus_handle(cx);
         let mut breadcrumb_elements = Vec::new();
 
         breadcrumb_elements.extend(path_components.into_iter().enumerate().map(
@@ -7071,7 +7073,7 @@ pub fn render_breadcrumb_text(
                     index,
                     breadcrumb_font.as_ref(),
                     workspace.clone(),
-                    editor.clone(),
+                    editor.downgrade(),
                     active_item_is_dirty,
                     window,
                     cx,
@@ -7087,7 +7089,7 @@ pub fn render_breadcrumb_text(
                     segment,
                     index,
                     breadcrumb_font.as_ref(),
-                    editor.clone(),
+                    editor.downgrade(),
                     focus_handle.clone(),
                     window,
                     cx,
@@ -7156,7 +7158,7 @@ pub fn render_breadcrumb_text(
                         this.style(ButtonStyle::Transparent)
                     })
                     .when(!multibuffer_header, |this| {
-                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+                        let focus_handle = editor.focus_handle(cx);
 
                         this.tooltip(Tooltip::element(move |_window, cx| {
                             v_flex()
@@ -7186,7 +7188,7 @@ pub fn render_breadcrumb_text(
                                 .into_any_element()
                         }))
                         .on_click({
-                            let editor = editor.clone();
+                            let editor = editor.downgrade();
                             move |_, window, cx| {
                                 if let Some((editor, callback)) = editor
                                     .upgrade()
@@ -7198,7 +7200,7 @@ pub fn render_breadcrumb_text(
                         })
                         .when(has_project_path, |this| {
                             this.on_right_click({
-                                let editor = editor.clone();
+                                let editor = editor.downgrade();
                                 move |_, _, cx| {
                                     if let Some(abs_path) = editor.upgrade().and_then(|editor| {
                                         editor.update(cx, |editor, cx| {
@@ -7230,7 +7232,7 @@ fn apply_dirty_filename_style(
     text_style: &gpui::TextStyle,
     cx: &App,
 ) -> Option<gpui::AnyElement> {
-    let text = segment.text.replace('\n', " ");
+    let text = single_line_breadcrumb_text(segment.text.as_ref());
 
     let filename_position = std::path::Path::new(segment.text.as_ref())
         .file_name()
