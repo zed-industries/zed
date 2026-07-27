@@ -399,17 +399,17 @@ impl WebWindowInner {
                 return;
             }
 
-            if modifiers.is_subset_of(&Modifiers::shift()) {
-                if let Some(text) = key_char {
-                    this.with_input_handler(|handler| {
-                        handler.replace_text_in_range(None, &text);
-                    });
-                    // The character went into the input handler; suppress browser
-                    // side-effects for the same keystroke (space scrolling the
-                    // page, quick-find, etc.). Everything not handled above falls
-                    // through so browser shortcuts keep their defaults.
-                    event.prevent_default();
-                }
+            if keystroke_inserts_text(&modifiers, this.is_mac)
+                && let Some(text) = key_char
+            {
+                this.with_input_handler(|handler| {
+                    handler.replace_text_in_range(None, &text);
+                });
+                // The character went into the input handler; suppress browser
+                // side-effects for the same keystroke (space scrolling the
+                // page, quick-find, etc.). Everything not handled above falls
+                // through so browser shortcuts keep their defaults.
+                event.prevent_default();
             }
         })
     }
@@ -681,12 +681,28 @@ fn is_modifier_only_key(key: &str) -> bool {
     )
 }
 
+/// Whether a keystroke with these modifiers produces text to insert.
+///
+/// On macOS, Option participates in text entry (e.g. option-n composes "~"
+/// or accented characters), so only Command and Control disqualify. Elsewhere,
+/// plain Alt is a shortcut modifier, but AltGr is reported by browsers as
+/// control+alt and `event.key()` then carries the composed character.
+fn keystroke_inserts_text(modifiers: &Modifiers, is_mac: bool) -> bool {
+    if is_mac {
+        !modifiers.platform && !modifiers.control
+    } else {
+        modifiers.is_subset_of(&Modifiers::shift()) || (modifiers.control && modifiers.alt)
+    }
+}
+
 fn compute_key_char(
     event: &web_sys::KeyboardEvent,
     gpui_key: &str,
     modifiers: &Modifiers,
 ) -> Option<String> {
-    if modifiers.platform || modifiers.control {
+    // AltGr arrives as control+alt with the composed character in
+    // `event.key()`; bare Command/Control combinations are not text.
+    if (modifiers.platform || modifiers.control) && !(modifiers.control && modifiers.alt) {
         return None;
     }
 
