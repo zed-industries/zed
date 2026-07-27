@@ -964,7 +964,13 @@ impl Item for Editor {
         } else {
             buffers
                 .into_iter()
-                .filter(|buffer| buffer.read(cx).is_dirty())
+                // Skip untitled buffers: a multi-buffer (e.g. project search results) can
+                // excerpt a buffer with no file on disk, which can only be persisted via
+                // `save_as`. Trying to save it here errors and aborts the whole save.
+                .filter(|buffer| {
+                    let buffer = buffer.read(cx);
+                    buffer.is_dirty() && buffer.file().is_some()
+                })
                 .collect()
         };
 
@@ -3281,6 +3287,92 @@ mod tests {
             let r = ranges[0].start.to_point(text_snapshot)..ranges[0].end.to_point(text_snapshot);
             assert_eq!(r.start.row, 2, "merged range should start at row 2");
             assert_eq!(r.end.row, 3, "merged range should end at row 3");
+        });
+    }
+
+    // Regression test for a multi-buffer (e.g. project search results) that excerpts
+    // an untitled buffer alongside a file-backed one. Saving used to error out with
+    // "buffer doesn't have a file", which aborted `workspace: reload` and quit flows.
+    #[gpui::test]
+    async fn test_save_multi_buffer_with_untitled_buffer_skips_untitled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "file.txt": "the cat sat" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let file_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let untitled_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("the cat", None, false, cx)
+        });
+
+        // Make both buffers dirty so both are candidates to be saved.
+        file_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "X")], None, cx);
+        });
+        untitled_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Y")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(project.read(cx).capability());
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                file_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                untitled_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            assert!(!editor.buffer().read(cx).is_singleton());
+        });
+
+        let save = editor.update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        });
+        save.await
+            .expect("saving a multi-buffer that excerpts an untitled buffer should not error");
+        cx.run_until_parked();
+
+        // The file-backed buffer is saved; the untitled buffer is skipped and stays dirty.
+        file_buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+        untitled_buffer.update(cx, |buffer, _| {
+            assert!(buffer.file().is_none());
+            assert!(buffer.is_dirty());
         });
     }
 }
