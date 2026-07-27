@@ -1,6 +1,6 @@
 use gpui::Window;
 use gpui::{Pixels, Rems, Size};
-use ui::{Div, Styled};
+use ui::{Div, Styled, rems_from_px};
 
 use crate::preview::Layout;
 
@@ -18,6 +18,12 @@ pub(crate) struct PositionAndShape {
     /// either a height or a width depends on previews layoutmode.
     /// Should be zero when preview is disabled or hidden
     pub(crate) preview: Pixels,
+}
+
+impl PositionAndShape {
+    pub(crate) fn width(&self) -> Pixels {
+        self.right - self.left
+    }
 }
 
 macro_rules! relative_size {
@@ -70,6 +76,13 @@ macro_rules! relative_size {
                     viewport_fraction: width / window.viewport_size().$accessor,
                     rems: Rems::ZERO,
                 }
+            }
+
+            /// Returns this size as [`Rems`] when it has no viewport-relative
+            /// component. Used to derive a rems-based minimum from an initial
+            /// size without needing a [`Window`].
+            pub fn as_rems(&self) -> Option<Rems> {
+                (self.viewport_fraction == 0.0).then_some(self.rems)
             }
 
             pub fn as_viewport_fraction(&self, window: &Window) -> ViewportFraction {
@@ -181,20 +194,24 @@ impl std::ops::Mul<f32> for ViewportFraction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum VerticalPadding {
-    /// The picker always fills its height even if there are no results
-    #[default]
-    Pad,
-    /// Picker might be shorter then it's height if there is not enough to display
-    None,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Centered {
     pub(crate) width: RelativeWidth,
     pub(crate) height: RelativeHeight,
     pub(crate) preview_size: ViewportFraction,
+}
+
+impl Centered {
+    /// The default size for a plain picker (no preview): a fixed standard width
+    /// and a standard *max* height that the picker shrinks below when it has
+    /// little content.
+    pub(crate) fn simple() -> Self {
+        Centered {
+            width: RelativeWidth::rems(crate::DEFAULT_MODAL_WIDTH),
+            height: RelativeHeight::rems(crate::DEFAULT_MODAL_MAX_HEIGHT),
+            preview_size: ViewportFraction::ZERO,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -211,7 +228,6 @@ pub(crate) enum Shape {
 pub struct SizeBounds {
     pub(crate) max_width: RelativeWidth,
     pub(crate) max_height: RelativeHeight,
-    /// Minimum size of the results pane.
     pub(crate) min_results: Size<Rems>,
     /// Minimum size of the preview pane. Along the split axis this only needs to
     /// be large enough to grab the divider and shrink it back.
@@ -226,12 +242,12 @@ impl Default for SizeBounds {
             // over the lower bar so clear another 5 rems there.
             max_height: (RelativeHeight::FULL - Rems(10.0)) * 0.95,
             min_results: Size {
-                width: Rems(15.0),
-                height: Rems(20.0),
+                width: rems_from_px(280.),
+                height: rems_from_px(320.),
             },
             min_preview: Size {
-                width: Rems(8.0),
-                height: Rems(6.0),
+                width: rems_from_px(128.),
+                height: rems_from_px(96.),
             },
         }
     }
@@ -369,6 +385,16 @@ impl SizeBounds {
         working.preview = working.preview.clamp(min_preview, max_preview);
     }
 
+    pub(crate) fn would_clamp_width_if_horizontal(&self, shape: &Shape, window: &Window) -> bool {
+        let min_width = self.min_width(Some(Layout::Right), window);
+
+        let unbounded_width = shape
+            .picker_position_and_size(Some(Layout::Right), window)
+            .width();
+
+        unbounded_width <= min_width
+    }
+
     /// Clamps a whole picker rect (results + preview) into bounds: the total size
     /// against the per-layout min/max, then the divider so both panes keep their
     /// minimums. Width is clamped about its center, height anchored at the top.
@@ -487,7 +513,7 @@ impl Shape {
         &self,
         layout: impl Into<Option<Layout>>,
         bounds: &SizeBounds,
-        vertical_padding: VerticalPadding,
+        fill_height: bool,
         div: Div,
         window: &Window,
     ) -> Div {
@@ -500,29 +526,27 @@ impl Shape {
             _ => full.right - full.left,
         };
         let div = div.w(width);
-        match vertical_padding {
-            VerticalPadding::None => div,
-            VerticalPadding::Pad => {
-                let height = match layout {
-                    Some(Layout::Below) => (full.bottom - full.top) - full.preview,
-                    _ => full.bottom - full.top,
-                };
-                div.h(height)
-            }
+        if fill_height {
+            let height = match layout {
+                Some(Layout::Below) => (full.bottom - full.top) - full.preview,
+                _ => full.bottom - full.top,
+            };
+            div.h(height)
+        } else {
+            div
         }
     }
 
     pub(crate) fn results_max_height(
         &self,
         bounds: &SizeBounds,
-        vertical_padding: VerticalPadding,
+        fill_height: bool,
         window: &Window,
     ) -> Option<Pixels> {
-        match vertical_padding {
-            // No preview when results size themselves (no vertical padding), so
-            // clamp against the results-only minimum.
-            VerticalPadding::None => Some(self.height(None, bounds, window)),
-            VerticalPadding::Pad => None,
+        if fill_height {
+            None
+        } else {
+            Some(self.height(None, bounds, window))
         }
     }
 

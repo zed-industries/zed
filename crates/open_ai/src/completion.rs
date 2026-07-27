@@ -2,22 +2,26 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelImage, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    Role, StopReason, TokenUsage,
-    util::{fix_streamed_json, parse_tool_arguments},
+    CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
+    LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
+    StopReason, TokenUsage,
+    util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    ContextManagement, Request as ResponseRequest, ResponseCompactionItem, ResponseError,
-    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
-    ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
-    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ContextManagement, Request as ResponseRequest, ResponseCustomToolCallItem,
+    ResponseCustomToolCallOutputItem, ResponseError, ResponseFunctionCallItem,
+    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
+    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
+    provider_compaction_items, provider_compaction_state_from_items,
 };
 use crate::{
     FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
@@ -37,15 +41,32 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatCompletionMaxTokensParameter {
+    MaxCompletionTokens,
+    MaxTokens,
+}
+
 pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
+    max_tokens_parameter: ChatCompletionMaxTokensParameter,
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
-) -> crate::Request {
+) -> Result<crate::Request> {
+    if request
+        .tools
+        .iter()
+        .any(|tool| matches!(tool.input, LanguageModelRequestToolInput::Custom { .. }))
+    {
+        return Err(anyhow!(
+            "OpenAI Chat Completions does not support custom tools; use Responses API instead"
+        ));
+    }
+
     let stream = !model_id.starts_with("o1-");
     let service_tier = service_tier_for(request.speed);
 
@@ -96,13 +117,18 @@ pub fn into_open_ai(
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let LanguageModelToolUseInput::Json(input) = &tool_use.input else {
+                        return Err(anyhow!(
+                            "OpenAI Chat Completions cannot replay custom tool call `{}`",
+                            tool_use.name
+                        ));
+                    };
                     let tool_call = ToolCall {
                         id: tool_use.id.to_string(),
                         content: ToolCallContent::Function {
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -145,7 +171,7 @@ pub fn into_open_ai(
         }
     }
 
-    crate::Request {
+    Ok(crate::Request {
         model: model_id.into(),
         messages,
         stream,
@@ -156,7 +182,14 @@ pub fn into_open_ai(
         },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
-        max_completion_tokens: max_output_tokens,
+        max_completion_tokens: match max_tokens_parameter {
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens => max_output_tokens,
+            ChatCompletionMaxTokensParameter::MaxTokens => None,
+        },
+        max_tokens: match max_tokens_parameter {
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens => None,
+            ChatCompletionMaxTokensParameter::MaxTokens => max_output_tokens,
+        },
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             Some(supports_parallel_tool_calls)
         } else {
@@ -170,14 +203,21 @@ pub fn into_open_ai(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| crate::ToolDefinition::Function {
-                function: FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| match tool.input {
+                LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                    Ok(crate::ToolDefinition::Function {
+                        function: FunctionDefinition {
+                            name: tool.name,
+                            description: Some(tool.description),
+                            parameters: Some(input_schema),
+                        },
+                    })
+                }
+                LanguageModelRequestToolInput::Custom { .. } => Err(anyhow!(
+                    "OpenAI Chat Completions does not support custom tools; use Responses API instead"
+                )),
             })
-            .collect(),
+            .collect::<Result<_>>()?,
         tool_choice: request.tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => crate::ToolChoice::Auto,
             LanguageModelToolChoice::Any => crate::ToolChoice::Required,
@@ -185,9 +225,14 @@ pub fn into_open_ai(
         }),
         reasoning_effort,
         service_tier,
-    }
+    })
 }
 
+/// `compaction_state_owner` identifies the backend this request will be sent
+/// to for the purpose of replaying provider-native compaction state. Multiple
+/// backends share this conversion, but their encrypted compaction items are
+/// not interchangeable, so only state owned by this id is replayed; state
+/// owned by any other backend falls back to replaying the full transcript.
 pub fn into_open_ai_response(
     request: LanguageModelRequest,
     model_id: &str,
@@ -196,7 +241,8 @@ pub fn into_open_ai_response(
     max_output_tokens: Option<u64>,
     default_reasoning_effort: Option<ReasoningEffort>,
     supports_none_reasoning_effort: bool,
-) -> ResponseRequest {
+    compaction_state_owner: &LanguageModelProviderId,
+) -> Result<ResponseRequest> {
     let stream = !model_id.starts_with("o1-");
 
     let LanguageModelRequest {
@@ -216,24 +262,62 @@ pub fn into_open_ai_response(
 
     let service_tier = service_tier_for(speed);
 
+    let mut provider_items = Vec::new();
     let mut input_items = Vec::new();
     let mut replayed_reasoning_item_indexes = HashMap::default();
+    let mut tool_use_kinds_by_id = HashMap::default();
+    let mut system_instructions = Vec::new();
     for (index, message) in messages.into_iter().enumerate() {
+        // System messages go to the top-level `instructions` field rather
+        // than the input item list. `instructions` is applied per request
+        // (the Responses API documents it as a system message inserted into
+        // the model's context), so the current system prompt survives when
+        // replaying provider compaction state replaces the accumulated input
+        // items below. This also matches the Codex backend, which rejects
+        // system-role input items outright.
+        if message.role == Role::System {
+            for content in message.content {
+                if let MessageContent::Text(text) = content
+                    && !text.trim().is_empty()
+                {
+                    system_instructions.push(text);
+                }
+            }
+            continue;
+        }
         append_message_to_response_items(
             message,
             index,
+            compaction_state_owner,
             &mut replayed_reasoning_item_indexes,
+            &mut tool_use_kinds_by_id,
+            &mut provider_items,
             &mut input_items,
-        );
+        )?;
     }
 
     let tools: Vec<_> = tools
         .into_iter()
-        .map(|tool| crate::responses::ToolDefinition::Function {
-            name: tool.name,
-            description: Some(tool.description),
-            parameters: Some(tool.input_schema),
-            strict: None,
+        .map(|tool| match tool.input {
+            LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                crate::responses::ToolDefinition::Function {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(input_schema),
+                    strict: None,
+                }
+            }
+            LanguageModelRequestToolInput::Custom { format } => {
+                crate::responses::ToolDefinition::Custom {
+                    name: tool.name,
+                    description: if tool.description.is_empty() {
+                        None
+                    } else {
+                        Some(tool.description)
+                    },
+                    format: format.map(custom_tool_format_into_open_ai),
+                }
+            }
         })
         .collect();
 
@@ -272,10 +356,14 @@ pub fn into_open_ai_response(
         Vec::new()
     };
 
-    ResponseRequest {
+    Ok(ResponseRequest {
         model: model_id.into(),
-        instructions: None,
-        input: input_items,
+        instructions: if system_instructions.is_empty() {
+            None
+        } else {
+            Some(system_instructions.join("\n\n"))
+        },
+        input: crate::responses::ResponseInput::new(provider_items, input_items),
         store: Some(false),
         include,
         stream,
@@ -302,15 +390,18 @@ pub fn into_open_ai_response(
         service_tier,
         context_management: compact_at_tokens
             .map(|compact_threshold| vec![ContextManagement::Compaction { compact_threshold }]),
-    }
+    })
 }
 
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
+    compaction_state_owner: &LanguageModelProviderId,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
+    tool_use_kinds_by_id: &mut HashMap<LanguageModelToolUseId, ReplayToolKind>,
+    provider_items: &mut Vec<serde_json::Value>,
     input_items: &mut Vec<ResponseInputItem>,
-) {
+) -> Result<()> {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
     let LanguageModelRequestMessage {
@@ -339,27 +430,26 @@ fn append_message_to_response_items(
                 push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
-            MessageContent::Compaction(CompactionContent::Encrypted {
-                id,
-                encrypted_content,
-            }) => {
-                flush_response_parts(
-                    &role,
-                    index,
-                    phase.as_deref(),
-                    &mut content_parts,
-                    input_items,
-                );
-                input_items.push(ResponseInputItem::Compaction(ResponseCompactionItem {
-                    id,
-                    encrypted_content,
-                }));
+            MessageContent::Compaction(CompactedContext::ProviderState(state)) => {
+                // The canonical replacement window already encodes all
+                // context retained at the compaction point, so everything
+                // accumulated before it -- earlier input items, earlier parts
+                // of this same message, and replay bookkeeping -- is
+                // superseded and must not be resent. When a transcript
+                // contains multiple compactions, each later window supersedes
+                // the previous one, so the last compaction wins. State owned
+                // by another backend yields `None`, in which case we fall
+                // back to replaying the full transcript.
+                if let Some(items) = provider_compaction_items(&state, compaction_state_owner)? {
+                    content_parts.clear();
+                    input_items.clear();
+                    replayed_reasoning_item_indexes.clear();
+                    tool_use_kinds_by_id.clear();
+                    provider_items.clear();
+                    provider_items.extend(items);
+                }
             }
-            // Summary compaction blocks come from other providers, and a
-            // Pending block is a streaming-only UI signal; neither is replayed.
-            MessageContent::Compaction(
-                CompactionContent::Summary { .. } | CompactionContent::Pending,
-            ) => {}
+            MessageContent::Compaction(CompactedContext::Summary { .. }) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -372,11 +462,29 @@ fn append_message_to_response_items(
                     input_items,
                 );
                 let call_id = tool_use.id.to_string();
-                input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
-                    call_id,
-                    name: tool_use.name.to_string(),
-                    arguments: tool_use.raw_input,
-                }));
+                match tool_use.input {
+                    LanguageModelToolUseInput::Json(_) => {
+                        tool_use_kinds_by_id.insert(tool_use.id, ReplayToolKind::Function);
+                        input_items.push(ResponseInputItem::FunctionCall(
+                            ResponseFunctionCallItem {
+                                call_id,
+                                name: tool_use.name.to_string(),
+                                arguments: tool_use.raw_input,
+                            },
+                        ));
+                    }
+                    LanguageModelToolUseInput::Text(_) => {
+                        tool_use_kinds_by_id.insert(tool_use.id, ReplayToolKind::Custom);
+                        input_items.push(ResponseInputItem::CustomToolCall(
+                            ResponseCustomToolCallItem {
+                                id: None,
+                                call_id,
+                                name: tool_use.name.to_string(),
+                                input: tool_use.raw_input,
+                            },
+                        ));
+                    }
+                }
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(
@@ -410,12 +518,24 @@ fn append_message_to_response_items(
                         ResponseFunctionCallOutputContent::List(parts)
                     }
                 };
-                input_items.push(ResponseInputItem::FunctionCallOutput(
-                    ResponseFunctionCallOutputItem {
-                        call_id: tool_result.tool_use_id.to_string(),
-                        output,
-                    },
-                ));
+                match tool_use_kinds_by_id.get(&tool_result.tool_use_id) {
+                    Some(ReplayToolKind::Custom) => {
+                        input_items.push(ResponseInputItem::CustomToolCallOutput(
+                            ResponseCustomToolCallOutputItem {
+                                call_id: tool_result.tool_use_id.to_string(),
+                                output,
+                            },
+                        ));
+                    }
+                    Some(ReplayToolKind::Function) | None => {
+                        input_items.push(ResponseInputItem::FunctionCallOutput(
+                            ResponseFunctionCallOutputItem {
+                                call_id: tool_result.tool_use_id.to_string(),
+                                output,
+                            },
+                        ));
+                    }
+                }
             }
         }
     }
@@ -427,6 +547,34 @@ fn append_message_to_response_items(
         &mut content_parts,
         input_items,
     );
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum ReplayToolKind {
+    Function,
+    Custom,
+}
+
+fn custom_tool_format_into_open_ai(
+    format: LanguageModelCustomToolFormat,
+) -> crate::responses::CustomToolFormat {
+    match format {
+        LanguageModelCustomToolFormat::Text => crate::responses::CustomToolFormat::Text,
+        LanguageModelCustomToolFormat::Grammar { syntax, definition } => {
+            crate::responses::CustomToolFormat::Grammar {
+                syntax: match syntax {
+                    LanguageModelCustomToolGrammarSyntax::Lark => {
+                        crate::responses::CustomToolGrammarSyntax::Lark
+                    }
+                    LanguageModelCustomToolGrammarSyntax::Regex => {
+                        crate::responses::CustomToolGrammarSyntax::Regex
+                    }
+                },
+                definition,
+            }
+        }
+    }
 }
 
 fn append_reasoning_details_to_response_items(
@@ -608,13 +756,11 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning) = delta.reasoning.clone() {
+                push_thinking_event(reasoning, &mut events);
+            }
             if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                if !reasoning_content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                        text: reasoning_content,
-                        signature: None,
-                    }));
-                }
+                push_thinking_event(reasoning_content, &mut events);
             }
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
@@ -653,7 +799,7 @@ impl OpenAiEventMapper {
                                     id: entry.id.clone().into(),
                                     name: entry.name.as_str().into(),
                                     is_input_complete: false,
-                                    input,
+                                    input: LanguageModelToolUseInput::Json(input),
                                     raw_input: entry.arguments.clone(),
                                     thought_signature: None,
                                 },
@@ -676,7 +822,7 @@ impl OpenAiEventMapper {
                                 id: tool_call.id.clone().into(),
                                 name: tool_call.name.as_str().into(),
                                 is_input_complete: true,
-                                input,
+                                input: LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -703,6 +849,18 @@ impl OpenAiEventMapper {
     }
 }
 
+fn push_thinking_event(
+    text: String,
+    events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+) {
+    if !text.is_empty() {
+        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+            text,
+            signature: None,
+        }));
+    }
+}
+
 #[derive(Default)]
 struct RawToolCall {
     id: String,
@@ -711,10 +869,15 @@ struct RawToolCall {
 }
 
 pub struct OpenAiResponseEventMapper {
+    /// The backend whose infrastructure produced this stream; stamped on any
+    /// compaction state it emits so replay is limited to the same backend.
+    compaction_state_owner: LanguageModelProviderId,
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
+    custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
+    pending_compaction_items: usize,
 }
 
 #[derive(Default)]
@@ -724,13 +887,22 @@ struct PendingResponseFunctionCall {
     arguments: String,
 }
 
+struct PendingResponseCustomToolCall {
+    call_id: String,
+    name: Arc<str>,
+    input: String,
+}
+
 impl OpenAiResponseEventMapper {
-    pub fn new() -> Self {
+    pub fn new(compaction_state_owner: LanguageModelProviderId) -> Self {
         Self {
+            compaction_state_owner,
             function_calls_by_item: HashMap::default(),
+            custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
             current_message_phase: None,
             pending_stop_reason: None,
+            pending_compaction_items: 0,
         }
     }
 
@@ -781,16 +953,35 @@ impl OpenAiResponseEventMapper {
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
+                    ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                        if let Some(item_id) = custom_tool_call.id.clone() {
+                            let call_id = custom_tool_call
+                                .call_id
+                                .clone()
+                                .or_else(|| custom_tool_call.id.clone())
+                                .unwrap_or_else(|| item_id.clone());
+                            let entry = PendingResponseCustomToolCall {
+                                call_id,
+                                name: Arc::<str>::from(
+                                    custom_tool_call.name.clone().unwrap_or_default(),
+                                ),
+                                input: custom_tool_call.input.clone(),
+                            };
+                            self.custom_tool_calls_by_item.insert(item_id, entry);
+                        }
+                    }
                     ResponseOutputItem::Compaction(_) => {
+                        self.pending_compaction_items += 1;
                         events.push(Ok(LanguageModelCompletionEvent::Compaction(
-                            CompactionContent::Pending,
+                            CompactionUpdate::Started,
                         )));
                     }
                     ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
                 }
                 events
             }
-            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -823,7 +1014,7 @@ impl OpenAiResponseEventMapper {
                                 id: LanguageModelToolUseId::from(entry.call_id.clone()),
                                 name: entry.name.clone(),
                                 is_input_complete: false,
-                                input,
+                                input: LanguageModelToolUseInput::Json(input),
                                 raw_input: entry.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -848,7 +1039,7 @@ impl OpenAiResponseEventMapper {
                                     id: LanguageModelToolUseId::from(entry.call_id.clone()),
                                     name: entry.name.clone(),
                                     is_input_complete: true,
-                                    input,
+                                    input: LanguageModelToolUseInput::Json(input),
                                     raw_input,
                                     thought_signature: None,
                                 },
@@ -866,6 +1057,30 @@ impl OpenAiResponseEventMapper {
                 } else {
                     Vec::new()
                 }
+            }
+            ResponsesStreamEvent::CustomToolCallInputDelta { item_id, delta, .. } => {
+                if let Some(entry) = self.custom_tool_calls_by_item.get_mut(&item_id) {
+                    entry.input.push_str(&delta);
+                    return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                        LanguageModelToolUse {
+                            id: LanguageModelToolUseId::from(entry.call_id.clone()),
+                            name: entry.name.clone(),
+                            is_input_complete: false,
+                            input: LanguageModelToolUseInput::Text(entry.input.clone()),
+                            raw_input: entry.input.clone(),
+                            thought_signature: None,
+                        },
+                    ))];
+                }
+                Vec::new()
+            }
+            ResponsesStreamEvent::CustomToolCallInputDone { item_id, input, .. } => {
+                if let Some(entry) = self.custom_tool_calls_by_item.get_mut(&item_id)
+                    && !input.is_empty()
+                {
+                    entry.input = input;
+                }
+                self.finish_pending_custom_tool_call(&item_id, None)
             }
             ResponsesStreamEvent::Completed { response } => {
                 self.handle_completion(response, StopReason::EndTurn)
@@ -906,20 +1121,18 @@ impl OpenAiResponseEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
                 events
             }
-            ResponsesStreamEvent::Failed { response } => {
-                let message = response_failure_message(&response);
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(message)))]
-            }
+            ResponsesStreamEvent::Failed { response } => match response.error.as_ref() {
+                Some(error) => vec![Err(completion_error_from_response_error(error))],
+                None => vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    response_failure_message(&response)
+                )))],
+            },
             ResponsesStreamEvent::Error { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_error_message(&error)
-                )))]
+                vec![Err(completion_error_from_response_error(&error))]
             }
             ResponsesStreamEvent::GenericError { error } => {
                 let error = error.into_response_error();
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_error_message(&error)
-                )))]
+                vec![Err(completion_error_from_response_error(&error))]
             }
             ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
                 if summary_index > 0 {
@@ -934,13 +1147,28 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
+                ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                    if let Some(item_id) = custom_tool_call.id.as_ref() {
+                        self.finish_pending_custom_tool_call(item_id, Some(&custom_tool_call))
+                    } else {
+                        Vec::new()
+                    }
+                }
                 ResponseOutputItem::Compaction(compaction) => {
-                    vec![Ok(LanguageModelCompletionEvent::Compaction(
-                        CompactionContent::Encrypted {
-                            id: compaction.id,
-                            encrypted_content: compaction.encrypted_content,
-                        },
-                    ))]
+                    self.pending_compaction_items = self.pending_compaction_items.saturating_sub(1);
+                    match serde_json::to_value(ResponseInputItem::Compaction(compaction))
+                        .map_err(anyhow::Error::from)
+                        .and_then(|item| {
+                            provider_compaction_state_from_items(
+                                self.compaction_state_owner.clone(),
+                                vec![item],
+                            )
+                        }) {
+                        Ok(state) => vec![Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionUpdate::Finished(CompactedContext::ProviderState(state)),
+                        ))],
+                        Err(error) => vec![Err(LanguageModelCompletionError::Other(error))],
+                    }
                 }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
@@ -949,6 +1177,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
+            | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }
             | ResponsesStreamEvent::InProgress { .. }
             | ResponsesStreamEvent::Unknown => Vec::new(),
@@ -960,6 +1189,16 @@ impl OpenAiResponseEventMapper {
         response: ResponsesSummary,
         default_reason: StopReason,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        // A compaction item that was added but never done means the server
+        // already pruned its context, but we never received the canonical
+        // replacement window. Continuing as if the turn succeeded would
+        // leave the conversation unable to continue coherently.
+        if self.pending_compaction_items > 0 {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "response completed with an unfinished compaction item"
+            )))];
+        }
+
         let mut events = Vec::new();
 
         events.extend(self.capture_reasoning_items_from_output(&response.output));
@@ -989,46 +1228,107 @@ impl OpenAiResponseEventMapper {
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
         for item in output {
-            if let ResponseOutputItem::FunctionCall(function_call) = item {
-                let Some(call_id) = function_call
-                    .call_id
-                    .clone()
-                    .or_else(|| function_call.id.clone())
-                else {
-                    log::error!(
-                        "Function call item missing both call_id and id: {:?}",
-                        function_call
-                    );
-                    continue;
-                };
-                let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
-                let arguments = &function_call.arguments;
-                self.pending_stop_reason = Some(StopReason::ToolUse);
-                match parse_tool_arguments(arguments) {
-                    Ok(input) => {
-                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
+            match item {
+                ResponseOutputItem::FunctionCall(function_call) => {
+                    let Some(call_id) = function_call
+                        .call_id
+                        .clone()
+                        .or_else(|| function_call.id.clone())
+                    else {
+                        log::error!(
+                            "Function call item missing both call_id and id: {:?}",
+                            function_call
+                        );
+                        continue;
+                    };
+                    let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
+                    let arguments = &function_call.arguments;
+                    self.pending_stop_reason = Some(StopReason::ToolUse);
+                    match parse_tool_arguments(arguments) {
+                        Ok(input) => {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: LanguageModelToolUseId::from(call_id.clone()),
+                                    name: name.clone(),
+                                    is_input_complete: true,
+                                    input: LanguageModelToolUseInput::Json(input),
+                                    raw_input: arguments.clone(),
+                                    thought_signature: None,
+                                },
+                            )));
+                        }
+                        Err(error) => {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                 id: LanguageModelToolUseId::from(call_id.clone()),
-                                name: name.clone(),
-                                is_input_complete: true,
-                                input,
-                                raw_input: arguments.clone(),
-                                thought_signature: None,
-                            },
-                        )));
-                    }
-                    Err(error) => {
-                        events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: LanguageModelToolUseId::from(call_id.clone()),
-                            tool_name: name.clone(),
-                            raw_input: Arc::<str>::from(arguments.clone()),
-                            json_parse_error: error.to_string(),
-                        }));
+                                tool_name: name.clone(),
+                                raw_input: Arc::<str>::from(arguments.clone()),
+                                json_parse_error: error.to_string(),
+                            }));
+                        }
                     }
                 }
+                ResponseOutputItem::CustomToolCall(custom_tool_call) => {
+                    events.extend(self.emit_custom_tool_call(custom_tool_call));
+                }
+                _ => {}
             }
         }
         events
+    }
+
+    fn emit_custom_tool_call(
+        &mut self,
+        custom_tool_call: &crate::responses::ResponseCustomToolCall,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(call_id) = custom_tool_call
+            .call_id
+            .clone()
+            .or_else(|| custom_tool_call.id.clone())
+        else {
+            log::error!(
+                "Custom tool call item missing both call_id and id: {:?}",
+                custom_tool_call
+            );
+            return Vec::new();
+        };
+        self.pending_stop_reason = Some(StopReason::ToolUse);
+        let input = custom_tool_call.input.clone();
+        vec![Ok(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: LanguageModelToolUseId::from(call_id),
+                name: Arc::from(custom_tool_call.name.clone().unwrap_or_default()),
+                is_input_complete: true,
+                input: LanguageModelToolUseInput::Text(input.clone()),
+                raw_input: input,
+                thought_signature: None,
+            },
+        ))]
+    }
+
+    fn finish_pending_custom_tool_call(
+        &mut self,
+        item_id: &str,
+        fallback: Option<&crate::responses::ResponseCustomToolCall>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(mut entry) = self.custom_tool_calls_by_item.remove(item_id) else {
+            return Vec::new();
+        };
+        if let Some(fallback) = fallback
+            && !fallback.input.is_empty()
+        {
+            entry.input = fallback.input.clone();
+        }
+        self.pending_stop_reason = Some(StopReason::ToolUse);
+        vec![Ok(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: LanguageModelToolUseId::from(entry.call_id),
+                name: entry.name,
+                is_input_complete: true,
+                input: LanguageModelToolUseInput::Text(entry.input.clone()),
+                raw_input: entry.input,
+                thought_signature: None,
+            },
+        ))]
     }
 
     fn capture_reasoning_items_from_output(
@@ -1143,6 +1443,15 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .unwrap_or_else(|| "response.failed".to_string())
 }
 
+fn completion_error_from_response_error(error: &ResponseError) -> LanguageModelCompletionError {
+    let message = response_error_message(error);
+    if is_context_window_exceeded_message(&message) {
+        LanguageModelCompletionError::PromptTooLarge { tokens: None }
+    } else {
+        LanguageModelCompletionError::Other(anyhow!(message))
+    }
+}
+
 fn response_error_message(error: &ResponseError) -> String {
     let code = error.code.as_deref().filter(|code| !code.trim().is_empty());
     let message = error.message.trim();
@@ -1177,7 +1486,7 @@ fn response_content_is_refusal(content: &serde_json::Value) -> bool {
     content_type == Some("refusal") || !refusal.is_empty()
 }
 
-fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
+pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     let cache_read_input_tokens = usage.input_tokens_details.cached_tokens;
 
     TokenUsage {
@@ -1219,15 +1528,18 @@ fn response_reasoning_input_item_from_output(
 #[cfg(test)]
 mod tests {
     use crate::responses::{
-        ReasoningSummaryPart, ResponseError, ResponseFunctionToolCall, ResponseIncompleteDetails,
-        ResponseInputTokensDetails, ResponseOutputItem, ResponseOutputMessage,
-        ResponseReasoningItem, ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
+        ReasoningSummaryPart, ResponseCustomToolCall, ResponseError, ResponseFunctionToolCall,
+        ResponseIncompleteDetails, ResponseInputItem, ResponseInputTokensDetails,
+        ResponseOutputItem, ResponseOutputMessage, ResponseReasoningItem, ResponseSummary,
+        ResponseUsage, StreamEvent as ResponsesStreamEvent, ToolDefinition,
     };
     use futures::{StreamExt, executor::block_on};
     use language_model_core::{
-        LanguageModelImage, LanguageModelRequestMessage, LanguageModelRequestTool,
+        LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
+        LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, SharedString, Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
+        Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1239,7 +1551,7 @@ mod tests {
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
-            OpenAiResponseEventMapper::new()
+            OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
                 .map_stream(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
                 .collect::<Vec<_>>()
                 .await
@@ -1277,6 +1589,16 @@ mod tests {
             name: Some("get_weather".to_string()),
             call_id: Some("call_123".to_string()),
             arguments: args.map(|s| s.to_string()).unwrap_or_default(),
+        })
+    }
+
+    fn response_item_custom_tool_call(id: &str, input: &str) -> ResponseOutputItem {
+        ResponseOutputItem::CustomToolCall(ResponseCustomToolCall {
+            id: Some(id.to_string()),
+            status: Some("in_progress".to_string()),
+            name: Some("apply_patch".to_string()),
+            call_id: Some("call_abc".to_string()),
+            input: input.to_string(),
         })
     }
 
@@ -1348,6 +1670,22 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_maps_mantle_reasoning_delta() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "response.reasoning.delta",
+            "delta": "checking the contract terms"
+        }))
+        .unwrap();
+
+        let mapped = map_response_events(vec![event]);
+        assert!(matches!(
+            &mapped[0],
+            LanguageModelCompletionEvent::Thinking { text, signature: None }
+                if text == "checking the contract terms"
+        ));
+    }
+
+    #[test]
     fn response_usage_deserializes_cached_tokens() -> Result<()> {
         let usage: ResponseUsage = serde_json::from_value(json!({
             "input_tokens": 5,
@@ -1376,6 +1714,97 @@ mod tests {
     }
 
     #[test]
+    fn responses_custom_tool_wire_types_round_trip() -> Result<()> {
+        let tool_json = json!({
+            "type": "custom",
+            "name": "apply_patch",
+            "description": "Apply a patch",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: /.+/"
+            }
+        });
+        let tool: ToolDefinition = serde_json::from_value(tool_json.clone())?;
+        assert_eq!(serde_json::to_value(tool)?, tool_json);
+
+        let text_tool_json = json!({
+            "type": "custom",
+            "name": "write_text",
+            "format": { "type": "text" }
+        });
+        let text_tool: ToolDefinition = serde_json::from_value(text_tool_json.clone())?;
+        assert_eq!(serde_json::to_value(text_tool)?, text_tool_json);
+
+        let input_json = json!({
+            "type": "custom_tool_call",
+            "id": "ctc_1",
+            "call_id": "call_abc",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** End Patch"
+        });
+        let input: ResponseInputItem = serde_json::from_value(input_json.clone())?;
+        assert_eq!(serde_json::to_value(input)?, input_json);
+
+        let output_json = json!({
+            "type": "custom_tool_call_output",
+            "call_id": "call_abc",
+            "output": "ok"
+        });
+        let output: ResponseInputItem = serde_json::from_value(output_json.clone())?;
+        assert_eq!(serde_json::to_value(output)?, output_json);
+
+        let output_item_json = json!({
+            "id": "ctc_1",
+            "type": "custom_tool_call",
+            "status": "completed",
+            "call_id": "call_abc",
+            "name": "apply_patch",
+            "input": "*** Begin Patch\n*** End Patch"
+        });
+        let output_item: ResponseOutputItem = serde_json::from_value(output_item_json.clone())?;
+        assert_eq!(serde_json::to_value(output_item)?, output_item_json);
+
+        let delta_json = json!({
+            "type": "response.custom_tool_call_input.delta",
+            "output_index": 0,
+            "item_id": "ctc_1",
+            "sequence_number": 5,
+            "delta": "chunk"
+        });
+        let delta: ResponsesStreamEvent = serde_json::from_value(delta_json)?;
+        assert!(matches!(
+            delta,
+            ResponsesStreamEvent::CustomToolCallInputDelta {
+                output_index: 0,
+                sequence_number: Some(5),
+                ref item_id,
+                ref delta,
+            } if item_id == "ctc_1" && delta == "chunk"
+        ));
+
+        let done_json = json!({
+            "type": "response.custom_tool_call_input.done",
+            "output_index": 0,
+            "item_id": "ctc_1",
+            "sequence_number": 6,
+            "input": "full text"
+        });
+        let done: ResponsesStreamEvent = serde_json::from_value(done_json)?;
+        assert!(matches!(
+            done,
+            ResponsesStreamEvent::CustomToolCallInputDone {
+                output_index: 0,
+                sequence_number: Some(6),
+                ref item_id,
+                ref input,
+            } if item_id == "ctc_1" && input == "full text"
+        ));
+
+        Ok(())
+    }
+
+    #[test]
     fn into_open_ai_response_builds_complete_payload() {
         let tool_call_id = LanguageModelToolUseId::from("call-42");
         let tool_input = json!({ "city": "Boston" });
@@ -1384,7 +1813,7 @@ mod tests {
             id: tool_call_id.clone(),
             name: Arc::from("get_weather"),
             raw_input: tool_arguments.clone(),
-            input: tool_input,
+            input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -1436,12 +1865,12 @@ mod tests {
                     reasoning_details: None,
                 },
             ],
-            tools: vec![LanguageModelRequestTool {
-                name: "get_weather".into(),
-                description: "Fetches the weather".into(),
-                input_schema: json!({ "type": "object" }),
-                use_input_streaming: false,
-            }],
+            tools: vec![LanguageModelRequestTool::function(
+                "get_weather".into(),
+                "Fetches the weather".into(),
+                json!({ "type": "object" }),
+                false,
+            )],
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
@@ -1459,19 +1888,15 @@ mod tests {
             Some(2048),
             Some(ReasoningEffort::Low),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         let expected = json!({
             "model": "custom-model",
+            "instructions": "System context",
             "input": [
-                {
-                    "type": "message",
-                    "role": "system",
-                    "content": [
-                        { "type": "input_text", "text": "System context" }
-                    ]
-                },
                 {
                     "type": "message",
                     "role": "user",
@@ -1521,6 +1946,175 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_maps_custom_tool_input() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_custom_tool_call("ctc_1", ""),
+            },
+            ResponsesStreamEvent::CustomToolCallInputDelta {
+                item_id: "ctc_1".into(),
+                output_index: 0,
+                delta: "*** Begin".into(),
+                sequence_number: Some(1),
+            },
+            ResponsesStreamEvent::CustomToolCallInputDelta {
+                item_id: "ctc_1".into(),
+                output_index: 0,
+                delta: " Patch".into(),
+                sequence_number: Some(2),
+            },
+            ResponsesStreamEvent::CustomToolCallInputDone {
+                item_id: "ctc_1".into(),
+                output_index: 0,
+                input: "*** Begin Patch".into(),
+                sequence_number: Some(3),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_custom_tool_call("ctc_1", "*** Begin Patch"),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        assert_eq!(
+            mapped,
+            vec![
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("call_abc"),
+                    name: Arc::from("apply_patch"),
+                    raw_input: "*** Begin".into(),
+                    input: LanguageModelToolUseInput::Text("*** Begin".into()),
+                    is_input_complete: false,
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("call_abc"),
+                    name: Arc::from("apply_patch"),
+                    raw_input: "*** Begin Patch".into(),
+                    input: LanguageModelToolUseInput::Text("*** Begin Patch".into()),
+                    is_input_complete: false,
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: LanguageModelToolUseId::from("call_abc"),
+                    name: Arc::from("apply_patch"),
+                    raw_input: "*** Begin Patch".into(),
+                    input: LanguageModelToolUseInput::Text("*** Begin Patch".into()),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+                LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
+            ]
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_custom_tool_calls() {
+        let tool_call_id = LanguageModelToolUseId::from("call_abc");
+        let raw_input = "*** Begin Patch\n*** End Patch".to_string();
+        let tool_use = LanguageModelToolUse {
+            id: tool_call_id.clone(),
+            name: Arc::from("apply_patch"),
+            raw_input: raw_input.clone(),
+            input: LanguageModelToolUseInput::Text(raw_input.clone()),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_call_id,
+            tool_name: Arc::from("apply_patch"),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("ok"))],
+            output: None,
+        };
+
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::ToolUse(tool_use),
+                    MessageContent::ToolResult(tool_result),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: vec![LanguageModelRequestTool {
+                name: "apply_patch".into(),
+                description: "Apply a patch".into(),
+                input: LanguageModelRequestToolInput::Custom {
+                    format: Some(LanguageModelCustomToolFormat::Grammar {
+                        syntax: LanguageModelCustomToolGrammarSyntax::Lark,
+                        definition: "start: /.+/".into(),
+                    }),
+                },
+            }],
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(response).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "model": "custom-model",
+                "input": [
+                    {
+                        "type": "custom_tool_call",
+                        "call_id": "call_abc",
+                        "name": "apply_patch",
+                        "input": raw_input
+                    },
+                    {
+                        "type": "custom_tool_call_output",
+                        "call_id": "call_abc",
+                        "output": "ok"
+                    }
+                ],
+                "store": false,
+                "stream": true,
+                "parallel_tool_calls": false,
+                "tools": [
+                    {
+                        "type": "custom",
+                        "name": "apply_patch",
+                        "description": "Apply a patch",
+                        "format": {
+                            "type": "grammar",
+                            "syntax": "lark",
+                            "definition": "start: /.+/"
+                        }
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
     fn into_open_ai_response_replays_encrypted_reasoning_details() {
         let tool_call_id = LanguageModelToolUseId::from("call-42");
         let tool_arguments = "{\"city\":\"Boston\"}".to_string();
@@ -1528,7 +2122,7 @@ mod tests {
             id: tool_call_id,
             name: Arc::from("get_weather"),
             raw_input: tool_arguments.clone(),
-            input: json!({ "city": "Boston" }),
+            input: LanguageModelToolUseInput::Json(json!({ "city": "Boston" })),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -1581,7 +2175,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Low),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -1656,8 +2252,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -1721,7 +2326,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
@@ -1757,7 +2364,17 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
+            let response = into_open_ai_response(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                None,
+                true,
+                &OPEN_AI_PROVIDER_ID,
+            )
+            .unwrap();
 
             let serialized = serde_json::to_value(&response)?;
             assert_eq!(
@@ -1799,7 +2416,16 @@ mod tests {
                 compact_at_tokens: None,
             };
 
-            let chat = into_open_ai(request, "gpt-5.4", true, true, None, None, false);
+            let chat = into_open_ai(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            )?;
 
             let serialized = serde_json::to_value(&chat)?;
             assert_eq!(
@@ -1810,6 +2436,45 @@ mod tests {
                 "speed = {speed:?} should produce service_tier = {expected:?}",
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn into_open_ai_can_send_max_tokens_parameter() -> Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let chat = into_open_ai(
+            request,
+            "compatible-model",
+            false,
+            false,
+            Some(4096),
+            ChatCompletionMaxTokensParameter::MaxTokens,
+            None,
+            false,
+        )?;
+
+        let serialized = serde_json::to_value(&chat)?;
+        assert_eq!(serialized.get("max_completion_tokens"), None);
+        assert_eq!(serialized["max_tokens"], json!(4096));
         Ok(())
     }
 
@@ -1843,7 +2508,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(serialized["reasoning"], json!({ "effort": "none" }));
@@ -1882,7 +2549,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             true,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response)?;
         assert_eq!(
@@ -1933,7 +2602,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2023,7 +2694,9 @@ mod tests {
             None,
             Some(ReasoningEffort::Medium),
             false,
-        );
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2103,8 +2776,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let response =
-            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            false,
+            false,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
         let serialized = serde_json::to_value(&response).unwrap();
 
         assert_eq!(
@@ -2227,7 +2909,7 @@ mod tests {
 
     #[test]
     fn responses_stream_failed_uses_response_error_message() {
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
                 status: Some("failed".into()),
@@ -2259,7 +2941,7 @@ mod tests {
         }))
         .expect("documented error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2276,6 +2958,31 @@ mod tests {
             "type": "error",
             "error": {
                 "type": "invalid_request_error",
+                "code": "invalid_prompt",
+                "message": "Your prompt was flagged.",
+                "param": "input"
+            },
+            "sequence_number": 2
+        }))
+        .expect("nested error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid_prompt: Your prompt was flagged."
+        );
+    }
+
+    #[test]
+    fn responses_stream_maps_context_length_exceeded_to_prompt_too_large() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
                 "code": "context_length_exceeded",
                 "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
                 "param": "input"
@@ -2284,15 +2991,38 @@ mod tests {
         }))
         .expect("nested error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "context_length_exceeded: Your input exceeds the context window of this model. Please adjust your input and try again."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_failed_context_length_exceeded_to_prompt_too_large() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
+            response: ResponseSummary {
+                status: Some("failed".into()),
+                error: Some(ResponseError {
+                    code: Some("context_length_exceeded".into()),
+                    message: "Your input exceeds the context window of this model.".into(),
+                    param: Some("input".into()),
+                }),
+                ..Default::default()
+            },
+        });
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
     }
 
     #[test]
@@ -2306,7 +3036,7 @@ mod tests {
         }))
         .expect("response error event");
 
-        let mut mapper = OpenAiResponseEventMapper::new();
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(event);
 
         assert_eq!(mapped.len(), 1);
@@ -2610,8 +3340,7 @@ mod tests {
             }) if id.to_string() == "call_123"
                 && name.as_ref() == "get_weather"
                 && raw_input == ""
-                && input.is_object()
-                && input.as_object().unwrap().is_empty()
+                && matches!(input, LanguageModelToolUseInput::Json(value) if value.as_object().is_some_and(|object| object.is_empty()))
         ));
         assert!(matches!(
             mapped[1],
@@ -3108,7 +3837,7 @@ mod tests {
             id: tool_use_id.clone(),
             name: Arc::from("search"),
             raw_input: tool_arguments.clone(),
-            input: tool_input,
+            input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
             thought_signature: None,
         };
@@ -3160,7 +3889,17 @@ mod tests {
             compact_at_tokens: None,
         };
 
-        let result = into_open_ai(request.clone(), "model", false, false, None, None, true);
+        let result = into_open_ai(
+            request.clone(),
+            "model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            true,
+        )
+        .unwrap();
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3175,7 +3914,17 @@ mod tests {
             ])
         );
 
-        let result = into_open_ai(request, "model", false, false, None, None, false);
+        let result = into_open_ai(
+            request,
+            "model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3194,6 +3943,32 @@ mod tests {
     }
 
     #[test]
+    fn stream_maps_reasoning() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: Some("thinking".into()),
+                    tool_calls: None,
+                    reasoning_content: None,
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![LanguageModelCompletionEvent::Thinking {
+                text: "thinking".into(),
+                signature: None,
+            }]
+        );
+    }
+
+    #[test]
     fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
         // DashScope sends id="" and name="" in subsequent tool_calls delta
         // chunks after the first chunk. OpenAiEventMapper must not overwrite
@@ -3207,6 +3982,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("call_dashscope_test".into()),
@@ -3228,6 +4004,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("".into()),
@@ -3248,6 +4025,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("".into()),
@@ -3322,6 +4100,128 @@ mod tests {
     }
 
     #[test]
+    fn into_open_ai_response_prepends_provider_input_unchanged() {
+        let provider_input = json!([
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            },
+            {
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }
+        ]);
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            provider_input.as_array().unwrap().clone(),
+                        )
+                        .unwrap(),
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Retained user context.",
+                    "provider_extension": {"preserve": true}
+                },
+                {
+                    "type": "compaction",
+                    "id": "cmp_manual",
+                    "encrypted_content": "opaque-state"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Continue."}]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn open_ai_response_converts_to_compact_request_with_supported_controls() {
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-123".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Retain this context.".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            speed: Some(Speed::Fast),
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let mut response_request = into_open_ai_response(
+            request,
+            "gpt-5.4",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+        response_request.instructions = Some("Preserve implementation details.".to_string());
+        let compact_request = response_request.into_compact_request();
+
+        assert_eq!(
+            serde_json::to_value(compact_request).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "instructions": "Preserve implementation details.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[test]
     fn into_open_ai_response_maps_compact_at_tokens_to_context_management() {
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
@@ -3334,7 +4234,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["context_management"],
@@ -3354,7 +4264,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert!(
             serde_json::to_value(&response)
@@ -3365,15 +4285,21 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_replays_encrypted_compaction_block() {
+    fn into_open_ai_response_replays_provider_compaction_block() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
         let request = LanguageModelRequest {
             messages: vec![LanguageModelRequestMessage {
                 role: Role::Assistant,
                 content: vec![
-                    MessageContent::Compaction(CompactionContent::Encrypted {
-                        id: Some("cmp_1".into()),
-                        encrypted_content: "encrypted-blob".into(),
-                    }),
+                    MessageContent::Compaction(CompactedContext::ProviderState(state)),
                     MessageContent::Text("Done.".into()),
                 ],
                 cache: false,
@@ -3382,7 +4308,17 @@ mod tests {
             ..Default::default()
         };
 
-        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(&response).unwrap()["input"],
@@ -3401,6 +4337,329 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn into_open_ai_response_hoists_system_messages_into_instructions() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are a coding assistant.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Prefer terse answers.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["instructions"],
+            json!("You are a coding assistant.\n\nPrefer terse answers.")
+        );
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Hello." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    /// Replaying provider compaction state discards all input items
+    /// accumulated before it, but the system prompt must not be lost with
+    /// them: it lives in the per-request `instructions` field, outside the
+    /// compacted window, so the model keeps running on the current prompt
+    /// rather than whatever was frozen into the window at compaction time.
+    #[test]
+    fn into_open_ai_response_preserves_system_prompt_across_compaction_replay() {
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Current system prompt.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Old context.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                        state,
+                    ))],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["instructions"], json!("Current system prompt."));
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted-blob"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Continue." }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_rejects_malformed_provider_compaction_state() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Compaction(CompactedContext::ProviderState(
+                    language_model_core::ProviderCompactionState::new(
+                        language_model_core::OPEN_AI_PROVIDER_ID,
+                        crate::responses::COMPACTION_STATE_FORMAT,
+                        "not valid JSON",
+                    ),
+                ))],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let error = into_open_ai_response(
+            request,
+            "gpt-5.1",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &OPEN_AI_PROVIDER_ID,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("malformed OpenAI compaction state payload")
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_ignores_compaction_state_owned_by_another_backend() {
+        // Several backends share this request conversion (OpenAI itself,
+        // OpenAI-compatible endpoints, Codex, Mantle), but an encrypted
+        // compaction item is only decryptable by the backend that produced
+        // it. Replaying OpenAI-owned state through a different backend would
+        // discard the entire transcript in exchange for an opaque blob that
+        // backend cannot read, so the state must be ignored and the full
+        // transcript replayed instead.
+        let state = provider_compaction_state_from_items(
+            OPEN_AI_PROVIDER_ID,
+            vec![json!({
+                "type": "compaction",
+                "id": "cmp_1",
+                "encrypted_content": "encrypted-blob"
+            })],
+        )
+        .unwrap();
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Set up the project.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Compaction(CompactedContext::ProviderState(state)),
+                        MessageContent::Text("Done.".into()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Continue.".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(
+            request,
+            "compatible-model",
+            true,
+            true,
+            None,
+            None,
+            false,
+            &LanguageModelProviderId::new("my-compatible-endpoint"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Set up the project." }]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{ "type": "input_text", "text": "Continue." }]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_stamps_compaction_state_with_owning_backend() {
+        let owner = LanguageModelProviderId::new("my-compatible-endpoint");
+        let mut mapper = OpenAiResponseEventMapper::new(owner.clone());
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let mut events = mapper.map_event(ResponsesStreamEvent::OutputItemDone {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+
+        let Some(Ok(LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+            CompactedContext::ProviderState(state),
+        )))) = events.pop()
+        else {
+            panic!("expected finished provider compaction state");
+        };
+        assert_eq!(state.provider_id(), &owner);
+        assert!(
+            crate::responses::provider_compaction_items(&state, &owner)
+                .unwrap()
+                .is_some()
+        );
+        // OpenAI proper must not attempt to replay a window produced by a
+        // different backend's infrastructure.
+        assert_eq!(
+            crate::responses::provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn responses_stream_rejects_completion_with_unfinished_compaction() {
+        let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+
+        let started = mapper.map_event(ResponsesStreamEvent::OutputItemAdded {
+            output_index: 0,
+            sequence_number: None,
+            item,
+        });
+        assert!(matches!(
+            started.as_slice(),
+            [Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started
+            ))]
+        ));
+
+        let mut completed = mapper.map_event(ResponsesStreamEvent::Completed {
+            response: ResponseSummary::default(),
+        });
+        let error = completed.pop().unwrap().unwrap_err();
+
+        assert!(error.to_string().contains("unfinished compaction"));
     }
 
     #[test]
@@ -3429,11 +4688,20 @@ mod tests {
         assert_eq!(
             mapped,
             vec![
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Pending),
-                LanguageModelCompletionEvent::Compaction(CompactionContent::Encrypted {
-                    id: Some("cmp_1".into()),
-                    encrypted_content: "encrypted-blob".into(),
-                }),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started),
+                LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                    CompactedContext::ProviderState(
+                        provider_compaction_state_from_items(
+                            OPEN_AI_PROVIDER_ID,
+                            vec![json!({
+                                "type": "compaction",
+                                "id": "cmp_1",
+                                "encrypted_content": "encrypted-blob"
+                            })],
+                        )
+                        .unwrap()
+                    )
+                )),
             ]
         );
     }

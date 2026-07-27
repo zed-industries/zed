@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use chrono::Utc;
 use collections::{HashMap, HashSet};
 use db::kvp::Dismissable;

@@ -3,7 +3,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
-use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString};
+use crate::{
+    LanguageModelProviderId, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelToolUseInput, SharedString,
+};
 
 /// Dimensions of a `LanguageModelImage`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -260,19 +263,58 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
-    Compaction(CompactionContent),
+    Compaction(CompactedContext),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub enum CompactionContent {
-    Pending,
+pub enum CompactedContext {
     Summary {
-        content: Option<Arc<str>>,
+        content: Arc<str>,
+        /// Opaque state the producing backend needs round-tripped alongside
+        /// the summary (e.g. Anthropic's `encrypted_content`). `None` when the
+        /// summary stands alone.
+        #[serde(default)]
+        provider_state: Option<ProviderCompactionState>,
     },
-    Encrypted {
-        id: Option<Arc<str>>,
-        encrypted_content: Arc<str>,
-    },
+    ProviderState(ProviderCompactionState),
+}
+
+/// Opaque context produced by a provider's native compaction mechanism.
+///
+/// Only the provider identified by `provider_id` may interpret `payload`.
+/// `format` lets that provider evolve its representation without exposing it
+/// through the shared language model API.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct ProviderCompactionState {
+    provider_id: LanguageModelProviderId,
+    format: SharedString,
+    payload: Arc<str>,
+}
+
+impl ProviderCompactionState {
+    pub fn new(
+        provider_id: LanguageModelProviderId,
+        format: impl Into<SharedString>,
+        payload: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            provider_id,
+            format: format.into(),
+            payload: payload.into(),
+        }
+    }
+
+    pub fn provider_id(&self) -> &LanguageModelProviderId {
+        &self.provider_id
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    pub fn payload(&self) -> &str {
+        &self.payload
+    }
 }
 
 impl MessageContent {
@@ -346,8 +388,52 @@ impl LanguageModelRequestMessage {
 pub struct LanguageModelRequestTool {
     pub name: String,
     pub description: String,
-    pub input_schema: serde_json::Value,
-    pub use_input_streaming: bool,
+    pub input: LanguageModelRequestToolInput,
+}
+
+impl LanguageModelRequestTool {
+    pub fn function(
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            input: LanguageModelRequestToolInput::Function {
+                input_schema,
+                use_input_streaming,
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelRequestToolInput {
+    Function {
+        input_schema: serde_json::Value,
+        use_input_streaming: bool,
+    },
+    Custom {
+        format: Option<LanguageModelCustomToolFormat>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelCustomToolFormat {
+    Text,
+    Grammar {
+        syntax: LanguageModelCustomToolGrammarSyntax,
+        definition: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LanguageModelCustomToolGrammarSyntax {
+    Lark,
+    Regex,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
@@ -387,6 +473,25 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
+}
+
+impl LanguageModelRequest {
+    pub fn contains_custom_tool_input(&self) -> bool {
+        self.tools
+            .iter()
+            .any(|tool| matches!(tool.input, LanguageModelRequestToolInput::Custom { .. }))
+            || self.messages.iter().any(|message| {
+                message.content.iter().any(|content| {
+                    matches!(
+                        content,
+                        MessageContent::ToolUse(LanguageModelToolUse {
+                            input: LanguageModelToolUseInput::Text(_),
+                            ..
+                        })
+                    )
+                })
+            })
+    }
 }
 
 #[derive(

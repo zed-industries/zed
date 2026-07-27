@@ -1,5 +1,5 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,

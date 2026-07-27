@@ -8,7 +8,7 @@ use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
+    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
@@ -26,7 +26,8 @@ use workspace::{
 use crate::git_panel::show_error_toast;
 use crate::worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
 use zed_actions::{
-    CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, SwitchWorktree,
+    CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, OpenWorktreeSetupTasks,
+    SwitchWorktree,
 };
 
 actions!(
@@ -128,10 +129,7 @@ impl WorktreePicker {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
                 .show_scrollbar(true)
-                .modal(false)
-                .minimum_results_width(rems(34.))
-                .height(rems(20.))
-                .no_vertical_padding()
+                .embedded()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
@@ -243,12 +241,15 @@ impl Render for WorktreePicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("WorktreePicker")
-            .w(rems(34.))
             .elevation_3(cx)
             .child(self.picker.clone())
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_mouse_down_out(cx.listener(|_, _, _, cx| {
                 cx.emit(DismissEvent);
+            }))
+            .on_action(cx.listener(|_, _: &OpenWorktreeSetupTasks, _, cx| {
+                cx.emit(DismissEvent);
+                cx.propagate();
             }))
             .on_action(cx.listener(|this, _: &DeleteWorktree, window, cx| {
                 this.picker.update(cx, |picker, cx| {
@@ -1352,6 +1353,35 @@ impl PickerDelegate for WorktreePickerDelegate {
         }
     }
 
+    fn searchbar_trailer(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        if self.show_footer {
+            return None;
+        }
+
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            IconButton::new("configure-worktree-tasks", IconName::Settings)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Automate Worktree Setup",
+                        &OpenWorktreeSetupTasks,
+                        &focus_handle,
+                        cx,
+                    )
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(OpenWorktreeSetupTasks.boxed_clone(), cx)
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         if !self.show_footer {
             return None;
@@ -1388,9 +1418,19 @@ impl PickerDelegate for WorktreePickerDelegate {
             .w_full()
             .p_1p5()
             .gap_0p5()
-            .justify_end()
+            .justify_between()
             .border_t_1()
-            .border_color(cx.theme().colors().border_variant);
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                Button::new("configure-worktree-tasks", "Automate Setup")
+                    .key_binding(
+                        KeyBinding::for_action_in(&OpenWorktreeSetupTasks, &focus_handle, cx)
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                    )
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(OpenWorktreeSetupTasks.boxed_clone(), cx)
+                    }),
+            );
 
         if is_creating {
             Some(
@@ -1410,55 +1450,70 @@ impl PickerDelegate for WorktreePickerDelegate {
         } else if is_existing_worktree {
             Some(
                 footer
-                    .when(is_deleting, |this| {
-                        this.child(
-                            Button::new("delete-worktree", "Deleting…")
-                                .loading(true)
-                                .disabled(true),
-                        )
-                    })
-                    .when(!is_deleting && can_delete, |this| {
-                        let focus_handle = focus_handle.clone();
-                        this.child(
-                            Button::new("delete-worktree", "Delete")
-                                .key_binding(
-                                    KeyBinding::for_action_in(&DeleteWorktree, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(12.))),
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .when(is_deleting, |this| {
+                                this.child(
+                                    Button::new("delete-worktree", "Deleting…")
+                                        .loading(true)
+                                        .disabled(true),
                                 )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
-                                }),
-                        )
-                    })
-                    .when(!is_deleting && !is_current, |this| {
-                        let focus_handle = focus_handle.clone();
-                        this.child(
-                            Button::new("open-in-new-window", "Open in New Window")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::SecondaryConfirm,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            })
+                            .when(!is_deleting && can_delete, |this| {
+                                let focus_handle = focus_handle.clone();
+                                this.child(
+                                    Button::new("delete-worktree", "Delete")
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &DeleteWorktree,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
+                                        }),
                                 )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                                }),
-                        )
-                    })
-                    .when(!is_deleting, |this| {
-                        this.child(
-                            Button::new("open-worktree", "Open")
-                                .key_binding(
-                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                        .map(|kb| kb.size(rems_from_px(12.))),
+                            })
+                            .when(!is_deleting && !is_current, |this| {
+                                let focus_handle = focus_handle.clone();
+                                this.child(
+                                    Button::new("open-in-new-window", "Open in New Window")
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::SecondaryConfirm,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                menu::SecondaryConfirm.boxed_clone(),
+                                                cx,
+                                            )
+                                        }),
                                 )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                                }),
-                        )
-                    })
+                            })
+                            .when(!is_deleting, |this| {
+                                this.child(
+                                    Button::new("open-worktree", "Open")
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Confirm,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                        }),
+                                )
+                            }),
+                    )
                     .into_any(),
             )
         } else {

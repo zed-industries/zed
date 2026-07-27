@@ -178,7 +178,7 @@ pub fn theme_picker(
 
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
-        .minimum_results_width(rems_from_px(210.))
-        .height(rems(18.))
-        .no_vertical_padding()
+        .initial_width(rems_from_px(210.))
+        .max_height(rems(18.))
+        .popover()
 }
