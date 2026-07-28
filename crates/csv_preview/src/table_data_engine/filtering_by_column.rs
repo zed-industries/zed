@@ -32,8 +32,6 @@ impl FilterEntry {
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct FilterStack {
-    /// Columns in the order their first filter was applied, used to compute cascade availability
-    activation_order: Vec<AnyColumn>,
     /// Which cell values are currently allowed for each filtered column
     retention_config: HashMap<AnyColumn, HashSet<Option<SharedString>>>,
 }
@@ -44,9 +42,11 @@ impl TableDataEngine {
     }
 
     /// Marks an entry unavailable if choosing it would leave zero rows, so users
-    /// aren't offered filter values that lead to an empty table. Only
-    /// earlier-activated columns count toward this: including `column`'s own
-    /// filter would make every currently-selected value block all others.
+    /// aren't offered filter values that lead to an empty table. Every other
+    /// active column's filter counts toward this, regardless of activation
+    /// order: `column`'s own filter is excluded (so its own current selection
+    /// doesn't block its other values), but a column filtered after `column`
+    /// blocks exactly as much as one filtered before it.
     pub(crate) fn get_filters_for_column(
         &self,
         column: AnyColumn,
@@ -56,47 +56,6 @@ impl TableDataEngine {
             .get(&column)
             .ok_or_else(|| anyhow::anyhow!("Expected {column:?} to have filter entries"))?;
 
-        let mut unavailable_entries: HashMap<Option<SharedString>, AnyColumn> = HashMap::new();
-
-        for &column_applied_previously in &self.filter_stack.activation_order {
-            if column_applied_previously == column {
-                break;
-            }
-
-            let retained_values = self
-                .filter_stack
-                .retention_config
-                .get(&column_applied_previously)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Expected {column_applied_previously:?} to have retained entries \
-                         as it is present in the filter stack"
-                    )
-                })?;
-
-            // Rows that survive the filter on `column_applied_previously`
-            let retained_rows: HashSet<DataRow> = self
-                .contents
-                .rows
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| {
-                    let cell_value = row
-                        .get(column_applied_previously)
-                        .and_then(|cell| cell.display_value().cloned());
-                    retained_values.contains(&cell_value)
-                })
-                .map(|(index, _)| DataRow(index))
-                .collect();
-
-            // An entry is unavailable when none of its rows survive the parent filter
-            for entry in all_column_entries {
-                if !entry.rows.iter().any(|row| retained_rows.contains(row)) {
-                    unavailable_entries.insert(entry.content.clone(), column_applied_previously);
-                }
-            }
-        }
-
         let empty = HashSet::new();
         let active_column_filters = self
             .filter_stack
@@ -104,43 +63,59 @@ impl TableDataEngine {
             .get(&column)
             .unwrap_or(&empty);
 
-        // Excludes `column`'s own filter so its entries reflect what selecting
-        // them would add, rather than being constrained by the current
-        // selection. Other columns' filters stay applied so counts remain
-        // accurate under stacked filters instead of reflecting the whole dataset.
+        // Rows that survive every *other* active column's filter. `column`'s own
+        // filter is excluded so its entries reflect what selecting them would
+        // add rather than being constrained by the current selection.
         let rows_passing_other_filters =
             retain_rows(&self.contents.rows, &self.filter_stack, Some(column));
 
-        Ok(Arc::new(
-            all_column_entries
-                .iter()
-                .map(|entry| {
-                    let state = if let Some(&blocked_by) = unavailable_entries.get(&entry.content) {
-                        FilterEntryState::Unavailable { blocked_by }
-                    } else {
-                        FilterEntryState::Available {
-                            is_applied: active_column_filters.contains(&entry.content),
-                        }
-                    };
-                    let adjusted_entry = FilterEntry {
+        // Only used to populate `Unavailable::blocked_by`, which the UI doesn't
+        // display by name; any other currently active column is a valid choice.
+        let blocking_column = self
+            .filter_stack
+            .retention_config
+            .keys()
+            .find(|&&col| col != column)
+            .copied();
+
+        all_column_entries
+            .iter()
+            .map(|entry| {
+                let adjusted_rows: Vec<DataRow> = entry
+                    .rows
+                    .iter()
+                    .filter(|row| rows_passing_other_filters.contains(row))
+                    .copied()
+                    .collect();
+
+                let state = if adjusted_rows.is_empty() {
+                    let blocked_by = blocking_column.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Expected an active column other than {column:?} to block \
+                             {:?} when it has no rows passing other filters",
+                            entry.content
+                        )
+                    })?;
+                    FilterEntryState::Unavailable { blocked_by }
+                } else {
+                    FilterEntryState::Available {
+                        is_applied: active_column_filters.contains(&entry.content),
+                    }
+                };
+
+                Ok((
+                    FilterEntry {
                         content: entry.content.clone(),
-                        rows: entry
-                            .rows
-                            .iter()
-                            .filter(|row| rows_passing_other_filters.contains(row))
-                            .copied()
-                            .collect(),
-                    };
-                    (adjusted_entry, state)
-                })
-                .collect(),
-        ))
+                        rows: adjusted_rows,
+                    },
+                    state,
+                ))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(Arc::new)
     }
 
     pub(crate) fn clear_filters_for_col(&mut self, col: AnyColumn) {
-        self.filter_stack
-            .activation_order
-            .retain(|&entry| entry != col);
         self.filter_stack.retention_config.remove(&col);
     }
 
@@ -186,9 +161,6 @@ impl TableDataEngine {
 
         if entries.len() == 1 {
             self.filter_stack.retention_config.remove(&column);
-            self.filter_stack
-                .activation_order
-                .retain(|&entry| entry != column);
         } else {
             entries.remove(&value);
         }
@@ -196,10 +168,6 @@ impl TableDataEngine {
     }
 
     fn apply_filter(&mut self, column: AnyColumn, value: Option<SharedString>) {
-        // Track the column only on its first activation to preserve cascade order
-        if !self.filter_stack.activation_order.contains(&column) {
-            self.filter_stack.activation_order.push(column);
-        }
         self.filter_stack
             .retention_config
             .entry(column)
