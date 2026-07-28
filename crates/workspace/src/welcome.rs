@@ -1,6 +1,6 @@
 use crate::{
     NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
-    ToggleWorkspaceSidebar, Workspace,
+    ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
     item::{Item, ItemEvent},
     persistence::WorkspaceDb,
 };
@@ -15,7 +15,7 @@ use menu::{SelectNext, SelectPrevious};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{DefaultOpenBehavior, Settings};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{
@@ -307,10 +307,14 @@ impl WelcomePage {
 
                 if is_local {
                     let paths = workspace.paths.paths().to_vec();
+                    let open_mode = match WorkspaceSettings::get_global(cx).default_open_behavior {
+                        DefaultOpenBehavior::ExistingWindow => OpenMode::Activate,
+                        DefaultOpenBehavior::NewWindow => OpenMode::NewWindow,
+                    };
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace
-                                .open_workspace_for_paths(OpenMode::Activate, paths, window, cx)
+                                .open_workspace_for_paths(open_mode, paths, window, cx)
                                 .detach_and_log_err(cx);
                         })
                         .log_err();

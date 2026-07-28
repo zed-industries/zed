@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
+    RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::KeepAlive;
@@ -18,6 +21,7 @@ pub struct Model {
     pub supports_tools: Option<bool>,
     pub supports_vision: Option<bool>,
     pub supports_thinking: Option<bool>,
+    pub disabled: Option<String>,
 }
 
 fn get_max_tokens(_name: &str) -> u64 {
@@ -28,7 +32,6 @@ fn get_max_tokens(_name: &str) -> u64 {
 impl Model {
     pub fn new(
         name: &str,
-        display_name: Option<&str>,
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_vision: Option<bool>,
@@ -36,14 +39,26 @@ impl Model {
     ) -> Self {
         Self {
             name: name.to_owned(),
-            display_name: display_name
-                .map(ToString::to_string)
-                .or_else(|| name.strip_suffix(":latest").map(ToString::to_string)),
+            display_name: name.strip_suffix(":latest").map(ToString::to_string),
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
             supports_vision,
             supports_thinking,
+            disabled: None,
+        }
+    }
+
+    pub fn new_disabled(name: &str, reason: String) -> Self {
+        Self {
+            name: name.to_owned(),
+            display_name: name.strip_suffix(":latest").map(ToString::to_string),
+            max_tokens: get_max_tokens(name),
+            keep_alive: Some(KeepAlive::indefinite()),
+            supports_tools: None,
+            supports_vision: None,
+            supports_thinking: None,
+            disabled: Some(reason),
         }
     }
 
@@ -281,6 +296,7 @@ pub async fn stream_chat_completion(
     api_url: &str,
     api_key: Option<&str>,
     request: ChatRequest,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
     let request = HttpRequest::builder()
@@ -290,6 +306,7 @@ pub async fn stream_chat_completion(
         .when_some(api_key, |builder, api_key| {
             builder.header("Authorization", format!("Bearer {api_key}"))
         })
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
     let mut response = client.send(request).await?;
@@ -318,6 +335,7 @@ pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: Option<&str>,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
     let request = HttpRequest::builder()
@@ -327,6 +345,7 @@ pub async fn get_models(
         .when_some(api_key, |builder, api_key| {
             builder.header("Authorization", format!("Bearer {api_key}"))
         })
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
@@ -351,6 +370,7 @@ pub async fn show_model(
     api_url: &str,
     api_key: Option<&str>,
     model: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
     let request = HttpRequest::builder()
@@ -360,6 +380,7 @@ pub async fn show_model(
         .when_some(api_key, |builder, api_key| {
             builder.header("Authorization", format!("Bearer {api_key}"))
         })
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::json!({ "model": model }).to_string(),
         ))?;

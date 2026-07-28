@@ -145,8 +145,12 @@ pub struct ThemeSettingsContent {
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeaturesContent>,
+    /// The name of a font to use for agent responses in the agent panel. Falls back to the UI font if unset.
+    pub agent_ui_font_family: Option<FontFamilyName>,
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     pub agent_ui_font_size: Option<FontSize>,
+    /// The name of a font to use for user messages in the agent panel. Falls back to the buffer font if unset.
+    pub agent_buffer_font_family: Option<FontFamilyName>,
     /// The font size for user messages in the agent panel.
     pub agent_buffer_font_size: Option<FontSize>,
     pub git_commit_buffer_font_size: Option<FontSize>,
@@ -156,6 +160,9 @@ pub struct ThemeSettingsContent {
     /// The name of a font to use for code (code blocks and inline code) in the
     /// markdown preview. Falls back to the buffer font if unset.
     pub markdown_preview_code_font_family: Option<FontFamilyName>,
+    /// The font size to use for rendering in the markdown preview.
+    /// Falls back to the UI font size if unset.
+    pub markdown_preview_font_size: Option<FontSize>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,

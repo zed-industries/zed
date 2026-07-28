@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, TypeIdHashMap};
 pub use gpui_macros::Action;
 pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
 use serde_json::json;
@@ -232,7 +232,7 @@ type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Actio
 
 pub(crate) struct ActionRegistry {
     by_name: HashMap<&'static str, ActionData>,
-    names_by_type_id: HashMap<TypeId, &'static str>,
+    names_by_type_id: TypeIdHashMap<&'static str>,
     all_names: Vec<&'static str>, // So we can return a static slice.
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
@@ -340,6 +340,11 @@ impl ActionRegistry {
             .with_context(|| format!("no action type registered for {type_id:?}"))?;
 
         Ok(self.build_action(name, None)?)
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(crate) fn try_resolve_action(&self, type_id: &TypeId) -> Option<&'static str> {
+        self.names_by_type_id.get(type_id).copied()
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.

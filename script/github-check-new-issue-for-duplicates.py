@@ -40,6 +40,7 @@ REPO_OWNER = "zed-industries"
 REPO_NAME = "zed"
 TRACKING_ISSUE_NUMBER = 46355
 STAFF_TEAM_SLUG = "staff"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # area prefixes to collapse in taxonomy (show summary instead of all sub-labels)
 PREFIXES_TO_COLLAPSE = ["languages", "parity", "tooling"]
@@ -146,11 +147,15 @@ No action needed. A maintainer will review this shortly.
             ]
             parts.append("**Possibly related open issues:**\n\n" + "\n".join(lines))
         if related_closed_issues:
+            # state_reason is shown only for "duplicate" (the close type is otherwise
+            # already visible from GitHub's icon next to the issue number on render).
             lines = [
-                f"- #{m['number']} (closed as {m['state_reason']}) — {m['explanation']}"
+                f"- #{m['number']}"
+                f"{' (closed as duplicate)' if m['state_reason'] == 'duplicate' else ''}"
+                f" — {m['explanation']}"
                 for m in related_closed_issues
             ]
-            parts.append("**Recently closed, possibly related:**\n\n" + "\n".join(lines))
+            parts.append("**Recently closed, possibly the same bug:**\n\n" + "\n".join(lines))
         body = "\n\n".join(parts)
         sections.append(f"""<details>
 <summary>Additional recent context for triagers</summary>
@@ -166,8 +171,8 @@ No action needed. A maintainer will review this shortly.
     return "\n\n".join(sections)
 
 
-def call_claude(api_key, system, user_content, max_tokens=1024):
-    """Send a message to Claude and return the text response. Raises on non-2xx status."""
+def _claude_request(api_key, payload):
+    """POST to the Claude Messages API, raise on non-2xx, log token usage, return parsed data."""
     response = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -175,24 +180,52 @@ def call_claude(api_key, system, user_content, max_tokens=1024):
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         },
-        json={
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": max_tokens,
-            "temperature": 0.0,
-            "system": system,
-            "messages": [{"role": "user", "content": user_content}],
-        },
+        json={"model": CLAUDE_MODEL, "temperature": 0.0, **payload},
     )
     response.raise_for_status()
     data = response.json()
 
     usage = data.get("usage", {})
     log(f"  Token usage - Input: {usage.get('input_tokens', 'N/A')}, Output: {usage.get('output_tokens', 'N/A')}")
+    return data
+
+
+def call_claude(api_key, system_prompt, user_content, max_tokens=1024):
+    """Send a message to Claude and return the text response. Raises on non-2xx status."""
+    data = _claude_request(api_key, {
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_content}],
+    })
 
     content = data.get("content", [])
     if content and content[0].get("type") == "text":
         return content[0].get("text") or ""
     return ""
+
+
+def call_claude_tool(api_key, system_prompt, user_content, tool, max_tokens=1024):
+    """Call Claude, forcing it to invoke `tool`, and return the structured input dict.
+
+    Forcing a tool call makes the API emit schema-shaped JSON via its tool-use mechanism
+    instead of free-form text we'd have to parse out of prose or markdown fences. Raises on
+    non-2xx status, or if no tool_use block is returned.
+    """
+    data = _claude_request(api_key, {
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_content}],
+        "tools": [tool],
+        "tool_choice": {"type": "tool", "name": tool["name"]},
+    })
+
+    if data.get("stop_reason") == "max_tokens":
+        log("  Warning: response hit max_tokens; structured output may be truncated")
+
+    for block in data.get("content", []):
+        if block.get("type") == "tool_use":
+            return block.get("input") or {}
+    raise ValueError(f"Claude returned no tool_use block for tool '{tool['name']}'")
 
 
 def fetch_issue(issue_number: int):
@@ -279,6 +312,12 @@ def detect_areas(anthropic_key, issue, area_labels):
     valid_areas = {label["name"] for label in area_labels}
 
     system_prompt = """You analyze GitHub issues to identify which area labels apply.
+
+Decide the area from the user's stated symptom and reproduction steps. Issue bodies routinely
+contain pasted log output, crash dumps, stack traces, settings files, and template headers like
+"Attach Zed log file" or "Relevant Zed settings" — these are evidence about the symptom and
+should not push you toward labels like "logging" or "settings" unless the bug itself is about
+how that subsystem works.
 
 Respond with ONLY a comma-separated list of matching area names. No prose, no explanation,
 no markdown, no preamble — just the names.
@@ -500,7 +539,13 @@ def analyze_duplicates(anthropic_key, issue, magnets, search_results):
         return [], [], []
 
     log("Analyzing candidates with Claude")
+    log(f"  Candidate pool: {len(top_magnets)} magnets, {len(open_results)} open search results, "
+        f"{len(closed_results)} closed search results (will pass {min(len(closed_results), 5)} closed)")
     enrich_magnets(top_magnets)
+
+    closed_candidates_for_claude = closed_results[:5]
+    if closed_candidates_for_claude:
+        log(f"  Closed candidates given to proposer: {[r['number'] for r in closed_candidates_for_claude]}")
 
     candidates = [
         {"number": m["number"], "title": m["title"], "body_preview": m["body_preview"],
@@ -509,7 +554,7 @@ def analyze_duplicates(anthropic_key, issue, magnets, search_results):
     ] + [
         {"number": r["number"], "title": r["title"], "body_preview": r["body_preview"],
          "state": r["state"], "state_reason": r["state_reason"], "source": "search_result"}
-        for r in open_results[:10] + closed_results[:5]
+        for r in open_results[:10] + closed_candidates_for_claude
     ]
 
     system_prompt = """You analyze GitHub issues to (a) identify duplicates among OPEN candidates
@@ -548,45 +593,70 @@ Examples of things that are NOT duplicates:
 For OPEN duplicates (either bucket), false positives are MUCH worse than false negatives — they
 waste the time of both the issue author and the maintainers. When in doubt, omit.
 
-# (b) Related closed issues — CLOSED candidates only
+# (b) Closed candidates that may be the same bug — CLOSED candidates only
 
-The goal is to give triagers extra context, NOT to claim a duplicate. The bar is lower than for
-duplicates: include a closed candidate if a triager would plausibly want to see it when reviewing
-the new issue. Examples worth surfacing:
-- A recently fixed (state_reason "completed") issue describing the same symptom — triager may ask
-  the reporter to retest on the latest build.
-- A cluster of similar issues closed as "not_planned" — signals a known limitation or design choice.
-- A previously triaged duplicate (state_reason "duplicate") in the same code area.
+The goal is NOT a "related reading" list. The goal is to surface closed issues where the
+new issue is plausibly the SAME bug — a duplicate that just happens to be filed against a
+closed predecessor instead of an open one. Empty is preferable to weak filler — triagers
+lose trust in this section quickly if it's stretched. The same false-positives-are-worse
+asymmetry as for duplicates applies here.
 
-Include at most 5 closed candidates, prioritized by relevance.
+The bar: a triager reading this should be able to act — ask the reporter to retest a fix,
+point at a known design decision that already declined this request, or point at the
+canonical bug this is a duplicate of. "Useful context" or "shared area" is NOT a reason
+to include.
 
-# Output format
+Omit a candidate if ANY of these apply (in observed practice, almost everything does):
 
-Output only valid JSON (no markdown code blocks):
-{
-  "likely_duplicates": [
-    {
-      "number": 12345,
-      "shared_root_cause": "The specific bug/root cause shared by both issues",
-      "explanation": "Brief explanation with concrete evidence from both issues"
-    }
-  ],
-  "possible_duplicates": [
-    {
-      "number": 12345,
-      "shared_root_cause": "The specific bug/root cause shared by both issues",
-      "explanation": "Brief explanation with concrete evidence from both issues"
-    }
-  ],
-  "related_closed_issues": [
-    {
-      "number": 12345,
-      "explanation": "Brief explanation of why this is useful triage context"
-    }
-  ]
-}
+1. Self-contradiction. If you find yourself writing "while focused on X rather than Y",
+   "although this is about A, the new issue is about B", "this issue focuses on... rather
+   than...", or any acknowledgment that the candidate isn't on the same topic — STOP.
+   You've already made the case for omitting it.
 
-Return empty arrays where nothing relevant is found."""
+2. Fabricated specifics. Every concrete claim about the candidate (its trigger, its scope,
+   its conditions) must be visible in the candidate's title or body preview. Specifics
+   like "when X happens", "under Y conditions", "specifically affecting Z" that aren't
+   supported by the candidate's actual text mean you're inventing details to fit the new
+   issue. Omit.
+
+3. Weasel phrases. Paraphrases of these all indicate you don't have a real claim:
+   "may indicate similar...", "could provide context for...", "shows / demonstrates recent
+   attention to...", "indicates the team has considered...", "demonstrates a pattern
+   of...", "may provide useful context...". STOP and omit.
+
+4. Retest by default. The "reporter may need to retest on the latest build" framing only
+   applies when the candidate's symptom is literally the same as the new issue's. It is
+   NOT a default justification for "this was a recent fix in roughly the same area."
+
+5. Same area / feature, different mechanism. Examples to omit:
+   - "ARM compile failure" alongside "ARM runtime perf" — same area, different mechanism.
+   - "Worktree path bug" alongside "worktree display label confusion" — same feature,
+     unrelated.
+
+6. Vague catch-all candidate. A closed issue like "Zed is slow" / "performance" / "agent
+   panel UX" that could be cited next to almost any new bug is filler. If you'd reuse the
+   same closed issue across many unrelated new issues, omit.
+
+7. Label or single-keyword overlap. A closed issue whose only connection is a shared
+   area:* label or one shared keyword is not relevant.
+
+Worth surfacing — strict examples:
+- A recently fixed ("completed") issue with the SAME specific trigger as the new issue —
+  triager can ask the reporter to retest on the latest build.
+- A cluster of "not_planned" closures about the EXACT same request — known design choice
+  the triager can point to.
+- A previously triaged "duplicate" pointing at the same canonical issue, or sharing the
+  same specific mechanism.
+
+Count: typically 0 or 1. Never more than 2 unless there's an obvious cluster of identical
+"not_planned" reports. 0 is a normal outcome.
+
+# Output
+
+Report your verdict by calling the report_duplicate_analysis tool. Fill the "reasoning"
+field first with a brief scratchpad weighing the strongest candidates and whether they
+share a root cause, then fill each bucket. Use empty arrays where nothing relevant is
+found."""
 
     user_content = f"""## New Issue #{issue['number']}
 **Title:** {issue['title']}
@@ -597,25 +667,215 @@ Return empty arrays where nothing relevant is found."""
 ## Existing Issues to Compare
 {json.dumps(candidates, indent=2)}"""
 
-    response = call_claude(anthropic_key, system_prompt, user_content, max_tokens=2048)
+    duplicate_match_schema = {
+        "type": "object",
+        "properties": {
+            "number": {"type": "integer", "description": "The candidate issue number"},
+            "shared_root_cause": {"type": "string", "description": "The specific bug/root cause shared by both issues"},
+            "explanation": {"type": "string", "description": "Brief explanation with concrete evidence from both issues"},
+        },
+        "required": ["number", "shared_root_cause", "explanation"],
+    }
+    analysis_tool = {
+        "name": "report_duplicate_analysis",
+        "description": "Report the duplicate analysis for the new issue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "string",
+                    "description": "A brief scratchpad (at most 2-3 sentences) weighing the strongest "
+                                   "candidates and whether they share a root cause. Be terse.",
+                    "maxLength": 700,
+                },
+                "likely_duplicates": {"type": "array", "items": duplicate_match_schema},
+                "possible_duplicates": {"type": "array", "items": duplicate_match_schema},
+                "related_closed_issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "number": {"type": "integer", "description": "The candidate issue number"},
+                            "explanation": {"type": "string", "description": "Brief explanation of why this is useful triage context"},
+                        },
+                        "required": ["number", "explanation"],
+                    },
+                },
+            },
+            "required": ["reasoning", "likely_duplicates", "possible_duplicates", "related_closed_issues"],
+        },
+    }
 
-    # Claude sometimes wraps JSON in a ```json ... ``` fence despite the prompt forbidding it
-    fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
-    if fence:
-        response = fence.group(1)
-
-    try:
-        data = json.loads(response)
-    except json.JSONDecodeError as e:
-        log(f"  Failed to parse Claude response as JSON: {e}")
-        log(f"  Raw response:\n{response}")
-        sys.exit(1)
+    data = call_claude_tool(anthropic_key, system_prompt, user_content, analysis_tool, max_tokens=3072)
+    if data.get("reasoning"):
+        log(f"  Reasoning: {data['reasoning']}")
 
     likely = data.get("likely_duplicates", [])
     possible = data.get("possible_duplicates", [])
     closed = data.get("related_closed_issues", [])
+
+    # Claude occasionally places a closed candidate in the duplicate buckets, or vice
+    # versa. Enforce that each match lives in the bucket consistent with the canonical
+    # state of the candidate we passed in.
+    candidate_states = {c["number"]: c["state"] for c in candidates}
+
+    def filter_by_state(items, expected_state, label):
+        kept, wrong = [], []
+        for m in items:
+            (kept if candidate_states.get(m["number"]) == expected_state else wrong).append(m)
+        if wrong:
+            log(f"  Dropped {len(wrong)} from {label} with wrong/unknown state: {[m['number'] for m in wrong]}")
+        return kept
+
+    likely = filter_by_state(likely, "open", "likely_duplicates")
+    possible = filter_by_state(possible, "open", "possible_duplicates")
+    closed = filter_by_state(closed, "closed", "related_closed_issues")
+
+    # Avoid showing the same issue in both the user-facing alert and the triage section.
+    likely_numbers = {m["number"] for m in likely}
+    overlap = [m["number"] for m in possible if m["number"] in likely_numbers]
+    if overlap:
+        log(f"  Dropped {len(overlap)} from possible_duplicates already in likely_duplicates: {overlap}")
+    possible = [m for m in possible if m["number"] not in likely_numbers]
+
     log(f"  Found {len(likely) + len(possible) + len(closed)} potential matches")
     return likely, possible, closed
+
+
+CRITIQUE_SYSTEM_PROMPT = """You are evaluating ONE recently closed GitHub issue to decide whether a triager looking
+at a brand-new bug report would find it useful to be told about that closed issue.
+
+There is no slate to fill. There is no quota. You will be shown exactly one candidate.
+The default verdict is OMIT. Zero is the expected outcome for most candidates.
+
+A candidate is worth surfacing ONLY if the new issue is plausibly the SAME BUG as the
+closed one — a duplicate that happens to be filed against a closed predecessor. Concretely,
+the legitimate cases are exactly three:
+
+- The candidate was closed as "completed" (a fix shipped) AND the new issue has the same
+  specific trigger / symptom. The triager will ask the reporter to retest.
+- The candidate was closed as "not_planned" AND the new issue is the EXACT same request
+  (a feature decision the team already declined). The triager will point at it.
+- The candidate was closed as "duplicate" AND it pointed at the same canonical bug the new
+  issue describes, or it shares the same specific mechanism.
+
+"Same broad area", "similar-sounding symptom", or "recent attention to this subsystem" are
+NOT reasons to include. Omit them.
+
+Return "omit" if ANY of the following apply (in observed practice, almost everything does):
+
+1. Self-contradiction. If your reasoning includes "while focused on X rather than Y",
+   "although this is about A, the new issue is about B", "this issue focuses on... rather
+   than...", or any acknowledgment the candidate is on a different topic — you've already
+   decided to omit.
+2. Fabricated specifics. Every concrete claim about the candidate (its trigger, scope,
+   conditions) must be visible in the candidate's title or body preview. If you find
+   yourself describing the candidate using details that aren't in its text, you're
+   inventing details to fit the new issue. Omit.
+3. Weasel phrases. Paraphrases of "may indicate similar...", "could provide context
+   for...", "shows / demonstrates recent attention to...", "indicates the team has
+   considered...", "demonstrates a pattern of...", "may provide useful context..." —
+   these mean you don't have a real claim. Omit.
+4. Retest by default. The "reporter may need to retest on the latest build" framing only
+   applies when the closed issue's symptom is LITERALLY the same as the new issue's. "This
+   was a recent fix in roughly the same area" is not enough.
+5. Same area / feature, different mechanism. Same area label but different bug, different
+   code path, different trigger. Omit.
+6. Vague catch-all candidate. A closed issue like "Zed is slow" / "performance" / "agent
+   panel UX" that you could cite next to many unrelated new bugs. Omit.
+7. Label or single-keyword overlap. Only connection is a shared area:* label or one shared
+   keyword. Omit.
+
+Report your decision by calling the report_critique_verdict tool. Fill "rationale" first
+(one concise sentence), then "verdict". When "verdict" is "include", "rule_violated" must be
+null. When "verdict" is "omit", set "rule_violated" to the most relevant rule number, or
+null if the candidate is simply too unrelated for any rule to specifically apply."""
+
+
+CRITIQUE_VERDICT_TOOL = {
+    "name": "report_critique_verdict",
+    "description": "Report whether the closed candidate is worth surfacing to a triager.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "One concise sentence justifying the verdict, grounded in the candidate's actual text.",
+                "maxLength": 400,
+            },
+            "verdict": {"type": "string", "enum": ["include", "omit"]},
+            "rule_violated": {
+                "type": ["integer", "null"],
+                "description": "The most relevant omit-rule number (1-7), or null when including.",
+            },
+        },
+        "required": ["rationale", "verdict"],
+    },
+}
+
+
+def critique_closed_candidates(anthropic_key, issue, proposed, search_results):
+    """Run a strict per-candidate critique pass over the proposer's closed candidates.
+
+    For each proposed match, call Claude with only the new issue and that single candidate
+    (blind to the proposer's rationale) and ask for a yes/no verdict. Default is omit.
+    Returns the subset of `proposed` that passes critique.
+    """
+    if not proposed:
+        log("  Critique: proposer surfaced 0 closed candidates; skipping")
+        return []
+
+    log(f"  Critique: proposer surfaced {len(proposed)} closed candidate(s): "
+        f"{[m['number'] for m in proposed]}")
+
+    results_by_number = {r["number"]: r for r in search_results}
+    kept = []
+    for match in proposed:
+        number = match["number"]
+        candidate = results_by_number.get(number)
+        if candidate is None:
+            # Should not happen — analyze_duplicates only emits numbers from candidates it
+            # was given — but be defensive rather than crash the bot.
+            log(f"  Critique: dropping #{number} — candidate context not found")
+            continue
+
+        state_reason = candidate.get("state_reason") or "unknown"
+        user_content = f"""## New Issue #{issue['number']}
+**Title:** {issue['title']}
+
+**Body:**
+{issue['body'][:3000]}
+
+## Closed Candidate #{number}
+**Title:** {candidate.get('title', '')}
+**State reason:** {state_reason}
+
+**Body preview:**
+{candidate.get('body_preview', '')}"""
+
+        log(f"  Critique: evaluating #{number}")
+        try:
+            verdict_data = call_claude_tool(
+                anthropic_key, CRITIQUE_SYSTEM_PROMPT, user_content, CRITIQUE_VERDICT_TOOL, max_tokens=600
+            )
+        except (requests.RequestException, ValueError) as e:
+            # If the critique call fails, prefer omitting the candidate over posting noise.
+            log(f"  Critique: verdict call failed for #{number} ({e}); omitting candidate")
+            continue
+
+        verdict = verdict_data.get("verdict")
+        rule = verdict_data.get("rule_violated")
+        rationale = verdict_data.get("rationale", "")
+
+        if verdict == "include":
+            log(f"  Critique: keeping #{number} — {rationale}")
+            kept.append(match)
+        else:
+            rule_str = f"rule {rule}" if rule else "no specific rule"
+            log(f"  Critique: omitting #{number} ({rule_str}) — {rationale}")
+
+    log(f"  Critique: kept {len(kept)} of {len(proposed)} closed candidates")
+    return kept
 
 
 if __name__ == "__main__":
@@ -656,6 +916,13 @@ if __name__ == "__main__":
     # analyze candidates
     likely_duplicates, possible_duplicates, related_closed_issues = analyze_duplicates(
         anthropic_key, issue, relevant_magnets, search_results
+    )
+
+    # second-pass critique: prompt iteration on the proposer hit a ceiling around 30% noise.
+    # Re-evaluate each proposed closed candidate in isolation with a stricter prompt that
+    # has no slate to fill and is blind to the proposer's rationale.
+    related_closed_issues = critique_closed_candidates(
+        anthropic_key, issue, related_closed_issues, search_results
     )
 
     # resolve close reason from our search results (the source of truth) so we don't depend

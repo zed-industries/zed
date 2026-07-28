@@ -6,9 +6,7 @@ use scheduler::Instant;
 use scheduler::Scheduler;
 use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
-pub use scheduler::{
-    FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority, Task,
-};
+pub use scheduler::{FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -22,7 +20,7 @@ pub struct BackgroundExecutor {
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    inner: scheduler::ForegroundExecutor,
+    inner: scheduler::LocalExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
@@ -280,18 +278,29 @@ impl ForegroundExecutor {
                 )
             } else {
                 let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-                let session_id = platform_scheduler.allocate_session_id();
-                (platform_scheduler, session_id)
+                let inner = platform_scheduler.foreground_executor();
+                return Self {
+                    inner,
+                    dispatcher,
+                    not_send: PhantomData,
+                };
             };
 
         #[cfg(not(any(test, feature = "test-support")))]
-        let (scheduler, session_id): (Arc<dyn Scheduler>, _) = {
+        let inner = {
             let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-            let session_id = platform_scheduler.allocate_session_id();
-            (platform_scheduler, session_id)
+            platform_scheduler.foreground_executor()
         };
 
-        let inner = scheduler::ForegroundExecutor::new(session_id, scheduler);
+        #[cfg(any(test, feature = "test-support"))]
+        let inner = {
+            let scheduler_for_dispatch = Arc::downgrade(&scheduler);
+            scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {
+                if let Some(scheduler) = scheduler_for_dispatch.upgrade() {
+                    scheduler.schedule_local(session_id, runnable);
+                }
+            })
+        };
 
         Self {
             inner,
@@ -366,7 +375,7 @@ impl ForegroundExecutor {
     }
 
     #[doc(hidden)]
-    pub fn scheduler_executor(&self) -> SchedulerForegroundExecutor {
+    pub fn scheduler_executor(&self) -> SchedulerLocalExecutor {
         self.inner.clone()
     }
 }
