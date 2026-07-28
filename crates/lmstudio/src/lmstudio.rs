@@ -208,10 +208,17 @@ pub struct FunctionContent {
 }
 
 #[derive(Serialize, Debug)]
+pub struct StreamOptions {
+    pub include_usage: bool,
+}
+
+#[derive(Serialize, Debug)]
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]

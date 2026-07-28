@@ -234,6 +234,11 @@ pub struct ContextMenu {
     submenu_trigger_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     submenu_trigger_mouse_down: bool,
     ignore_blur_until: Option<Instant>,
+    /// When set to true, the next on_focus_in callback will not automatically
+    /// select an item. This prevents a visual flash where a submenu close in
+    /// on_hover(false) returns focus to the main menu and on_focus_in
+    /// re-selects the first item before the next on_hover(true) clears it.
+    suppress_focus_selection: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -297,6 +302,20 @@ impl ContextMenu {
         );
         window.refresh();
 
+        // When the menu first receives focus (i.e. when it opens), move the
+        // selection onto a menu item so assistive technology announces a real
+        // item rather than the bare menu container. Per the ARIA menu button
+        // pattern, opening a menu places focus on a menu item; for select-style
+        // menus we prefer the currently-checked item. We only do this when
+        // nothing is selected yet so we don't override an existing selection.
+        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+            if this.selected_index.is_none() && !this.suppress_focus_selection {
+                this.select_toggled_or_first(window, cx);
+            }
+            this.suppress_focus_selection = false;
+        })
+        .detach();
+
         f(
             Self {
                 builder: None,
@@ -321,6 +340,7 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                suppress_focus_selection: false,
             },
             window,
             cx,
@@ -374,6 +394,15 @@ impl ContextMenu {
             );
             window.refresh();
 
+            // See the note in `ContextMenu::new`: select an item when the menu
+            // opens so screen readers announce it instead of just "menu".
+            cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+                if this.selected_index.is_none() {
+                    this.select_toggled_or_first(window, cx);
+                }
+            })
+            .detach();
+
             (builder.clone())(
                 Self {
                     builder: Some(builder),
@@ -398,6 +427,7 @@ impl ContextMenu {
                     submenu_trigger_bounds: Rc::new(Cell::new(None)),
                     submenu_trigger_mouse_down: false,
                     ignore_blur_until: None,
+                    suppress_focus_selection: false,
                 },
                 window,
                 cx,
@@ -467,6 +497,7 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                suppress_focus_selection: false,
             },
             window,
             cx,
@@ -611,9 +642,23 @@ impl ContextMenu {
     }
 
     pub fn toggleable_entry(
+        self,
+        label: impl Into<SharedString>,
+        toggled: bool,
+        position: IconPosition,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.toggleable_entry_disabled_when(label, toggled, false, position, action, handler)
+    }
+
+    /// Like [`Self::toggleable_entry`], but the entry is rendered disabled (and its handler is not
+    /// invoked) when `disabled` is `true`.
+    pub fn toggleable_entry_disabled_when(
         mut self,
         label: impl Into<SharedString>,
         toggled: bool,
+        disabled: bool,
         position: IconPosition,
         action: Option<Box<dyn Action>>,
         handler: impl Fn(&mut Window, &mut App) + 'static,
@@ -630,7 +675,7 @@ impl ContextMenu {
             icon_size: IconSize::Small,
             icon_color: None,
             action,
-            disabled: false,
+            disabled,
             documentation_aside: None,
             end_slot_icon: None,
             end_slot_title: None,
@@ -1076,6 +1121,32 @@ impl ContextMenu {
         cx.notify();
     }
 
+    /// Selects the currently-checked entry if one exists (e.g. the active value
+    /// in a single-select dropdown), otherwise the first selectable item.
+    ///
+    /// This is intended to be called when the menu opens. Per the ARIA menu
+    /// button pattern, opening a menu should place focus on a menu item rather
+    /// than the menu container, so that assistive technology immediately
+    /// announces a meaningful item (ideally the current selection) instead of
+    /// just "menu".
+    pub fn select_toggled_or_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let toggled_ix = self.items.iter().position(|item| {
+            matches!(
+                item,
+                ContextMenuItem::Entry(ContextMenuEntry {
+                    toggle: Some((_, true)),
+                    ..
+                })
+            )
+        });
+        if let Some(ix) = toggled_ix {
+            self.select_index(ix, window, cx);
+            cx.notify();
+        } else {
+            self.select_first(&SelectFirst, window, cx);
+        }
+    }
+
     pub fn select_last(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<usize> {
         for (ix, item) in self.items.iter().enumerate().rev() {
             if item.is_selectable() {
@@ -1282,6 +1353,7 @@ impl ContextMenu {
                 submenu_trigger_bounds: Rc::new(Cell::new(None)),
                 submenu_trigger_mouse_down: false,
                 ignore_blur_until: None,
+                suppress_focus_selection: false,
             };
 
             menu = (builder)(menu, window, cx);
@@ -1446,7 +1518,7 @@ impl ContextMenu {
                 .child(Label::new(label.clone()))
                 .into_any_element(),
             ContextMenuItem::Entry(entry) => self
-                .render_menu_entry(ix, entry, is_active_descendant(true), cx)
+                .render_menu_entry(ix, entry, is_active_descendant(true), window, cx)
                 .into_any_element(),
             ContextMenuItem::CustomEntry {
                 entry_render,
@@ -1610,6 +1682,7 @@ impl ContextMenu {
 
                         if *hovered {
                             this.clear_selected();
+                            this.suppress_focus_selection = true;
                             window.focus(&this.focus_handle.clone(), cx);
                             this.hover_target = HoverTarget::MainMenu;
                             this.submenu_safety_threshold_x = Some(mouse_pos.x - px(50.0));
@@ -1647,6 +1720,7 @@ impl ContextMenu {
                             {
                                 this.close_submenu(false, cx);
                                 this.clear_selected();
+                                this.suppress_focus_selection = true;
                                 window.focus(&this.focus_handle.clone(), cx);
                                 cx.notify();
                             }
@@ -1773,6 +1847,7 @@ impl ContextMenu {
         ix: usize,
         entry: &ContextMenuEntry,
         is_active_descendant: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuEntry {
@@ -1795,6 +1870,17 @@ impl ContextMenu {
             secondary_handler: _,
         } = entry;
         let this = cx.weak_entity();
+        // Report the item's keyboard shortcut to assistive technology, resolving
+        // the action's binding the same way the visible accelerator (rendered
+        // below) is.
+        let keyboard_shortcut = action.as_ref().and_then(|action| {
+            let binding = self
+                .action_context
+                .as_ref()
+                .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+            binding.keyboard_shortcut_text(window, cx)
+        });
 
         let handler = handler.clone();
         let menu = cx.entity().downgrade();
@@ -1918,13 +2004,18 @@ impl ContextMenu {
                     } else {
                         Role::MenuItem
                     })
+                    .when_some(*toggle, |item, (_, checked)| item.aria_checked(checked))
                     .when(is_active_descendant, |item| item.aria_active_descendant())
                     .aria_label(label.clone())
+                    .when_some(keyboard_shortcut, |item, keyboard_shortcut| {
+                        item.aria_keyshortcuts(keyboard_shortcut)
+                    })
                     .toggle_state(Some(ix) == self.selected_index)
                     .when(self.main_menu.is_none() && !*disabled, |item| {
                         item.on_hover(cx.listener(move |this, hovered, window, cx| {
                             if *hovered {
                                 this.clear_selected();
+                                this.suppress_focus_selection = true;
                                 window.focus(&this.focus_handle.clone(), cx);
 
                                 if let SubmenuState::Open(open_submenu) = &this.submenu_state {
@@ -2130,7 +2221,9 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = theme::theme_settings(cx).ui_font_size(cx);
+        let theme_settings = theme::theme_settings(cx);
+        let ui_font_size = theme_settings.ui_font_size(cx);
+        let ui_font_family = theme_settings.ui_font(cx).family.clone();
         let window_size = window.viewport_size();
         let rem_size = window.rem_size();
         let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
@@ -2180,6 +2273,7 @@ impl Render for ContextMenu {
         let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
             WithRemSize::new(ui_font_size)
                 .occlude()
+                .font_family(ui_font_family.clone())
                 .elevation_2(cx)
                 .w_full()
                 .p_2()
@@ -2206,6 +2300,7 @@ impl Render for ContextMenu {
 
             WithRemSize::new(ui_font_size)
                 .occlude()
+                .font_family(ui_font_family.clone())
                 .elevation_2(cx)
                 .flex()
                 .flex_row()

@@ -155,11 +155,17 @@ def compute_size_bucket(total_changes):
 def compute_contributor(pr_labels):
     """Return the Contributor value derived from the PR's labels.
 
-    The auto-labeler is responsible for applying `community champion` and
-    `first contribution` based on the author's history; anything else on
-    the board is treated as a returning contributor (PRs from staff/bots
+    The auto-labeler is responsible for applying `guild`, `community champion`
+    and `first contribution` based on the author's membership/history; anything
+    else on the board is treated as a returning contributor (PRs from staff/bots
     don't reach this function because they're filtered upstream).
+
+    Guild takes precedence over Champion because current-cohort guild members
+    are frequently also community champions, and their guild status is the more
+    relevant signal while the cohort is active.
     """
+    if "guild" in pr_labels:
+        return "Guild"
     if "community champion" in pr_labels:
         return "Champion"
     if "first contribution" in pr_labels:

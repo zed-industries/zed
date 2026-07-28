@@ -47,6 +47,10 @@ actions!(
         /// Opens project-specific settings.
         #[action(deprecated_aliases = ["zed_actions::OpenProjectSettings"])]
         OpenProjectSettings,
+        /// Opens the project tasks configuration.
+        OpenProjectTasks,
+        /// Opens the project tasks configuration with worktree setup guidance.
+        OpenWorktreeSetupTasks,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens the user keymap file.
@@ -69,6 +73,8 @@ actions!(
         OpenLicenses,
         /// Opens the Zed status page.
         OpenStatusPage,
+        /// Opens the Zed merch store.
+        GetMerch,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -350,6 +356,12 @@ pub mod git {
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
+            /// Shows uncommitted changes across the project.
+            ViewUncommittedChanges,
+            /// Shows unstaged changes across the project.
+            ViewUnstagedChanges,
+            /// Shows staged changes across the project.
+            ViewStagedChanges,
             /// Opens the git stash selector.
             ViewStash,
             /// Opens the git worktree selector.
@@ -539,7 +551,7 @@ pub mod agent {
     actions!(
         agent,
         [
-            /// Opens the agent settings panel.
+            /// Opens the agent settings UI.
             #[action(deprecated_aliases = ["agent::OpenConfiguration"])]
             OpenSettings,
             /// Opens the agent onboarding modal.
@@ -564,6 +576,17 @@ pub mod agent {
             PasteRaw,
         ]
     );
+
+    /// Selects the agent used for new threads in the agent panel, without
+    /// opening the panel. The selected agent is launched the next time the
+    /// panel is opened.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct SelectAgent {
+        /// The id of the agent to select.
+        pub agent: String,
+    }
 
     /// Opens a new agent thread with the provided branch diff for review.
     #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -925,6 +948,18 @@ pub mod notebook {
             EnterEditMode,
             /// Exits the cell editor and returns to cell command mode.
             EnterCommandMode,
+        ]
+    );
+}
+
+pub mod git_panel {
+    use gpui::actions;
+
+    actions!(
+        git_panel,
+        [
+            /// Toggles focus on the git panel.
+            ToggleFocus,
         ]
     );
 }

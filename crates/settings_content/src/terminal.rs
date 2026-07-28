@@ -124,6 +124,14 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub keep_selection_on_copy: Option<bool>,
+    /// Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    /// when the terminal application has enabled mouse reporting (e.g. vim with
+    /// mouse=a, htop). When false, these clicks are forwarded to the application
+    /// instead, and hyperlinks can still be opened with shift-cmd-click
+    /// (shift-ctrl-click).
+    ///
+    /// Default: true
+    pub open_links_in_mouse_mode: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
     /// Default: true

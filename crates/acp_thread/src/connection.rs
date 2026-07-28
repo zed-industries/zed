@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
 use gpui::{Entity, SharedString, Task};
-use language_model::{DisabledReason, LanguageModelProviderId};
+use language_model::DisabledReason;
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc};
@@ -421,24 +421,15 @@ impl dyn AgentSessionList {
 #[derive(Debug)]
 pub struct AuthRequired {
     pub description: Option<String>,
-    pub provider_id: Option<LanguageModelProviderId>,
 }
 
 impl AuthRequired {
     pub fn new() -> Self {
-        Self {
-            description: None,
-            provider_id: None,
-        }
+        Self { description: None }
     }
 
     pub fn with_description(mut self, description: String) -> Self {
         self.description = Some(description);
-        self
-    }
-
-    pub fn with_language_model_provider(mut self, provider_id: LanguageModelProviderId) -> Self {
-        self.provider_id = Some(provider_id);
         self
     }
 }

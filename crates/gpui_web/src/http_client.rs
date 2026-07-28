@@ -15,11 +15,34 @@ extern "C" {
 
 pub struct FetchHttpClient {
     user_agent: Option<http_client::http::header::HeaderValue>,
+    credentials: FetchCredentials,
 }
 
-impl Default for FetchHttpClient {
-    fn default() -> Self {
-        Self { user_agent: None }
+/// Controls whether browser Fetch requests include credentials.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FetchCredentials {
+    /// Never send credentials in the request or include credentials in the response.
+    Omit,
+    /// Only send and include credentials for same-origin requests. This is the default.
+    #[default]
+    SameOrigin,
+    /// Always include credentials, even for cross-origin requests.
+    Include,
+}
+
+impl FetchHttpClient {
+    // Kept private so that all construction goes through the constructors
+    // below, which are `unsafe` when background threads are enabled.
+    fn build(user_agent: Option<http_client::http::header::HeaderValue>) -> Self {
+        Self {
+            user_agent,
+            credentials: FetchCredentials::default(),
+        }
+    }
+
+    pub fn with_credentials(mut self, credentials: FetchCredentials) -> Self {
+        self.credentials = credentials;
+        self
     }
 }
 
@@ -27,44 +50,46 @@ impl Default for FetchHttpClient {
 impl FetchHttpClient {
     /// # Safety
     ///
-    /// The caller must ensure that the created `FetchHttpClient` is only used in a single thread environment.
+    /// The caller must ensure the client is only used from the main thread:
+    /// the futures returned by [`HttpClient::send`] call browser APIs that do
+    /// not exist on worker threads, so they must never be polled from a task
+    /// spawned on the background executor.
     pub unsafe fn new() -> Self {
-        Self::default()
+        Self::build(None)
     }
 
     /// # Safety
     ///
-    /// The caller must ensure that the created `FetchHttpClient` is only used in a single thread environment.
+    /// The caller must ensure the client is only used from the main thread:
+    /// the futures returned by [`HttpClient::send`] call browser APIs that do
+    /// not exist on worker threads, so they must never be polled from a task
+    /// spawned on the background executor.
     pub unsafe fn with_user_agent(user_agent: &str) -> anyhow::Result<Self> {
-        Ok(Self {
-            user_agent: Some(http_client::http::header::HeaderValue::from_str(
-                user_agent,
-            )?),
-        })
+        Ok(Self::build(Some(
+            http_client::http::header::HeaderValue::from_str(user_agent)?,
+        )))
     }
 }
 
 #[cfg(not(feature = "multithreaded"))]
 impl FetchHttpClient {
     pub fn new() -> Self {
-        Self::default()
+        Self::build(None)
     }
 
     pub fn with_user_agent(user_agent: &str) -> anyhow::Result<Self> {
-        Ok(Self {
-            user_agent: Some(http_client::http::header::HeaderValue::from_str(
-                user_agent,
-            )?),
-        })
+        Ok(Self::build(Some(
+            http_client::http::header::HeaderValue::from_str(user_agent)?,
+        )))
     }
 }
 
 /// Wraps a `!Send` future to satisfy the `Send` bound on `BoxFuture`.
 ///
-/// Safety: only valid in WASM contexts where the `FetchHttpClient` is
-/// confined to a single thread (guaranteed by the caller via unsafe
-/// constructors when `multithreaded` is enabled, or by the absence of
-/// threads when it is not).
+/// Safety: only valid because the `FetchHttpClient` constructors confine the
+/// client to the main thread (via their `unsafe` contract when
+/// `multithreaded` is enabled, or by the absence of threads when it is not),
+/// so the wrapped future is never actually sent across threads.
 struct AssertSend<F>(F);
 
 unsafe impl<F> Send for AssertSend<F> {}
@@ -94,12 +119,18 @@ impl HttpClient for FetchHttpClient {
     ) -> futures::future::BoxFuture<'static, anyhow::Result<http_client::http::Response<AsyncBody>>>
     {
         let (parts, body) = req.into_parts();
+        let credentials = self.credentials;
 
         Box::pin(AssertSend(async move {
             let body_bytes = read_body_to_bytes(body).await?;
 
             let init = web_sys::RequestInit::new();
             init.set_method(parts.method.as_str());
+            init.set_credentials(match credentials {
+                FetchCredentials::Omit => web_sys::RequestCredentials::Omit,
+                FetchCredentials::SameOrigin => web_sys::RequestCredentials::SameOrigin,
+                FetchCredentials::Include => web_sys::RequestCredentials::Include,
+            });
 
             if let Some(redirect_policy) = parts.extensions.get::<RedirectPolicy>() {
                 match redirect_policy {
