@@ -30,16 +30,16 @@ pub enum FetchCredentials {
     Include,
 }
 
-impl Default for FetchHttpClient {
-    fn default() -> Self {
+impl FetchHttpClient {
+    // Kept private so that all construction goes through the constructors
+    // below, which are `unsafe` when background threads are enabled.
+    fn build(user_agent: Option<http_client::http::header::HeaderValue>) -> Self {
         Self {
-            user_agent: None,
+            user_agent,
             credentials: FetchCredentials::default(),
         }
     }
-}
 
-impl FetchHttpClient {
     pub fn with_credentials(mut self, credentials: FetchCredentials) -> Self {
         self.credentials = credentials;
         self
@@ -50,46 +50,46 @@ impl FetchHttpClient {
 impl FetchHttpClient {
     /// # Safety
     ///
-    /// The caller must ensure that the created `FetchHttpClient` is only used in a single thread environment.
+    /// The caller must ensure the client is only used from the main thread:
+    /// the futures returned by [`HttpClient::send`] call browser APIs that do
+    /// not exist on worker threads, so they must never be polled from a task
+    /// spawned on the background executor.
     pub unsafe fn new() -> Self {
-        Self::default()
+        Self::build(None)
     }
 
     /// # Safety
     ///
-    /// The caller must ensure that the created `FetchHttpClient` is only used in a single thread environment.
+    /// The caller must ensure the client is only used from the main thread:
+    /// the futures returned by [`HttpClient::send`] call browser APIs that do
+    /// not exist on worker threads, so they must never be polled from a task
+    /// spawned on the background executor.
     pub unsafe fn with_user_agent(user_agent: &str) -> anyhow::Result<Self> {
-        Ok(Self {
-            user_agent: Some(http_client::http::header::HeaderValue::from_str(
-                user_agent,
-            )?),
-            credentials: FetchCredentials::default(),
-        })
+        Ok(Self::build(Some(
+            http_client::http::header::HeaderValue::from_str(user_agent)?,
+        )))
     }
 }
 
 #[cfg(not(feature = "multithreaded"))]
 impl FetchHttpClient {
     pub fn new() -> Self {
-        Self::default()
+        Self::build(None)
     }
 
     pub fn with_user_agent(user_agent: &str) -> anyhow::Result<Self> {
-        Ok(Self {
-            user_agent: Some(http_client::http::header::HeaderValue::from_str(
-                user_agent,
-            )?),
-            credentials: FetchCredentials::default(),
-        })
+        Ok(Self::build(Some(
+            http_client::http::header::HeaderValue::from_str(user_agent)?,
+        )))
     }
 }
 
 /// Wraps a `!Send` future to satisfy the `Send` bound on `BoxFuture`.
 ///
-/// Safety: only valid in WASM contexts where the `FetchHttpClient` is
-/// confined to a single thread (guaranteed by the caller via unsafe
-/// constructors when `multithreaded` is enabled, or by the absence of
-/// threads when it is not).
+/// Safety: only valid because the `FetchHttpClient` constructors confine the
+/// client to the main thread (via their `unsafe` contract when
+/// `multithreaded` is enabled, or by the absence of threads when it is not),
+/// so the wrapped future is never actually sent across threads.
 struct AssertSend<F>(F);
 
 unsafe impl<F> Send for AssertSend<F> {}
