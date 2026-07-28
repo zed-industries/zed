@@ -1222,16 +1222,18 @@ impl From<SelectedPermissionOutcome> for acp::SelectedPermissionOutcome {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum RequestPermissionOutcome {
     Cancelled,
+    InterruptedByFollowUp,
     Selected(SelectedPermissionOutcome),
 }
 
 impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
     fn from(value: RequestPermissionOutcome) -> Self {
         match value {
-            RequestPermissionOutcome::Cancelled => Self::Cancelled,
+            RequestPermissionOutcome::Cancelled
+            | RequestPermissionOutcome::InterruptedByFollowUp => Self::Cancelled,
             RequestPermissionOutcome::Selected(outcome) => Self::Selected(outcome.into()),
         }
     }
@@ -1262,7 +1264,7 @@ pub enum ToolCallStatus {
     WaitingForConfirmation {
         current_status: acp::ToolCallStatus,
         options: PermissionOptions,
-        respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
+        respond_tx: oneshot::Sender<RequestPermissionOutcome>,
         kind: AuthorizationKind,
     },
     /// The tool call is currently running.
@@ -3401,10 +3403,7 @@ impl AcpThread {
         ));
 
         Ok(cx.spawn(async move |this, cx| {
-            let outcome = match rx.await {
-                Ok(outcome) => RequestPermissionOutcome::Selected(outcome),
-                Err(oneshot::Canceled) => RequestPermissionOutcome::Cancelled,
-            };
+            let outcome = rx.await.unwrap_or(RequestPermissionOutcome::Cancelled);
             this.update(cx, |_this, cx| {
                 cx.emit(AcpThreadEvent::ToolAuthorizationReceived(tool_call_id))
             })
@@ -3465,7 +3464,9 @@ impl AcpThread {
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(outcome).ok();
+            respond_tx
+                .send(RequestPermissionOutcome::Selected(outcome))
+                .ok();
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -3734,7 +3735,7 @@ impl AcpThread {
         self.had_error = false;
 
         let (tx, rx) = oneshot::channel();
-        let cancel_task = self.cancel(cx);
+        let cancel_task = self.cancel_inner(RequestPermissionOutcome::InterruptedByFollowUp, cx);
 
         self.turn_id += 1;
         let turn_id = self.turn_id;
@@ -3893,13 +3894,21 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.cancel_inner(RequestPermissionOutcome::Cancelled, cx)
+    }
+
+    fn cancel_inner(
+        &mut self,
+        permission_outcome: RequestPermissionOutcome,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.cancel_outstanding_elicitations(cx);
 
         let Some(turn) = self.running_turn.take() else {
             return Task::ready(());
         };
-        self.mark_pending_entries_as_canceled(cx);
+        self.mark_pending_entries_as_canceled(permission_outcome, cx);
         self.connection.cancel(&self.session_id, cx);
         cx.emit(AcpThreadEvent::StatusChanged);
 
@@ -3908,11 +3917,15 @@ impl AcpThread {
     }
 
     fn cancel_pending_turn_entries(&mut self, cx: &mut Context<Self>) {
-        self.mark_pending_entries_as_canceled(cx);
+        self.mark_pending_entries_as_canceled(RequestPermissionOutcome::Cancelled, cx);
         self.cancel_outstanding_elicitations(cx);
     }
 
-    fn mark_pending_entries_as_canceled(&mut self, cx: &mut Context<Self>) {
+    fn mark_pending_entries_as_canceled(
+        &mut self,
+        permission_outcome: RequestPermissionOutcome,
+        cx: &mut Context<Self>,
+    ) {
         for (ix, entry) in self.entries.iter_mut().enumerate() {
             match entry {
                 AgentThreadEntry::ToolCall(call) => {
@@ -3923,7 +3936,16 @@ impl AcpThread {
                             | ToolCallStatus::InProgress
                     );
                     if cancel {
-                        call.status = ToolCallStatus::Canceled;
+                        let previous_status =
+                            mem::replace(&mut call.status, ToolCallStatus::Canceled);
+                        if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } =
+                            previous_status
+                            && respond_tx.send(permission_outcome.clone()).is_err()
+                        {
+                            log::debug!(
+                                "Permission request closed before cancellation was delivered"
+                            );
+                        }
                         cx.emit(AcpThreadEvent::EntryUpdated(ix));
                     }
                 }
@@ -6479,7 +6501,8 @@ mod tests {
                 assert_eq!(outcome.option_id, allow_option_id);
                 assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
             }
-            RequestPermissionOutcome::Cancelled => {
+            RequestPermissionOutcome::Cancelled
+            | RequestPermissionOutcome::InterruptedByFollowUp => {
                 panic!("permission request should remain open after duplicate tool call update")
             }
         }
@@ -6591,7 +6614,8 @@ mod tests {
                 assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
                 assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
             }
-            RequestPermissionOutcome::Cancelled => {
+            RequestPermissionOutcome::Cancelled
+            | RequestPermissionOutcome::InterruptedByFollowUp => {
                 panic!("resolved permission request should select an outcome")
             }
         }
@@ -6675,7 +6699,8 @@ mod tests {
                 assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
                 assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
             }
-            RequestPermissionOutcome::Cancelled => {
+            RequestPermissionOutcome::Cancelled
+            | RequestPermissionOutcome::InterruptedByFollowUp => {
                 panic!("permission request should resolve after authorization")
             }
         }
@@ -6729,7 +6754,8 @@ mod tests {
 
         match permission_task.await {
             RequestPermissionOutcome::Cancelled => {}
-            RequestPermissionOutcome::Selected(_) => {
+            RequestPermissionOutcome::InterruptedByFollowUp
+            | RequestPermissionOutcome::Selected(_) => {
                 panic!("cancelled permission request should not select an outcome")
             }
         }
@@ -6791,7 +6817,8 @@ mod tests {
 
         match permission_task.await {
             RequestPermissionOutcome::Cancelled => {}
-            RequestPermissionOutcome::Selected(_) => {
+            RequestPermissionOutcome::InterruptedByFollowUp
+            | RequestPermissionOutcome::Selected(_) => {
                 panic!("terminal tool call update should close pending permission request")
             }
         }
@@ -9477,10 +9504,24 @@ mod tests {
         // Send first message (turn_id=1) - handler will block
         let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 1);
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new("permission", "Needs permission").into(),
+                    PermissionOptions::Flat(Vec::new()),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
 
         // Send second message (turn_id=2) while first is still blocked
         // This calls cancel() which takes turn 1's running_turn and sets turn 2's
         let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+        assert!(matches!(
+            permission_task.await,
+            RequestPermissionOutcome::InterruptedByFollowUp
+        ));
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 2);
 
         let running_turn_after_second_send =
