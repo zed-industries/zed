@@ -78,8 +78,9 @@ could allow privilege escalation - for example, allow an agent to write to a
 file that it should only have read access to.
 
 Sandboxing also only applies the restrictions that the user requested. If an
-agent requests write access to your home directory, sandboxing will (and
-should!) do nothing to prevent an agent adding a malicious key to `$HOME/.ssh`.
+agent requests write access to your home directory, sandboxing will not (and
+should not!) do anything to prevent an agent adding a malicious key to
+`$HOME/.ssh`.
 
 Be careful with what you grant the agent. At any point in time, you can view the
 state of the sandbox by hovering the padlock icon in the top right of the
@@ -231,6 +232,12 @@ after host-specific network access is approved.
 If Bubblewrap is unavailable or cannot create a sandbox in the current environment, Zed may run the command without the OS
 sandbox and show a warning in the tool output.
 
+> **Warning**: On Linux and WSL, restrictions on filesystem objects are
+  determined at *sandbox creation time*. Among other things, this means that an
+  agent given access to a non-Git-repo directory `/foo` could create
+  `/foo/.git`. See [How much can I trust the sandbox?](#trust) for more
+  information on the implications of this.
+
 #### Installing Bubblewrap {#installing-bubblewrap}
 
 Zed needs a runnable, non-setuid `bwrap` binary on your `$PATH`. Installing
@@ -287,11 +294,9 @@ On Windows, Zed Agent sandboxing is supported only when the agent action runs in
   terminal command may write outside sandbox grants when the user has given
   write access to any path that resides on the NTFS drive. This includes the
   current-project grant for projects stored on NTFS. Zed will show a warning
-  when this happens.
-
-  In practice, we believe this is difficult to exploit, but security cannot be
-  guaranteed. See [below](#why-ntfs-compromise) for a more technical
-  explanation. todo! check formatting.
+  when this happens. In practice, we believe this is difficult to exploit, but
+  security cannot be guaranteed. See [below](#why-ntfs-compromise) for a more
+  technical explanation.
 
 Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that
 Bubblewrap needs. Native Windows processes do not currently have the same sandbox integration in Zed, so a native Windows
@@ -321,7 +326,7 @@ matching:
 If a user believes they granted access to `/foo/hello`, but they actually granted
 access to `/bar/world`, then the sandbox has failed.
 
-On Linux, this "filesystem object" is called an `inode`.
+On Linux, this "filesystem object" is called an **inode**.
 
 But `/foo/hello` doesn't refer to an inode. Loosely, it refers to a location
 where an inode might exist. It may refer to one inode at one point in time,
