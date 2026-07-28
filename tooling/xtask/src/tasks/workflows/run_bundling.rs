@@ -215,7 +215,9 @@ pub(crate) fn bundle_windows(
             })
             .add_step(steps::setup_sentry())
             .add_step(steps::clear_target_dir_if_large(platform))
+            .add_step(steps::setup_sccache(platform))
             .add_step(bundle_windows(arch))
+            .add_step(steps::show_sccache_stats(platform))
             .add_step(upload_artifact(&format!("target/{artifact_name}")))
             .add_step(upload_artifact(&format!(
                 "target/{remote_server_artifact_name}"
