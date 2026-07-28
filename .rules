@@ -14,7 +14,7 @@
 * Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
 * When creating new crates, prefer specifying the library root path in `Cargo.toml` using `[lib] path = "...rs"` instead of the default `lib.rs`, to maintain consistent and descriptive naming (e.g., `gpui.rs` or `main.rs`).
 * Avoid creative additions unless explicitly requested
-* Use full words for variable names (no abbreviations like "q" for "queue")
+* Prefer descriptive variable names. Short conventional names are fine only when local context makes them clearer than spelling everything out.
 * Use variable shadowing to scope clones in async contexts for clarity, minimizing the lifetime of borrowed references.
   Example:
   ```rust
@@ -155,17 +155,9 @@ Release Notes:
 - N/A
 ```
 
-# Crash Investigation
-
-## Sentry Integration
-- Crash investigation prompts: `.factory/prompts/crash/investigate.md`
-- Crash fix prompts: `.factory/prompts/crash/fix.md`
-- Fetch crash reports: `script/sentry-fetch <issue-id>`
-- Generate investigation prompt from crash: `script/crash-to-prompt <issue-id>`
-
 # Rules Hygiene
 
-These `.rules` files are read by every agent session. Keep them high-signal.
+Zed loads the first project rules file it finds in `RULES_FILE_NAMES` order; in this repo that is `.rules`. Keep `.rules` high-signal because it is always included for Zed agent sessions in this worktree.
 
 ## After any agentic session
 If you discover a non-obvious pattern that would help future sessions, include a **"Suggested .rules additions"** heading in your PR description with the proposed text. Do **not** edit `.rules` inline during normal feature/fix work. Reviewers decide what gets merged.
