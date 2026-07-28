@@ -527,6 +527,7 @@ pub(crate) struct Vim {
 
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
+    pub(crate) helix_append_state: Option<HelixAppendState>,
     pub(crate) undo_modes: HashMap<TransactionId, Mode>,
     pub(crate) undo_last_line_tx: Option<TransactionId>,
     extended_pending_selection_id: Option<usize>,
@@ -539,6 +540,13 @@ pub(crate) struct Vim {
     last_command: Option<String>,
     running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Captured by `helix_append` so that escape can restore the pre-append
+/// selections when nothing was inserted, matching Helix.
+pub(crate) struct HelixAppendState {
+    pub(crate) selections_before_append: Vec<Range<Anchor>>,
+    pub(crate) cursors_after_append: Vec<Range<Anchor>>,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -588,6 +596,7 @@ impl Vim {
             current_tx: None,
             undo_last_line_tx: None,
             current_anchor: None,
+            helix_append_state: None,
             extended_pending_selection_id: None,
             undo_modes: HashMap::default(),
 
@@ -1210,6 +1219,9 @@ impl Vim {
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
+            if mode != Mode::Insert {
+                self.helix_append_state.take();
+            }
             self.update_editor(cx, |_, editor, _| {
                 editor.clear_selection_drag_state();
             });
