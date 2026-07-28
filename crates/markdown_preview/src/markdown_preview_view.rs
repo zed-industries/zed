@@ -61,6 +61,13 @@ pub struct MarkdownPreviewView {
     pending_update_task: Option<Task<Result<()>>>,
     hovered_url: Option<SharedString>,
     mode: MarkdownPreviewMode,
+    /// True when the preview tab opens by default (via `open_preview_on_file_open`),
+    /// making it the file's only tab. Such previews take over the editor tab's responsibilities: claiming the
+    /// file's project entry (so reopening the path activates them) and
+    /// reporting dirty state. Companion previews opened next to an editor tab
+    /// must not claim the entry, or opening the file's path would activate
+    /// the preview instead of an editor.
+    replaces_editor: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -72,17 +79,22 @@ pub enum MarkdownPreviewMode {
 }
 
 impl MarkdownPreviewMode {
-    fn to_db(self) -> i64 {
-        match self {
-            Self::Default => 0,
-            Self::Follow => 1,
+    // 2 encodes "Default + replaces-editor" so file-open previews survive
+    // workspace restoration without a schema migration; 0 and 1 keep their
+    // old meanings and must not be repurposed.
+    fn to_db(self, replaces_editor: bool) -> i64 {
+        match (self, replaces_editor) {
+            (Self::Default, false) => 0,
+            (Self::Follow, _) => 1,
+            (Self::Default, true) => 2,
         }
     }
 
-    fn from_db(value: i64) -> Self {
+    fn from_db(value: i64) -> (Self, bool) {
         match value {
-            1 => Self::Follow,
-            _ => Self::Default,
+            1 => (Self::Follow, false),
+            2 => (Self::Default, true),
+            _ => (Self::Default, false),
         }
     }
 }
@@ -329,6 +341,7 @@ impl MarkdownPreviewView {
             pending_update_task: None,
             hovered_url: None,
             mode,
+            replaces_editor: false,
         };
 
         this.set_editor(active_editor, window, cx);
@@ -451,6 +464,7 @@ impl MarkdownPreviewView {
         let project = workspace.project().clone();
         let editor = cx.new(|cx| Editor::for_buffer(buffer.clone(), Some(project), window, cx));
         let preview = Self::create_markdown_view(workspace, editor, window, cx);
+        preview.update(cx, |preview, _| preview.replaces_editor = true);
 
         pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(preview.clone()), true, true, None, window, cx);
@@ -1190,14 +1204,16 @@ impl workspace::item::ProjectItem for MarkdownPreviewView {
             .unwrap_or_else(WeakEntity::new_invalid);
         let language_registry = project.read(cx).languages().clone();
         let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
-        Self::build(
+        let mut this = Self::build(
             MarkdownPreviewMode::Default,
             editor,
             workspace,
             language_registry,
             window,
             cx,
-        )
+        );
+        this.replaces_editor = true;
+        this
     }
 }
 
@@ -1547,15 +1563,20 @@ impl Item for MarkdownPreviewView {
         cx: &App,
         f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
+        if !self.replaces_editor {
+            return;
+        }
         if let Some(state) = &self.active_editor {
             state.editor.read(cx).for_each_project_item(cx, f);
         }
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
-        self.active_editor
-            .as_ref()
-            .is_some_and(|state| state.editor.read(cx).is_dirty(cx))
+        self.replaces_editor
+            && self
+                .active_editor
+                .as_ref()
+                .is_some_and(|state| state.editor.read(cx).is_dirty(cx))
     }
 
     fn as_searchable(
@@ -1605,20 +1626,22 @@ impl Render for MarkdownPreviewView {
             .min_h_0()
             .relative()
             .bg(bg_color)
-            .child(
-                h_flex().px_2().pt_2().child(
-                    Button::new("open-markdown-source", "Markdown")
-                        .label_size(LabelSize::Small)
-                        .start_icon(
-                            Icon::new(IconName::File)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_markdown_file_source(&OpenSource, window, cx);
-                        })),
-                ),
-            )
+            .when(self.replaces_editor, |this| {
+                this.child(
+                    h_flex().px_2().pt_2().child(
+                        Button::new("open-markdown-source", "Markdown")
+                            .label_size(LabelSize::Small)
+                            .start_icon(
+                                Icon::new(IconName::File)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_markdown_file_source(&OpenSource, window, cx);
+                            })),
+                    ),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -1896,7 +1919,7 @@ impl SerializableItem for MarkdownPreviewView {
             let (abs_path, mode_value) = db
                 .get_preview(item_id, workspace_id)?
                 .context("No markdown preview entry found")?;
-            let mode = MarkdownPreviewMode::from_db(mode_value);
+            let (mode, replaces_editor) = MarkdownPreviewMode::from_db(mode_value);
 
             let (worktree, relative_path) = project
                 .update(cx, |project, cx| {
@@ -1919,7 +1942,16 @@ impl SerializableItem for MarkdownPreviewView {
                 let language_registry = project.read(cx).languages().clone();
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
-                MarkdownPreviewView::new(mode, editor, workspace, language_registry, window, cx)
+                let view = MarkdownPreviewView::new(
+                    mode,
+                    editor,
+                    workspace,
+                    language_registry,
+                    window,
+                    cx,
+                );
+                view.update(cx, |view, _| view.replaces_editor = replaces_editor);
+                view
             })
         })
     }
@@ -1953,7 +1985,7 @@ impl SerializableItem for MarkdownPreviewView {
             .worktree_for_id(worktree_id, cx)?
             .read(cx)
             .absolutize(file.path());
-        let mode = self.mode.to_db();
+        let mode = self.mode.to_db(self.replaces_editor);
         let db = persistence::MarkdownPreviewDb::global(cx);
         Some(cx.background_spawn(async move {
             db.save_preview(item_id, workspace_id, abs_path, mode).await
@@ -3281,6 +3313,76 @@ mod tests {
                         "opener should decline non-markdown buffers"
                     );
                 });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn opening_path_with_classic_preview_open_opens_editor_not_preview(
+        cx: &mut TestAppContext,
+    ) {
+        let (multi_workspace, editor) = open_markdown_file(cx, "note.md", "# Note\n").await;
+        let _preview = open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        let project_path = multi_workspace
+            .update(cx, |_, _, cx| {
+                editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .read(cx)
+                    .file()
+                    .map(|file| project::ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    })
+                    .unwrap()
+            })
+            .unwrap();
+
+        // Leave only the preview tab open, then re-open the file's path.
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(editor.entity_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Regression test: classic previews must not report the file's project
+        // entry, or `Pane::open_item` would match the preview tab and opening
+        // the path via the file finder or project panel would activate the
+        // preview instead of opening an editor.
+        let item = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(
+            item.downcast::<Editor>().is_some(),
+            "opening the file's path should open an editor, not activate the preview"
+        );
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                assert_eq!(
+                    workspace.active_pane().read(cx).items_len(),
+                    2,
+                    "the preview tab should remain open alongside the new editor"
+                );
             })
             .unwrap();
     }
