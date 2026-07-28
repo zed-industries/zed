@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
+use editor::items::open_resolved_target;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
@@ -14,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
     ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point, px,
 };
-use language::{LanguageRegistry, Point};
+use language::LanguageRegistry;
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
     MarkdownOptions, MarkdownStyle,
@@ -29,9 +30,11 @@ use ui::{ContextMenu, LinkPreview, WithScrollbar, prelude::*, right_click_menu};
 use util::{
     ResultExt,
     markdown::{source_position_from_fragment, split_local_url_fragment},
+    paths::PathWithPosition,
 };
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
-use workspace::notifications::NotifyResultExt;
+use workspace::notifications::{NotifyResultExt, NotifyTaskExt};
+use workspace::path_link::{PathMatching, resolve_open_target};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
@@ -1093,20 +1096,36 @@ fn open_preview_url(
 ) {
     let decoded_path = urlencoding::decode(&url).unwrap_or_else(|_| Cow::Borrowed(&url));
 
-    if let Some(row) = fragment
-        .as_deref()
-        .and_then(|fragment| fragment.strip_prefix('L'))
-        .and_then(source_position_from_fragment)
-        .map(|(row, _)| row)
-        && open_preview_path_at_line(
-            decoded_path.to_string(),
-            base_directory.clone(),
+    // Only `://` URLs skip position handling (a scheme check would misclassify `main.rs:2`); ambiguous links like `tel:123` are tried as files first, then fall back to the URL handler.
+    let path_with_position = if !decoded_path.contains("://") {
+        if PathWithPosition::parse_str(&decoded_path).row.is_some() {
+            Some(decoded_path.to_string())
+        } else {
+            fragment
+                .as_deref()
+                .and_then(|fragment| fragment.strip_prefix('L'))
+                .and_then(source_position_from_fragment)
+                .map(|(row, column)| {
+                    if column == 0 {
+                        format!("{decoded_path}:{}", row + 1)
+                    } else {
+                        format!("{decoded_path}:{}:{}", row + 1, column + 1)
+                    }
+                })
+        }
+    } else {
+        None
+    };
+
+    if let Some(path_with_position) = path_with_position {
+        open_preview_path_with_position(
+            path_with_position,
+            decoded_path.into_owned(),
+            base_directory,
             workspace,
-            row,
             window,
             cx,
-        )
-    {
+        );
         return;
     }
 
@@ -1119,75 +1138,41 @@ fn open_preview_url(
     }
 }
 
-enum PreviewPathTarget {
-    Project(ProjectPath),
-    Absolute(PathBuf),
-}
-
-fn open_preview_path_at_line(
-    path: String,
+fn open_preview_path_with_position(
+    path_with_position: String,
+    fallback_path: String,
     base_directory: Option<PathBuf>,
     workspace: &WeakEntity<Workspace>,
-    row: u32,
     window: &mut Window,
     cx: &mut App,
-) -> bool {
-    let Some(workspace) = workspace.upgrade() else {
-        return false;
-    };
-    let project = workspace.read(cx).project().clone();
-    let path_style = project.read(cx).path_style(cx);
-    let target = if path_style.is_absolute(&path) {
-        Some(PreviewPathTarget::Absolute(PathBuf::from(path)))
-    } else if project.read(cx).is_local()
-        && let Some(resolved) = base_directory
-            .as_deref()
-            .map(|base_directory| base_directory.join(&path))
-        && resolved.exists()
-    {
-        Some(PreviewPathTarget::Absolute(resolved))
-    } else {
-        project
-            .update(cx, |project, cx| project.find_project_path(&path, cx))
-            .map(PreviewPathTarget::Project)
-    };
-    let Some(target) = target else {
-        return false;
-    };
+) {
+    let open_target = resolve_open_target(
+        workspace,
+        PathMatching::Exact,
+        &path_with_position,
+        base_directory.as_deref(),
+        cx,
+    );
+    let workspace = workspace.clone();
+    let workspace_for_error = workspace.clone();
+    let task = window.spawn(cx, async move |cx| {
+        let opened = if let Some(open_target) = open_target.await {
+            open_resolved_target(&workspace, &open_target, cx)
+                .await
+                .context("opening Markdown preview link")?
+        } else {
+            false
+        };
 
-    let task = workspace.update(cx, |workspace, cx| match target {
-        PreviewPathTarget::Project(project_path) => {
-            workspace.open_path(project_path, None, true, window, cx)
-        }
-        PreviewPathTarget::Absolute(abs_path) => workspace.open_abs_path(
-            abs_path,
-            workspace::OpenOptions {
-                focus: Some(true),
-                ..Default::default()
-            },
-            window,
-            cx,
-        ),
-    });
-    window
-        .spawn(cx, async move |cx| {
-            let item = task.await?;
-            let Some(editor) = item.downcast::<Editor>() else {
-                return anyhow::Ok(());
-            };
-            editor.update_in(cx, |editor, window, cx| {
-                let point = Point::new(row, 0);
-                editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::center()),
-                    window,
-                    cx,
-                    |selections| selections.select_ranges([point..point]),
-                );
+        if !opened {
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.open_url_or_file(&fallback_path, base_directory.as_deref(), window, cx);
             })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    true
+        }
+
+        anyhow::Ok(())
+    });
+    task.detach_and_notify_err(workspace_for_error, window, cx);
 }
 
 fn resolve_preview_image(
@@ -1853,13 +1838,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn opens_preview_file_link_at_line(cx: &mut TestAppContext) {
+    async fn opens_preview_file_links_at_positions(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/project"),
-            json!({"src": {"main.rs": "first\nsecond\nthird\n"}}),
+            json!({
+                "docs": {"guide.md": "alpha\nbeta\ngamma\n"},
+                "src": {"main.rs": "first\nsecond\nthird\n"}
+            }),
         )
         .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
@@ -1871,9 +1859,9 @@ mod tests {
 
         multi_workspace.update_in(cx, |_, window, cx| {
             open_preview_url(
-                "src/main.rs".into(),
-                Some("L2".into()),
+                "../src/main.rs:2:4".into(),
                 None,
+                Some(PathBuf::from(path!("/project/docs"))),
                 &workspace_weak,
                 window,
                 cx,
@@ -1889,8 +1877,101 @@ mod tests {
         });
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(1, 3)
+            );
         });
+
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "../src/main.rs".into(),
+                Some("L3".into()),
+                Some(PathBuf::from(path!("/project/docs"))),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(2, 0)
+            );
+        });
+
+        // `guide.md:2` must open the sibling file at line 2 despite `guide.md:` being a valid URI scheme prefix.
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "guide.md:2".into(),
+                None,
+                Some(PathBuf::from(path!("/project/docs"))),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let guide_editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("guide.md should be open in an editor")
+        });
+        guide_editor.update_in(cx, |editor, window, cx| {
+            let file_path = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file().map(|file| file.path().clone()))
+                .expect("opened editor should have a file");
+            assert_eq!(file_path.as_ref(), rel_path("docs/guide.md"));
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(1, 0)
+            );
+        });
+
+        // An unresolved link must not open an unrelated file that merely shares its trailing path components.
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "main.rs:2".into(),
+                None,
+                Some(PathBuf::from(path!("/project/docs"))),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.opened_url().as_deref(), Some("main.rs:2"));
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(2, 0),
+                "broken link must not move the cursor in a suffix-matching file"
+            );
+        });
+
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "tel:123".into(),
+                None,
+                Some(PathBuf::from(path!("/project/docs"))),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.opened_url().as_deref(), Some("tel:123"));
     }
 
     #[gpui::test]
