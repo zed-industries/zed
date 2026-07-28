@@ -458,7 +458,7 @@
       "alt-e": "editor::MoveToEndOfLargerSyntaxNode",
 
       // Changes
-      "shift-r": "editor::Paste",
+      "shift-r": "vim::HelixReplaceWithYanked",
       "`": "vim::ConvertToLowerCase",
       "alt-`": "vim::ConvertToUpperCase",
       "insert": "vim::InsertBefore", // not a helix default
