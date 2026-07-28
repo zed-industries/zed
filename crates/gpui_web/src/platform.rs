@@ -1,6 +1,7 @@
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
 use crate::events::EventListenerHandle;
+use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
@@ -34,6 +35,7 @@ static BUNDLED_FONTS: &[&[u8]] = &[
 
 pub struct WebPlatform {
     browser_window: web_sys::Window,
+    dispatcher: Arc<WebDispatcher>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
@@ -67,7 +69,7 @@ impl WebPlatform {
             allow_multi_threading,
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
         let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
             "IBM Plex Sans",
         ));
@@ -92,6 +94,7 @@ impl WebPlatform {
 
         Self {
             browser_window,
+            dispatcher,
             background_executor,
             foreground_executor,
             text_system,
@@ -103,6 +106,19 @@ impl WebPlatform {
             last_cursor_css,
             _cursor_restore_listeners: cursor_restore_listeners,
         }
+    }
+
+    /// Returns an HTTP client that runs browser Fetch operations on this platform's main thread.
+    pub fn fetch_http_client(&self) -> FetchHttpClient {
+        FetchHttpClient::new(self.dispatcher.clone())
+    }
+
+    /// Returns a browser Fetch HTTP client with the given reported user agent.
+    pub fn fetch_http_client_with_user_agent(
+        &self,
+        user_agent: &str,
+    ) -> anyhow::Result<FetchHttpClient> {
+        FetchHttpClient::with_user_agent(self.dispatcher.clone(), user_agent)
     }
 }
 
