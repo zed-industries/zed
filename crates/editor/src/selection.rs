@@ -1817,7 +1817,7 @@ impl Editor {
                     return None;
                 }
 
-                let buffer_row = DisplayPoint::new(row, 0).to_point(display_map).row;
+                let buffer_row = row.as_display_point().to_point(display_map).row;
                 if last_buffer_row == Some(buffer_row) {
                     return None;
                 }
