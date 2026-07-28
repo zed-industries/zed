@@ -262,6 +262,11 @@ pkgs.testers.nixosTest {
         "convert -version | head -n 1; "
         "} > /tmp/gpui-i3-artifacts/package-versions.txt"
     )
+    machine.succeed(
+        "runuser -u gpui-test -- env "
+        "DISPLAY=:0 XAUTHORITY=/home/gpui-test/.Xauthority "
+        "i3-msg 'shmlog on'"
+    )
 
     status, output = machine.execute(
         "runuser -u gpui-test -- env "
@@ -289,6 +294,11 @@ pkgs.testers.nixosTest {
     )
     machine.execute(
         "journalctl --no-pager -b > /tmp/gpui-i3-artifacts/system-journal.log"
+    )
+    machine.execute(
+        "runuser -u gpui-test -- env "
+        "DISPLAY=:0 XAUTHORITY=/home/gpui-test/.Xauthority "
+        "i3-dump-log > /tmp/gpui-i3-artifacts/i3.log 2>&1"
     )
     machine.copy_from_vm("/tmp/gpui-i3-artifacts", os.environ["out"])
 
