@@ -19,17 +19,22 @@ pub struct Keystroke {
     /// the state of the modifier keys at the time the keystroke was generated
     pub modifiers: Modifiers,
 
-    /// key is the character printed on the key that was pressed
-    /// e.g. for option-s, key is "s"
-    /// On layouts that do not have ascii keys (e.g. Thai)
-    /// this will be the ASCII-equivalent character (q instead of ๆ),
-    /// and the typed character will be present in key_char.
+    /// The canonical identity used for keybinding matching and display.
+    /// For character-oriented layouts this is the layout-resolved key. On
+    /// layouts without a complete ASCII alphabet this is the key from the
+    /// corresponding US keyboard position.
     pub key: String,
 
-    /// key_char is the character that could have been typed when
-    /// this binding was pressed.
-    /// e.g. for s this is "s", for option-s "ß", and cmd-s None
+    /// Text produced by the active layout and modifier state, before IME
+    /// processing. For example, `s` produces "s", option-s may produce "ß",
+    /// and control-s produces no text.
     pub key_char: Option<String>,
+
+    /// The key assigned by the active layout when it differs from `key`.
+    /// This preserves bindings to non-ASCII layout keys when `key` uses a
+    /// layout-independent binding identity.
+    #[serde(default)]
+    pub layout_key: Option<Box<str>>,
 }
 
 /// Represents a keystroke that can be used in keybindings and displayed to the user.
@@ -80,11 +85,28 @@ impl Keystroke {
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
     pub fn should_match(&self, target: &KeybindingKeystroke) -> bool {
+        if let Some(layout_key) = self
+            .layout_key
+            .as_ref()
+            .filter(|layout_key| !layout_key.is_ascii())
+            && target.inner.key == layout_key.as_ref()
+            && target.inner.modifiers == self.modifiers
+        {
+            return true;
+        }
+
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
             .as_ref()
             .filter(|key_char| key_char != &&self.key)
+            .filter(|key_char| {
+                self.layout_key.as_ref().is_none_or(|layout_key| {
+                    !(layout_key.as_ref() == key_char.as_str()
+                        && key_char.is_ascii()
+                        && self.key.is_ascii())
+                })
+            })
         {
             let ime_modifiers = Modifiers {
                 control: self.modifiers.control,
@@ -216,6 +238,7 @@ impl Keystroke {
             modifiers,
             key,
             key_char,
+            layout_key: None,
         })
     }
 

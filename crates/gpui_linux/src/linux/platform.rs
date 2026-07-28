@@ -1116,6 +1116,7 @@ pub(super) fn keystroke_from_xkb(
         modifiers,
         key,
         key_char,
+        layout_key: None,
     }
 }
 

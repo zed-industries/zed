@@ -5020,6 +5020,7 @@ impl Window {
                     keystroke = Some(Keystroke {
                         key: key.to_string(),
                         key_char: None,
+                        layout_key: None,
                         modifiers: Modifiers::default(),
                     });
                 }

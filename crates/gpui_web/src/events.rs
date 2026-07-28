@@ -359,6 +359,7 @@ impl WebWindowInner {
                 modifiers,
                 key,
                 key_char: key_char.clone(),
+                layout_key: None,
             };
 
             let result = this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
@@ -425,6 +426,7 @@ impl WebWindowInner {
                 modifiers,
                 key,
                 key_char,
+                layout_key: None,
             };
 
             let result = this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
