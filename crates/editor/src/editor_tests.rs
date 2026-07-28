@@ -37776,6 +37776,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                     x: 0.,
                     y: scroll_offset,
                 },
+                None,
                 window,
                 cx,
             );
