@@ -1489,19 +1489,17 @@ fn open_markdown_link_in_preview(
                 Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
             });
             let preview = MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
-            // With open_preview_on_file_open enabled, previews are the user's
-            // markdown tabs: this link-opened preview is the file's only tab,
-            // so it takes over the editor tab's responsibilities (entry claim,
-            // dirty state). With the setting off, keep the pre-existing
-            // behavior where opening the path still opens a text editor.
+
             if MarkdownPreviewSettings::get_global(cx).open_preview_on_file_open {
                 preview.update(cx, |preview, _| preview.replaces_editor = true);
             }
+
             let pane = source_view
                 .as_ref()
                 .and_then(|view| view.upgrade())
                 .and_then(|view| workspace.pane_for(&view))
                 .unwrap_or_else(|| workspace.active_pane().clone());
+
             pane.update(cx, |pane, cx| {
                 pane.add_item(Box::new(preview.clone()), true, true, None, window, cx);
             });
