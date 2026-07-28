@@ -58,6 +58,14 @@ pub fn sandbox_git_dirs(project: &Project, cx: &App) -> Vec<PathBuf> {
         let worktree_abs_path = worktree.abs_path();
         // Protect `<worktree>/.git` even when it doesn't exist yet, so a command
         // can't `git init` and then write to the freshly created metadata.
+        //
+        // We don't gate this on the worktree's scanned root being a directory:
+        // that state can be stale/pending, and for a *single-file* worktree
+        // (e.g. `settings.json` opened on its own) this synthesizes
+        // `settings.json/.git`, which can never exist. That impossible path is
+        // resolved authoritatively at capture time — the real filesystem
+        // reports `NotADirectory`, and `SandboxWrap::to_policy` skips a
+        // protected path that can't exist — so it never reaches enforcement.
         git_dirs.push(worktree_abs_path.join(".git"));
         if let Some(root_repo_common_dir) = worktree.root_repo_common_dir() {
             git_dirs.push(root_repo_common_dir.to_path_buf());

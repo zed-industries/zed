@@ -248,29 +248,31 @@ impl SandboxWrap {
     /// security-relevant event instead of running with the grant quietly
     /// missing.
     ///
-    /// Protected paths are the one exception: a protected path that no longer
-    /// exists protects nothing, so `NotFound` skips it; any other capture error
-    /// still fails (dropping a protection that might exist would fail *open*).
+    /// Protected paths, by contrast, are **best-effort**: we protect only the
+    /// ones that exist at creation time (`capture` succeeding *is* the existence
+    /// check), and silently drop the rest. Unlike a writable grant, a protection
+    /// can't be materialized — you can't pin the inode of a path that isn't
+    /// there — and there is an inherent, *accepted* loophole regardless: a
+    /// command in a non-git directory can `git init` and write hooks into a
+    /// `.git` that didn't exist when the sandbox was built. Since the protection
+    /// is defeatable that way no matter what, failing sandbox creation over a
+    /// currently-absent (or otherwise uncapturable) `.git` would only break
+    /// legitimate cases — non-git projects, single-file worktrees whose
+    /// synthesized `settings.json/.git` routes through a file — without closing
+    /// the hole. So we drop and move on.
     fn to_policy(&self) -> Result<sandbox::SandboxPolicy> {
-        let mut protected_paths = Vec::new();
-        for path in &self.protected_paths {
-            match sandbox::HostFilesystemLocation::capture(path) {
-                Ok(location) => protected_paths.push(location),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(anyhow::anyhow!(error).context(format!(
-                        "cannot capture protected sandbox path `{}`",
-                        path.display()
-                    )));
-                }
-            }
-        }
+        let protected_paths = self
+            .protected_paths
+            .iter()
+            .filter_map(|path| sandbox::HostFilesystemLocation::capture(path).ok())
+            .collect::<Vec<_>>();
         let fs = if self.allow_fs_write {
             sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
         } else {
             // Project worktree paths are captured fresh; user-approved grants are
             // rebuilt via the verifying reopen (or captured when legacy bare
-            // strings) through `granted_write_path_to_location`.
+            // strings) through `granted_write_path_to_location`. A path that
+            // can't be captured fails the whole construction (never created).
             let mut locations = Vec::new();
             for path in &self.writable_paths {
                 let location = sandbox::HostFilesystemLocation::capture(path).map_err(|error| {
@@ -671,7 +673,8 @@ mod tests {
     /// *created* missing write grants — famously turning a granted
     /// `~/.config/zed/AGENTS.md` file path into a directory. A grant whose
     /// target no longer exists must fail policy construction with an error
-    /// naming it, and nothing may be created.
+    /// naming it, and nothing may be created — a required safety grant that
+    /// can't be honored must stop the command, not silently shrink its access.
     #[cfg(target_os = "linux")]
     #[test]
     fn to_policy_fails_on_missing_grant_and_never_creates_it() {
@@ -721,23 +724,33 @@ mod tests {
         );
     }
 
-    /// Protected paths are the exception: a protected path that no longer
-    /// exists protects nothing, so it is skipped rather than failing the whole
-    /// policy.
+    /// Protected paths are best-effort: an uncapturable one is dropped, never
+    /// fatal. That covers a missing path (`NotFound`) and one routed through a
+    /// regular file (`NotADirectory`) — the latter is the synthesized `.git` of
+    /// a single-file worktree (e.g. `settings.json/.git`). Unlike a writable
+    /// grant, a protection can't be materialized, and `.git` protection has an
+    /// inherent accepted loophole (`git init`), so failing here would only break
+    /// legitimate cases. Unit-level companion to the `settings.json/.git` NixOS
+    /// check.
     #[cfg(target_os = "linux")]
     #[test]
-    fn to_policy_skips_missing_protected_path() {
+    fn to_policy_skips_uncapturable_protected_paths() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
         let writable = temp_dir.path().join("writable");
         std::fs::create_dir(&writable).expect("create writable dir");
+        let single_file_root = temp_dir.path().join("settings.json");
+        std::fs::write(&single_file_root, b"{}").expect("create single-file worktree root");
 
         let wrap = SandboxWrap {
             writable_paths: vec![writable],
-            protected_paths: vec![temp_dir.path().join("no-such-.git")],
+            protected_paths: vec![
+                temp_dir.path().join("no-such-.git"),
+                single_file_root.join(".git"),
+            ],
             ..Default::default()
         };
 
         wrap.to_policy()
-            .expect("a missing protected path must be skipped, not fail the policy");
+            .expect("uncapturable protected paths must be dropped, not fail the policy");
     }
 }

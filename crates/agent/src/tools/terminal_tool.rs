@@ -809,11 +809,11 @@ async fn run_terminal_tool(
                     Ok(()) => Some(wrap),
                     Err(error) => {
                         // Off Linux the probe only fails when the policy itself
-                        // can't be built (e.g. an approved write grant no longer
-                        // exists or fails its verifying reopen). Running the
-                        // command anyway would silently drop access the user
-                        // approved — or, worse, run unsandboxed — so fail
-                        // closed with the reason instead.
+                        // can't be built (e.g. a required write grant or `.git`
+                        // protection no longer exists or fails its verifying
+                        // reopen). Running the command anyway would silently
+                        // drop access the user approved — or a safety-critical
+                        // protection — so fail closed with the reason instead.
                         log::warn!(
                             "Failed to create a sandbox for an agent terminal command: {error:?}"
                         );

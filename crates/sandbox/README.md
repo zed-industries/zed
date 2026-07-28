@@ -32,6 +32,8 @@ This can be mitigated by:
   access to those paths can be escalated to unsandboxed code execution via hooks,
   `$EDITOR`, and other mechanisms
 
+This is not foolproof though - for example, on linux, it's not possible to protect `.git` if it doesn't already exist, and so 
+
 ## Implementation
 
 The implementations are highly platform-specific:
