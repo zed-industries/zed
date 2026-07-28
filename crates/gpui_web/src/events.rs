@@ -1,19 +1,86 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, DispatchEventResult, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, point, px,
+    Capslock, DispatchEventResult, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    TouchPhase, point, px,
 };
-use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
 
 use crate::window::WebWindowInner;
 
 pub struct WebEventListeners {
-    #[allow(dead_code)]
-    closures: Vec<Closure<dyn FnMut(JsValue)>>,
+    _handles: Vec<EventListenerHandle>,
+}
+
+/// A DOM event listener that is removed from its target when dropped.
+///
+/// Dropping the `Closure` alone would leave the listener attached to the DOM
+/// pointing at a freed function; the next event would then throw "closure
+/// invoked after being dropped". Keeping the target alongside the closure
+/// lets `Drop` unregister the listener first.
+pub(crate) struct EventListenerHandle {
+    target: web_sys::EventTarget,
+    event_name: &'static str,
+    closure: Closure<dyn FnMut(JsValue)>,
+}
+
+impl EventListenerHandle {
+    pub(crate) fn add(
+        target: &web_sys::EventTarget,
+        event_name: &'static str,
+        handler: impl FnMut(JsValue) + 'static,
+    ) -> Self {
+        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        target
+            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
+            .ok();
+        Self {
+            target: target.clone(),
+            event_name,
+            closure,
+        }
+    }
+
+    /// Registers with `{passive: false}` so that `preventDefault()` works.
+    /// Needed for events like `wheel` which are passive by default in modern
+    /// browsers. Removal does not need to match the `passive` option, so
+    /// `Drop` works the same as for [`EventListenerHandle::add`].
+    fn add_non_passive(
+        target: &web_sys::EventTarget,
+        event_name: &'static str,
+        handler: impl FnMut(JsValue) + 'static,
+    ) -> Self {
+        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        let target_js: &JsValue = target.as_ref();
+        let callback_js: &JsValue = closure.as_ref();
+        let options = js_sys::Object::new();
+        js_sys::Reflect::set(&options, &"passive".into(), &false.into()).ok();
+        if let Ok(add_fn_val) = js_sys::Reflect::get(target_js, &"addEventListener".into()) {
+            if let Ok(add_fn) = add_fn_val.dyn_into::<js_sys::Function>() {
+                add_fn
+                    .call3(target_js, &event_name.into(), callback_js, &options)
+                    .ok();
+            }
+        }
+        Self {
+            target: target.clone(),
+            event_name,
+            closure,
+        }
+    }
+}
+
+impl Drop for EventListenerHandle {
+    fn drop(&mut self) {
+        self.target
+            .remove_event_listener_with_callback(
+                self.event_name,
+                self.closure.as_ref().unchecked_ref(),
+            )
+            .ok();
+    }
 }
 
 pub(crate) struct ClickState {
@@ -52,7 +119,7 @@ impl ClickState {
 
 impl WebWindowInner {
     pub fn register_event_listeners(self: &Rc<Self>) -> WebEventListeners {
-        let mut closures = vec![
+        let mut handles = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
             self.register_pointer_move(),
@@ -61,7 +128,6 @@ impl WebWindowInner {
             self.register_context_menu(),
             self.register_dragover(),
             self.register_drop(),
-            self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
             self.register_paste(),
@@ -71,71 +137,65 @@ impl WebWindowInner {
             self.register_focus(),
             self.register_blur(),
             self.register_pointer_enter(),
-            self.register_pointer_leave_hover(),
         ];
-        closures.extend(self.register_visibility_change());
-        closures.extend(self.register_appearance_change());
+        handles.extend(self.register_visibility_change());
+        handles.extend(self.register_appearance_change());
+        handles.extend(self.register_fullscreen_change());
 
-        WebEventListeners { closures }
+        WebEventListeners { _handles: handles }
     }
 
     fn listen(
         self: &Rc<Self>,
-        event_name: &str,
+        event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
-    ) -> Closure<dyn FnMut(JsValue)> {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
-        self.canvas
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
-            .ok();
-        closure
+    ) -> EventListenerHandle {
+        EventListenerHandle::add(self.canvas.as_ref(), event_name, handler)
     }
 
     fn listen_input(
         self: &Rc<Self>,
-        event_name: &str,
+        event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
-    ) -> Closure<dyn FnMut(JsValue)> {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
-        self.input_element
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
-            .ok();
-        closure
+    ) -> EventListenerHandle {
+        EventListenerHandle::add(self.input_element.as_ref(), event_name, handler)
     }
 
-    /// Registers a listener with `{passive: false}` so that `preventDefault()` works.
-    /// Needed for events like `wheel` which are passive by default in modern browsers.
     fn listen_non_passive(
         self: &Rc<Self>,
-        event_name: &str,
+        event_name: &'static str,
         handler: impl FnMut(JsValue) + 'static,
-    ) -> Closure<dyn FnMut(JsValue)> {
-        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
-        let canvas_js: &JsValue = self.canvas.as_ref();
-        let callback_js: &JsValue = closure.as_ref();
-        let options = js_sys::Object::new();
-        js_sys::Reflect::set(&options, &"passive".into(), &false.into()).ok();
-        if let Ok(add_fn_val) = js_sys::Reflect::get(canvas_js, &"addEventListener".into()) {
-            if let Ok(add_fn) = add_fn_val.dyn_into::<js_sys::Function>() {
-                add_fn
-                    .call3(canvas_js, &event_name.into(), callback_js, &options)
-                    .ok();
-            }
-        }
-        closure
+    ) -> EventListenerHandle {
+        EventListenerHandle::add_non_passive(self.canvas.as_ref(), event_name, handler)
     }
 
     fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
-        let mut borrowed = self.callbacks.borrow_mut();
-        borrowed.input.as_mut().map(|callback| callback(input))
+        self.with_callback(|callbacks| &mut callbacks.input, |callback| callback(input))
     }
 
-    fn register_pointer_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    /// Records the latest modifier state and reports whether it changed, so
+    /// that `ModifiersChanged` is only dispatched on actual transitions
+    /// rather than for every key event.
+    fn update_modifiers(&self, modifiers: Modifiers, capslock: Capslock) -> bool {
+        let mut current_state = self.state.borrow_mut();
+        let changed = current_state.modifiers != modifiers || current_state.capslock != capslock;
+        current_state.modifiers = modifiers;
+        current_state.capslock = capslock;
+        changed
+    }
+
+    fn register_pointer_down(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
             this.input_element.focus().ok();
+
+            // Capture the pointer so drags that leave the canvas keep
+            // delivering pointermove/pointerup here; otherwise a release
+            // outside the canvas is never seen and `pressed_button` stays
+            // stuck. The capture is released implicitly on pointerup.
+            this.canvas.set_pointer_capture(event.pointer_id()).ok();
 
             let button = dom_mouse_button_to_gpui(event.button());
             let position = pointer_position_in_element(&event);
@@ -161,7 +221,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_up(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_up(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerup", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -189,7 +249,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_move(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_move(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointermove", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -213,7 +273,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_pointer_leave(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_leave(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerleave", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
@@ -226,6 +286,7 @@ impl WebWindowInner {
                 let mut current_state = this.state.borrow_mut();
                 current_state.mouse_position = position;
                 current_state.modifiers = modifiers;
+                current_state.is_hovered = false;
             }
 
             this.dispatch_input(PlatformInput::MouseExited(MouseExitEvent {
@@ -233,10 +294,15 @@ impl WebWindowInner {
                 pressed_button: current_pressed,
                 modifiers,
             }));
+
+            this.with_callback(
+                |callbacks| &mut callbacks.hover_status_change,
+                |callback| callback(false),
+            );
         })
     }
 
-    fn register_wheel(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_wheel(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_non_passive("wheel", move |event: JsValue| {
             let event: web_sys::WheelEvent = event.unchecked_into();
@@ -270,64 +336,34 @@ impl WebWindowInner {
         })
     }
 
-    fn register_context_menu(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_context_menu(self: &Rc<Self>) -> EventListenerHandle {
         self.listen("contextmenu", move |event: JsValue| {
             let event: web_sys::Event = event.unchecked_into();
             event.prevent_default();
         })
     }
 
-    fn register_dragover(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
-        let this = Rc::clone(self);
+    /// Browsers only expose dropped files as `File` objects, never as
+    /// filesystem paths, so no `FileDrop` input can be synthesized: GPUI's
+    /// `ExternalPaths` consumers would try to read paths that don't exist.
+    /// The events are still intercepted so the browser doesn't navigate to
+    /// the dropped file. Delivering actual file drops would require plumbing
+    /// `File` contents through a web-specific channel.
+    fn register_dragover(self: &Rc<Self>) -> EventListenerHandle {
         self.listen("dragover", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
             event.prevent_default();
-
-            let mouse_event: &web_sys::MouseEvent = event.as_ref();
-            let position = mouse_position_in_element(mouse_event);
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-            }
-
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
         })
     }
 
-    fn register_drop(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
-        let this = Rc::clone(self);
+    fn register_drop(self: &Rc<Self>) -> EventListenerHandle {
         self.listen("drop", move |event: JsValue| {
             let event: web_sys::DragEvent = event.unchecked_into();
             event.prevent_default();
-
-            let mouse_event: &web_sys::MouseEvent = event.as_ref();
-            let position = mouse_position_in_element(mouse_event);
-
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.mouse_position = position;
-            }
-
-            let paths = extract_file_paths_from_drag(&event);
-
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Entered {
-                position,
-                paths: ExternalPaths(paths),
-            }));
-
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
         })
     }
 
-    fn register_dragleave(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
-        let this = Rc::clone(self);
-        self.listen("dragleave", move |_event: JsValue| {
-            this.dispatch_input(PlatformInput::FileDrop(FileDropEvent::Exited));
-        })
-    }
-
-    fn register_key_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_key_down(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("keydown", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
@@ -335,16 +371,12 @@ impl WebWindowInner {
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
             let capslock = capslock_from_keyboard_event(&event);
 
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.modifiers = modifiers;
-                current_state.capslock = capslock;
+            if this.update_modifiers(modifiers, capslock) {
+                this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers,
+                    capslock,
+                }));
             }
-
-            this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                modifiers,
-                capslock,
-            }));
 
             let key = dom_key_to_gpui_key(&event);
 
@@ -379,22 +411,22 @@ impl WebWindowInner {
                 return;
             }
 
-            if modifiers.is_subset_of(&Modifiers::shift()) {
-                if let Some(text) = key_char {
-                    this.with_input_handler(|handler| {
-                        handler.replace_text_in_range(None, &text);
-                    });
-                    // The character went into the input handler; suppress browser
-                    // side-effects for the same keystroke (space scrolling the
-                    // page, quick-find, etc.). Everything not handled above falls
-                    // through so browser shortcuts keep their defaults.
-                    event.prevent_default();
-                }
+            if keystroke_inserts_text(&modifiers, this.is_mac)
+                && let Some(text) = key_char
+            {
+                this.with_input_handler(|handler| {
+                    handler.replace_text_in_range(None, &text);
+                });
+                // The character went into the input handler; suppress browser
+                // side-effects for the same keystroke (space scrolling the
+                // page, quick-find, etc.). Everything not handled above falls
+                // through so browser shortcuts keep their defaults.
+                event.prevent_default();
             }
         })
     }
 
-    fn register_key_up(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_key_up(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("keyup", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
@@ -402,16 +434,12 @@ impl WebWindowInner {
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
             let capslock = capslock_from_keyboard_event(&event);
 
-            {
-                let mut current_state = this.state.borrow_mut();
-                current_state.modifiers = modifiers;
-                current_state.capslock = capslock;
+            if this.update_modifiers(modifiers, capslock) {
+                this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers,
+                    capslock,
+                }));
             }
-
-            this.dispatch_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                modifiers,
-                capslock,
-            }));
 
             let key = dom_key_to_gpui_key(&event);
 
@@ -441,7 +469,7 @@ impl WebWindowInner {
     /// read API cannot fit that synchronous signature, while `ClipboardEvent`
     /// exposes `clipboardData` synchronously inside the event. It fires for
     /// any browser-initiated paste (keyboard, menu bar, context menu).
-    fn register_paste(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_paste(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("paste", move |event: JsValue| {
             let event: web_sys::ClipboardEvent = event.unchecked_into();
@@ -462,14 +490,14 @@ impl WebWindowInner {
         })
     }
 
-    fn register_composition_start(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_composition_start(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("compositionstart", move |_event: JsValue| {
             this.is_composing.set(true);
         })
     }
 
-    fn register_composition_update(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_composition_update(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("compositionupdate", move |event: JsValue| {
             let event: web_sys::CompositionEvent = event.unchecked_into();
@@ -481,7 +509,7 @@ impl WebWindowInner {
         })
     }
 
-    fn register_composition_end(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_composition_end(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("compositionend", move |event: JsValue| {
             let event: web_sys::CompositionEvent = event.unchecked_into();
@@ -495,59 +523,45 @@ impl WebWindowInner {
         })
     }
 
-    fn register_focus(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_focus(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("focus", move |_event: JsValue| {
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = true;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.active_status_change {
-                callback(true);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.active_status_change,
+                |callback| callback(true),
+            );
         })
     }
 
-    fn register_blur(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_blur(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("blur", move |_event: JsValue| {
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.active_status_change {
-                callback(false);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.active_status_change,
+                |callback| callback(false),
+            );
         })
     }
 
-    fn register_pointer_enter(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+    fn register_pointer_enter(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerenter", move |_event: JsValue| {
             {
                 let mut state = this.state.borrow_mut();
                 state.is_hovered = true;
             }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.hover_status_change {
-                callback(true);
-            }
-        })
-    }
-
-    fn register_pointer_leave_hover(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
-        let this = Rc::clone(self);
-        self.listen("pointerleave", move |_event: JsValue| {
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_hovered = false;
-            }
-            let mut callbacks = this.callbacks.borrow_mut();
-            if let Some(ref mut callback) = callbacks.hover_status_change {
-                callback(false);
-            }
+            this.with_callback(
+                |callbacks| &mut callbacks.hover_status_change,
+                |callback| callback(true),
+            );
         })
     }
 }
@@ -661,12 +675,28 @@ fn is_modifier_only_key(key: &str) -> bool {
     )
 }
 
+/// Whether a keystroke with these modifiers produces text to insert.
+///
+/// On macOS, Option participates in text entry (e.g. option-n composes "~"
+/// or accented characters), so only Command and Control disqualify. Elsewhere,
+/// plain Alt is a shortcut modifier, but AltGr is reported by browsers as
+/// control+alt and `event.key()` then carries the composed character.
+fn keystroke_inserts_text(modifiers: &Modifiers, is_mac: bool) -> bool {
+    if is_mac {
+        !modifiers.platform && !modifiers.control
+    } else {
+        modifiers.is_subset_of(&Modifiers::shift()) || (modifiers.control && modifiers.alt)
+    }
+}
+
 fn compute_key_char(
     event: &web_sys::KeyboardEvent,
     gpui_key: &str,
     modifiers: &Modifiers,
 ) -> Option<String> {
-    if modifiers.platform || modifiers.control {
+    // AltGr arrives as control+alt with the composed character in
+    // `event.key()`; bare Command/Control combinations are not text.
+    if (modifiers.platform || modifiers.control) && !(modifiers.control && modifiers.alt) {
         return None;
     }
 
@@ -695,23 +725,4 @@ fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     // offset_x/offset_y give position relative to the target element's padding edge
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
-}
-
-fn extract_file_paths_from_drag(
-    event: &web_sys::DragEvent,
-) -> smallvec::SmallVec<[std::path::PathBuf; 2]> {
-    let mut paths = smallvec![];
-    let Some(data_transfer) = event.data_transfer() else {
-        return paths;
-    };
-    let file_list = data_transfer.files();
-    let Some(files) = file_list else {
-        return paths;
-    };
-    for index in 0..files.length() {
-        if let Some(file) = files.get(index) {
-            paths.push(std::path::PathBuf::from(file.name()));
-        }
-    }
-    paths
 }

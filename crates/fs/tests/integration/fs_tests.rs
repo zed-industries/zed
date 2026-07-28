@@ -697,7 +697,13 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
+    assert_eq!(
+        fs.original_path_for_trash_id(trashed_entry),
+        Some(path.to_path_buf())
+    );
+
     fs.restore(trashed_entry).await.unwrap();
+    assert_eq!(fs.original_path_for_trash_id(trashed_entry), None);
 
     assert_eq!(
         fs.files(),
