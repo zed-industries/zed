@@ -3257,6 +3257,40 @@ impl Pane {
                             );
                         }
 
+                        menu = menu.separator().entry(
+                            "Move to New Window",
+                            Some(crate::MoveActiveItemToNewWindow.boxed_clone()),
+                            window.handler_for(&pane, move |pane, window, cx| {
+                                crate::move_item_to_new_window(
+                                    pane.workspace.clone(),
+                                    cx.entity(),
+                                    item_id,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        );
+                        let shared_window_count =
+                            pane.read(cx).workspace.upgrade().map_or(0, |workspace| {
+                                let project = workspace.read(cx).project().clone();
+                                crate::workspace_windows_for_project(&project, cx).len()
+                            });
+                        if shared_window_count > 1 {
+                            menu = menu.entry(
+                                "Move to Next Window",
+                                Some(crate::MoveActiveItemToNextWindow.boxed_clone()),
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    crate::move_item_to_next_window(
+                                        pane.workspace.clone(),
+                                        cx.entity(),
+                                        item_id,
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            );
+                        }
+
                         if let Some(entry) = single_entry_to_resolve {
                             let project_path = pane
                                 .read(cx)
@@ -8885,6 +8919,62 @@ mod tests {
             pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_move_item_to_new_window(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        let item_id = item_a.entity_id();
+
+        pane.update_in(cx, |pane, window, cx| {
+            crate::move_item_to_new_window(
+                pane.workspace.clone(),
+                cx.entity(),
+                item_id,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // The original test window's root is a bare `Workspace`, so only the
+        // newly opened secondary window shows up here.
+        let windows = cx.update(|_, cx| crate::workspace_windows_for_project(&project, cx));
+        assert_eq!(
+            windows.len(),
+            1,
+            "expected a new window sharing the project"
+        );
+        let (_, secondary_workspace) = windows[0].clone();
+        assert_ne!(secondary_workspace.entity_id(), workspace.entity_id());
+
+        cx.update(|_, cx| {
+            let secondary = secondary_workspace.read(cx);
+            assert!(secondary.is_secondary());
+            assert!(secondary.database_id().is_none());
+            assert_eq!(secondary.project(), &project);
+            let target_items = secondary
+                .active_pane()
+                .read(cx)
+                .items()
+                .map(|item| item.item_id())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                target_items,
+                vec![item_id],
+                "the moved item entity should be the only item in the new window"
+            );
+        });
+        assert_item_labels(&pane, ["B*"], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {

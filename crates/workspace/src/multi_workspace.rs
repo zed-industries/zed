@@ -286,6 +286,10 @@ pub struct ProjectGroupState {
 
 pub struct MultiWorkspace {
     window_id: WindowId,
+    /// True for windows created by moving a tab out of another window. These
+    /// share their `Project` with the originating window and are ephemeral:
+    /// they are never serialized and don't participate in session restore.
+    secondary: bool,
     retained_workspaces: Vec<Entity<Workspace>>,
     project_groups: Vec<ProjectGroupState>,
     active_workspace: Entity<Workspace>,
@@ -351,6 +355,7 @@ impl MultiWorkspace {
         });
         Self {
             window_id: window.window_handle().window_id(),
+            secondary: false,
             retained_workspaces: Vec::new(),
             project_groups: Vec::new(),
             active_workspace: workspace,
@@ -367,6 +372,20 @@ impl MultiWorkspace {
             ],
             previous_focus_handle: None,
         }
+    }
+
+    pub fn new_secondary(
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(workspace, window, cx);
+        this.secondary = true;
+        this
+    }
+
+    pub fn is_secondary(&self) -> bool {
+        self.secondary
     }
 
     pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
@@ -1636,6 +1655,9 @@ impl MultiWorkspace {
     }
 
     pub fn serialize(&mut self, cx: &mut Context<Self>) {
+        if self.secondary {
+            return;
+        }
         self._serialize_task = Some(cx.spawn(async move |this, cx| {
             let Some((window_id, state)) = this
                 .read_with(cx, |this, cx| {

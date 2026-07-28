@@ -574,6 +574,10 @@ actions!(
         MovePaneUp,
         /// Move the current pane to be at the very bottom.
         MovePaneDown,
+        /// Moves the active tab into a new window that shares this window's project.
+        MoveActiveItemToNewWindow,
+        /// Moves the active tab to the next window that shares this window's project.
+        MoveActiveItemToNextWindow,
     ]
 );
 
@@ -1425,6 +1429,10 @@ pub struct Workspace {
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
     removing: bool,
+    /// True for workspaces living in a window created by moving a tab out of
+    /// another window. They share their `Project` with the originating window,
+    /// are never serialized, and aren't reused when opening paths.
+    secondary: bool,
     open_in_dev_container: bool,
     _dev_container_task: Option<Task<Result<()>>>,
     _panels_task: Option<Task<Result<()>>>,
@@ -1885,6 +1893,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            secondary: false,
             sidebar_focus_handle: None,
             multi_workspace,
             active_workspace_id: None,
@@ -3369,19 +3378,24 @@ impl Workspace {
             // Hot-exit silently writes dirty buffers to the DB; only allow it
             // if the workspace will be reachable again, either via session
             // restore or by reopening its folder paths. Otherwise prompt, so
-            // we don't orphan the buffers.
-            let allow_hot_exit_serialization = close_intent == CloseIntent::Quit
-                || save_last_workspace
-                || this
-                    .read_with(cx, |workspace, cx| {
-                        workspace
-                            .project
-                            .read(cx)
-                            .visible_worktrees(cx)
-                            .next()
-                            .is_some()
-                    })
-                    .unwrap_or(false);
+            // we don't orphan the buffers. Secondary windows are never
+            // serialized, so hot exit can't restore them.
+            let is_secondary = this
+                .read_with(cx, |workspace, _| workspace.secondary)
+                .unwrap_or(false);
+            let allow_hot_exit_serialization = !is_secondary
+                && (close_intent == CloseIntent::Quit
+                    || save_last_workspace
+                    || this
+                        .read_with(cx, |workspace, cx| {
+                            workspace
+                                .project
+                                .read(cx)
+                                .visible_worktrees(cx)
+                                .next()
+                                .is_some()
+                        })
+                        .unwrap_or(false));
             let save_result = this
                 .update_in(cx, |this, window, cx| {
                     this.save_all_internal(
@@ -6940,6 +6954,10 @@ impl Workspace {
         self.database_id
     }
 
+    pub fn is_secondary(&self) -> bool {
+        self.secondary
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn set_database_id(&mut self, id: WorkspaceId) {
         self.database_id = Some(id);
@@ -6950,6 +6968,9 @@ impl Workspace {
     }
 
     fn save_window_bounds(&self, window: &mut Window, cx: &mut App) -> Task<()> {
+        if self.secondary {
+            return Task::ready(());
+        }
         let Some(display) = window.display(cx) else {
             return Task::ready(());
         };
@@ -7583,6 +7604,24 @@ impl Workspace {
                     workspace.move_item_to_pane_in_direction(action, window, cx)
                 },
             ))
+            .on_action(
+                cx.listener(|workspace, _: &MoveActiveItemToNewWindow, window, cx| {
+                    let pane = workspace.active_pane().clone();
+                    if let Some(item) = pane.read(cx).active_item() {
+                        let item_id = item.item_id();
+                        move_item_to_new_window(cx.weak_entity(), pane, item_id, window, cx);
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace, _: &MoveActiveItemToNextWindow, window, cx| {
+                    let pane = workspace.active_pane().clone();
+                    if let Some(item) = pane.read(cx).active_item() {
+                        let item_id = item.item_id();
+                        move_item_to_next_window(cx.weak_entity(), pane, item_id, window, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|workspace, _: &SwapPaneLeft, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Left, cx)
             }))
@@ -10159,7 +10198,8 @@ pub fn workspace_windows_for_location(
             };
 
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace.workspaces().any(|workspace| {
+                !multi_workspace.is_secondary()
+                    && multi_workspace.workspaces().any(|workspace| {
                     match workspace.read(cx).workspace_location(cx) {
                         WorkspaceLocation::Location(location, _) => {
                             match (&location, serialized_location) {
@@ -11448,6 +11488,150 @@ pub fn move_active_item(
                 cx,
             );
         });
+    });
+}
+
+/// Returns every window whose `MultiWorkspace` contains a workspace attached
+/// to the given project, along with that workspace.
+pub fn workspace_windows_for_project(
+    project: &Entity<Project>,
+    cx: &App,
+) -> Vec<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
+        .filter_map(|window| {
+            let workspace = window
+                .read(cx)
+                .ok()?
+                .workspaces()
+                .find(|workspace| workspace.read(cx).project == *project)?
+                .clone();
+            Some((window, workspace))
+        })
+        .collect()
+}
+
+/// Opens a new window containing a fresh, ephemeral workspace that shares the
+/// given project (and thus buffers, language servers, and settings) with the
+/// windows it already belongs to.
+pub fn open_secondary_workspace_window(
+    project: Entity<Project>,
+    app_state: Arc<AppState>,
+    cx: &mut App,
+) -> Result<WindowHandle<MultiWorkspace>> {
+    let options = (app_state.build_window_options)(None, cx);
+    cx.open_window(options, move |window, cx| {
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+            workspace.secondary = true;
+            workspace
+        });
+        cx.new(|cx| MultiWorkspace::new_secondary(workspace, window, cx))
+    })
+}
+
+/// Moves the given item out of `source_pane` into a new window sharing the
+/// same project. The item entity is moved, not cloned, so unsaved state
+/// travels with it.
+pub fn move_item_to_new_window(
+    workspace: WeakEntity<Workspace>,
+    source_pane: Entity<Pane>,
+    item_id: EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    // Defer so we don't open a window in the middle of this window's update.
+    window.defer(cx, move |window, cx| {
+        move_item_to_new_window_inner(workspace, source_pane, item_id, window, cx);
+    });
+}
+
+fn move_item_to_new_window_inner(
+    workspace: WeakEntity<Workspace>,
+    source_pane: Entity<Pane>,
+    item_id: EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(item) = source_pane
+        .read(cx)
+        .items()
+        .find(|item| item.item_id() == item_id)
+        .map(|item| item.boxed_clone())
+    else {
+        return;
+    };
+    let Ok((project, app_state)) = workspace.read_with(cx, |workspace, _| {
+        (workspace.project.clone(), workspace.app_state.clone())
+    }) else {
+        return;
+    };
+    let Some(target_window) = open_secondary_workspace_window(project, app_state, cx).log_err()
+    else {
+        return;
+    };
+    source_pane.update(cx, |pane, cx| {
+        pane.remove_item(item_id, false, true, window, cx);
+    });
+    target_window
+        .update(cx, |multi_workspace, window, cx| {
+            let pane = multi_workspace.workspace().read(cx).active_pane().clone();
+            pane.update(cx, |pane, cx| {
+                pane.add_item(item, true, true, None, window, cx);
+            });
+            window.activate_window();
+        })
+        .log_err();
+}
+
+/// Moves the given item to the next window sharing this workspace's project,
+/// opening a new one if this is the only such window.
+pub fn move_item_to_next_window(
+    workspace: WeakEntity<Workspace>,
+    source_pane: Entity<Pane>,
+    item_id: EntityId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.defer(cx, move |window, cx| {
+        let Ok(project) = workspace.read_with(cx, |workspace, _| workspace.project.clone()) else {
+            return;
+        };
+        let windows = workspace_windows_for_project(&project, cx);
+        let current_window_id = window.window_handle().window_id();
+        let target = windows
+            .iter()
+            .position(|(handle, _)| handle.window_id() == current_window_id)
+            .and_then(|current_ix| {
+                let (handle, target_workspace) = windows.get((current_ix + 1) % windows.len())?;
+                (handle.window_id() != current_window_id)
+                    .then(|| (*handle, target_workspace.clone()))
+            });
+        let Some((target_window, target_workspace)) = target else {
+            move_item_to_new_window_inner(workspace, source_pane, item_id, window, cx);
+            return;
+        };
+        let Some(item) = source_pane
+            .read(cx)
+            .items()
+            .find(|item| item.item_id() == item_id)
+            .map(|item| item.boxed_clone())
+        else {
+            return;
+        };
+        source_pane.update(cx, |pane, cx| {
+            pane.remove_item(item_id, false, true, window, cx);
+        });
+        target_window
+            .update(cx, |_, window, cx| {
+                let pane = target_workspace.read(cx).active_pane().clone();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item, true, true, None, window, cx);
+                });
+                window.activate_window();
+            })
+            .log_err();
     });
 }
 
