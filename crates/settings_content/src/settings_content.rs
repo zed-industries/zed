@@ -1211,6 +1211,11 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<f32>,
+    /// Whether opening a markdown file opens a markdown preview tab instead
+    /// of a text editor.
+    ///
+    /// Default: false
+    pub open_preview_on_file_open: Option<bool>,
 }
 
 /// The settings for the image viewer.

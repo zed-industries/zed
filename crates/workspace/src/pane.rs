@@ -896,6 +896,10 @@ impl Pane {
         &self.nav_history
     }
 
+    pub fn workspace(&self) -> &WeakEntity<Workspace> {
+        &self.workspace
+    }
+
     pub fn nav_history_mut(&mut self) -> &mut NavHistory {
         &mut self.nav_history
     }
@@ -1282,7 +1286,12 @@ impl Pane {
         let existing_item_index = self.items.iter().position(|existing_item| {
             if existing_item.item_id() == item.item_id() {
                 true
-            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton {
+            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton
+                // Different views of the same file (e.g. an editor and a
+                // markdown preview) aren't duplicates; only dedupe items of
+                // the same view type.
+                && existing_item.to_any_view().entity_type() == item.to_any_view().entity_type()
+            {
                 existing_item
                     .project_entry_ids(cx)
                     .first()

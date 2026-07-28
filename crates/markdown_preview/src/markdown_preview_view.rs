@@ -10,17 +10,18 @@ use anyhow::{Context as _, Result};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
-    InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
-    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point, px,
+    App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    ImageSource, InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource,
+    RetainAllImageCache, ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity,
+    Window, point, px,
 };
-use language::{LanguageRegistry, Point};
+use language::{Buffer, LanguageRegistry, Point};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
     MarkdownOptions, MarkdownStyle,
 };
 use project::search::SearchQuery;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectEntryId, ProjectPath};
 use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
@@ -40,8 +41,8 @@ use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFon
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
 use crate::{
-    CloseAndReturnToEditor, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown,
-    ScrollDownByItem,
+    CloseAndReturnToEditor, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, OpenSource,
+    ScrollDown, ScrollDownByItem,
 };
 use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp, ScrollUpByItem};
 
@@ -275,6 +276,26 @@ impl MarkdownPreviewView {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
+            Self::build(
+                mode,
+                active_editor,
+                workspace,
+                language_registry,
+                window,
+                cx,
+            )
+        })
+    }
+
+    fn build(
+        mode: MarkdownPreviewMode,
+        active_editor: Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
+        language_registry: Arc<LanguageRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        {
             let markdown = cx.new(|cx| {
                 Markdown::new_with_options(
                     SharedString::default(),
@@ -342,7 +363,7 @@ impl MarkdownPreviewView {
             }
 
             this
-        })
+        }
     }
 
     fn workspace_updated(
@@ -397,6 +418,48 @@ impl MarkdownPreviewView {
         .detach();
     }
 
+    /// Opens (or activates) a preview tab for the given singleton buffer in the
+    /// given pane. Used when jumping to markdown files from multibuffer excerpts
+    /// while `open_preview_on_file_open` is enabled.
+    pub fn open_preview_for_buffer_in_pane(
+        workspace: &mut Workspace,
+        pane: &Entity<Pane>,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Entity<Self>> {
+        let existing = pane.read(cx).items().enumerate().find_map(|(index, item)| {
+            let view = item.downcast::<MarkdownPreviewView>()?;
+            let view_read = view.read(cx);
+
+            (view_read.mode == MarkdownPreviewMode::Default
+                && view_read
+                    .active_editor
+                    .as_ref()
+                    .and_then(|state| state.editor.read(cx).buffer().read(cx).as_singleton())
+                    .as_ref()
+                    == Some(buffer))
+            .then_some((index, view))
+        });
+
+        if let Some((index, view)) = existing {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(index, true, true, window, cx);
+            });
+            return Some(view);
+        }
+
+        let project = workspace.project().clone();
+        let editor = cx.new(|cx| Editor::for_buffer(buffer.clone(), Some(project), window, cx));
+        let preview = Self::create_markdown_view(workspace, editor, window, cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.add_item(Box::new(preview.clone()), true, true, None, window, cx);
+        });
+
+        Some(preview)
+    }
+
     pub fn is_markdown_file(editor: &Entity<Editor>, cx: &App) -> bool {
         let buffer = editor.read(cx).buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton()
@@ -440,11 +503,12 @@ impl MarkdownPreviewView {
                                 (index, focused)
                             });
                         if let Some(selection_start) = selection_start {
-                            this.sync_preview_to_source_index(
-                                selection_start,
-                                editor_is_focused,
-                                cx,
-                            );
+                            // Also reveal when the preview itself is focused: the backing
+                            // editor may be hidden (preview-only tabs), in which case
+                            // selection changes come from programmatic navigation like
+                            // jumping to a multibuffer excerpt.
+                            let reveal = editor_is_focused || this.focus_handle.is_focused(window);
+                            this.sync_preview_to_source_index(selection_start, reveal, cx);
                             cx.notify();
                         }
                     }
@@ -835,6 +899,29 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
+    fn open_source(&mut self, _: &OpenSource, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self
+            .active_editor
+            .as_ref()
+            .map(|state| state.editor.clone())
+        else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        // Defer for the same reason as `close_and_return_to_editor`: we're a pane
+        // item ourselves, and manipulating the pane reentrantly would panic.
+        window.defer(cx, move |window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                if !workspace.activate_item(&editor, true, true, window, cx) {
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                }
+            });
+        });
+    }
+
     fn close_and_return_to_editor(
         &mut self,
         _: &CloseAndReturnToEditor,
@@ -1028,6 +1115,82 @@ impl MarkdownPreviewView {
                 this.update_markdown_from_active_editor(false, false, window, cx);
             });
         }
+    }
+}
+
+/// A thin project-item wrapper around a markdown buffer. Registering
+/// `MarkdownPreviewView` with its own item type (instead of `Buffer`) keeps it
+/// from clobbering the `Buffer` -> `Editor` mapping in the project item
+/// registry, while still letting the preview claim markdown paths when
+/// `open_preview_on_file_open` is enabled.
+pub struct MarkdownPreviewBuffer(pub Entity<Buffer>);
+
+impl project::ProjectItem for MarkdownPreviewBuffer {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<Result<Entity<Self>>>> {
+        if !MarkdownPreviewSettings::get_global(cx).open_preview_on_file_open {
+            return None;
+        }
+        let languages = project.read(cx).languages().clone();
+        let markdown = languages.available_language_for_name("Markdown")?;
+        if languages.language_for_file_path(path.path.as_std_path()) != Some(markdown.id()) {
+            return None;
+        }
+        let open_buffer = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
+        Some(cx.spawn(async move |cx| {
+            let buffer = open_buffer.await?;
+            Ok(cx.new(|_| Self(buffer)))
+        }))
+    }
+
+    fn entry_id(&self, cx: &App) -> Option<ProjectEntryId> {
+        project::ProjectItem::entry_id(self.0.read(cx), cx)
+    }
+
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        project::ProjectItem::project_path(self.0.read(cx), cx)
+    }
+
+    fn is_dirty(&self) -> bool {
+        // Can't read the buffer entity without a context; this wrapper only
+        // exists transiently while the registry builds the preview view.
+        false
+    }
+}
+
+impl workspace::item::ProjectItem for MarkdownPreviewView {
+    type Item = MarkdownPreviewBuffer;
+
+    fn for_project_item(
+        project: Entity<Project>,
+        pane: Option<&Pane>,
+        item: Entity<MarkdownPreviewBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer = item.read(cx).0.clone();
+        let workspace = pane
+            .map(|pane| pane.workspace().clone())
+            .or_else(|| {
+                window
+                    .root::<Workspace>()
+                    .flatten()
+                    .map(|workspace| workspace.downgrade())
+            })
+            .unwrap_or_else(WeakEntity::new_invalid);
+        let language_registry = project.read(cx).languages().clone();
+        let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        Self::build(
+            MarkdownPreviewMode::Default,
+            editor,
+            workspace,
+            language_registry,
+            window,
+            cx,
+        )
     }
 }
 
@@ -1372,6 +1535,22 @@ impl Item for MarkdownPreviewView {
         ItemBufferKind::Singleton
     }
 
+    fn for_each_project_item(
+        &self,
+        cx: &App,
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
+    ) {
+        if let Some(state) = &self.active_editor {
+            state.editor.read(cx).for_each_project_item(cx, f);
+        }
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .is_some_and(|state| state.editor.read(cx).is_dirty(cx))
+    }
+
     fn as_searchable(
         &self,
         handle: &Entity<Self>,
@@ -1390,7 +1569,8 @@ impl Render for MarkdownPreviewView {
             .unwrap_or_else(|| cx.theme().colors().editor_background);
         let preview_font_size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
         let hovered_url = self.hovered_url.clone();
-        div()
+
+        v_flex()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
@@ -1409,6 +1589,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
             .on_action(cx.listener(MarkdownPreviewView::close_and_return_to_editor))
+            .on_action(cx.listener(MarkdownPreviewView::open_source))
             .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
             .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
             .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
@@ -1418,81 +1599,117 @@ impl Render for MarkdownPreviewView {
             .relative()
             .bg(bg_color)
             .child(
-                WithRemSize::new(preview_font_size).size_full().child(
-                    div()
-                        .id("markdown-preview-scroll-container")
-                        .size_full()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll_handle)
-                        .p_4()
-                        .child({
-                            let markdown_element =
-                                self.render_markdown_element(&preview_theme, window, cx);
-                            let markdown = self.markdown.clone();
-                            let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
-                            let content = right_click_menu("markdown-preview-context-menu")
-                                .trigger(move |_, _, _| markdown_element)
-                                .maybe_menu(move |window, cx| {
-                                    let focus = window.focused(cx);
-                                    let markdown = markdown.read(cx);
-                                    let context_menu_link = markdown.context_menu_link().cloned();
-                                    let selected_text =
-                                        markdown.context_menu_selected_text().cloned();
-                                    let selected_markdown =
-                                        markdown.context_menu_selected_markdown().cloned();
-                                    if context_menu_link.is_none()
-                                        && selected_text.is_none()
-                                        && selected_markdown.is_none()
-                                    {
-                                        return None;
-                                    }
-                                    Some(ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                        menu.when_some(focus, |menu, focus| menu.context(focus))
-                                            .when_some(selected_text, |menu, text| {
-                                                menu.entry(
-                                                    "Copy",
-                                                    Some(Box::new(markdown::Copy)),
-                                                    move |_, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                text.to_string(),
-                                                            ),
-                                                        );
-                                                    },
-                                                )
-                                            })
-                                            .when_some(selected_markdown, |menu, text| {
-                                                menu.entry(
-                                                    "Copy as Markdown",
-                                                    Some(Box::new(markdown::CopyAsMarkdown)),
-                                                    move |_, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                text.to_string(),
-                                                            ),
-                                                        );
-                                                    },
-                                                )
-                                            })
-                                            .when_some(context_menu_link, |menu, url| {
-                                                menu.entry("Copy Link", None, move |_, cx| {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(url.to_string()),
-                                                    );
-                                                })
-                                            })
-                                    }))
-                                });
-                            div()
-                                .w_full()
-                                .when_some(max_width, |this, max_width| {
-                                    this.max_w(max_width).mx_auto()
-                                })
-                                .child(content)
-                        }),
+                h_flex().px_2().pt_2().child(
+                    Button::new("open-markdown-source", "Markdown")
+                        .label_size(LabelSize::Small)
+                        .start_icon(
+                            Icon::new(IconName::File)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_source(&OpenSource, window, cx);
+                        })),
                 ),
             )
-            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+                    .child(
+                        WithRemSize::new(preview_font_size).size_full().child(
+                            div()
+                                .id("markdown-preview-scroll-container")
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll_handle)
+                                .p_4()
+                                .child({
+                                    let markdown_element =
+                                        self.render_markdown_element(&preview_theme, window, cx);
+                                    let markdown = self.markdown.clone();
+                                    let max_width =
+                                        MarkdownPreviewSettings::get_global(cx).max_width;
+                                    let content = right_click_menu("markdown-preview-context-menu")
+                                        .trigger(move |_, _, _| markdown_element)
+                                        .maybe_menu(move |window, cx| {
+                                            let focus = window.focused(cx);
+                                            let markdown = markdown.read(cx);
+                                            let context_menu_link =
+                                                markdown.context_menu_link().cloned();
+                                            let selected_text =
+                                                markdown.context_menu_selected_text().cloned();
+                                            let selected_markdown =
+                                                markdown.context_menu_selected_markdown().cloned();
+                                            if context_menu_link.is_none()
+                                                && selected_text.is_none()
+                                                && selected_markdown.is_none()
+                                            {
+                                                return None;
+                                            }
+                                            Some(ContextMenu::build(
+                                                window,
+                                                cx,
+                                                move |menu, _, _cx| {
+                                                    menu.when_some(focus, |menu, focus| {
+                                                        menu.context(focus)
+                                                    })
+                                                    .when_some(selected_text, |menu, text| {
+                                                        menu.entry(
+                                                            "Copy",
+                                                            Some(Box::new(markdown::Copy)),
+                                                            move |_, cx| {
+                                                                cx.write_to_clipboard(
+                                                                    ClipboardItem::new_string(
+                                                                        text.to_string(),
+                                                                    ),
+                                                                );
+                                                            },
+                                                        )
+                                                    })
+                                                    .when_some(selected_markdown, |menu, text| {
+                                                        menu.entry(
+                                                            "Copy as Markdown",
+                                                            Some(Box::new(
+                                                                markdown::CopyAsMarkdown,
+                                                            )),
+                                                            move |_, cx| {
+                                                                cx.write_to_clipboard(
+                                                                    ClipboardItem::new_string(
+                                                                        text.to_string(),
+                                                                    ),
+                                                                );
+                                                            },
+                                                        )
+                                                    })
+                                                    .when_some(context_menu_link, |menu, url| {
+                                                        menu.entry(
+                                                            "Copy Link",
+                                                            None,
+                                                            move |_, cx| {
+                                                                cx.write_to_clipboard(
+                                                                    ClipboardItem::new_string(
+                                                                        url.to_string(),
+                                                                    ),
+                                                                );
+                                                            },
+                                                        )
+                                                    })
+                                                },
+                                            ))
+                                        });
+                                    div()
+                                        .w_full()
+                                        .when_some(max_width, |this, max_width| {
+                                            this.max_w(max_width).mx_auto()
+                                        })
+                                        .child(content)
+                                }),
+                        ),
+                    ),
+            )
             .when_some(hovered_url, |this, hovered_url| {
                 this.child(
                     div()

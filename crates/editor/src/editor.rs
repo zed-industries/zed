@@ -10175,6 +10175,14 @@ impl Editor {
                                 Some(editor)
                             })
                             .flatten()
+                            .or_else(|| {
+                                // An alternate opener (e.g. markdown preview) may claim
+                                // this buffer; its item exposes the backing editor via
+                                // `act_as`, so selection handling below still applies.
+                                workspace
+                                    .open_alternate_item_for_buffer(&pane, &buffer, window, cx)
+                                    .and_then(|item| item.act_as::<Editor>(cx))
+                            })
                             .unwrap_or_else(|| {
                                 let keep_old_preview = PreviewTabsSettings::get_global(cx)
                                     .enable_keep_preview_on_code_navigation;

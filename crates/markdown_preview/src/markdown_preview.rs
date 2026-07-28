@@ -6,7 +6,9 @@ pub mod markdown_preview_view;
 
 pub use zed_actions::preview::markdown::{OpenPreview, OpenPreviewToTheSide};
 
+use crate::markdown_preview_settings::MarkdownPreviewSettings;
 use crate::markdown_preview_view::MarkdownPreviewView;
+use settings::Settings as _;
 
 actions!(
     markdown,
@@ -32,12 +34,30 @@ actions!(
         /// Opens a following markdown preview that syncs with the editor.
         OpenFollowingPreview,
         /// Closes the markdown preview and returns focus to the source editor.
-        CloseAndReturnToEditor
+        CloseAndReturnToEditor,
+        /// Opens the source file of the markdown preview in a text editor.
+        OpenSource
     ]
 );
 
 pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<MarkdownPreviewView>(cx);
+    workspace::register_project_item::<MarkdownPreviewView>(cx);
+    workspace::register_alternate_buffer_item_opener(cx, |workspace, pane, buffer, window, cx| {
+        if !MarkdownPreviewSettings::get_global(cx).open_preview_on_file_open {
+            return None;
+        }
+
+        if buffer.read(cx).language()?.name().as_ref() != "Markdown" {
+            return None;
+        }
+
+        let preview = MarkdownPreviewView::open_preview_for_buffer_in_pane(
+            workspace, pane, buffer, window, cx,
+        )?;
+
+        Some(Box::new(preview))
+    });
 
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {

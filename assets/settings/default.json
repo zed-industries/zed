@@ -125,6 +125,9 @@
     // The maximum width, in pixels, of the rendered markdown content when
     // limit_content_width is enabled.
     "max_width": 800,
+    // Whether opening a markdown file opens a markdown preview tab instead
+    // of a text editor.
+    "open_preview_on_file_open": false,
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //
