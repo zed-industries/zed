@@ -8310,6 +8310,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
+    let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     let _worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
@@ -8337,6 +8338,38 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         &worktree_project,
         cx,
     );
+    cx.run_until_parked();
+
+    let remote_host =
+        remote::RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 99 });
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(workspace::ProjectGroup {
+            key: ProjectGroupKey::new(
+                Some(remote_host.clone()),
+                PathList::new(&[PathBuf::from("/remote/project")]),
+            ),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+    cx.update(|_window, cx| {
+        let metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("remote-thread"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote Thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/remote/project",
+            )])),
+            archived: false,
+            remote_connection: Some(remote_host),
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+    });
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -8367,6 +8400,14 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         1,
         "linked worktree workspace should be removed after archiving its last thread"
     );
+
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.workspace(),
+            &main_workspace,
+            "archiving the worktree's last thread should activate its own project, not the remote one"
+        );
+    });
 
     // The linked worktree checkout directory should also be removed from disk.
     assert!(
