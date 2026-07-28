@@ -380,7 +380,14 @@ impl X11Client {
             .reply()
             .context("Failed to get XCB atoms")?;
 
-        let root = xcb_connection.setup().roots[0].root;
+        let root = xcb_connection.setup().roots[x_root_index].root;
+        check_reply(
+            || "Failed to subscribe to X11 desktop changes",
+            xcb_connection.change_window_attributes(
+                root,
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+            ),
+        )?;
         let compositor_present = check_compositor_present(&xcb_connection, root);
         let gtk_frame_extents_supported =
             check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
@@ -951,6 +958,70 @@ impl X11Client {
                     .log_err();
             }
             Event::PropertyNotify(event) => {
+                let desktop_changed = {
+                    let state = self.0.borrow();
+                    let root = state.xcb_connection.setup().roots[state.x_root_index].root;
+                    event.window == root && event.atom == state.atoms._NET_CURRENT_DESKTOP
+                };
+                if desktop_changed {
+                    // i3 maps its ancestor frame rather than the client window when
+                    // switching workspaces, so no Expose event reaches the client.
+                    let mut attempts_remaining = 8;
+                    let mut viewable_windows = HashSet::new();
+                    let mut refreshed_windows = HashSet::new();
+                    self.0
+                        .borrow()
+                        .loop_handle
+                        .insert_source(
+                            calloop::timer::Timer::from_duration(Duration::from_millis(16)),
+                            move |_, (), client| {
+                                let (xcb_connection, windows) = {
+                                    let state = client.0.borrow();
+                                    let windows = state
+                                        .windows
+                                        .iter()
+                                        .map(|(x_window, window)| {
+                                            (*x_window, window.window.clone())
+                                        })
+                                        .collect::<Vec<_>>();
+                                    (state.xcb_connection.clone(), windows)
+                                };
+                                for (x_window, window) in windows {
+                                    if refreshed_windows.contains(&x_window) {
+                                        continue;
+                                    }
+                                    let is_viewable = get_reply(
+                                        || "Failed to get X11 window attributes",
+                                        xcb_connection.get_window_attributes(x_window),
+                                    )
+                                    .map(|attributes| {
+                                        attributes.map_state == xproto::MapState::VIEWABLE
+                                    })
+                                    .log_err()
+                                    .unwrap_or(false);
+                                    // Give the compositor one frame after the window becomes
+                                    // viewable before presenting its new contents.
+                                    if is_viewable && !viewable_windows.insert(x_window) {
+                                        refreshed_windows.insert(x_window);
+                                        window.refresh(RequestFrameOptions {
+                                            require_presentation: true,
+                                            force_render: true,
+                                        });
+                                    }
+                                }
+                                attempts_remaining -= 1;
+                                if attempts_remaining == 0 {
+                                    calloop::timer::TimeoutAction::Drop
+                                } else {
+                                    calloop::timer::TimeoutAction::ToDuration(
+                                        Duration::from_millis(16),
+                                    )
+                                }
+                            },
+                        )
+                        .log_err();
+                    return Some(());
+                }
                 let window = self.get_window(event.window)?;
                 window
                     .property_notify(event)
