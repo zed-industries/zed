@@ -902,10 +902,14 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             let display_snapshot = editor.display_snapshot(cx);
             let buffer = display_snapshot.buffer_snapshot();
-            let selections = editor.selections.all::<MultiBufferOffset>(&display_snapshot);
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&display_snapshot);
             let mut trimmed = Vec::new();
 
             for selection in &selections {
@@ -4508,5 +4512,19 @@ mod test {
         cx.set_state("aa«    ˇ»next\n", Mode::HelixNormal);
         cx.simulate_keystrokes("_");
         cx.assert_state("aa   ˇ next\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections_consumes_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // A count is meaningless for `_`, but it must not leak into the next
+        // command.
+        cx.set_state("«  aa  ˇ»\nbbb\nccc\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("2 _");
+        cx.assert_state("  «aaˇ»  \nbbb\nccc\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.assert_state("«  aa  \nˇ»bbb\nccc\n", Mode::HelixNormal);
     }
 }
