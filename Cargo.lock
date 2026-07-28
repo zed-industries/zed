@@ -9887,10 +9887,10 @@ dependencies = [
  "log",
  "menu",
  "mistral",
- "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
+ "openai_subscribed",
  "opencode",
  "parking_lot",
  "pretty_assertions",
@@ -9900,13 +9900,10 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sha2",
- "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
- "url",
  "util",
  "x_ai",
 ]
@@ -12462,6 +12459,30 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "openai_subscribed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "http_client",
+ "language_model",
+ "log",
+ "oauth_callback_server",
+ "open_ai",
+ "parking_lot",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smol",
+ "url",
+ "util",
 ]
 
 [[package]]
