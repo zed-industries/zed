@@ -24,7 +24,7 @@ use workspace::searchable::{self, Direction, FilteredSearchRange};
 use crate::motion::{self, MotionKind};
 use crate::state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, SearchState};
 use crate::{
-    PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
+    HelixAppendState, PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
     motion::{Motion, right},
 };
 use std::ops::Range;
@@ -63,6 +63,9 @@ actions!(
         HelixSelectNext,
         /// Select the previous match for the current search query.
         HelixSelectPrevious,
+        /// Trim leading and trailing whitespace from each selection.
+        /// Originally-empty selections (cursors) are dropped before trimming.
+        HelixTrimSelections,
     ]
 );
 
@@ -89,6 +92,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_jump_to_word);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
+    Vim::action(editor, cx, Vim::helix_trim_selections);
     Vim::action(editor, cx, |vim, _: &PushHelixSurroundAdd, window, cx| {
         vim.clear_operator(window, cx);
         vim.push_operator(Operator::HelixSurroundAdd, window, cx);
@@ -718,7 +722,15 @@ impl Vim {
     fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let selections_before_append = editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .map(|selection| selection.tail()..selection.head())
+                .collect();
+
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     let point = if selection.is_empty() {
@@ -728,6 +740,18 @@ impl Vim {
                     };
                     selection.collapse_to(point, SelectionGoal::None);
                 });
+            });
+
+            let snapshot = editor.display_snapshot(cx);
+            let cursors_after_append = editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .map(|selection| selection.range())
+                .collect();
+            vim.helix_append_state = Some(HelixAppendState {
+                selections_before_append,
+                cursors_after_append,
             });
         });
     }
@@ -889,6 +913,94 @@ impl Vim {
                 .selections
                 .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             editor.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
+        });
+    }
+
+    fn helix_trim_selections(
+        &mut self,
+        _: &HelixTrimSelections,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+        self.update_editor(cx, |_, editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            let buffer = display_snapshot.buffer_snapshot();
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&display_snapshot);
+            let mut trimmed = Vec::new();
+
+            for selection in &selections {
+                if selection.is_empty() {
+                    continue;
+                }
+                let all_whitespace = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .flat_map(|chunk| chunk.chars())
+                    .all(|ch| ch.is_whitespace());
+                if all_whitespace {
+                    continue;
+                }
+
+                let mut new_start = selection.start;
+                for ch in buffer.chars_at(selection.start) {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    new_start += ch.len_utf8();
+                }
+
+                let mut new_end = selection.end;
+                for ch in buffer.reversed_chars_at(selection.end) {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    new_end -= ch.len_utf8();
+                }
+
+                let mut new_selection = selection.clone();
+                new_selection.start = new_start;
+                new_selection.end = new_end;
+                trimmed.push(new_selection);
+            }
+
+            if !trimmed.is_empty() {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select(trimmed);
+                });
+                return;
+            }
+
+            // All selections were empty or entirely whitespace. Match Helix's
+            // fallback: `collapse_selection` followed by `keep_primary_selection`.
+            // Take the newest selection and collapse it to a one-char cursor at
+            // the head (head - 1 for a forward, non-empty selection; head as-is
+            // otherwise).
+            let newest = editor
+                .selections
+                .newest::<MultiBufferOffset>(&display_snapshot);
+            let head = if newest.reversed {
+                newest.start
+            } else {
+                newest.end
+            };
+            let cursor_offset = if !newest.reversed && !newest.is_empty() {
+                let mut p = head;
+                if let Some(ch) = buffer.reversed_chars_at(head).next() {
+                    p -= ch.len_utf8();
+                }
+                p
+            } else {
+                head
+            };
+            let mut collapsed = newest;
+            collapsed.start = cursor_offset;
+            collapsed.end = cursor_offset;
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select(vec![collapsed]);
+            });
         });
     }
 
@@ -2479,6 +2591,23 @@ mod test {
     async fn test_append(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
+
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a");
+
+        cx.assert_state("Theˇ quick brown", Mode::Insert);
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.set_state("The quick brownˇ", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a escape");
+
+        cx.assert_state("The quick brownˇ", Mode::HelixNormal);
+
         // test from the end of the selection
         cx.set_state(
             indoc! {"
@@ -2496,6 +2625,16 @@ mod test {
             fox jumps over
             the lazy dog."},
             Mode::Insert,
+        );
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state(
+            indoc! {"
+            «Theˇ» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
         );
 
         // test from the beginning of the selection
@@ -2516,6 +2655,37 @@ mod test {
             the lazy dog."},
             Mode::Insert,
         );
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state(
+            indoc! {"
+            «ˇThe» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        // escape must not restore the selection once text was inserted
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a x escape");
+
+        cx.assert_state("Thexˇ quick brown", Mode::HelixNormal);
+
+        // or when the cursor moved during insert mode
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a left left escape");
+
+        cx.assert_state("Tˇhe quick brown", Mode::HelixNormal);
+
+        // all selections restore with multiple cursors
+        cx.set_state("ˇaaa bbb\nˇccc ddd", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a escape");
+
+        cx.assert_state("ˇaaa bbb\nˇccc ddd", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -4393,5 +4563,46 @@ mod test {
         rename_request.next().await.unwrap();
 
         cx.assert_state("const after = 2; console.log(afterˇ)", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Canonical case: a line selection (as produced by `x`) including its
+        // trailing newline. `_` strips the leading indent and trailing newline.
+        cx.set_state("«    indented line\nˇ»next line\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("_");
+        cx.assert_state("    «indented lineˇ»\nnext line\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections_all_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // An entirely-whitespace selection is filtered out before trimming.
+        // When every selection filters out, Helix falls back to
+        // `collapse_selection` + `keep_primary_selection`, which collapses the
+        // primary selection to a one-char cursor at head - 1 (the last
+        // whitespace char of the original selection).
+        cx.set_state("aa«    ˇ»next\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("_");
+        cx.assert_state("aa   ˇ next\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections_consumes_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // A count is meaningless for `_`, but it must not leak into the next
+        // command.
+        cx.set_state("«  aa  ˇ»\nbbb\nccc\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("2 _");
+        cx.assert_state("  «aaˇ»  \nbbb\nccc\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.assert_state("«  aa  \nˇ»bbb\nccc\n", Mode::HelixNormal);
     }
 }
