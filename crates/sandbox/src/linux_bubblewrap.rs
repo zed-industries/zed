@@ -1222,7 +1222,7 @@ fn path_is_on_windows_fs(path: &Path) -> bool {
     const FUSE_SUPER_MAGIC: i64 = 0x6573_5546;
     match nix::sys::statfs::statfs(path) {
         Ok(stat) => {
-            let fs_type = stat.filesystem_type().0 as i64;
+            let fs_type = stat.filesystem_type().0;
             fs_type == V9FS_MAGIC || fs_type == FUSE_SUPER_MAGIC
         }
         Err(_) => true,
