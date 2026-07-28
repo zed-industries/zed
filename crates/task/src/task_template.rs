@@ -1178,9 +1178,9 @@ mod tests {
 
         let context = TaskContext {
             task_variables: TaskVariables::from_iter([
-                (features_flag.clone(), String::new()),
-                (features.clone(), String::new()),
-                (bin_name.clone(), "test_bin".to_string()),
+                (features_flag, String::new()),
+                (features, String::new()),
+                (bin_name, "test_bin".to_string()),
             ]),
             ..TaskContext::default()
         };
