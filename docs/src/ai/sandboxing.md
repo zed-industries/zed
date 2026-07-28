@@ -24,8 +24,8 @@ Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language s
 terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
 
 > **Note**: Under some conditions, sandboxes on Windows are weaker than those on
-  Linux and MacOS, and may not prevent all escape attempts. See
-  [Windows](#windows) for more detail.
+> Linux and MacOS, and may not prevent all escape attempts. See
+> [Windows](#windows) for more detail.
 
 ## Sandboxed Tools {#sandboxed-tools}
 
@@ -233,10 +233,10 @@ If Bubblewrap is unavailable or cannot create a sandbox in the current environme
 sandbox and show a warning in the tool output.
 
 > **Warning**: On Linux and WSL, restrictions on filesystem objects are
-  determined at *sandbox creation time*. Among other things, this means that an
-  agent given access to a non-Git-repo directory `/foo` could create
-  `/foo/.git`. See [How much can I trust the sandbox?](#trust) for more
-  information on the implications of this.
+> determined at _sandbox creation time_. Among other things, this means that an
+> agent given access to a non-Git-repo directory `/foo` could create
+> `/foo/.git`. See [How much can I trust the sandbox?](#trust) for more
+> information on the implications of this.
 
 #### Installing Bubblewrap {#installing-bubblewrap}
 
@@ -291,12 +291,12 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 On Windows, Zed Agent sandboxing is supported only when the agent action runs inside WSL.
 
 > **Warning**: Due to limitations in WSL's implementation, it is possible that a
-  terminal command may write outside sandbox grants when the user has given
-  write access to any path that resides on the NTFS drive. This includes the
-  current-project grant for projects stored on NTFS. Zed will show a warning
-  when this happens. In practice, we believe this is difficult to exploit, but
-  security cannot be guaranteed. See [below](#why-ntfs-compromise) for a more
-  technical explanation.
+> terminal command may write outside sandbox grants when the user has given
+> write access to any path that resides on the NTFS drive. This includes the
+> current-project grant for projects stored on NTFS. Zed will show a warning
+> when this happens. In practice, we believe this is difficult to exploit, but
+> security cannot be guaranteed. See [below](#why-ntfs-compromise) for a more
+> technical explanation.
 
 Zed uses the Linux Bubblewrap sandbox inside WSL because WSL provides the Linux process and filesystem primitives that
 Bubblewrap needs. Native Windows processes do not currently have the same sandbox integration in Zed, so a native Windows
@@ -330,7 +330,7 @@ On Linux, this "filesystem object" is called an **inode**.
 
 But `/foo/hello` doesn't refer to an inode. Loosely, it refers to a location
 where an inode might exist. It may refer to one inode at one point in time,
-and another inode later. 
+and another inode later.
 
 And because of symlinks, it's possible for an agent with write access to `/foo`
 to change `/foo/bar` to point to `/secret`, even if they have no write access to
@@ -339,6 +339,7 @@ cannot also grant access to `/foo/bar`, since that would grant access to
 `/secret`.
 
 This means that we must only refer to paths which are:
+
 - canonical (i.e. contain no symlinks)
 - absolute
 - unchanged since we validated the above
@@ -362,19 +363,19 @@ could potentially allow writes outside the confines of the sandbox.
 sandbox.**
 
 In practice, the mapping tends to be quite stable. This is because the inode
-that gets generated in the Linux filesytem is derived from the *file reference*
+that gets generated in the Linux filesytem is derived from the _file reference_
 (very loosely, a "Windows inode"), which has similar stability to a Linux inode.
 The standard "rename a subcomponent" attack seems to produce a different inode
 number, and so the in-sandbox check would fail-closed.
 
-But, crucially, *it is not guaranteed*. This is the behaviour we observed in
+But, crucially, _it is not guaranteed_. This is the behaviour we observed in
 testing, but could not find documentation guaranteeing this behaviour in all
 circumstances, for all Windows/WSL versions past and present, regardless of
 configuration options.
 
 Zed's sandbox has been designed with the aim of being totally unbreakable, even
 in the presence of a motivated attacker with full control over the files in your
-project running as a standard user. It does *not* assume a
+project running as a standard user. It does _not_ assume a
 mostly-benevolent-but-sometimes-careless agent.
 
 Given this, we cannot give the same guarantees about sandbox security as we do
