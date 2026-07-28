@@ -27,6 +27,7 @@ enum MainThreadItem {
         runnable: RunnableVariant,
         millis: i32,
     },
+    Function(Box<dyn FnOnce() + Send>),
     // TODO-Wasm: Shouldn't these run on their own dedicated thread?
     RealtimeFunction(Box<dyn FnOnce() + Send>),
 }
@@ -52,9 +53,8 @@ impl MainThreadMailbox {
             log::error!("MainThreadMailbox::send failed: receiver disconnected");
         }
 
-        // TODO-Wasm: Verify this lock-free protocol
         let view = self.signal_view();
-        js_sys::Atomics::store(&view, 0, 1).ok();
+        js_sys::Atomics::add(&view, 0, 1).ok();
         js_sys::Atomics::notify(&view, 0).ok();
     }
 
@@ -87,14 +87,10 @@ impl MainThreadMailbox {
         wasm_bindgen_futures::spawn_local(async move {
             let view = mailbox.signal_view();
             loop {
-                js_sys::Atomics::store(&view, 0, 0).expect("Atomics.store failed");
-
-                // Items posted between the previous drain and the store above
-                // set the signal we just cleared, so their notify is lost.
-                // Drain again after re-arming to avoid missing them.
+                let observed_signal = js_sys::Atomics::load(&view, 0).unwrap_or_default();
                 mailbox.drain(&window);
 
-                let result = match js_sys::Atomics::wait_async(&view, 0, 0) {
+                let result = match js_sys::Atomics::wait_async(&view, 0, observed_signal) {
                     Ok(result) => result,
                     Err(error) => {
                         log::error!("Atomics.waitAsync failed: {error:?}");
@@ -104,22 +100,19 @@ impl MainThreadMailbox {
 
                 let is_async = js_sys::Reflect::get(&result, &JsValue::from_str("async"))
                     .ok()
-                    .and_then(|v| v.as_bool())
+                    .and_then(|value| value.as_bool())
                     .unwrap_or(false);
 
-                // `async: false` means the signal changed between the store and
-                // the wait ("not-equal"): work has already arrived, so skip
-                // waiting and drain immediately.
-                if is_async {
-                    let promise: js_sys::Promise =
-                        js_sys::Reflect::get(&result, &JsValue::from_str("value"))
-                            .expect("waitAsync result missing 'value'")
-                            .unchecked_into();
-
-                    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+                if !is_async {
+                    continue;
                 }
 
-                mailbox.drain(&window);
+                let promise: js_sys::Promise =
+                    js_sys::Reflect::get(&result, &JsValue::from_str("value"))
+                        .expect("waitAsync result missing 'value'")
+                        .unchecked_into();
+
+                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
             }
         });
     }
@@ -141,7 +134,10 @@ unsafe impl Send for WebDispatcher {}
 unsafe impl Sync for WebDispatcher {}
 
 impl WebDispatcher {
-    pub fn new(browser_window: web_sys::Window, allow_threads: bool) -> Self {
+    pub fn new(
+        browser_window: web_sys::Window,
+        #[cfg_attr(not(feature = "multithreaded"), expect(unused_variables))] allow_threads: bool,
+    ) -> Self {
         #[cfg(feature = "multithreaded")]
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         #[cfg(not(feature = "multithreaded"))]
@@ -208,6 +204,20 @@ impl WebDispatcher {
 
     fn on_main_thread(&self) -> bool {
         std::thread::current().id() == self.main_thread_id
+    }
+
+    pub(crate) fn dispatch_function_on_main_thread(
+        &self,
+        function: impl FnOnce() + Send + 'static,
+    ) {
+        if self.on_main_thread() {
+            let callback = Closure::once_into_js(function);
+            self.browser_window
+                .queue_microtask(callback.unchecked_ref());
+        } else {
+            self.main_thread_mailbox
+                .post(Priority::High, MainThreadItem::Function(Box::new(function)));
+        }
     }
 }
 
@@ -294,7 +304,7 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
                 )
                 .ok();
         }
-        MainThreadItem::RealtimeFunction(function) => {
+        MainThreadItem::Function(function) | MainThreadItem::RealtimeFunction(function) => {
             function();
         }
     }
