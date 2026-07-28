@@ -30,7 +30,7 @@
 ((module
   (function_definition
     name: (identifier) @run @_pytest_method_name
-    (#match? @_pytest_method_name "^test_")) @_python-pytest-method)
+    (#match? @_pytest_method_name "^test_|_test$")) @_python-pytest-method)
   (#set! tag python-pytest-method))
 
 ; decorated pytest functions
@@ -39,7 +39,7 @@
     (decorator)+ @_decorator
     definition: (function_definition
       name: (identifier) @run @_pytest_method_name
-      (#match? @_pytest_method_name "^test_"))) @_python-pytest-method)
+      (#match? @_pytest_method_name "^test_|_test$"))) @_python-pytest-method)
   (#set! tag python-pytest-method))
 
 ; pytest classes
