@@ -213,8 +213,9 @@ launch_fixture() {
     local palette=$3
     local log_file=$4
     local window_id
+    shift 4
 
-    "$executable" --title "$title" --palette "$palette" >"$log_file" 2>&1 &
+    "$executable" --title "$title" --palette "$palette" "$@" >"$log_file" 2>&1 &
     launched_pid=$!
     test_pids+=("$launched_pid")
 
@@ -229,7 +230,7 @@ launch_fixture() {
     launched_con=$(container_for_window "$window_id") ||
         fail "i3 container not found for window ${window_id} (${title})"
     test_cons+=("$launched_con")
-    xprop -id "$window_id" _NET_WM_PID _NET_WM_NAME WM_CLASS \
+    xprop -id "$window_id" _NET_WM_PID _NET_WM_NAME _NET_WM_DESKTOP WM_CLASS \
         >"${log_file%.log}.xprop" 2>&1
 }
 
@@ -369,8 +370,22 @@ run_variant() {
 
     i3-msg "workspace $(i3_quote "$workspace_a")" >/dev/null
     launch_fixture "$executable" "$target_title" target \
-        "${artifact_dir}/${label}-target.log"
+        "${artifact_dir}/${label}-target.log" \
+        --secondary-title "$alternate_title" --secondary-palette alternate
+    local target_pid=$launched_pid
     target_con=$launched_con
+    local alternate_window
+    alternate_window=$(window_for_pid_and_title "$target_pid" "$alternate_title") ||
+        fail "timed out waiting for secondary fixture: $alternate_title"
+    alternate_con=$(container_for_window "$alternate_window") ||
+        fail "i3 container not found for secondary fixture window ${alternate_window}"
+    test_cons+=("$alternate_con")
+    i3-msg "[con_id=${alternate_con}] move container to workspace $(i3_quote "$workspace_b")" \
+        >/dev/null
+    xprop -id "$alternate_window" \
+        _NET_WM_PID _NET_WM_NAME _NET_WM_DESKTOP WM_CLASS \
+        >"${artifact_dir}/${label}-alternate.xprop" 2>&1
+
     launch_fixture "$executable" "$helper_title" helper \
         "${artifact_dir}/${label}-helper.log"
     helper_con=$launched_con
@@ -386,9 +401,6 @@ run_variant() {
         fail "${label} reference image does not contain the expected target palette"
 
     i3-msg "workspace $(i3_quote "$workspace_b")" >/dev/null
-    launch_fixture "$executable" "$alternate_title" alternate \
-        "${artifact_dir}/${label}-alternate.log"
-    alternate_con=$launched_con
     i3-msg "[con_id=${alternate_con}] focus" >/dev/null
     sleep "$settle"
 
@@ -445,6 +457,11 @@ run_variant() {
             tee -a "${artifact_dir}/results.tsv"
     done
 
+    if grep -Fq "Timed out waiting for" "${artifact_dir}/${label}-target.log"; then
+        tail -n 80 "${artifact_dir}/${label}-target.log" >&2 || true
+        fail "${label} emitted a workspace redraw timeout warning"
+    fi
+
     stop_test_processes
     variant_failures=$failures
     if ((failures == 0)); then
@@ -459,7 +476,7 @@ run_variant() {
 {
     printf 'display=%s\n' "$DISPLAY"
     printf 'i3=%s\n' "$(i3-msg -t get_version | jq -er '.human_readable')"
-    printf 'imagemagick=%s\n' "$(convert -version | head -n 1)"
+    printf 'imagemagick=%s\n' "$(magick -version | head -n 1)"
     printf 'iterations=%s\nsettle=%s\nthreshold=%s\n' \
         "$iterations" "$settle" "$threshold"
     printf 'candidate=%s\nbaseline=%s\n' "$candidate" "${baseline:-none}"

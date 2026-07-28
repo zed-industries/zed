@@ -124,13 +124,15 @@ enum RefreshState {
 struct WorkspaceRedrawWindowState {
     viewable_since: Option<Instant>,
     refresh_rate: Duration,
+    warn_on_timeout: bool,
 }
 
 impl WorkspaceRedrawWindowState {
-    fn new(refresh_rate: Duration) -> Self {
+    fn new(refresh_rate: Duration, candidate: WorkspaceRedrawCandidate) -> Self {
         Self {
             viewable_since: None,
             refresh_rate,
+            warn_on_timeout: candidate == WorkspaceRedrawCandidate::Expected,
         }
     }
 
@@ -147,6 +149,41 @@ impl WorkspaceRedrawWindowState {
                 false
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceRedrawCandidate {
+    Expected,
+    Fallback,
+}
+
+#[derive(Default)]
+struct WorkspaceRedrawGeneration(u64);
+
+impl WorkspaceRedrawGeneration {
+    fn advance(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(1);
+        self.0
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.0 == generation
+    }
+}
+
+fn workspace_redraw_candidate(
+    current_desktop: Option<u32>,
+    window_desktop: Option<u32>,
+) -> Option<WorkspaceRedrawCandidate> {
+    match (current_desktop, window_desktop) {
+        (Some(current_desktop), Some(window_desktop))
+            if window_desktop != current_desktop && window_desktop != u32::MAX =>
+        {
+            None
+        }
+        (Some(_), Some(_)) => Some(WorkspaceRedrawCandidate::Expected),
+        _ => Some(WorkspaceRedrawCandidate::Fallback),
     }
 }
 
@@ -232,7 +269,7 @@ pub struct X11ClientState {
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     workspace_redraw_timer: Option<RegistrationToken>,
-    workspace_redraw_generation: u64,
+    workspace_redraw_generation: WorkspaceRedrawGeneration,
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
@@ -584,7 +621,7 @@ impl X11Client {
             atoms,
             windows: HashMap::default(),
             workspace_redraw_timer: None,
-            workspace_redraw_generation: 0,
+            workspace_redraw_generation: WorkspaceRedrawGeneration::default(),
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
@@ -614,25 +651,107 @@ impl X11Client {
     }
 
     fn start_workspace_redraw_timer(&self) {
-        let (loop_handle, generation, mut window_states) = {
+        let (
+            loop_handle,
+            generation,
+            xcb_connection,
+            root,
+            current_desktop_atom,
+            window_desktop_atom,
+            windows,
+        ) = {
             let mut state = self.0.borrow_mut();
             if let Some(timer) = state.workspace_redraw_timer.take() {
                 state.loop_handle.remove(timer);
             }
-            state.workspace_redraw_generation = state.workspace_redraw_generation.wrapping_add(1);
-            let generation = state.workspace_redraw_generation;
-            let window_states = state
+            let generation = state.workspace_redraw_generation.advance();
+            let root = state.xcb_connection.setup().roots[state.x_root_index].root;
+            let windows = state
                 .windows
                 .iter()
-                .map(|(x_window, window)| {
-                    (
-                        *x_window,
-                        WorkspaceRedrawWindowState::new(window.refresh_rate()),
-                    )
-                })
-                .collect::<HashMap<_, _>>();
-            (state.loop_handle.clone(), generation, window_states)
+                .map(|(x_window, window)| (*x_window, window.refresh_rate()))
+                .collect::<Vec<_>>();
+            (
+                state.loop_handle.clone(),
+                generation,
+                state.xcb_connection.clone(),
+                root,
+                state.atoms._NET_CURRENT_DESKTOP,
+                state.atoms._NET_WM_DESKTOP,
+                windows,
+            )
         };
+
+        let current_desktop_request = xcb_connection.get_property(
+            false,
+            root,
+            current_desktop_atom,
+            xproto::AtomEnum::CARDINAL,
+            0,
+            1,
+        );
+
+        let mut desktop_requests = Vec::with_capacity(windows.len());
+        let mut windows_without_desktop_request = Vec::new();
+        for (x_window, refresh_rate) in windows {
+            match xcb_connection.get_property(
+                false,
+                x_window,
+                window_desktop_atom,
+                xproto::AtomEnum::CARDINAL,
+                0,
+                1,
+            ) {
+                Ok(request) => desktop_requests.push((x_window, refresh_rate, request)),
+                Err(error) => {
+                    log::debug!(
+                        "Failed to request _NET_WM_DESKTOP for workspace redraw: {error:?}"
+                    );
+                    windows_without_desktop_request.push((x_window, refresh_rate));
+                }
+            }
+        }
+
+        let current_desktop = match current_desktop_request {
+            Ok(request) => match request.reply() {
+                Ok(reply) => reply.value32().and_then(|mut values| values.next()),
+                Err(error) => {
+                    log::debug!(
+                        "Failed to get _NET_CURRENT_DESKTOP for workspace redraw: {error:?}"
+                    );
+                    None
+                }
+            },
+            Err(error) => {
+                log::debug!(
+                    "Failed to request _NET_CURRENT_DESKTOP for workspace redraw: {error:?}"
+                );
+                None
+            }
+        };
+
+        let mut window_states = HashMap::default();
+        for (x_window, refresh_rate, request) in desktop_requests {
+            let window_desktop = match request.reply() {
+                Ok(reply) => reply.value32().and_then(|mut values| values.next()),
+                Err(error) => {
+                    log::debug!("Failed to get _NET_WM_DESKTOP for workspace redraw: {error:?}");
+                    None
+                }
+            };
+            if let Some(candidate) = workspace_redraw_candidate(current_desktop, window_desktop) {
+                window_states.insert(
+                    x_window,
+                    WorkspaceRedrawWindowState::new(refresh_rate, candidate),
+                );
+            }
+        }
+        for (x_window, refresh_rate) in windows_without_desktop_request {
+            window_states.insert(
+                x_window,
+                WorkspaceRedrawWindowState::new(refresh_rate, WorkspaceRedrawCandidate::Fallback),
+            );
+        }
 
         if window_states.is_empty() {
             return;
@@ -647,7 +766,7 @@ impl X11Client {
             let now = Instant::now();
             let (xcb_connection, pending_windows) = {
                 let state = client.0.borrow();
-                if state.workspace_redraw_generation != generation {
+                if !state.workspace_redraw_generation.is_current(generation) {
                     return calloop::timer::TimeoutAction::Drop;
                 }
                 window_states.retain(|x_window, _| state.windows.contains_key(x_window));
@@ -701,7 +820,7 @@ impl X11Client {
 
             let windows_to_refresh = {
                 let state = client.0.borrow();
-                if state.workspace_redraw_generation != generation {
+                if !state.workspace_redraw_generation.is_current(generation) {
                     return calloop::timer::TimeoutAction::Drop;
                 }
                 windows_to_refresh
@@ -723,16 +842,28 @@ impl X11Client {
 
             let timed_out = Instant::now() >= deadline;
             if timed_out && !window_states.is_empty() {
-                log::warn!(
-                    "Timed out waiting for {} X11 window(s) to become viewable after a \
-                     workspace change",
-                    window_states.len()
-                );
+                let expected_windows = window_states
+                    .values()
+                    .filter(|window| window.warn_on_timeout)
+                    .count();
+                let fallback_windows = window_states.len() - expected_windows;
+                if expected_windows > 0 {
+                    log::warn!(
+                        "Timed out waiting for {expected_windows} X11 window(s) on the current \
+                         desktop to become viewable after a workspace change"
+                    );
+                }
+                if fallback_windows > 0 {
+                    log::debug!(
+                        "Stopped polling {fallback_windows} X11 window(s) whose desktop could not \
+                         be determined after a workspace change"
+                    );
+                }
             }
 
             if window_states.is_empty() || timed_out {
                 let mut state = client.0.borrow_mut();
-                if state.workspace_redraw_generation == generation {
+                if state.workspace_redraw_generation.is_current(generation) {
                     state.workspace_redraw_timer = None;
                 }
                 calloop::timer::TimeoutAction::Drop
@@ -744,7 +875,7 @@ impl X11Client {
         match registration {
             Ok(registration) => {
                 let mut state = self.0.borrow_mut();
-                if state.workspace_redraw_generation == generation {
+                if state.workspace_redraw_generation.is_current(generation) {
                     state.workspace_redraw_timer = Some(registration);
                 } else {
                     state.loop_handle.remove(registration);
@@ -3007,7 +3138,10 @@ mod tests {
 
     fn workspace_redraw_observations(observations: &[(u64, bool)]) -> Vec<bool> {
         let start = Instant::now();
-        let mut state = WorkspaceRedrawWindowState::new(Duration::from_millis(16));
+        let mut state = WorkspaceRedrawWindowState::new(
+            Duration::from_millis(16),
+            WorkspaceRedrawCandidate::Expected,
+        );
         observations
             .iter()
             .map(|(milliseconds, is_viewable)| {
@@ -3042,6 +3176,39 @@ mod tests {
             workspace_redraw_observations(&[(0, false), (100, false), (200, true), (216, true),]),
             [false, false, false, true],
         );
+    }
+
+    #[test]
+    fn workspace_redraw_limits_candidates_to_the_current_desktop() {
+        assert_eq!(
+            workspace_redraw_candidate(Some(2), Some(2)),
+            Some(WorkspaceRedrawCandidate::Expected)
+        );
+        assert_eq!(
+            workspace_redraw_candidate(Some(2), Some(u32::MAX)),
+            Some(WorkspaceRedrawCandidate::Expected)
+        );
+        assert_eq!(workspace_redraw_candidate(Some(2), Some(3)), None);
+        assert_eq!(
+            workspace_redraw_candidate(Some(2), None),
+            Some(WorkspaceRedrawCandidate::Fallback)
+        );
+        assert_eq!(
+            workspace_redraw_candidate(None, Some(2)),
+            Some(WorkspaceRedrawCandidate::Fallback)
+        );
+    }
+
+    #[test]
+    fn workspace_redraw_generation_invalidates_older_timers() {
+        let mut generation = WorkspaceRedrawGeneration::default();
+        let first = generation.advance();
+        let second = generation.advance();
+        let third = generation.advance();
+
+        assert!(!generation.is_current(first));
+        assert!(!generation.is_current(second));
+        assert!(generation.is_current(third));
     }
 
     fn test_keymap(layouts: &str) -> xkbc::Keymap {
