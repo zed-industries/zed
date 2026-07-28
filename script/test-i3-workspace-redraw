@@ -1,0 +1,373 @@
+#!/usr/bin/env bash
+#
+# Screenshot regression test for GPUI redraws after i3 switches X11 workspaces.
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  script/test-i3-workspace-redraw --candidate FIXTURE [options]
+
+Options:
+  --candidate PATH      GPUI fixture containing the proposed fix (required).
+  --baseline PATH       Optional unpatched fixture to measure first.
+  --iterations N        Workspace round trips per variant (default: 5).
+  --settle SECONDS      Delay before screenshots (default: 0.5).
+  --threshold RMSE      Maximum normalized RMSE (default: 0.01).
+  --artifacts DIR       Output directory (default: a new /tmp directory).
+  -h, --help            Show this help.
+
+The current i3 workspace and focused container are restored on exit. The target
+is never focused between returning to its workspace and taking the return image.
+EOF
+}
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 2
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 ||
+        fail "required command not found: $1"
+}
+
+resolve_executable() {
+    local executable=$1
+
+    if [[ "$executable" == */* ]]; then
+        [[ -x "$executable" ]] || fail "not an executable: $executable"
+        readlink -f "$executable"
+    else
+        command -v "$executable" ||
+            fail "executable not found in PATH: $executable"
+    fi
+}
+
+i3_quote() {
+    jq -Rrn --arg value "$1" '$value | @json'
+}
+
+candidate=
+baseline=
+iterations=5
+settle=0.5
+threshold=0.01
+artifact_dir=
+
+while (($#)); do
+    case "$1" in
+        --candidate)
+            (($# >= 2)) || fail "--candidate requires a value"
+            candidate=$2
+            shift 2
+            ;;
+        --baseline)
+            (($# >= 2)) || fail "--baseline requires a value"
+            baseline=$2
+            shift 2
+            ;;
+        --iterations)
+            (($# >= 2)) || fail "--iterations requires a value"
+            iterations=$2
+            shift 2
+            ;;
+        --settle)
+            (($# >= 2)) || fail "--settle requires a value"
+            settle=$2
+            shift 2
+            ;;
+        --threshold)
+            (($# >= 2)) || fail "--threshold requires a value"
+            threshold=$2
+            shift 2
+            ;;
+        --artifacts)
+            (($# >= 2)) || fail "--artifacts requires a value"
+            artifact_dir=$2
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            fail "unknown argument: $1"
+            ;;
+    esac
+done
+
+[[ -n "$candidate" ]] || {
+    usage >&2
+    fail "--candidate is required"
+}
+[[ "$iterations" =~ ^[1-9][0-9]*$ ]] ||
+    fail "--iterations must be a positive integer"
+[[ "$settle" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] ||
+    fail "--settle must be a non-negative number"
+[[ "$threshold" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] ||
+    fail "--threshold must be a non-negative number"
+[[ -n "${DISPLAY:-}" ]] || fail "DISPLAY is not set"
+[[ "${XDG_SESSION_TYPE:-x11}" == x11 ]] || fail "an X11 session is required"
+[[ -z "${WAYLAND_DISPLAY:-}" ]] || fail "WAYLAND_DISPLAY must be unset"
+
+for command in awk compare convert grep i3-msg import jq readlink seq xdotool xprop; do
+    require_command "$command"
+done
+
+candidate=$(resolve_executable "$candidate")
+if [[ -n "$baseline" ]]; then
+    baseline=$(resolve_executable "$baseline")
+fi
+
+if [[ -z "$artifact_dir" ]]; then
+    artifact_dir=$(mktemp -d "${TMPDIR:-/tmp}/gpui-i3-redraw.XXXXXX")
+else
+    mkdir -p "$artifact_dir"
+    artifact_dir=$(readlink -f "$artifact_dir")
+fi
+
+run_id="$$-$(date +%s)"
+original_workspace=$(i3-msg -t get_workspaces |
+    jq -er '.[] | select(.focused).name')
+original_con_id=$(i3-msg -t get_tree |
+    jq -r '.. | objects |
+        select(.focused? == true and .window? != null) | .id' |
+    head -n 1)
+test_pids=()
+test_cons=()
+
+stop_test_processes() {
+    local con_id pid
+
+    for con_id in "${test_cons[@]}"; do
+        i3-msg "[con_id=${con_id}] kill" >/dev/null 2>&1 || true
+    done
+    for pid in "${test_pids[@]}"; do
+        kill "$pid" >/dev/null 2>&1 || true
+        wait "$pid" >/dev/null 2>&1 || true
+    done
+
+    test_cons=()
+    test_pids=()
+}
+
+cleanup() {
+    stop_test_processes
+    i3-msg "workspace $(i3_quote "$original_workspace")" \
+        >/dev/null 2>&1 || true
+    if [[ -n "$original_con_id" ]]; then
+        i3-msg "[con_id=${original_con_id}] focus" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+window_for_pid_and_title() {
+    local pid=$1
+    local title=$2
+    local window_id window_pid
+
+    for _ in $(seq 1 150); do
+        while read -r window_id; do
+            [[ -n "$window_id" ]] || continue
+            window_pid=$(xdotool getwindowpid "$window_id" 2>/dev/null || true)
+            if [[ "$window_pid" == "$pid" ]] &&
+                xprop -id "$window_id" _NET_WM_NAME 2>/dev/null |
+                    grep -Fq "\"${title}\""; then
+                printf '%s\n' "$window_id"
+                return 0
+            fi
+        done < <(xdotool search --pid "$pid" --name "^${title}$" 2>/dev/null || true)
+        sleep 0.1
+    done
+
+    return 1
+}
+
+container_for_window() {
+    local window_id=$1
+    local con_id
+
+    for _ in $(seq 1 100); do
+        con_id=$(i3-msg -t get_tree |
+            jq -er --argjson window_id "$window_id" \
+                '.. | objects |
+                select(.window? == $window_id) | .id' |
+            head -n 1) || true
+        if [[ -n "$con_id" ]]; then
+            printf '%s\n' "$con_id"
+            return 0
+        fi
+        sleep 0.1
+    done
+
+    return 1
+}
+
+launch_fixture() {
+    local executable=$1
+    local title=$2
+    local palette=$3
+    local log_file=$4
+    local window_id
+
+    "$executable" --title "$title" --palette "$palette" >"$log_file" 2>&1 &
+    launched_pid=$!
+    test_pids+=("$launched_pid")
+
+    if ! window_id=$(window_for_pid_and_title "$launched_pid" "$title"); then
+        printf 'fixture did not create its X11 window; log tail:\n' >&2
+        tail -n 80 "$log_file" >&2 || true
+        printf 'i3 tree:\n' >&2
+        i3-msg -t get_tree | jq '.. | objects | select(.window? != null)' >&2 || true
+        fail "timed out waiting for fixture: $title"
+    fi
+
+    launched_con=$(container_for_window "$window_id") ||
+        fail "i3 container not found for window ${window_id} (${title})"
+    test_cons+=("$launched_con")
+    xprop -id "$window_id" _NET_WM_PID _NET_WM_NAME WM_CLASS \
+        >"${log_file%.log}.xprop" 2>&1
+}
+
+capture_container() {
+    local con_id=$1
+    local output=$2
+    local geometry x y width height
+
+    geometry=$(i3-msg -t get_tree |
+        jq -er --argjson con_id "$con_id" \
+            '.. | objects | select(.id? == $con_id) |
+            [
+                (.rect.x + .window_rect.x),
+                (.rect.y + .window_rect.y),
+                .window_rect.width,
+                .window_rect.height
+            ] | @tsv')
+    IFS=$'\t' read -r x y width height <<<"$geometry"
+    ((width > 0 && height > 0)) ||
+        fail "invalid target geometry: ${width}x${height}+${x}+${y}"
+
+    import -window root "${output}.root.png"
+    convert "${output}.root.png" \
+        -crop "${width}x${height}+${x}+${y}" +repage "${output}.png"
+    rm -f "${output}.root.png"
+}
+
+normalized_rmse() {
+    local metric value
+
+    metric=$(compare -metric RMSE "$1" "$2" null: 2>&1 || true)
+    value=$(awk -F '[()]' 'NF >= 3 { print $(NF - 1) }' <<<"$metric")
+    [[ "$value" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] ||
+        fail "could not parse ImageMagick RMSE output: $metric"
+    printf '%s\n' "$value"
+}
+
+rmse_is_acceptable() {
+    awk -v value="$1" -v limit="$threshold" \
+        'BEGIN { exit !(value <= limit) }'
+}
+
+run_variant() {
+    local label=$1
+    local executable=$2
+    local workspace_a="gpui_i3_e2e_${run_id}_${label}_a"
+    local workspace_b="gpui_i3_e2e_${run_id}_${label}_b"
+    local target_title="GPUI_I3_E2E_${run_id}_${label}_TARGET"
+    local helper_title="GPUI_I3_E2E_${run_id}_${label}_HELPER"
+    local alternate_title="GPUI_I3_E2E_${run_id}_${label}_ALTERNATE"
+    local target_con helper_con alternate_con focused_con iteration
+    local return_rmse control_rmse failures=0
+
+    i3-msg "workspace $(i3_quote "$workspace_a")" >/dev/null
+    launch_fixture "$executable" "$target_title" target \
+        "${artifact_dir}/${label}-target.log"
+    target_con=$launched_con
+    launch_fixture "$executable" "$helper_title" helper \
+        "${artifact_dir}/${label}-helper.log"
+    helper_con=$launched_con
+
+    i3-msg "[con_id=${helper_con}] focus" >/dev/null
+    sleep "$settle"
+    capture_container "$target_con" "${artifact_dir}/${label}-reference"
+
+    i3-msg "workspace $(i3_quote "$workspace_b")" >/dev/null
+    launch_fixture "$executable" "$alternate_title" alternate \
+        "${artifact_dir}/${label}-alternate.log"
+    alternate_con=$launched_con
+    i3-msg "[con_id=${alternate_con}] focus" >/dev/null
+    sleep "$settle"
+
+    printf '\nvariant=%s executable=%s\n' "$label" "$executable"
+    for iteration in $(seq 1 "$iterations"); do
+        i3-msg "workspace $(i3_quote "$workspace_b")" >/dev/null
+        sleep "$settle"
+        i3-msg "workspace $(i3_quote "$workspace_a")" >/dev/null
+        i3-msg "[con_id=${helper_con}] focus" >/dev/null
+        sleep "$settle"
+
+        focused_con=$(i3-msg -t get_tree |
+            jq -er '.. | objects | select(.focused? == true) | .id' |
+            head -n 1)
+        [[ "$focused_con" == "$helper_con" ]] ||
+            fail "target workspace returned with the wrong focused container"
+
+        capture_container "$target_con" \
+            "${artifact_dir}/${label}-return-${iteration}"
+        return_rmse=$(normalized_rmse \
+            "${artifact_dir}/${label}-reference.png" \
+            "${artifact_dir}/${label}-return-${iteration}.png")
+        if ! rmse_is_acceptable "$return_rmse"; then
+            ((failures += 1))
+        fi
+
+        i3-msg "[con_id=${target_con}] focus" >/dev/null
+        sleep "$settle"
+        i3-msg "[con_id=${helper_con}] focus" >/dev/null
+        sleep "$settle"
+        capture_container "$target_con" \
+            "${artifact_dir}/${label}-control-${iteration}"
+        control_rmse=$(normalized_rmse \
+            "${artifact_dir}/${label}-reference.png" \
+            "${artifact_dir}/${label}-control-${iteration}.png")
+
+        printf '%s\t%d\t%s\t%s\n' \
+            "$label" "$iteration" "$return_rmse" "$control_rmse" |
+            tee -a "${artifact_dir}/results.tsv"
+    done
+
+    stop_test_processes
+    variant_failures=$failures
+    if ((failures == 0)); then
+        printf 'result=%s PASS (%d/%d at or below %s)\n' \
+            "$label" "$iterations" "$iterations" "$threshold"
+    else
+        printf 'result=%s FAIL (%d/%d exceeded %s)\n' \
+            "$label" "$failures" "$iterations" "$threshold"
+    fi
+}
+
+{
+    printf 'display=%s\n' "$DISPLAY"
+    printf 'i3=%s\n' "$(i3-msg -t get_version | jq -er '.human_readable')"
+    printf 'imagemagick=%s\n' "$(convert -version | head -n 1)"
+    printf 'iterations=%s\nsettle=%s\nthreshold=%s\n' \
+        "$iterations" "$settle" "$threshold"
+    printf 'candidate=%s\nbaseline=%s\n' "$candidate" "${baseline:-none}"
+} | tee "${artifact_dir}/environment.txt"
+printf 'variant\titeration\treturn_rmse\tcontrol_rmse\n' \
+    >"${artifact_dir}/results.tsv"
+printf 'artifacts=%s\n' "$artifact_dir"
+
+if [[ -n "$baseline" ]]; then
+    run_variant baseline "$baseline"
+fi
+
+run_variant candidate "$candidate"
+candidate_failures=$variant_failures
+
+if ((candidate_failures > 0)); then
+    exit 1
+fi

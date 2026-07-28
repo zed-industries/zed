@@ -265,5 +265,9 @@ name = "a11y"
 path = "examples/a11y.rs"
 
 [[example]]
+name = "x11_workspace_redraw"
+path = "examples/x11_workspace_redraw.rs"
+
+[[example]]
 name = "view_example"
 path = "examples/view_example/view_example_main.rs"
