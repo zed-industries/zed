@@ -11,6 +11,14 @@ pub fn background_executor() -> gpui::BackgroundExecutor {
 }
 
 pub fn application() -> gpui::Application {
+    #[cfg(target_family = "wasm")]
+    {
+        let platform = Rc::new(gpui_web::WebPlatform::new(true));
+        let http_client = std::sync::Arc::new(platform.fetch_http_client());
+        gpui::Application::with_platform(platform).with_http_client(http_client)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     gpui::Application::with_platform(current_platform(false))
 }
 
@@ -21,7 +29,9 @@ pub fn headless() -> gpui::Application {
 /// Unlike `application`, this function returns a single-threaded web application.
 #[cfg(target_family = "wasm")]
 pub fn single_threaded_web() -> gpui::Application {
-    gpui::Application::with_platform(Rc::new(gpui_web::WebPlatform::new(false)))
+    let platform = Rc::new(gpui_web::WebPlatform::new(false));
+    let http_client = std::sync::Arc::new(platform.fetch_http_client());
+    gpui::Application::with_platform(platform).with_http_client(http_client)
 }
 
 /// Initializes panic hooks and logging for the web platform.

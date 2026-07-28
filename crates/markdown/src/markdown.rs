@@ -395,6 +395,8 @@ pub struct Markdown {
     pressed_link: Option<RenderedLink>,
     pressed_footnote_ref: Option<RenderedFootnoteRef>,
     autoscroll_request: Option<usize>,
+    pending_heading_scroll: Option<SharedString>,
+    pending_autoscroll: Option<usize>,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -588,6 +590,8 @@ impl Markdown {
             pressed_link: None,
             pressed_footnote_ref: None,
             autoscroll_request: None,
+            pending_heading_scroll: None,
+            pending_autoscroll: None,
             active_root_block: None,
             should_reparse: false,
             images_by_source_offset: Default::default(),
@@ -705,6 +709,14 @@ impl Markdown {
         self.pending_parse.is_some()
     }
 
+    pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
+        if self.pending_parse.is_some() || self.source.is_empty() {
+            self.pending_heading_scroll = Some(slug);
+        } else {
+            self.scroll_to_heading(&slug, cx);
+        }
+    }
+
     pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) -> Option<usize> {
         if let Some(source_index) = self.parsed_markdown.heading_slugs.get(slug).copied() {
             self.autoscroll_request = Some(source_index);
@@ -756,7 +768,11 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        self.autoscroll_request = Some(source_index);
+        if self.pending_parse.is_some() {
+            self.pending_autoscroll = Some(source_index);
+        } else {
+            self.autoscroll_request = Some(source_index);
+        }
         cx.refresh_windows();
     }
 
@@ -784,11 +800,24 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
+            if self.pending_parse.is_none() {
+                if let Some(slug) = self.pending_heading_scroll.take() {
+                    self.pending_autoscroll = None;
+                    self.scroll_to_heading(&slug, cx);
+                } else if let Some(source_index) = self.pending_autoscroll.take() {
+                    self.autoscroll_request = Some(source_index);
+                    cx.refresh_windows();
+                }
+            }
             return;
+        }
+        if !self.source.is_empty() {
+            self.pending_heading_scroll = None;
         }
         self.source = source;
         self.selection = Selection::default();
         self.autoscroll_request = None;
+        self.pending_autoscroll = None;
         self.pending_parse = None;
         self.should_reparse = false;
         self.search_highlights.clear();
@@ -940,6 +969,8 @@ impl Markdown {
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
+            self.pending_heading_scroll = None;
+            self.pending_autoscroll = None;
             self.parsed_markdown = ParsedMarkdown {
                 source: self.source.clone(),
                 ..Default::default()
@@ -1100,6 +1131,14 @@ impl Markdown {
                 this.pending_parse.take();
                 if this.should_reparse {
                     this.parse(cx);
+                } else if let Some(slug) = this.pending_heading_scroll.take()
+                    && let Some(source_index) =
+                        this.parsed_markdown.heading_slugs.get(&slug).copied()
+                {
+                    this.pending_autoscroll = None;
+                    this.autoscroll_request = Some(source_index);
+                } else if let Some(source_index) = this.pending_autoscroll.take() {
+                    this.autoscroll_request = Some(source_index);
                 }
                 cx.notify();
                 cx.refresh_windows();
@@ -2534,7 +2573,7 @@ impl Element for MarkdownElement {
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .overflow_hidden(),
+                                    .overflow_x_scroll(),
                                 range,
                                 markdown_end,
                             );
@@ -4027,17 +4066,15 @@ impl RenderedText {
 
     fn position_for_source_index(&self, source_index: usize) -> Option<(Point<Pixels>, Pixels)> {
         for line in self.lines.iter() {
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            if source_index < line_source_start {
-                break;
-            } else if source_index > line.source_end {
+            if source_index > line.source_end {
                 continue;
-            } else {
-                let line_height = line.layout.line_height();
-                let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
-                let position = line.layout.position_for_index(rendered_index_within_line)?;
-                return Some((position, line_height));
             }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            let source_index = source_index.max(line_source_start);
+            let line_height = line.layout.line_height();
+            let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
+            let position = line.layout.position_for_index(rendered_index_within_line)?;
+            return Some((position, line_height));
         }
         None
     }
@@ -4176,6 +4213,106 @@ mod tests {
         }
     }
 
+    struct MarkdownTestView {
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl Render for MarkdownTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut markdown_element =
+                MarkdownElement::new(self.markdown.clone(), self.style.clone());
+            if let Some(code_span_link) = self.code_span_link.clone() {
+                markdown_element =
+                    markdown_element.on_code_span_link(move |text, cx| code_span_link(text, cx));
+            }
+            CapturingMarkdownElement {
+                markdown_element: markdown_element.code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                ),
+                rendered_text: self.rendered_text.clone(),
+            }
+        }
+    }
+
+    struct CapturingMarkdownElement {
+        markdown_element: MarkdownElement,
+        rendered_text: Rc<RefCell<Option<RenderedText>>>,
+    }
+
+    impl IntoElement for CapturingMarkdownElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for CapturingMarkdownElement {
+        type RequestLayoutState = RenderedMarkdown;
+        type PrepaintState = Hitbox;
+
+        fn id(&self) -> Option<ElementId> {
+            self.markdown_element.id()
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            self.markdown_element.source_location()
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+            self.markdown_element
+                .request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            self.markdown_element
+                .prepaint(id, inspector_id, bounds, rendered_markdown, window, cx)
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&gpui::InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            rendered_markdown: &mut Self::RequestLayoutState,
+            hitbox: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.markdown_element.paint(
+                id,
+                inspector_id,
+                bounds,
+                rendered_markdown,
+                hitbox,
+                window,
+                cx,
+            );
+            *self.rendered_text.borrow_mut() = Some(rendered_markdown.text.clone());
+        }
+    }
+
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
             if !cx.has_global::<settings::SettingsStore>() {
@@ -4185,6 +4322,30 @@ mod tests {
                 theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
+    }
+
+    fn render_markdown_entity_in_view(
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        code_span_link: Option<CodeSpanLinkCallback>,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let rendered_text = rendered_text.clone();
+            move |_, _| MarkdownTestView {
+                markdown,
+                style,
+                code_span_link,
+                rendered_text,
+            }
+        });
+        cx.run_until_parked();
+
+        rendered_text
+            .borrow()
+            .clone()
+            .expect("markdown should be rendered in the test view")
     }
 
     #[gpui::test]
@@ -4368,23 +4529,9 @@ mod tests {
     ) -> RenderedText {
         ensure_theme_initialized(cx);
 
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, style)
-                    .on_code_span_link(callback)
-                    .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    })
-            },
-        );
-        rendered.text
+        render_markdown_entity_in_view(markdown, style, Some(Arc::new(callback)), cx)
     }
 
     fn render_markdown_with_language_registry(
@@ -4403,7 +4550,6 @@ mod tests {
     ) -> RenderedText {
         ensure_theme_initialized(cx);
 
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| {
             Markdown::new_with_options(
                 markdown.to_string().into(),
@@ -4414,20 +4560,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
-            Default::default(),
-            size(px(600.0), px(600.0)),
-            |_window, _cx| {
-                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
-                    CodeBlockRenderer::Default {
-                        copy_button_visibility: CopyButtonVisibility::Hidden,
-                        wrap_button_visibility: WrapButtonVisibility::Hidden,
-                        border: false,
-                    },
-                )
-            },
-        );
-        rendered.text
+        render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, cx)
     }
 
     fn render_markdown_with_image_resolver(
