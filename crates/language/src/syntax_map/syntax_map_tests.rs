@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, buffer_tests::markdown_inline_lang,
-    markdown_lang, rust_lang,
+    LanguageConfig, LanguageMatcher, LanguageQueries, markdown_inline_lang, markdown_lang,
+    rust_lang,
 };
 use gpui::App;
 use pretty_assertions::assert_eq;
@@ -184,7 +184,7 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
 fn test_syntax_map_languages_match_layers_for_range(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let markdown = markdown_lang();
-    let markdown_inline = Arc::new(markdown_inline_lang());
+    let markdown_inline = markdown_inline_lang();
     registry.add(markdown.clone());
     registry.add(markdown_inline);
     registry.add(rust_lang());
@@ -265,7 +265,7 @@ fn test_syntax_map_languages_match_layers_for_range(cx: &mut App) {
 fn test_dynamic_language_injection(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let markdown = markdown_lang();
-    let markdown_inline = Arc::new(markdown_inline_lang());
+    let markdown_inline = markdown_inline_lang();
     registry.add(markdown.clone());
     registry.add(markdown_inline.clone());
     registry.add(rust_lang());
@@ -1340,7 +1340,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
     registry.add(Arc::new(html_lang()));
     registry.add(Arc::new(erb_lang()));
     registry.add(markdown_lang());
-    registry.add(Arc::new(markdown_inline_lang()));
+    registry.add(markdown_inline_lang());
 
     let language = registry
         .language_for_name(language_name)
