@@ -630,8 +630,8 @@ mod tests {
 
     use crate::{
         ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
-        KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription, TestAppContext,
-        UTF16Selection, Unbind, Window,
+        KeyBinding, KeyContext, KeyDownEvent, Keymap, Pixels, PlatformInput, Point, Render,
+        Subscription, TestAppContext, UTF16Selection, Unbind, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -1191,5 +1191,274 @@ mod tests {
         });
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+    }
+
+    #[derive(Clone)]
+    struct KeyDispatchInputElement {
+        focus_handle: FocusHandle,
+        text: Rc<RefCell<String>>,
+        action_count: Rc<RefCell<usize>>,
+    }
+
+    impl KeyDispatchInputElement {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+                text: Rc::default(),
+                action_count: Rc::default(),
+            }
+        }
+    }
+
+    impl Element for KeyDispatchInputElement {
+        type RequestLayoutState = ();
+
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            Some("custom".into())
+        }
+
+        fn source_location(&self) -> Option<&'static panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            window.set_focus_handle(&self.focus_handle, cx);
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            let mut key_context = KeyContext::default();
+            key_context.add("Terminal");
+            window.set_key_context(key_context);
+            window.handle_input(&self.focus_handle, self.clone(), cx);
+
+            let action_count = self.action_count.clone();
+            window.on_action(
+                std::any::TypeId::of::<TestAction>(),
+                move |_, phase, _, _| {
+                    if phase == gpui::DispatchPhase::Bubble {
+                        *action_count.borrow_mut() += 1;
+                    }
+                },
+            );
+        }
+    }
+
+    impl IntoElement for KeyDispatchInputElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl InputHandler for KeyDispatchInputElement {
+        fn selected_text_range(
+            &mut self,
+            _: bool,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<UTF16Selection> {
+            None
+        }
+
+        fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+            None
+        }
+
+        fn text_for_range(
+            &mut self,
+            _: Range<usize>,
+            _: &mut Option<Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<String> {
+            None
+        }
+
+        fn replace_text_in_range(
+            &mut self,
+            replacement_range: Option<Range<usize>>,
+            text: &str,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            if replacement_range.is_some() {
+                unimplemented!()
+            }
+            self.text.borrow_mut().push_str(text)
+        }
+
+        fn replace_and_mark_text_in_range(
+            &mut self,
+            replacement_range: Option<Range<usize>>,
+            new_text: &str,
+            _: Option<Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            if replacement_range.is_some() {
+                unimplemented!()
+            }
+            self.text.borrow_mut().push_str(new_text)
+        }
+
+        fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+        fn bounds_for_range(
+            &mut self,
+            _: Range<usize>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<Bounds<Pixels>> {
+            None
+        }
+
+        fn character_index_for_point(
+            &mut self,
+            _: Point<Pixels>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<usize> {
+            None
+        }
+    }
+
+    impl Render for KeyDispatchInputElement {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.clone()
+        }
+    }
+
+    fn dispatch_key_down(
+        window: &mut Window,
+        cx: &mut App,
+        keystroke: &str,
+        key_char: Option<&str>,
+        prefer_character_input: bool,
+        allow_keybinding_override: bool,
+    ) -> bool {
+        let mut keystroke = Keystroke::parse(keystroke).unwrap();
+        keystroke.key_char = key_char.map(ToOwned::to_owned);
+        window
+            .dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                    prefer_character_input,
+                    allow_keybinding_override,
+                }),
+                cx,
+            )
+            .propagate
+    }
+
+    #[crate::test]
+    fn test_preferred_character_input_allows_exact_keybinding_override(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("alt-shift-f", TestAction, Some("Terminal"))]);
+        });
+
+        let (test, cx) = cx.add_window_view(|_, cx| KeyDispatchInputElement::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        let propagated = cx.update(|window, cx| {
+            dispatch_key_down(window, cx, "alt-shift-f", Some("\u{00cf}"), true, false)
+        });
+        assert!(propagated);
+        test.update(cx, |test, _| assert_eq!(*test.action_count.borrow(), 0));
+
+        let propagated = cx.update(|window, cx| {
+            dispatch_key_down(window, cx, "alt-shift-f", Some("\u{00cf}"), true, true)
+        });
+        assert!(!propagated);
+        test.update(cx, |test, _| {
+            assert_eq!(*test.action_count.borrow(), 1);
+            assert_eq!(test.text.borrow().as_str(), "");
+        });
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+    }
+
+    #[crate::test]
+    fn test_preferred_character_input_does_not_start_new_pending_sequence(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("j j", TestAction, Some("Terminal"))]);
+        });
+
+        let (test, cx) = cx.add_window_view(|_, cx| KeyDispatchInputElement::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        let propagated =
+            cx.update(|window, cx| dispatch_key_down(window, cx, "j", Some("j"), true, true));
+
+        assert!(propagated);
+        test.update(cx, |test, _| assert_eq!(*test.action_count.borrow(), 0));
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+    }
+
+    #[crate::test]
+    fn test_preferred_character_input_continues_existing_pending_sequence(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("ctrl-x p f", TestAction, Some("Terminal"))]);
+        });
+
+        let (test, cx) = cx.add_window_view(|_, cx| KeyDispatchInputElement::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        let propagated =
+            cx.update(|window, cx| dispatch_key_down(window, cx, "ctrl-x", None, false, false));
+        assert!(!propagated);
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        let propagated =
+            cx.update(|window, cx| dispatch_key_down(window, cx, "p", Some("p"), true, true));
+        assert!(!propagated);
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        let propagated =
+            cx.update(|window, cx| dispatch_key_down(window, cx, "f", Some("f"), true, true));
+        assert!(!propagated);
+        test.update(cx, |test, _| assert_eq!(*test.action_count.borrow(), 1));
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
     }
 }

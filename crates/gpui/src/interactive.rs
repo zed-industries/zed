@@ -32,6 +32,11 @@ pub struct KeyDownEvent {
     /// Whether to prefer character input over keybindings for this keystroke.
     /// In some cases, like AltGr on Windows, modifiers are significant for character input.
     pub prefer_character_input: bool,
+
+    /// Whether keybindings may still override character input when `prefer_character_input` is set.
+    /// This lets platforms give IMEs the default path for printable keys while still allowing an
+    /// exact keymap binding to win.
+    pub allow_keybinding_override: bool,
 }
 
 impl Sealed for KeyDownEvent {}
