@@ -3153,6 +3153,54 @@ Configuration for various AI model providers including API URLs and authenticati
 
 `boolean` values
 
+## Markdown Preview
+
+- Description: Settings for the markdown preview
+- Setting: `markdown_preview`
+- Default:
+
+```json [settings]
+{
+  "markdown_preview": {
+    "limit_content_width": true,
+    "max_width": 800,
+    "open_preview_on_file_open": false
+  }
+}
+```
+
+**Options**
+
+### Limit Content Width
+
+- Description: Whether to limit the maximum width of the rendered markdown content
+- Setting: `limit_content_width`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Max Width
+
+- Description: The maximum width, in pixels, of the rendered markdown content when `limit_content_width` is enabled
+- Setting: `max_width`
+- Default: `800`
+
+**Options**
+
+Positive `number` values
+
+### Open Preview On File Open
+
+- Description: Whether opening a markdown file opens a markdown preview tab instead of a text editor
+- Setting: `open_preview_on_file_open`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Max Tabs
 
 - Description: Maximum number of tabs to show in the tab bar
