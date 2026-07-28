@@ -27,7 +27,6 @@ use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{ContextMenu, LinkPreview, WithScrollbar, prelude::*, right_click_menu};
-use url::Url;
 use util::{
     ResultExt,
     markdown::{source_position_from_fragment, split_local_url_fragment},
@@ -35,7 +34,7 @@ use util::{
 };
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
 use workspace::notifications::{NotifyResultExt, NotifyTaskExt};
-use workspace::path_link::possible_open_target;
+use workspace::path_link::{PathMatching, resolve_open_target};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
@@ -1097,7 +1096,8 @@ fn open_preview_url(
 ) {
     let decoded_path = urlencoding::decode(&url).unwrap_or_else(|_| Cow::Borrowed(&url));
 
-    let path_with_position = if Url::parse(&decoded_path).is_err() {
+    // Only `://` URLs skip position handling (a scheme check would misclassify `main.rs:2`); ambiguous links like `tel:123` are tried as files first, then fall back to the URL handler.
+    let path_with_position = if !decoded_path.contains("://") {
         if PathWithPosition::parse_str(&decoded_path).row.is_some() {
             Some(decoded_path.to_string())
         } else {
@@ -1146,8 +1146,9 @@ fn open_preview_path_with_position(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let open_target = possible_open_target(
+    let open_target = resolve_open_target(
         workspace,
+        PathMatching::Exact,
         &path_with_position,
         base_directory.as_deref(),
         cx,
@@ -1169,7 +1170,7 @@ fn open_preview_path_with_position(
             })?;
         }
 
-        Ok(())
+        anyhow::Ok(())
     });
     task.detach_and_notify_err(workspace_for_error, window, cx);
 }
@@ -1844,7 +1845,7 @@ mod tests {
         fs.insert_tree(
             path!("/project"),
             json!({
-                "docs": {},
+                "docs": {"guide.md": "alpha\nbeta\ngamma\n"},
                 "src": {"main.rs": "first\nsecond\nthird\n"}
             }),
         )
@@ -1902,6 +1903,63 @@ mod tests {
             );
         });
 
+        // `guide.md:2` must open the sibling file at line 2 despite `guide.md:` being a valid URI scheme prefix.
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "guide.md:2".into(),
+                None,
+                Some(PathBuf::from(path!("/project/docs"))),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let guide_editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("guide.md should be open in an editor")
+        });
+        guide_editor.update_in(cx, |editor, window, cx| {
+            let file_path = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file().map(|file| file.path().clone()))
+                .expect("opened editor should have a file");
+            assert_eq!(file_path.as_ref(), rel_path("docs/guide.md"));
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(1, 0)
+            );
+        });
+
+        // An unresolved link must not open an unrelated file that merely shares its trailing path components.
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "main.rs:2".into(),
+                None,
+                Some(PathBuf::from(path!("/project/docs"))),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.opened_url().as_deref(), Some("main.rs:2"));
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).head(),
+                Point::new(2, 0),
+                "broken link must not move the cursor in a suffix-matching file"
+            );
+        });
+
         multi_workspace.update_in(cx, |_, window, cx| {
             open_preview_url(
                 "tel:123".into(),
@@ -1912,6 +1970,7 @@ mod tests {
                 cx,
             );
         });
+        cx.run_until_parked();
         assert_eq!(cx.opened_url().as_deref(), Some("tel:123"));
     }
 
