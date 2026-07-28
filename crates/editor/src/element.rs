@@ -1014,6 +1014,9 @@ impl EditorElement {
         em_advance: Pixels,
         autoscroll_containing_element: bool,
         redacted_ranges: &[Range<DisplayPoint>],
+        primary_player_color: PlayerColor,
+        highlight_primary_local_selection: bool,
+        has_multiple_local_selections: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<CursorLayout> {
@@ -1052,6 +1055,13 @@ impl EditorElement {
 
                     let mut block_width = cell_width;
                     let mut block_text = None;
+                    let cursor_color = Self::cursor_color(
+                        player_color,
+                        selection,
+                        primary_player_color,
+                        highlight_primary_local_selection,
+                        has_multiple_local_selections,
+                    );
 
                     let is_cursor_in_redacted_range = redacted_ranges
                         .iter()
@@ -1154,7 +1164,7 @@ impl EditorElement {
                     }
 
                     let mut cursor = CursorLayout {
-                        color: player_color.cursor,
+                        color: cursor_color,
                         block_width,
                         origin: point(x, y),
                         line_height,
@@ -2909,6 +2919,9 @@ impl EditorElement {
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: impl IntoIterator<Item = (Range<DisplayPoint>, Hsla)>,
         base_background: Hsla,
+        primary_player_color: PlayerColor,
+        highlight_primary_local_selection: bool,
+        has_multiple_local_selections: bool,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -2919,9 +2932,15 @@ impl EditorElement {
         }
         let highlight_iter = highlight_ranges.into_iter();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
-            let color = player_color.selection;
             layouts.iter().filter_map(move |selection_layout| {
                 if selection_layout.range.start != selection_layout.range.end {
+                    let color = Self::selection_background_color(
+                        player_color,
+                        selection_layout,
+                        primary_player_color,
+                        highlight_primary_local_selection,
+                        has_multiple_local_selections,
+                    );
                     Some((selection_layout.range.clone(), color))
                 } else {
                     None
@@ -2962,6 +2981,63 @@ impl EditorElement {
             *row_segments = merged;
         }
         per_row_map
+    }
+
+    fn selection_background_color(
+        player_color: &PlayerColor,
+        selection_layout: &SelectionLayout,
+        primary_player_color: PlayerColor,
+        highlight_primary_local_selection: bool,
+        has_multiple_local_selections: bool,
+    ) -> Hsla {
+        if Self::should_highlight_primary_local_selection(
+            selection_layout,
+            highlight_primary_local_selection,
+            has_multiple_local_selections,
+        ) {
+            primary_player_color.selection
+        } else {
+            player_color.selection
+        }
+    }
+
+    fn cursor_color(
+        player_color: &PlayerColor,
+        selection_layout: &SelectionLayout,
+        primary_player_color: PlayerColor,
+        highlight_primary_local_selection: bool,
+        has_multiple_local_selections: bool,
+    ) -> Hsla {
+        if Self::should_highlight_primary_local_selection(
+            selection_layout,
+            highlight_primary_local_selection,
+            has_multiple_local_selections,
+        ) {
+            primary_player_color.cursor
+        } else {
+            player_color.cursor
+        }
+    }
+
+    fn primary_selection_player_color(cx: &App) -> PlayerColor {
+        let players = cx.theme().players();
+        players
+            .0
+            .get(1)
+            .or_else(|| players.0.first())
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn should_highlight_primary_local_selection(
+        selection_layout: &SelectionLayout,
+        highlight_primary_local_selection: bool,
+        has_multiple_local_selections: bool,
+    ) -> bool {
+        highlight_primary_local_selection
+            && has_multiple_local_selections
+            && selection_layout.is_local
+            && selection_layout.is_newest
     }
 
     /// Merge overlapping ranges by splitting at all range boundaries and blending colors where
@@ -5605,13 +5681,31 @@ impl EditorElement {
             } else {
                 Pixels::ZERO
             };
+            let highlight_primary_local_selection =
+                self.editor.read(cx).highlight_primary_local_selection;
+            let primary_player_color = Self::primary_selection_player_color(cx);
+            let has_multiple_local_selections = layout
+                .selections
+                .iter()
+                .flat_map(|(_, selections)| selections)
+                .filter(|selection| selection.is_local)
+                .take(2)
+                .count()
+                > 1;
 
             for (player_color, selections) in &layout.selections {
                 for selection in selections.iter() {
+                    let selection_background_color = Self::selection_background_color(
+                        player_color,
+                        selection,
+                        primary_player_color,
+                        highlight_primary_local_selection,
+                        has_multiple_local_selections,
+                    );
                     self.paint_highlighted_range(
                         selection.range.clone(),
                         true,
-                        player_color.selection,
+                        selection_background_color,
                         corner_radius,
                         corner_radius * 2.,
                         layout,
@@ -8543,6 +8637,16 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let highlight_primary_local_selection =
+                        self.editor.read(cx).highlight_primary_local_selection;
+                    let has_multiple_local_selections = selections
+                        .iter()
+                        .flat_map(|(_, selections)| selections)
+                        .filter(|selection| selection.is_local)
+                        .take(2)
+                        .count()
+                        > 1;
+                    let primary_player_color = Self::primary_selection_player_color(cx);
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,
                         &selections,
@@ -8552,6 +8656,9 @@ impl Element for EditorElement {
                                 .flat_map(|(_, colors)| colors.iter().cloned()),
                         ),
                         self.style.background,
+                        primary_player_color,
+                        highlight_primary_local_selection,
+                        has_multiple_local_selections,
                     );
 
                     let mut line_layouts = Self::layout_lines(
@@ -9021,6 +9128,9 @@ impl Element for EditorElement {
                         em_advance,
                         autoscroll_containing_element,
                         &redacted_ranges,
+                        primary_player_color,
+                        highlight_primary_local_selection,
+                        has_multiple_local_selections,
                         window,
                         cx,
                     );
@@ -12232,6 +12342,9 @@ mod tests {
                 &selections,
                 [].into_iter(),
                 base_bg,
+                player_color,
+                false,
+                false,
             );
 
             assert_eq!(result.len(), 5);
@@ -12281,6 +12394,9 @@ mod tests {
                 &selections,
                 [].into_iter(),
                 base_bg,
+                player_color,
+                false,
+                false,
             );
 
             assert_eq!(result.len(), 4);
@@ -12296,6 +12412,170 @@ mod tests {
             assert_eq!(result[2][0].0.end.row(), DisplayRow(2));
             assert_eq!(result[2][0].0.end.column(), u32::MAX);
         }
+
+        // Case C: primary local selections use the primary player's selection color.
+        {
+            let selection_color = Hsla {
+                h: 120.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let primary_selection_color = Hsla {
+                h: 240.0,
+                s: 0.5,
+                l: 0.5,
+                a: 0.5,
+            };
+            let primary_cursor_color = Hsla {
+                h: 300.0,
+                s: 0.5,
+                l: 0.5,
+                a: 1.0,
+            };
+            let player_color = PlayerColor {
+                cursor: selection_color,
+                background: selection_color,
+                selection: selection_color,
+            };
+            let primary_player_color = PlayerColor {
+                cursor: primary_cursor_color,
+                background: primary_selection_color,
+                selection: primary_selection_color,
+            };
+
+            let primary_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(1), 3),
+                cursor_shape: CursorShape::Bar,
+                is_newest: true,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 3),
+                active_rows: DisplayRow(1)..DisplayRow(2),
+                user_name: None,
+            };
+            let secondary_selection = SelectionLayout {
+                head: DisplayPoint::new(DisplayRow(1), 8),
+                cursor_shape: CursorShape::Bar,
+                is_newest: false,
+                is_local: true,
+                range: DisplayPoint::new(DisplayRow(1), 5)..DisplayPoint::new(DisplayRow(1), 8),
+                active_rows: DisplayRow(1)..DisplayRow(2),
+                user_name: None,
+            };
+
+            let selections = vec![(player_color, vec![primary_selection, secondary_selection])];
+            let result = EditorElement::bg_segments_per_row(
+                DisplayRow(0)..DisplayRow(2),
+                &selections,
+                [].into_iter(),
+                base_bg,
+                primary_player_color,
+                true,
+                true,
+            );
+
+            assert_eq!(result[1][0].1, base_bg.blend(primary_selection_color));
+            assert_eq!(result[1][1].1, base_bg.blend(selection_color));
+        }
+    }
+
+    #[gpui::test]
+    fn test_primary_local_selection_uses_primary_player_colors() {
+        let selection_layout = |is_newest, is_local| SelectionLayout {
+            head: DisplayPoint::new(DisplayRow(0), 3),
+            cursor_shape: CursorShape::Block,
+            is_newest,
+            is_local,
+            range: DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 3),
+            active_rows: DisplayRow(0)..DisplayRow(1),
+            user_name: None,
+        };
+
+        let player_color = PlayerColor {
+            cursor: Hsla {
+                h: 120.0,
+                s: 0.5,
+                l: 0.5,
+                a: 1.0,
+            },
+            background: Hsla::black().opacity(0.25),
+            selection: Hsla::black().opacity(0.25),
+        };
+        let primary_player_color = PlayerColor {
+            cursor: Hsla {
+                h: 240.0,
+                s: 0.5,
+                l: 0.5,
+                a: 1.0,
+            },
+            background: Hsla::white().opacity(0.25),
+            selection: Hsla::white().opacity(0.25),
+        };
+
+        let primary_selection = selection_layout(true, true);
+        assert_eq!(
+            EditorElement::selection_background_color(
+                &player_color,
+                &primary_selection,
+                primary_player_color,
+                true,
+                true,
+            ),
+            primary_player_color.selection
+        );
+        assert_eq!(
+            EditorElement::cursor_color(
+                &player_color,
+                &primary_selection,
+                primary_player_color,
+                true,
+                true,
+            ),
+            primary_player_color.cursor
+        );
+
+        assert_eq!(
+            EditorElement::cursor_color(
+                &player_color,
+                &selection_layout(false, true),
+                primary_player_color,
+                true,
+                true,
+            ),
+            player_color.cursor
+        );
+        assert_eq!(
+            EditorElement::cursor_color(
+                &player_color,
+                &selection_layout(true, false),
+                primary_player_color,
+                true,
+                true,
+            ),
+            player_color.cursor
+        );
+        assert_eq!(
+            EditorElement::cursor_color(
+                &player_color,
+                &selection_layout(true, true),
+                primary_player_color,
+                true,
+                false,
+            ),
+            player_color.cursor
+        );
+
+        assert_eq!(
+            EditorElement::selection_background_color(
+                &player_color,
+                &selection_layout(false, true),
+                primary_player_color,
+                true,
+                true,
+            ),
+            player_color.selection
+        );
+        assert_ne!(primary_player_color.cursor, player_color.cursor);
     }
 
     #[cfg(test)]

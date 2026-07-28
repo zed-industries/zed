@@ -1529,6 +1529,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.last_selection_from_search = effects.from_search;
+        self.suppress_selected_text_highlight = effects.suppress_selected_text_highlight;
         window.invalidate_character_coordinates();
 
         // Copy selections to primary selection buffer
