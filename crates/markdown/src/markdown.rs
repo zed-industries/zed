@@ -207,7 +207,7 @@ impl MarkdownStyle {
         let line_height = buffer_font_size * 1.75;
 
         text_style.refine(&TextStyleRefinement {
-            font_family: Some(body_font_family),
+            font_family: Some(body_font_family.clone()),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(if is_preview {
@@ -423,6 +423,7 @@ pub struct Markdown {
     _mermaid_theme_subscription: Option<Subscription>,
     mermaid_showing_code: HashSet<usize>,
     math_state: MathState,
+    _math_theme_subscription: Option<Subscription>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -590,10 +591,15 @@ impl Markdown {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let theme_subscription = if options.render_mermaid_diagrams {
+        let theme_subscription = if options.render_mermaid_diagrams || options.render_math {
             Some(
                 cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
-                    this.invalidate_mermaid_cache(cx);
+                    if this.options.render_mermaid_diagrams {
+                        this.invalidate_mermaid_cache(cx);
+                    }
+                    if this.options.render_math {
+                        this.invalidate_math_cache(cx);
+                    }
                 }),
             )
         } else {
@@ -620,6 +626,7 @@ impl Markdown {
             _mermaid_theme_subscription: theme_subscription,
             mermaid_showing_code: HashSet::default(),
             math_state: MathState::default(),
+            _math_theme_subscription: None,
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -678,6 +685,17 @@ impl Markdown {
 
         self.mermaid_state.clear();
         self.mermaid_state.update(&self.parsed_markdown, cx);
+        cx.notify();
+    }
+
+    pub fn invalidate_math_cache(&mut self, cx: &mut Context<Self>) {
+        if !self.options.render_math || self.parsed_markdown.math_expressions.is_empty() {
+            return;
+        }
+
+        let font_size = ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32();
+        self.math_state.invalidate();
+        self.math_state.update(&self.parsed_markdown, font_size, cx);
         cx.notify();
     }
 
@@ -1154,7 +1172,8 @@ impl Markdown {
                 }
                 if this.options.render_math {
                     let parsed_markdown = this.parsed_markdown.clone();
-                    this.math_state.update(&parsed_markdown, cx);
+                    let font_size = ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32();
+                    this.math_state.update(&parsed_markdown, font_size, cx);
                 } else {
                     this.math_state.clear();
                 }
@@ -2892,9 +2911,9 @@ impl Element for MarkdownElement {
                 MarkdownEvent::InlineMath(_) => {
                     if render_math {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
-                            builder.push_sourced_element(
+                            builder.push_inline_sourced_element(
                                 range.clone(),
-                                render_math_expression(expr, &math_state, &self.style),
+                                render_math_expression(expr, &math_state),
                             );
                         }
                     } else {
@@ -2911,15 +2930,15 @@ impl Element for MarkdownElement {
                 MarkdownEvent::DisplayMath(_) => {
                     if render_math {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
-                            builder.push_sourced_element(
+                            builder.push_display_sourced_element(
                                 range.clone(),
-                                render_math_expression(expr, &math_state, &self.style),
+                                render_math_expression(expr, &math_state),
                             );
                         }
                     } else {
                         // Fallback: render as centered code block.
                         builder.push_div(
-                            div().centered().py_2().px_4().child(
+                            div().text_center().py_2().px_4().child(
                                 div().child(parsed_markdown.source[range.clone()].to_string()),
                             ),
                             range,
@@ -3503,6 +3522,57 @@ impl MarkdownElementBuilder {
                 .relative()
                 .child(anchor)
                 .child(element.into())
+                .into_any_element(),
+        );
+    }
+
+    /// Pushes an inline math element that flows inline with surrounding text.
+    ///
+    /// Unlike `push_sourced_element`, this converts the parent div to flex layout
+    /// so the math image participates in the inline flow alongside text runs,
+    /// rather than breaking into a separate block.
+    fn push_inline_sourced_element(
+        &mut self,
+        source_range: Range<usize>,
+        element: impl Into<AnyElement>,
+    ) {
+        self.flush_text();
+        let anchor = self.render_source_anchor(source_range);
+        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
+        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.append_child(
+            div()
+                .relative()
+                .child(anchor)
+                .child(element.into())
+                .into_any_element(),
+        );
+    }
+
+    /// Pushes a display math element as a centered standalone block.
+    ///
+    /// Unlike `push_sourced_element`, this wraps the math in a centered container
+    /// with vertical padding, matching the layout of display equations in
+    /// GitHub Markdown / Obsidian.
+    fn push_display_sourced_element(
+        &mut self,
+        source_range: Range<usize>,
+        element: impl Into<AnyElement>,
+    ) {
+        self.flush_text();
+        let anchor = self.render_source_anchor(source_range);
+        self.append_child(
+            div()
+                .relative()
+                .child(anchor)
+                .child(
+                    div()
+                        .flex()
+                        .justify_center()
+                        .w_full()
+                        .py_2()
+                        .child(element.into()),
+                )
                 .into_any_element(),
         );
     }

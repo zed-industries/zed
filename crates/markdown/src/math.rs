@@ -1,12 +1,16 @@
 use collections::HashMap;
-use gpui::{AnyElement, Context, Entity, RenderImage, Task, StyledText, div};
+use gpui::{AnyElement, Context, Pixels, RenderImage, Task, StyledText, div, px};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
+use theme_settings::ThemeSettings;
 use ui::prelude::*;
 
 use crate::parser::MarkdownEvent;
-use super::{Markdown, MarkdownStyle, ParsedMarkdown};
+use super::{Markdown, ParsedMarkdown};
+
+#[path = "math_svg.rs"]
+mod math_svg;
 
 /// A math expression extracted from parsed markdown events.
 #[derive(Clone, Debug)]
@@ -19,18 +23,47 @@ pub(crate) struct ParsedMarkdownMathExpression {
     pub(crate) is_display: bool,
 }
 
-type MathExpressionKey = SharedString;
-type MathExpressionCache = HashMap<MathExpressionKey, Arc<CachedMathExpression>>;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct MathCacheKey {
+    latex: SharedString,
+    font_size_bits: u32,
+}
+
+impl MathCacheKey {
+    fn new(latex: SharedString, font_size: f32) -> Self {
+        Self {
+            latex,
+            font_size_bits: font_size.to_bits(),
+        }
+    }
+}
+
+type MathExpressionCache = HashMap<MathCacheKey, Arc<CachedMathExpression>>;
 
 #[derive(Default, Clone)]
 pub(crate) struct MathState {
     cache: MathExpressionCache,
-    order: Vec<MathExpressionKey>,
+    order: Vec<MathCacheKey>,
+    font_size: f32,
+    /// Ascent of the buffer font at `font_size`, in pixels.
+    /// Used to align inline math baselines with surrounding text.
+    text_ascent: f32,
+}
+
+struct MathRenderResult {
+    image: Arc<RenderImage>,
+    baseline_y: f32,
 }
 
 struct CachedMathExpression {
-    render_image: Arc<OnceLock<anyhow::Result<Arc<RenderImage>>>>,
+    result: Arc<OnceLock<anyhow::Result<MathRenderResult>>>,
     _task: Task<()>,
+}
+
+/// Convert a GPUI Hsla color to a ratex Color (RGBA f32).
+fn gpui_color_to_ratex(color: gpui::Hsla) -> ratex_types::color::Color {
+    let rgba = gpui::Rgba::from(color);
+    ratex_types::color::Color::new(rgba.r, rgba.g, rgba.b, rgba.a)
 }
 
 impl MathState {
@@ -39,49 +72,63 @@ impl MathState {
         self.order.clear();
     }
 
-    pub(crate) fn update(&mut self, parsed: &ParsedMarkdown, cx: &mut Context<Markdown>) {
+    pub(crate) fn invalidate(&mut self) {
+        self.cache.clear();
+        self.order.clear();
+    }
+
+    pub(crate) fn update(&mut self, parsed: &ParsedMarkdown, font_size: f32, cx: &mut Context<Markdown>) {
+        self.font_size = font_size;
+
+        // Compute the actual font ascent from GPUI metrics so inline math
+        // baseline aligns with surrounding text.
+        let theme_settings = ThemeSettings::get_global(cx);
+        let font = gpui::Font {
+            family: theme_settings.buffer_font.family.clone(),
+            fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+            features: theme_settings.buffer_font.features.clone(),
+            style: Default::default(),
+            weight: theme_settings.buffer_font.weight,
+        };
+        let text_system = cx.text_system();
+        let font_id = text_system.resolve_font(&font);
+        self.text_ascent = text_system.ascent(font_id, Pixels::from(font_size)).as_f32();
+
         let mut new_order = Vec::new();
         for expr in parsed.math_expressions.values() {
-            new_order.push(expr.latex.clone());
+            new_order.push(MathCacheKey::new(expr.latex.clone(), font_size));
         }
 
-        for latex in &new_order {
-            if !self.cache.contains_key(latex) {
+        for key in &new_order {
+            if !self.cache.contains_key(key) {
                 self.cache.insert(
-                    latex.clone(),
-                    Arc::new(CachedMathExpression::new(latex.clone(), cx)),
+                    key.clone(),
+                    Arc::new(CachedMathExpression::new(key.latex.clone(), font_size, cx)),
                 );
             }
         }
 
         let new_order_set: std::collections::HashSet<_> = new_order.iter().cloned().collect();
-        self.cache.retain(|latex, _| new_order_set.contains(latex));
+        self.cache.retain(|key, _| new_order_set.contains(key));
         self.order = new_order;
     }
 }
 
 impl CachedMathExpression {
-    fn new(latex: SharedString, cx: &mut Context<Markdown>) -> Self {
-        let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
-        let render_image_clone = render_image.clone();
+    fn new(latex: SharedString, font_size: f32, cx: &mut Context<Markdown>) -> Self {
+        let result = Arc::new(OnceLock::<anyhow::Result<MathRenderResult>>::new());
+        let result_clone = result.clone();
 
-        // TODO: Replace with actual RaTeX rendering:
-        //   let svg_string = ratex_svg::render(latex.as_ref(), font_size, color)?;
-        //   svg_renderer.render_single_frame(svg_string.as_bytes(), 1.0)
-        //
-        // For now, we produce an error result so the fallback path renders the raw LaTeX.
-        // This is intentional: the placeholder rendering in MarkdownElement::request_layout
-        // handles the fallback display. Once ratex-render is added as a dependency,
-        // this task will produce actual rendered images.
+        let text_color = cx.theme().colors().text;
+        let svg_renderer = cx.svg_renderer();
+
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    Err(anyhow::anyhow!(
-                        "LaTeX rendering not yet wired — pending ratex-render integration"
-                    ))
+                    render_latex_to_image(latex.as_ref(), text_color, font_size, svg_renderer)
                 })
                 .await;
-            let _ = render_image_clone.set(value);
+            let _ = result_clone.set(value);
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -89,10 +136,43 @@ impl CachedMathExpression {
         });
 
         Self {
-            render_image,
+            result,
             _task: task,
         }
     }
+}
+
+/// Render a LaTeX expression to a GPUI RenderImage using SVG pipeline.
+///
+/// Pipeline: LaTeX string → parse → layout → DisplayList → SVG → GPUI SvgRenderer → RenderImage
+fn render_latex_to_image(
+    latex: &str,
+    text_color: gpui::Hsla,
+    font_size: f32,
+    svg_renderer: gpui::SvgRenderer,
+) -> anyhow::Result<MathRenderResult> {
+    let ratex_color = gpui_color_to_ratex(text_color);
+
+    let parse_nodes = ratex_parser::parse(latex)
+        .map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
+
+    let layout_options = ratex_layout::LayoutOptions {
+        color: ratex_color,
+        ..Default::default()
+    };
+    let layout_box = ratex_layout::layout(&parse_nodes, &layout_options);
+    let display_list = ratex_layout::to_display_list(&layout_box);
+
+    let svg_output = math_svg::display_list_to_svg(&display_list, font_size);
+
+    let image = svg_renderer
+        .render_single_frame(&svg_output.svg_bytes, 1.0)
+        .map_err(|e| anyhow::anyhow!("SVG render error: {}", e))?;
+
+    Ok(MathRenderResult {
+        image,
+        baseline_y: svg_output.baseline_y,
+    })
 }
 
 /// Renders a math expression as a GPUI element.
@@ -102,14 +182,25 @@ impl CachedMathExpression {
 pub(crate) fn render_math_expression(
     parsed: &ParsedMarkdownMathExpression,
     math_state: &MathState,
-    style: &MarkdownStyle,
 ) -> AnyElement {
-    let cached = math_state.cache.get(&parsed.latex);
-    let render_result = cached.and_then(|cached| cached.render_image.get());
+    let key = MathCacheKey::new(parsed.latex.clone(), math_state.font_size);
+    let cached = math_state.cache.get(&key);
+    let render_result = cached.and_then(|cached| cached.result.get());
 
     match render_result {
-        Some(Ok(render_image)) => {
-            div().child(gpui::img(render_image.clone()).max_h_40()).into_any_element()
+        Some(Ok(MathRenderResult { image, baseline_y })) => {
+            if parsed.is_display {
+                div().child(gpui::img(image.clone())).into_any_element()
+            } else {
+                let shift = math_state.text_ascent - baseline_y;
+
+                div()
+                    .child(
+                        gpui::img(image.clone())
+                            .mt(px(shift))
+                    )
+                    .into_any_element()
+            }
         }
         Some(Err(_)) | None => {
             let label = if parsed.is_display {
@@ -118,7 +209,7 @@ pub(crate) fn render_math_expression(
                 format!("${}$", parsed.latex)
             };
             div().child(
-                StyledText::new(label).with_text_style(style.inline_code.clone()),
+                StyledText::new(label),
             ).into_any_element()
         }
     }
@@ -129,6 +220,8 @@ pub(crate) fn render_math_expression(
 /// Walks the event list looking for `MarkdownEvent::InlineMath` and
 /// `MarkdownEvent::DisplayMath` events, collecting them into a map keyed
 /// by source offset for O(log n) lookup during rendering.
+use settings::Settings;
+
 pub(crate) fn extract_math_expressions(
     events: &[(Range<usize>, MarkdownEvent)],
 ) -> BTreeMap<usize, ParsedMarkdownMathExpression> {
@@ -141,7 +234,7 @@ pub(crate) fn extract_math_expressions(
                     source_range.start,
                     ParsedMarkdownMathExpression {
                         source_range: source_range.clone(),
-                        latex: SharedString::from(latex.as_str()),
+                        latex: SharedString::from(latex.trim()),
                         is_display: false,
                     },
                 );
@@ -151,7 +244,7 @@ pub(crate) fn extract_math_expressions(
                     source_range.start,
                     ParsedMarkdownMathExpression {
                         source_range: source_range.clone(),
-                        latex: SharedString::from(latex.as_str()),
+                        latex: SharedString::from(latex.trim()),
                         is_display: true,
                     },
                 );
@@ -261,9 +354,33 @@ mod tests {
     }
 
     #[test]
+    fn test_display_math_multiline_trimmed() {
+        let input = "$$\n\\int_0^\\infty e^{-x^2}dx=\\frac{\\sqrt\\pi}{2}\n$$";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let expressions = extract_math_expressions(&parsed.events);
+        assert_eq!(expressions.len(), 1);
+        let expr = expressions.values().next().unwrap();
+        assert!(expr.is_display);
+        assert_eq!(
+            expr.latex.as_ref(),
+            "\\int_0^\\infty e^{-x^2}dx=\\frac{\\sqrt\\pi}{2}"
+        );
+    }
+
+    #[test]
     fn test_extract_math_from_empty_events() {
         let events: &[(Range<usize>, MarkdownEvent)] = &[];
         let expressions = extract_math_expressions(events);
         assert!(expressions.is_empty());
+    }
+
+    #[test]
+    fn test_cache_key_includes_font_size() {
+        let a = MathCacheKey::new("x^2".into(), 14.0);
+        let b = MathCacheKey::new("x^2".into(), 18.0);
+        assert_ne!(a, b);
+
+        let c = MathCacheKey::new("x^2".into(), 14.0);
+        assert_eq!(a, c);
     }
 }
