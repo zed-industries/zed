@@ -34,7 +34,7 @@ use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ColumnWidthConfig, ContextMenu,
     IconButtonShape, IconPosition, Indicator, Modal, ModalFooter, ModalHeader, ParentElement as _,
     PopoverMenu, RedistributableColumnsState, Render, Section, SharedString, Styled as _, Table,
-    TableInteractionState, TableResizeBehavior, Tooltip, Window, prelude::*,
+    TableInteractionState, TableResizeBehavior, Tooltip, Window, prelude::*, utils::WithRemSize,
 };
 use ui_input::InputField;
 use util::ResultExt;
@@ -44,7 +44,10 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::{ChangeKeybinding, OpenKeymap};
+use zed_actions::{
+    ChangeKeybinding, DecreaseBufferFontSize, IncreaseBufferFontSize, OpenKeymap, ResetAllZoom,
+    ResetBufferFontSize,
+};
 
 use crate::{
     action_completion_provider::ActionCompletionProvider,
@@ -461,6 +464,10 @@ struct KeymapEditor {
     /// worktree and directory once, although the perf improvement is negligible.
     action_args_temp_dir_worktree: Option<Entity<project::Worktree>>,
     action_args_temp_dir: Option<tempfile::TempDir>,
+    /// Offset from the current UI font size, adjusted by the buffer-font-size actions.
+    /// This view has no buffer of its own, so those actions scale this view's rem size
+    /// instead of the global buffer font size.
+    font_size_delta: Pixels,
 }
 
 enum PreviousEdit {
@@ -644,6 +651,7 @@ impl KeymapEditor {
                     ],
                 )
             }),
+            font_size_delta: px(0.),
         };
 
         this.on_keymap_changed(window, cx);
@@ -1007,6 +1015,56 @@ impl KeymapEditor {
         dispatch_context.add("menu");
 
         dispatch_context
+    }
+
+    fn font_size(&self, cx: &App) -> Pixels {
+        theme_settings::clamp_font_size(
+            theme_settings::ThemeSettings::get_global(cx).ui_font_size(cx) + self.font_size_delta,
+        )
+    }
+
+    fn adjust_font_size(&mut self, delta: Pixels, cx: &mut Context<Self>) {
+        let ui_font_size = theme_settings::ThemeSettings::get_global(cx).ui_font_size(cx);
+        let new_size = theme_settings::clamp_font_size(self.font_size(cx) + delta);
+        self.font_size_delta = new_size - ui_font_size;
+        cx.notify();
+    }
+
+    fn reset_font_size_delta(&mut self, cx: &mut Context<Self>) {
+        self.font_size_delta = px(0.);
+        cx.notify();
+    }
+
+    // The keymap editor has no buffer of its own, so the buffer-font-size actions scale this
+    // view's own rem size instead. `persist` is ignored: this zoom is view-local and has no
+    // backing setting to write.
+    fn increase_font_size(
+        &mut self,
+        _: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(px(1.), cx);
+    }
+
+    fn decrease_font_size(
+        &mut self,
+        _: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(px(-1.), cx);
+    }
+
+    fn reset_font_size(&mut self, _: &ResetBufferFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        self.reset_font_size_delta(cx);
+    }
+
+    // Also reset by the all-zoom action, but propagate so the workspace handler still resets
+    // the other (unrelated) font sizes it owns.
+    fn reset_all_zoom(&mut self, _: &ResetAllZoom, _: &mut Window, cx: &mut Context<Self>) {
+        self.reset_font_size_delta(cx);
+        cx.propagate();
     }
 
     fn scroll_to_item(&self, index: usize, strategy: ScrollStrategy, cx: &mut App) {
@@ -2005,14 +2063,24 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::toggle_keystroke_search))
             .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
             .on_action(cx.listener(Self::show_matching_keystrokes))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::reset_all_zoom))
             .on_mouse_move(cx.listener(|this, _, _window, _cx| {
                 this.show_hover_menus = true;
             }))
             .size_full()
-            .p_2()
-            .gap_1()
             .bg(theme.colors().editor_background)
             .child(
+                WithRemSize::new(self.font_size(cx))
+                    .size_full()
+                    .child(
+                        v_flex()
+                    .size_full()
+                    .p_2()
+                    .gap_1()
+                    .child(
                 v_flex()
                     .gap_2()
                     .child(
@@ -2349,6 +2417,8 @@ impl Render for KeymapEditor {
                                 })
                                 .into_any_element()
                         }),
+                    ),
+            ),
                     ),
             )
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
@@ -3006,6 +3076,43 @@ impl KeybindingEditorModal {
         cx.emit(DismissEvent);
     }
 
+    // See the matching handlers on `KeymapEditor`: this modal shares the keymap editor's
+    // view-local font size so the two stay in sync while either is visible.
+    fn increase_font_size(
+        &mut self,
+        _: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.keymap_editor
+            .update(cx, |editor, cx| editor.adjust_font_size(px(1.), cx));
+        cx.notify();
+    }
+
+    fn decrease_font_size(
+        &mut self,
+        _: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.keymap_editor
+            .update(cx, |editor, cx| editor.adjust_font_size(px(-1.), cx));
+        cx.notify();
+    }
+
+    fn reset_font_size(&mut self, _: &ResetBufferFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        self.keymap_editor
+            .update(cx, |editor, cx| editor.reset_font_size_delta(cx));
+        cx.notify();
+    }
+
+    fn reset_all_zoom(&mut self, _: &ResetAllZoom, _: &mut Window, cx: &mut Context<Self>) {
+        self.keymap_editor
+            .update(cx, |editor, cx| editor.reset_font_size_delta(cx));
+        cx.notify();
+        cx.propagate();
+    }
+
     fn get_matching_bindings_count(&self, cx: &Context<Self>) -> usize {
         let current_keystrokes = self.keybind_editor.read(cx).keystrokes();
 
@@ -3061,137 +3168,153 @@ impl Render for KeybindingEditorModal {
         let key_context = self.key_context_internal(window, cx);
         let showing_completions = key_context.contains("showing_completions");
 
+        // This modal renders in the workspace's modal layer, outside the keymap editor's own
+        // dispatch path, so it needs its own copies of the font-size action handlers, applied to
+        // the same view-local font size the keymap editor uses.
+        let font_size = self.keymap_editor.read(cx).font_size(cx);
+
         v_flex()
-            .w(rems(34.))
-            .elevation_3(cx)
             .key_context(key_context)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::reset_all_zoom))
             .when(!showing_completions, |this| {
                 this.on_action(cx.listener(Self::focus_next))
                     .on_action(cx.listener(Self::focus_prev))
             })
             .child(
-                Modal::new("keybinding_editor_modal", None)
-                    .header(
-                        ModalHeader::new().child(
-                            v_flex()
-                                .w_full()
-                                .pb_1p5()
-                                .mb_1()
-                                .gap_0p5()
-                                .border_b_1()
-                                .border_color(theme.border_variant)
-                                .when(!self.creating, |this| {
-                                    this.child(Label::new(
-                                        self.editing_keybind.action().humanized_name.clone(),
-                                    ))
-                                    .when_some(
-                                        self.editing_keybind.action().documentation,
-                                        |this, docs| {
-                                            this.child(
-                                                Label::new(docs)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                        },
-                                    )
-                                })
-                                .when(self.creating, |this| {
-                                    this.child(Label::new("Create Keybinding"))
-                                }),
-                        ),
-                    )
-                    .section(
-                        Section::new().child(
-                            v_flex()
-                                .gap_2p5()
-                                .when_some(
-                                    self.creating
-                                        .then_some(())
-                                        .and_then(|_| self.action_editor.as_ref()),
-                                    |this, selector| this.child(selector.clone()),
-                                )
-                                .child(
-                                    v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Edit Keystroke"))
-                                        .child(self.keybind_editor.clone())
-                                        .child(h_flex().gap_px().when(
-                                            matching_bindings_count > 0,
-                                            |this| {
-                                                let label = format!(
-                                                    "There {} {} {} with the same keystrokes.",
-                                                    if matching_bindings_count == 1 {
-                                                        "is"
-                                                    } else {
-                                                        "are"
-                                                    },
-                                                    matching_bindings_count,
-                                                    if matching_bindings_count == 1 {
-                                                        "binding"
-                                                    } else {
-                                                        "bindings"
-                                                    }
-                                                );
-
+                WithRemSize::new(font_size)
+                    .w(rems(34.))
+                    .elevation_3(cx)
+                    .child(
+                    Modal::new("keybinding_editor_modal", None)
+                        .header(
+                            ModalHeader::new().child(
+                                v_flex()
+                                    .w_full()
+                                    .pb_1p5()
+                                    .mb_1()
+                                    .gap_0p5()
+                                    .border_b_1()
+                                    .border_color(theme.border_variant)
+                                    .when(!self.creating, |this| {
+                                        this.child(Label::new(
+                                            self.editing_keybind.action().humanized_name.clone(),
+                                        ))
+                                        .when_some(
+                                            self.editing_keybind.action().documentation,
+                                            |this, docs| {
                                                 this.child(
-                                                    Label::new(label)
+                                                    Label::new(docs)
                                                         .size(LabelSize::Small)
                                                         .color(Color::Muted),
                                                 )
-                                                .child(
-                                                    Button::new("show_matching", "View")
-                                                        .label_size(LabelSize::Small)
-                                                        .end_icon(
-                                                            Icon::new(IconName::ArrowUpRight)
-                                                                .size(IconSize::Small)
-                                                                .color(Color::Muted),
-                                                        )
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.show_matching_bindings(
-                                                                    window, cx,
-                                                                );
-                                                            },
-                                                        )),
-                                                )
                                             },
-                                        )),
-                                )
-                                .when_some(self.action_arguments_editor.clone(), |this, editor| {
-                                    this.child(
+                                        )
+                                    })
+                                    .when(self.creating, |this| {
+                                        this.child(Label::new("Create Keybinding"))
+                                    }),
+                            ),
+                        )
+                        .section(
+                            Section::new().child(
+                                v_flex()
+                                    .gap_2p5()
+                                    .when_some(
+                                        self.creating
+                                            .then_some(())
+                                            .and_then(|_| self.action_editor.as_ref()),
+                                        |this, selector| this.child(selector.clone()),
+                                    )
+                                    .child(
                                         v_flex()
                                             .gap_1()
-                                            .child(Label::new("Edit Arguments"))
-                                            .child(editor),
+                                            .child(Label::new("Edit Keystroke"))
+                                            .child(self.keybind_editor.clone())
+                                            .child(h_flex().gap_px().when(
+                                                matching_bindings_count > 0,
+                                                |this| {
+                                                    let label = format!(
+                                                        "There {} {} {} with the same keystrokes.",
+                                                        if matching_bindings_count == 1 {
+                                                            "is"
+                                                        } else {
+                                                            "are"
+                                                        },
+                                                        matching_bindings_count,
+                                                        if matching_bindings_count == 1 {
+                                                            "binding"
+                                                        } else {
+                                                            "bindings"
+                                                        }
+                                                    );
+
+                                                    this.child(
+                                                        Label::new(label)
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .child(
+                                                        Button::new("show_matching", "View")
+                                                            .label_size(LabelSize::Small)
+                                                            .end_icon(
+                                                                Icon::new(IconName::ArrowUpRight)
+                                                                    .size(IconSize::Small)
+                                                                    .color(Color::Muted),
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                |this, _, window, cx| {
+                                                                    this.show_matching_bindings(
+                                                                        window, cx,
+                                                                    );
+                                                                },
+                                                            )),
+                                                    )
+                                                },
+                                            )),
                                     )
-                                })
-                                .child(self.context_editor.clone())
-                                .when_some(self.error.as_ref(), |this, error| {
-                                    this.child(
-                                        Banner::new()
-                                            .severity(error.severity)
-                                            .child(Label::new(error.content.clone())),
+                                    .when_some(
+                                        self.action_arguments_editor.clone(),
+                                        |this, editor| {
+                                            this.child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Edit Arguments"))
+                                                    .child(editor),
+                                            )
+                                        },
                                     )
-                                }),
+                                    .child(self.context_editor.clone())
+                                    .when_some(self.error.as_ref(), |this, error| {
+                                        this.child(
+                                            Banner::new()
+                                                .severity(error.severity)
+                                                .child(Label::new(error.content.clone())),
+                                        )
+                                    }),
+                            ),
+                        )
+                        .footer(
+                            ModalFooter::new().end_slot(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("cancel", "Cancel").on_click(
+                                            cx.listener(|_, _, _, cx| cx.emit(DismissEvent)),
+                                        ),
+                                    )
+                                    .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                        |this, _event, _window, cx| {
+                                            this.save_or_display_error(cx);
+                                        },
+                                    ))),
+                            ),
                         ),
-                    )
-                    .footer(
-                        ModalFooter::new().end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Button::new("cancel", "Cancel")
-                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                                )
-                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                                    |this, _event, _window, cx| {
-                                        this.save_or_display_error(cx);
-                                    },
-                                ))),
-                        ),
-                    ),
+                ),
             )
     }
 }
@@ -4031,6 +4154,7 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use settings::KeymapFileLoadResult;
+    use std::cell::Cell;
     use workspace::{AppState, MultiWorkspace};
 
     async fn reload_keymap_from_file(fs: &Arc<FakeFs>, cx: &mut TestAppContext) {
@@ -4097,6 +4221,120 @@ mod tests {
             })
             .map(|(index, _)| index)
             .collect()
+    }
+
+    #[gpui::test]
+    async fn test_font_size_actions_scale_keymap_editor_locally(cx: &mut TestAppContext) {
+        let (_, keymap_editor, mut cx) = setup_keymap_editor(cx, "[]").await;
+        let cx = &mut cx;
+
+        // Probes to detect whether the actions escape the focused keymap editor and reach a
+        // global handler, the way the real `zed::Increase/Decrease/ResetBufferFontSize`
+        // handlers are registered in `crates/zed/src/zed.rs`.
+        let increase_count = Rc::new(Cell::new(0));
+        let decrease_count = Rc::new(Cell::new(0));
+        let reset_count = Rc::new(Cell::new(0));
+
+        cx.update(|_, cx| {
+            cx.on_action({
+                let increase_count = increase_count.clone();
+                move |_: &IncreaseBufferFontSize, _| {
+                    increase_count.set(increase_count.get() + 1);
+                }
+            });
+            cx.on_action({
+                let decrease_count = decrease_count.clone();
+                move |_: &DecreaseBufferFontSize, _| {
+                    decrease_count.set(decrease_count.get() + 1);
+                }
+            });
+            cx.on_action({
+                let reset_count = reset_count.clone();
+                move |_: &ResetBufferFontSize, _| {
+                    reset_count.set(reset_count.get() + 1);
+                }
+            });
+        });
+
+        let workspace = keymap_editor.read_with(cx, |editor, _| {
+            editor.workspace.upgrade().expect("workspace should exist")
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(keymap_editor.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let initial_font_size = keymap_editor.read_with(cx, |editor, cx| editor.font_size(cx));
+        let initial_buffer_font_size =
+            cx.update(|_, cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx));
+
+        cx.dispatch_action(IncreaseBufferFontSize { persist: false });
+        cx.dispatch_action(IncreaseBufferFontSize { persist: false });
+        cx.dispatch_action(DecreaseBufferFontSize { persist: false });
+
+        let font_size = keymap_editor.read_with(cx, |editor, cx| editor.font_size(cx));
+        assert_eq!(
+            font_size,
+            initial_font_size + px(1.),
+            "the keymap editor's own font size should scale with the buffer-font-size actions"
+        );
+
+        let buffer_font_size =
+            cx.update(|_, cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx));
+        assert_eq!(
+            buffer_font_size, initial_buffer_font_size,
+            "the global buffer font size must not change when the keymap editor is focused"
+        );
+
+        assert_eq!(
+            (
+                increase_count.get(),
+                decrease_count.get(),
+                reset_count.get()
+            ),
+            (0, 0, 0),
+            "buffer font size actions should not escape the focused keymap editor"
+        );
+
+        cx.dispatch_action(ResetBufferFontSize { persist: false });
+        let font_size = keymap_editor.read_with(cx, |editor, cx| editor.font_size(cx));
+        assert_eq!(
+            font_size, initial_font_size,
+            "resetting should return to the original (unzoomed) font size"
+        );
+
+        // The keybinding modal shares the keymap editor's font size and has its own copies of
+        // these handlers, since it renders outside the keymap editor's dispatch path.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.open_create_keybinding_modal(&OpenCreateKeybindingModal, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        cx.dispatch_action(IncreaseBufferFontSize { persist: false });
+
+        let font_size_after_modal_zoom =
+            keymap_editor.read_with(cx, |editor, cx| editor.font_size(cx));
+        assert_eq!(
+            font_size_after_modal_zoom,
+            initial_font_size + px(1.),
+            "zooming from the keybinding modal should scale the shared keymap editor font size"
+        );
+        assert_eq!(
+            (
+                increase_count.get(),
+                decrease_count.get(),
+                reset_count.get()
+            ),
+            (0, 0, 0),
+            "buffer font size actions should not escape the keybinding editor modal"
+        );
     }
 
     #[gpui::test]
