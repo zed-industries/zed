@@ -220,12 +220,9 @@ pub fn setup_windows() -> Step<Run> {
         Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
         git config --global core.longpaths true
 
-        $targetPath = Join-Path $env:GITHUB_WORKSPACE "target"
-        if ((Get-MpPreference).ExclusionPath -notcontains $targetPath) {
-            Add-MpPreference -ExclusionPath $targetPath
-        }
-        if ((Get-MpPreference).ExclusionPath -notcontains $targetPath) {
-            throw "Failed to exclude $targetPath from Windows Defender"
+        Set-MpPreference -DisableRealtimeMonitoring $true
+        if (-not (Get-MpPreference).DisableRealtimeMonitoring) {
+            throw "Failed to disable Windows Defender real-time monitoring"
         }
     "#})
 }
