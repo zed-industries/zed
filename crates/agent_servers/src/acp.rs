@@ -2801,7 +2801,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn request_scoped_url_elicitation_completion_after_create_is_observed(
+    async fn request_scoped_url_elicitation_completion_before_consent_is_ignored(
         cx: &mut gpui::TestAppContext,
     ) {
         init_feature_flags_test(cx);
@@ -2835,19 +2835,18 @@ mod tests {
             cx.update(|cx| connection.authenticate(acp::AuthMethodId::new("login"), cx));
         cx.run_until_parked();
 
-        let response = response_rx
-            .recv()
-            .await
-            .expect("fake auth flow should receive elicitation response");
-        assert_eq!(
-            response.action,
-            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+        assert!(
+            matches!(
+                response_rx.try_recv(),
+                Err(async_channel::TryRecvError::Empty)
+            ),
+            "completion before consent must not answer the elicitation request"
         );
 
         let store = connection
             .request_elicitations()
             .expect("ACP connections expose request-scoped elicitations");
-        store.read_with(cx, |store, _| {
+        let entry_id = store.read_with(cx, |store, _| {
             let [elicitation] = store.elicitations() else {
                 panic!(
                     "expected one request-scoped elicitation, got {:?}",
@@ -2860,7 +2859,35 @@ mod tests {
             assert_eq!(scope.request_id, request_id);
             assert!(matches!(
                 elicitation.status,
-                acp_thread::ElicitationStatus::Completed
+                acp_thread::ElicitationStatus::Pending { .. }
+            ));
+            elicitation.id.clone()
+        });
+
+        store.update(cx, |store, cx| {
+            store.respond_to_elicitation(
+                &entry_id,
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                    acp::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        let response = response_rx
+            .recv()
+            .await
+            .expect("fake auth flow should receive elicitation response");
+        assert_eq!(
+            response.action,
+            acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new())
+        );
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&entry_id) else {
+                panic!("missing request-scoped elicitation");
+            };
+            assert!(matches!(
+                elicitation.status,
+                acp_thread::ElicitationStatus::Accepted
             ));
         });
 

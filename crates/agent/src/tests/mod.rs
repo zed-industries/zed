@@ -907,9 +907,20 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             thought_signature: None,
         },
     ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_interrupted".into(),
+            name: ToolRequiringPermission::NAME.into(),
+            raw_input: "{}".into(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
     fake_model.end_last_completion_stream();
     let tool_call_auth_1 = next_tool_call_authorization(&mut events).await;
     let tool_call_auth_2 = next_tool_call_authorization(&mut events).await;
+    let interrupted_tool_call_auth = next_tool_call_authorization(&mut events).await;
 
     // Approve the first - send "allow" option_id (UI transforms "once" to "allow")
     tool_call_auth_1
@@ -926,6 +937,13 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
             acp::PermissionOptionId::new("deny"),
+            acp::PermissionOptionKind::RejectOnce,
+        ))
+        .unwrap();
+    interrupted_tool_call_auth
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new(FOLLOW_UP_PERMISSION_DENIED_OPTION_ID),
             acp::PermissionOptionKind::RejectOnce,
         ))
         .unwrap();
@@ -949,6 +967,13 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 is_error: true,
                 content: vec!["Permission to run tool denied by user".into()],
                 output: Some("Permission to run tool denied by user".into())
+            }),
+            language_model::MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: "tool_id_interrupted".into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
+                is_error: true,
+                content: vec!["Permission denied: user sent a follow-up message instead of approving the tool call.".into()],
+                output: Some("Permission denied: user sent a follow-up message instead of approving the tool call.".into())
             })
         ]
     );

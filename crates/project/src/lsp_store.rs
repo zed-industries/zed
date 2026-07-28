@@ -7799,27 +7799,32 @@ impl LspStore {
                         Ok(new_hints_by_server) => lsp_store
                             .update(cx, |lsp_store, cx| {
                                 let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-                                if lsp_data.buffer_version == query_version {
-                                    if new_hints_by_server.is_empty() {
-                                        lsp_data.inlay_hints.invalidate_for_chunk(chunk);
-                                    } else {
-                                        for (server_id, new_hints) in new_hints_by_server {
-                                            let new_hints = new_hints
-                                                .into_iter()
-                                                .map(|new_hint| {
-                                                    (
-                                                        InlayId::Hint(next_hint_id.fetch_add(
-                                                            1,
-                                                            atomic::Ordering::AcqRel,
-                                                        )),
-                                                        new_hint,
-                                                    )
-                                                })
-                                                .collect::<Vec<_>>();
-                                            lsp_data
-                                                .inlay_hints
-                                                .insert_new_hints(chunk, server_id, new_hints);
-                                        }
+                                // `chunk` indexes the chunks of the buffer version this fetch
+                                // was started for. If the buffer changed meanwhile, the hint
+                                // cache has been rebuilt for the new version and may hold fewer
+                                // chunks, so the stale id must not be used to index it.
+                                if lsp_data.buffer_version != query_version {
+                                    return CacheInlayHints::default();
+                                }
+                                if new_hints_by_server.is_empty() {
+                                    lsp_data.inlay_hints.invalidate_for_chunk(chunk);
+                                } else {
+                                    for (server_id, new_hints) in new_hints_by_server {
+                                        let new_hints = new_hints
+                                            .into_iter()
+                                            .map(|new_hint| {
+                                                (
+                                                    InlayId::Hint(
+                                                        next_hint_id
+                                                            .fetch_add(1, atomic::Ordering::AcqRel),
+                                                    ),
+                                                    new_hint,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>();
+                                        lsp_data
+                                            .inlay_hints
+                                            .insert_new_hints(chunk, server_id, new_hints);
                                     }
                                 }
                                 lsp_data
