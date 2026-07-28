@@ -21,6 +21,18 @@ fn shared_memory_supported() -> bool {
     has_shared_array_buffer && has_atomics && is_shared_buffer
 }
 
+fn wait_async_supported() -> bool {
+    let global = js_sys::global();
+    let Ok(atomics) = js_sys::Reflect::get(&global, &JsValue::from_str("Atomics")) else {
+        return false;
+    };
+    let Ok(wait_async) = js_sys::Reflect::get(&atomics, &JsValue::from_str("waitAsync")) else {
+        return false;
+    };
+
+    wait_async.is_function()
+}
+
 enum MainThreadItem {
     Runnable(RunnableVariant),
     Delayed {
@@ -53,8 +65,9 @@ impl MainThreadMailbox {
             log::error!("MainThreadMailbox::send failed: receiver disconnected");
         }
 
+        // TODO-Wasm: Verify this lock-free protocol
         let view = self.signal_view();
-        js_sys::Atomics::add(&view, 0, 1).ok();
+        js_sys::Atomics::store(&view, 0, 1).ok();
         js_sys::Atomics::notify(&view, 0).ok();
     }
 
@@ -87,10 +100,14 @@ impl MainThreadMailbox {
         wasm_bindgen_futures::spawn_local(async move {
             let view = mailbox.signal_view();
             loop {
-                let observed_signal = js_sys::Atomics::load(&view, 0).unwrap_or_default();
+                js_sys::Atomics::store(&view, 0, 0).expect("Atomics.store failed");
+
+                // Items posted between the previous drain and the store above
+                // set the signal we just cleared, so their notify is lost.
+                // Drain again after re-arming to avoid missing them.
                 mailbox.drain(&window);
 
-                let result = match js_sys::Atomics::wait_async(&view, 0, observed_signal) {
+                let result = match js_sys::Atomics::wait_async(&view, 0, 0) {
                     Ok(result) => result,
                     Err(error) => {
                         log::error!("Atomics.waitAsync failed: {error:?}");
@@ -100,19 +117,22 @@ impl MainThreadMailbox {
 
                 let is_async = js_sys::Reflect::get(&result, &JsValue::from_str("async"))
                     .ok()
-                    .and_then(|value| value.as_bool())
+                    .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
-                if !is_async {
-                    continue;
+                // `async: false` means the signal changed between the store and
+                // the wait ("not-equal"): work has already arrived, so skip
+                // waiting and drain immediately.
+                if is_async {
+                    let promise: js_sys::Promise =
+                        js_sys::Reflect::get(&result, &JsValue::from_str("value"))
+                            .expect("waitAsync result missing 'value'")
+                            .unchecked_into();
+
+                    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
                 }
 
-                let promise: js_sys::Promise =
-                    js_sys::Reflect::get(&result, &JsValue::from_str("value"))
-                        .expect("waitAsync result missing 'value'")
-                        .unchecked_into();
-
-                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+                mailbox.drain(&window);
             }
         });
     }
@@ -136,15 +156,16 @@ impl WebDispatcher {
 
         let main_thread_mailbox = Arc::new(MainThreadMailbox::new());
 
-        let supports_shared_memory = shared_memory_supported();
-        let supports_threads =
-            cfg!(feature = "multithreaded") && allow_threads && supports_shared_memory;
+        let supports_threads = cfg!(feature = "multithreaded")
+            && allow_threads
+            && shared_memory_supported()
+            && wait_async_supported();
 
-        if supports_shared_memory {
+        if supports_threads {
             main_thread_mailbox.run_waker_loop(browser_window.clone());
         } else if cfg!(feature = "multithreaded") && allow_threads {
             log::warn!(
-                "SharedArrayBuffer not available; falling back to single-threaded dispatcher"
+                "Required WebAssembly threading APIs are unavailable; falling back to single-threaded dispatcher"
             );
         }
 
