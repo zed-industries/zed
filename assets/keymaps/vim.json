@@ -1126,6 +1126,12 @@
     },
   },
   {
+    "context": "WorkspaceNotification > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "escape": "menu::Cancel",
+    },
+  },
+  {
     "context": "GitCommit > Editor && VimControl && vim_mode == normal",
     "bindings": {
       "ctrl-c": "menu::Cancel",
