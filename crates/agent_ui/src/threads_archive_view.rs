@@ -28,7 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::{AgentId, AgentServerStore, WorktreePaths};
+use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
@@ -1644,6 +1644,7 @@ impl PickerDelegate for ProjectPickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use project::WorktreePaths;
 
     fn thread_metadata_with_titles(title: &str, title_override: &str) -> ThreadMetadata {
         ThreadMetadata {
