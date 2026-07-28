@@ -55,6 +55,9 @@ use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
+/// How many entries beyond the viewport keep their decoded images resident.
+const OFFSCREEN_IMAGE_MARGIN: usize = 10;
+
 #[derive(Default)]
 struct ThreadFeedbackState {
     feedback: Option<ThreadFeedback>,
@@ -1059,9 +1062,10 @@ impl ThreadView {
         let thread_view = cx.entity().downgrade();
 
         this.list_state
-            .set_scroll_handler(move |_event, _window, cx| {
+            .set_scroll_handler(move |event, _window, cx| {
                 let list_state = list_state_for_scroll.clone();
                 let thread_view = thread_view.clone();
+                let visible_range = event.visible_range.clone();
                 // N.B. We must defer because the scroll handler is called while the
                 // ListState's RefCell is mutably borrowed. Reading logical_scroll_top()
                 // directly would panic from a double borrow.
@@ -1073,6 +1077,13 @@ impl ThreadView {
                                 thread.set_ui_scroll_position(Some(scroll_top));
                             });
                         }
+                        // Keep a margin around the viewport so small scrolls
+                        // don't thrash decoding of images at either edge.
+                        let keep = visible_range.start.saturating_sub(OFFSCREEN_IMAGE_MARGIN)
+                            ..visible_range.end + OFFSCREEN_IMAGE_MARGIN;
+                        this.thread.update(cx, |thread, cx| {
+                            thread.release_offscreen_images(keep, cx);
+                        });
                         this.schedule_save(cx);
                     });
                 });

@@ -365,6 +365,12 @@ impl AssistantMessageChunk {
         }
     }
 
+    pub fn block(&self) -> &ContentBlock {
+        match self {
+            Self::Message { block, .. } | Self::Thought { block, .. } => block,
+        }
+    }
+
     fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::Message { block, .. } => block.to_markdown(cx).to_string(),
@@ -781,6 +787,34 @@ pub struct ContextCompactionUpdate {
 }
 
 impl AgentThreadEntry {
+    /// Every image this entry renders. Decoding an image caches its bitmap in
+    /// GPUI's asset cache, which is keyed by the `Arc<Image>` and only ever
+    /// grows, so callers that know an entry is off screen use this to release
+    /// the decoded bitmaps (see [`AcpThread::release_offscreen_images`]).
+    pub fn images(&self) -> impl Iterator<Item = &Arc<gpui::Image>> {
+        let blocks: Box<dyn Iterator<Item = Option<&Arc<gpui::Image>>>> = match self {
+            Self::UserMessage(message) => {
+                Box::new(std::iter::once(message.content.image().map(|(image, _)| image)))
+            }
+            Self::AssistantMessage(message) => Box::new(
+                message
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.block().image().map(|(image, _)| image)),
+            ),
+            Self::ToolCall(tool_call) => Box::new(
+                tool_call
+                    .content
+                    .iter()
+                    .map(|content| content.image().map(|(image, _)| image)),
+            ),
+            Self::Elicitation(_) | Self::CompletedPlan(_) | Self::ContextCompaction(_) => {
+                Box::new(std::iter::empty())
+            }
+        };
+        blocks.flatten()
+    }
+
     pub fn is_indented(&self) -> bool {
         match self {
             Self::UserMessage(message) => message.indented,
@@ -2387,6 +2421,23 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    /// Drops the decoded bitmaps of every image outside `keep`.
+    ///
+    /// GPUI caches a decoded image per `Arc<Image>` and never evicts it, so in
+    /// a long conversation the bitmaps of every image ever scrolled past stay
+    /// resident -- a 705x1567 screenshot costs ~4.4MB decoded regardless of the
+    /// ~100KB it takes as PNG. Scrolling back re-decodes off the main thread.
+    pub fn release_offscreen_images(&self, keep: Range<usize>, cx: &mut App) {
+        for (index, entry) in self.entries.iter().enumerate() {
+            if keep.contains(&index) {
+                continue;
+            }
+            for image in entry.images() {
+                gpui::ImageSource::from(image.clone()).remove_asset(cx);
+            }
+        }
     }
 
     pub fn is_compacting(&self) -> bool {
