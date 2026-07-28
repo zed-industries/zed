@@ -234,6 +234,15 @@
     (computed_property_name) @name
   ]) @item
 
+; Constructor parameter properties (e.g. constructor(public name: string, private id: number))
+(parameter_property
+  [
+    "readonly"
+    "override"
+    (accessibility_modifier)
+  ]* @context
+  name: (identifier) @name) @item
+
 ; Nested variables in function bodies
 (statement_block
   (lexical_declaration
@@ -243,6 +252,20 @@
     ] @context
     (variable_declarator
       name: (identifier) @name) @item))
+
+; Nested functions and arrow functions assigned to const/let inside function bodies
+(statement_block
+  (lexical_declaration
+    [
+      "let"
+      "const"
+    ] @context
+    (variable_declarator
+      name: (identifier) @name
+      value: [
+        (function_expression)
+        (arrow_function)
+      ]) @item))
 
 ; Nested array destructuring in functions
 (statement_block
