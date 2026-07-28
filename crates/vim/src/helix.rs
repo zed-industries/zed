@@ -24,8 +24,7 @@ use workspace::searchable::{self, Direction, FilteredSearchRange};
 use crate::motion::{self, MotionKind};
 use crate::state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, SearchState};
 use crate::{
-    HelixAppendInsert, PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace,
-    Vim,
+    HelixAppendState, PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
     motion::{Motion, right},
 };
 use std::ops::Range;
@@ -643,7 +642,6 @@ impl Vim {
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
-        self.helix_append_insert = None;
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |_map, selection| {
@@ -722,7 +720,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.display_snapshot(cx);
-            let original = editor
+            let selections_before_append = editor
                 .selections
                 .all_anchors(&snapshot)
                 .iter()
@@ -741,13 +739,16 @@ impl Vim {
             });
 
             let snapshot = editor.display_snapshot(cx);
-            let inserted = editor
+            let cursors_after_append = editor
                 .selections
                 .all_anchors(&snapshot)
                 .iter()
                 .map(|selection| selection.range())
                 .collect();
-            vim.helix_append_insert = Some(HelixAppendInsert { original, inserted });
+            vim.helix_append_state = Some(HelixAppendState {
+                selections_before_append,
+                cursors_after_append,
+            });
         });
     }
 
@@ -2572,6 +2573,27 @@ mod test {
             the lazy dog."},
             Mode::HelixNormal,
         );
+
+        // escape must not restore the selection once text was inserted
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a x escape");
+
+        cx.assert_state("Thexˇ quick brown", Mode::HelixNormal);
+
+        // or when the cursor moved during insert mode
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a left left escape");
+
+        cx.assert_state("Tˇhe quick brown", Mode::HelixNormal);
+
+        // all selections restore with multiple cursors
+        cx.set_state("ˇaaa bbb\nˇccc ddd", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a escape");
+
+        cx.assert_state("ˇaaa bbb\nˇccc ddd", Mode::HelixNormal);
     }
 
     #[gpui::test]
