@@ -16,6 +16,9 @@ use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 use zed_actions::ShowCallStats;
 
+const WEBRTC_AUDIO_SAMPLES_PER_MILLISECOND: f64 = 48.0;
+const PLAYBACK_FRAME_DURATION_MILLISECONDS: u64 = 10;
+
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &ShowCallStats, window, cx| {
@@ -214,6 +217,16 @@ fn audio_issue_score(audio: &RemoteAudioDiagnostics) -> u64 {
         ))
 }
 
+fn format_audio_duration(milliseconds: f64) -> String {
+    if milliseconds > 0.0 && milliseconds < 1.0 {
+        "<1ms".to_string()
+    } else if milliseconds < 10.0 && milliseconds.fract() != 0.0 {
+        format!("{milliseconds:.1}ms")
+    } else {
+        format!("{milliseconds:.0}ms")
+    }
+}
+
 impl EventEmitter<DismissEvent> for CallStatsModal {}
 impl ModalView for CallStatsModal {}
 
@@ -405,6 +418,34 @@ impl CallStatsModal {
             .jitter_buffer_delay_ms
             .map(|delay| format!("{delay:.1}ms"))
             .unwrap_or_else(|| "—".to_string());
+        let repaired_audio_duration = format_audio_duration(
+            audio.concealed_samples as f64 / WEBRTC_AUDIO_SAMPLES_PER_MILLISECOND,
+        );
+        let starved_audio_duration = format_audio_duration(
+            audio
+                .queue_underflows
+                .saturating_mul(PLAYBACK_FRAME_DURATION_MILLISECONDS) as f64,
+        );
+        let dropped_audio_duration = format_audio_duration(
+            audio
+                .frames_dropped
+                .saturating_mul(PLAYBACK_FRAME_DURATION_MILLISECONDS) as f64,
+        );
+        let buffered_audio_duration = format_audio_duration(
+            audio
+                .current_queue_depth
+                .saturating_mul(PLAYBACK_FRAME_DURATION_MILLISECONDS) as f64,
+        );
+        let peak_buffered_audio_duration = format_audio_duration(
+            audio
+                .maximum_queue_depth
+                .saturating_mul(PLAYBACK_FRAME_DURATION_MILLISECONDS) as f64,
+        );
+        let repair_event_label = if audio.concealment_events == 1 {
+            "event"
+        } else {
+            "events"
+        };
 
         v_flex()
             .px_2()
@@ -439,13 +480,15 @@ impl CallStatsModal {
             )
             .child(
                 Label::new(format!(
-                    "Concealed {} samples in {} events · underflows {} · dropped {} · queue {}/{}",
-                    audio.concealed_samples,
+                    "WebRTC repaired {repaired_audio_duration} in {} {repair_event_label}",
                     audio.concealment_events,
-                    audio.queue_underflows,
-                    audio.frames_dropped,
-                    audio.current_queue_depth,
-                    audio.maximum_queue_depth,
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .child(
+                Label::new(format!(
+                    "Local playback starved for {starved_audio_duration} · dropped {dropped_audio_duration} · buffered {buffered_audio_duration} (peak {peak_buffered_audio_duration})",
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),

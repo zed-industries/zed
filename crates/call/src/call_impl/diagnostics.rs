@@ -9,7 +9,7 @@ use std::{
 
 use super::room::Room;
 
-const MAX_HISTORY_SAMPLES: usize = 600;
+const MAX_HISTORY_SAMPLES: usize = 60;
 
 #[derive(Copy, Clone, Default)]
 pub struct DurationDTO(pub Duration);
