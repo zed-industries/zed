@@ -4762,7 +4762,7 @@ fn erb_lang() -> Language {
 }
 
 fn color_index_for_open(
-    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>>,
+    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch>>,
     open_offset: usize,
 ) -> Option<usize> {
     matches
