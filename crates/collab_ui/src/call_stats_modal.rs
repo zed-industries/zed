@@ -184,10 +184,10 @@ fn metric_rating(label: &str, value_ms: f64) -> (&'static str, Color) {
     }
 }
 
-fn input_lag_rating(value_ms: f64) -> (&'static str, Color) {
-    if value_ms < 20.0 {
+fn input_lag_rating(value_ms: u128) -> (&'static str, Color) {
+    if value_ms < 20 {
         ("Normal", Color::Success)
-    } else if value_ms < 50.0 {
+    } else if value_ms < 50 {
         ("High", Color::Warning)
     } else {
         ("Poor", Color::Error)
@@ -236,7 +236,7 @@ impl Render for CallStatsModal {
                     .history()
                     .front()
                     .zip(diagnostics.history().back())
-                    .and_then(|(first, last)| last.elapsed.checked_sub(first.elapsed))
+                    .and_then(|(first, last)| last.elapsed.0.checked_sub(first.elapsed.0))
                     .unwrap_or_default();
                 let recent_issue_count = diagnostics
                     .history()
@@ -267,7 +267,8 @@ impl Render for CallStatsModal {
             .unwrap_or_default();
         remote_audio.sort_by_key(|audio| Reverse(audio_issue_score(audio)));
 
-        let (quality_text, quality_color) = quality_label(stats.connection_quality);
+        let (quality_text, quality_color) =
+            quality_label(stats.connection_quality.map(|inner| inner.0));
         let has_diagnostics = sample_count > 0;
 
         v_flex()
@@ -347,8 +348,8 @@ impl Render for CallStatsModal {
                                 .child(self.render_metric_row(
                                     "Input lag",
                                     "Delay from audio capture to WebRTC",
-                                    stats.input_lag.map(|d| d.as_secs_f64() * 1000.0),
-                                    |v| format!("{:.1}ms", v),
+                                    stats.input_lag.map(|d| d.0.as_millis()),
+                                    |v| format!("{}ms", v),
                                     input_lag_rating,
                                 )),
                         )
@@ -451,13 +452,13 @@ impl CallStatsModal {
             )
     }
 
-    fn render_metric_row(
+    fn render_metric_row<T: Copy + Clone>(
         &self,
         title: &str,
         description: &str,
-        value: Option<f64>,
-        format_value: impl Fn(f64) -> String,
-        rate: impl Fn(f64) -> (&'static str, Color),
+        value: Option<T>,
+        format_value: impl Fn(T) -> String,
+        rate: impl Fn(T) -> (&'static str, Color),
     ) -> impl IntoElement {
         let (rating_text, rating_color, value_text) = match value {
             Some(v) => {

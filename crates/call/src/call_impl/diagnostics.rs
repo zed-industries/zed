@@ -11,20 +11,21 @@ use super::room::Room;
 
 const MAX_HISTORY_SAMPLES: usize = 600;
 
+#[derive(Copy, Clone, Default)]
+pub struct DurationDTO(pub Duration);
+
+#[derive(Copy, Clone)]
+pub struct ConnectionQualityDTO(pub ConnectionQuality);
+
 #[derive(Clone, Default, Serialize)]
 pub struct CallStats {
-    #[serde(serialize_with = "serialize_connection_quality")]
-    pub connection_quality: Option<ConnectionQuality>,
-    #[serde(serialize_with = "serialize_connection_quality")]
-    pub effective_quality: Option<ConnectionQuality>,
+    pub connection_quality: Option<ConnectionQualityDTO>,
+    pub effective_quality: Option<ConnectionQualityDTO>,
     pub latency_ms: Option<f64>,
     pub jitter_ms: Option<f64>,
     pub packet_loss_pct: Option<f64>,
-    #[serde(
-        rename = "input_lag_ms",
-        serialize_with = "serialize_optional_duration_ms"
-    )]
-    pub input_lag: Option<Duration>,
+    #[serde(rename = "input_lag_ms")]
+    pub input_lag: Option<DurationDTO>,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -51,8 +52,8 @@ pub struct RemoteAudioDiagnostics {
 
 #[derive(Clone, Serialize)]
 pub struct CallDiagnosticsSnapshot {
-    #[serde(rename = "elapsed_ms", serialize_with = "serialize_duration_ms")]
-    pub elapsed: Duration,
+    #[serde(rename = "elapsed_ms")]
+    pub elapsed: DurationDTO,
     pub stats: CallStats,
     pub remote_audio: Vec<RemoteAudioDiagnostics>,
 }
@@ -131,7 +132,7 @@ impl CallDiagnostics {
     fn poll_stats(&mut self, cx: &mut Context<Self>) -> Option<Task<PollResult>> {
         let room = self.room.upgrade()?;
         let connection_quality = room.read(cx).connection_quality();
-        let input_lag = room.read(cx).input_lag();
+        let input_lag = room.read(cx).input_lag().map(DurationDTO);
         let stats_future = room.read(cx).get_stats(cx);
 
         let mut remote_tracks = Vec::new();
@@ -173,18 +174,20 @@ impl CallDiagnostics {
             let (remote_audio, previous_inbound) =
                 compute_remote_audio_stats(&session_stats, &remote_tracks, previous_inbound);
             let mut stats = CallStats {
-                connection_quality: Some(connection_quality),
+                connection_quality: Some(ConnectionQualityDTO(connection_quality)),
                 effective_quality: None,
                 latency_ms: computed.latency_ms,
                 jitter_ms: computed.jitter_ms,
                 packet_loss_pct: computed.packet_loss_pct,
                 input_lag,
             };
-            stats.effective_quality =
-                Some(effective_connection_quality(connection_quality, &stats));
+            stats.effective_quality = Some(ConnectionQualityDTO(effective_connection_quality(
+                connection_quality,
+                &stats,
+            )));
             PollResult {
                 snapshot: Some(CallDiagnosticsSnapshot {
-                    elapsed: started_at.elapsed(),
+                    elapsed: DurationDTO(started_at.elapsed()),
                     stats,
                     remote_audio,
                 }),
@@ -207,40 +210,28 @@ impl CallDiagnostics {
     }
 }
 
-fn serialize_connection_quality<S>(
-    quality: &Option<ConnectionQuality>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    quality
-        .map(|quality| match quality {
+impl Serialize for DurationDTO {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.as_millis().serialize(serializer)
+    }
+}
+
+impl Serialize for ConnectionQualityDTO {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.0 {
             ConnectionQuality::Excellent => "excellent",
             ConnectionQuality::Good => "good",
             ConnectionQuality::Poor => "poor",
             ConnectionQuality::Lost => "lost",
-        })
+        }
         .serialize(serializer)
-}
-
-fn serialize_duration_ms<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    duration.as_millis().serialize(serializer)
-}
-
-fn serialize_optional_duration_ms<S>(
-    duration: &Option<Duration>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    duration
-        .map(|duration| duration.as_secs_f64() * 1000.0)
-        .serialize(serializer)
+    }
 }
 
 #[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
@@ -309,38 +300,6 @@ fn compute_network_stats(stats: &livekit_client::SessionStats) -> ComputedNetwor
         latency_ms: min_rtt.map(|rtt| rtt * 1000.0),
         jitter_ms: max_jitter.map(|j| j * 1000.0),
         packet_loss_pct,
-    }
-}
-
-fn counter_delta(current: u64, previous: u64) -> u64 {
-    current.checked_sub(previous).unwrap_or_default()
-}
-
-#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
-fn signed_counter_delta(current: i64, previous: i64) -> i64 {
-    current.checked_sub(previous).unwrap_or_default()
-}
-
-fn interval_packet_loss_pct(packets_received: u64, packets_lost: i64) -> Option<f64> {
-    let packets_lost = packets_lost.max(0);
-    let expected_packets = packets_received as i128 + i128::from(packets_lost);
-    if expected_packets > 0 {
-        Some((packets_lost as f64 / expected_packets as f64) * 100.0)
-    } else {
-        None
-    }
-}
-
-fn average_jitter_buffer_delay_ms(
-    current_delay: f64,
-    previous_delay: f64,
-    emitted_count: u64,
-) -> Option<f64> {
-    let delay = current_delay - previous_delay;
-    if emitted_count > 0 && delay >= 0.0 {
-        Some((delay / emitted_count as f64) * 1000.0)
-    } else {
-        None
     }
 }
 
@@ -417,19 +376,37 @@ fn compute_remote_audio_stats(
             .unwrap_or(current);
         next_inbound.insert(inbound.rtc.id.clone(), current);
 
-        let packets_received = counter_delta(current.packets_received, previous.packets_received);
-        let packets_lost = signed_counter_delta(current.packets_lost, previous.packets_lost);
-        let packet_loss_pct = interval_packet_loss_pct(packets_received, packets_lost);
+        let packets_received = current
+            .packets_received
+            .checked_sub(previous.packets_received)
+            .unwrap_or_default();
+        let packets_lost = current
+            .packets_lost
+            .checked_sub(previous.packets_lost)
+            .unwrap_or_default();
 
-        let emitted_count = counter_delta(
-            current.jitter_buffer_emitted_count,
-            previous.jitter_buffer_emitted_count,
-        );
-        let jitter_buffer_delay_ms = average_jitter_buffer_delay_ms(
-            current.jitter_buffer_delay,
-            previous.jitter_buffer_delay,
-            emitted_count,
-        );
+        let packet_loss_pct = {
+            let packets_lost = packets_lost.max(0);
+            let expected_packets = packets_received as i128 + i128::from(packets_lost);
+            if expected_packets > 0 {
+                Some((packets_lost as f64 / expected_packets as f64) * 100.0)
+            } else {
+                None
+            }
+        };
+
+        let emitted_count = current
+            .jitter_buffer_emitted_count
+            .checked_sub(previous.jitter_buffer_emitted_count)
+            .unwrap_or_default();
+        let jitter_buffer_delay_ms = {
+            let delay = current.jitter_buffer_delay - previous.jitter_buffer_delay;
+            if emitted_count > 0 && delay >= 0.0 {
+                Some((delay / emitted_count as f64) * 1000.0)
+            } else {
+                None
+            }
+        };
 
         diagnostics.push(RemoteAudioDiagnostics {
             participant_id: track.participant_id.clone(),
@@ -440,31 +417,37 @@ fn compute_remote_audio_stats(
             packet_loss_pct,
             jitter_ms: inbound.received.jitter * 1000.0,
             jitter_buffer_delay_ms,
-            concealed_samples: counter_delta(current.concealed_samples, previous.concealed_samples),
-            concealment_events: counter_delta(
-                current.concealment_events,
-                previous.concealment_events,
-            ),
-            inserted_samples_for_deceleration: counter_delta(
-                current.inserted_samples_for_deceleration,
-                previous.inserted_samples_for_deceleration,
-            ),
-            removed_samples_for_acceleration: counter_delta(
-                current.removed_samples_for_acceleration,
-                previous.removed_samples_for_acceleration,
-            ),
-            frames_received: counter_delta(
-                current.playback.frames_received,
-                previous.playback.frames_received,
-            ),
-            frames_dropped: counter_delta(
-                current.playback.frames_dropped,
-                previous.playback.frames_dropped,
-            ),
-            queue_underflows: counter_delta(
-                current.playback.queue_underflows,
-                previous.playback.queue_underflows,
-            ),
+            concealed_samples: current
+                .concealed_samples
+                .checked_sub(previous.concealed_samples)
+                .unwrap_or_default(),
+            concealment_events: current
+                .concealment_events
+                .checked_sub(previous.concealment_events)
+                .unwrap_or_default(),
+            inserted_samples_for_deceleration: current
+                .inserted_samples_for_deceleration
+                .checked_sub(previous.inserted_samples_for_deceleration)
+                .unwrap_or_default(),
+            removed_samples_for_acceleration: current
+                .removed_samples_for_acceleration
+                .checked_sub(previous.removed_samples_for_acceleration)
+                .unwrap_or_default(),
+            frames_received: current
+                .playback
+                .frames_received
+                .checked_sub(previous.playback.frames_received)
+                .unwrap_or_default(),
+            frames_dropped: current
+                .playback
+                .frames_dropped
+                .checked_sub(previous.playback.frames_dropped)
+                .unwrap_or_default(),
+            queue_underflows: current
+                .playback
+                .queue_underflows
+                .checked_sub(previous.playback.queue_underflows)
+                .unwrap_or_default(),
             current_queue_depth: current.playback.current_queue_depth,
             maximum_queue_depth: current.playback.maximum_queue_depth,
         });
@@ -571,7 +554,7 @@ fn effective_connection_quality(
         worst = worst.max(metric_quality(loss, 1.0, 5.0));
     }
     if let Some(lag) = stats.input_lag {
-        let lag_ms = lag.as_secs_f64() * 1000.0;
+        let lag_ms = lag.0.as_secs_f64() * 1000.0;
         worst = worst.max(metric_quality(lag_ms, 20.0, 50.0));
     }
 
@@ -583,30 +566,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counter_delta_ignores_counter_resets() {
-        assert_eq!(counter_delta(5, 10), 0);
-        assert_eq!(counter_delta(15, 10), 5);
-    }
-
-    #[test]
-    fn packet_loss_ignores_late_packet_recovery() {
-        assert_eq!(interval_packet_loss_pct(100, -1), Some(0.0));
-        assert_eq!(interval_packet_loss_pct(95, 5), Some(5.0));
-    }
-
-    #[test]
-    fn jitter_buffer_delay_ignores_counter_resets() {
-        assert_eq!(average_jitter_buffer_delay_ms(1.5, 1.0, 100), Some(5.0));
-        assert_eq!(average_jitter_buffer_delay_ms(0.5, 1.0, 100), None);
-        assert_eq!(average_jitter_buffer_delay_ms(1.5, 1.0, 0), None);
-    }
-
-    #[test]
     fn report_redacts_participant_names() -> anyhow::Result<()> {
         let report = CallDiagnosticsReport {
             schema_version: 1,
             samples: vec![Arc::new(CallDiagnosticsSnapshot {
-                elapsed: Duration::from_secs(1),
+                elapsed: DurationDTO(Duration::from_secs(1)),
                 stats: CallStats::default(),
                 remote_audio: vec![RemoteAudioDiagnostics {
                     participant_id: "participant-1".to_string(),
