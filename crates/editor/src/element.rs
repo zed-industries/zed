@@ -8901,28 +8901,67 @@ impl Element for EditorElement {
                             );
 
                             let line_ix = display_row.minus(start_row) as usize;
-                            if let (Some(row_info), Some(line_layout), Some(crease_trailer)) = (
+                            if let (Some(row_info), Some(_), Some(_)) = (
                                 row_infos.get(line_ix),
                                 line_layouts.get(line_ix),
                                 crease_trailers.get(line_ix),
                             ) {
-                                let crease_trailer_layout = crease_trailer.as_ref();
-                                if let Some(layout) = self.layout_inline_blame(
-                                    display_row,
-                                    row_info,
-                                    line_layout,
-                                    crease_trailer_layout,
-                                    em_width,
-                                    content_origin,
-                                    scroll_position,
-                                    scroll_pixel_position,
-                                    line_height,
-                                    window,
-                                    cx,
+                                // A soft-wrapped logical line is one line of blame history, so
+                                // render it at the end of the line's last (shortest) continuation
+                                // row instead of after the cursor's row, which for non-final rows
+                                // sits at the wrap boundary and gets clipped.
+                                let mut target_ix = line_ix;
+                                while row_infos.get(target_ix + 1).is_some_and(|next| {
+                                    next.buffer_row.is_none() && next.wrapped_buffer_row.is_some()
+                                }) {
+                                    target_ix += 1;
+                                }
+
+                                let buffer_id = row_info.buffer_id.or_else(|| {
+                                    row_infos[..=line_ix]
+                                        .iter()
+                                        .rev()
+                                        .find_map(|info| info.buffer_id)
+                                });
+                                let buffer_row =
+                                    row_info.buffer_row.or(row_info.wrapped_buffer_row);
+
+                                if let (
+                                    Some(buffer_id),
+                                    Some(buffer_row),
+                                    Some(target_line_layout),
+                                    Some(target_crease_trailer),
+                                ) = (
+                                    buffer_id,
+                                    buffer_row,
+                                    line_layouts.get(target_ix),
+                                    crease_trailers.get(target_ix),
                                 ) {
-                                    inline_blame_layout = Some(layout);
-                                    // Blame overrides inline diagnostics
-                                    inline_diagnostics.remove(&display_row);
+                                    let resolved_row_info = RowInfo {
+                                        buffer_id: Some(buffer_id),
+                                        buffer_row: Some(buffer_row),
+                                        ..Default::default()
+                                    };
+                                    let target_display_row =
+                                        DisplayRow(start_row.0 + target_ix as u32);
+                                    let crease_trailer_layout = target_crease_trailer.as_ref();
+                                    if let Some(layout) = self.layout_inline_blame(
+                                        target_display_row,
+                                        &resolved_row_info,
+                                        target_line_layout,
+                                        crease_trailer_layout,
+                                        em_width,
+                                        content_origin,
+                                        scroll_position,
+                                        scroll_pixel_position,
+                                        line_height,
+                                        window,
+                                        cx,
+                                    ) {
+                                        inline_blame_layout = Some(layout);
+                                        // Blame overrides inline diagnostics
+                                        inline_diagnostics.remove(&target_display_row);
+                                    }
                                 }
                             } else {
                                 log::error!(
@@ -11170,6 +11209,178 @@ mod tests {
         assert!(
             state.position_map.scroll_max.x > 0.,
             "Without soft wrap the blame width should still be reserved"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_inline_blame_on_wrapped_line_cursor_on_continuation_row(cx: &mut TestAppContext) {
+        struct FixedWidthBlameRenderer;
+
+        impl BlameRenderer for FixedWidthBlameRenderer {
+            fn max_author_length(&self) -> usize {
+                20
+            }
+
+            fn render_blame_entry(
+                &self,
+                _: &gpui::TextStyle,
+                _: BlameEntry,
+                _: Option<ParsedCommitMessage>,
+                _: Vec<SharedString>,
+                _: Entity<project::git_store::Repository>,
+                _: WeakEntity<Workspace>,
+                _: Entity<Editor>,
+                _: usize,
+                _: Hsla,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<AnyElement> {
+                None
+            }
+
+            fn render_inline_blame_entry(
+                &self,
+                _: &gpui::TextStyle,
+                _: BlameEntry,
+                _: &mut App,
+            ) -> Option<AnyElement> {
+                Some(div().w(px(80.)).into_any_element())
+            }
+
+            fn render_blame_entry_popover(
+                &self,
+                _: BlameEntry,
+                _: ScrollHandle,
+                _: Option<ParsedCommitMessage>,
+                _: Vec<SharedString>,
+                _: Entity<Markdown>,
+                _: Entity<project::git_store::Repository>,
+                _: WeakEntity<Workspace>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<AnyElement> {
+                None
+            }
+
+            fn open_blame_commit(
+                &self,
+                _: BlameEntry,
+                _: Entity<project::git_store::Repository>,
+                _: WeakEntity<Workspace>,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+            }
+        }
+
+        init_test(cx, |_| {});
+        cx.update(|cx| crate::git::set_blame_renderer(FixedWidthBlameRenderer, cx));
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            util::path!("/my-repo"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "a ".repeat(100),
+            }),
+        )
+        .await;
+        fs.set_blame_for_repo(
+            std::path::Path::new(util::path!("/my-repo/.git")),
+            vec![(
+                git::repository::repo_path("file.txt"),
+                git::blame::Blame {
+                    entries: vec![BlameEntry {
+                        sha: "1b1b1b".parse().unwrap(),
+                        range: 0..1,
+                        original_line_number: 0,
+                        author: None,
+                        author_mail: None,
+                        author_time: None,
+                        author_tz: None,
+                        committer_name: None,
+                        committer_email: None,
+                        committer_time: None,
+                        committer_tz: None,
+                        summary: None,
+                        previous: None,
+                        filename: String::new(),
+                    }],
+                    ..Default::default()
+                },
+            )],
+        );
+
+        let project = project::Project::test(fs, [util::path!("/my-repo").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(util::path!("/my-repo/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let window = cx.add_window(|window, cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, Some(project), window, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        cx.update(|window, cx| window.focus(&editor.read(cx).focus_handle(cx), cx));
+        editor.update(cx, |editor, cx| {
+            editor
+                .blame()
+                .expect("inline blame should be running")
+                .clone()
+                .update(cx, |blame, cx| blame.focus(cx))
+        });
+        cx.executor().run_until_parked();
+
+        // Move the cursor into the middle of the (single, wrapped) logical line, so
+        // it lands on a soft-wrap continuation row rather than the row the line
+        // starts on.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 100)..Point::new(0, 100)]);
+            });
+        });
+
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        let editor_width = px(300.);
+        let (_, state) = cx.draw(Default::default(), size(editor_width, px(500.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+
+        let snapshot = &state.position_map.snapshot;
+        let cursor_display_row = Point::new(0, 100).to_display_point(snapshot).row();
+        let last_display_row = snapshot.max_point().row();
+        assert!(
+            cursor_display_row.0 > 0 && cursor_display_row < last_display_row,
+            "test setup should place the cursor on a continuation row that isn't the line's last row"
+        );
+
+        let (bounds, _, _) =
+            state.position_map.inline_blame_bounds.clone().expect(
+                "inline blame should still render when the cursor is on a continuation row",
+            );
+
+        let expected_y = state.content_origin.y
+            + state.position_map.line_height
+                * ((last_display_row.as_f64() - state.position_map.scroll_position.y) as f32);
+        assert!(
+            (bounds.origin.y - expected_y).abs() < px(1.),
+            "inline blame should render on the wrapped line's last display row ({:?}), not the cursor's row ({:?}); got y={:?}, expected y={:?}",
+            last_display_row,
+            cursor_display_row,
+            bounds.origin.y,
+            expected_y,
+        );
+
+        assert!(
+            bounds.origin.x + bounds.size.width <= editor_width,
+            "inline blame should be laid out within the visible editor width, not past the right edge"
         );
     }
 
