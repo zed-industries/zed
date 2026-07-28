@@ -12,12 +12,13 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use ui::{
-    Color, Divider, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label,
-    LabelSize, ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
+    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label, LabelSize,
+    ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
 };
 
 use crate::{
     CsvPreviewView,
+    renderer::table_cell::with_copy_on_right_click,
     settings::FilterSortOrder,
     table_data_engine::{
         filtering_by_column::{FilterEntry, FilterEntryState},
@@ -546,8 +547,8 @@ impl CsvPreviewView {
             .items_center()
             .font_buffer(cx)
             .text_buffer(cx)
-            .child(
-                div()
+            .child({
+                let header_text_cell = div()
                     .id(ElementId::NamedInteger(
                         "csv-col-header-text".into(),
                         col_idx.get() as u64,
@@ -555,31 +556,14 @@ impl CsvPreviewView {
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .whitespace_nowrap()
-                    .on_mouse_down(MouseButton::Right, {
-                        let text = header_text.clone();
-                        move |_event, _window, cx| {
-                            cx.stop_propagation();
-                            cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
-                        }
-                    })
-                    .tooltip(Tooltip::element({
-                        let text = header_text.clone();
-                        move |_window, cx| {
-                            v_flex()
-                                .gap_1()
-                                .child(div().font_buffer(cx).child(text.clone()))
-                                .child(Divider::horizontal())
-                                .child(
-                                    Label::new("Right click to copy column name")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .into_any_element()
-                        }
-                    }))
-                    .child(header_text),
-            )
+                    .whitespace_nowrap();
+                with_copy_on_right_click(
+                    header_text_cell,
+                    header_text.clone(),
+                    "Right click to copy column name",
+                )
+                .child(header_text)
+            })
             .child(
                 GradientFade::new(base_bg, base_bg, base_bg)
                     .width(grad_width)
