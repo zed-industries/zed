@@ -168,9 +168,12 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
-    /// Restores a given `TrashedEntry`, moving it from the system's trash back
-    /// to the original path.
-    async fn restore(&self, item: TrashId) -> std::result::Result<PathBuf, TrashRestoreError>;
+    /// Returns the original absolute path of the item identified by `trash_id`.
+    fn original_path_for_trash_id(&self, trash_id: TrashId) -> Option<PathBuf>;
+
+    /// Restores the item identified by `trash_id`, moving it from the system's
+    /// trash back to its original path.
+    async fn restore(&self, trash_id: TrashId) -> std::result::Result<PathBuf, TrashRestoreError>;
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -1348,11 +1351,18 @@ impl Fs for RealFs {
         res
     }
 
-    async fn restore(&self, item: TrashId) -> std::result::Result<PathBuf, TrashRestoreError> {
+    fn original_path_for_trash_id(&self, trash_id: TrashId) -> Option<PathBuf> {
+        self.trash
+            .lock()
+            .get(trash_id)
+            .map(|entry| entry.original_parent.join(&entry.name))
+    }
+
+    async fn restore(&self, trash_id: TrashId) -> std::result::Result<PathBuf, TrashRestoreError> {
         let trashed_entry = self
             .trash
             .lock()
-            .remove(item)
+            .remove(trash_id)
             .ok_or(TrashRestoreError::AlreadyRestored)?;
 
         let restored_item_path = trashed_entry.original_parent.join(&trashed_entry.name);
@@ -3322,6 +3332,15 @@ impl Fs for FakeFs {
         let (sender, receiver) = futures::channel::mpsc::unbounded();
         self.state.lock().job_event_subscribers.lock().push(sender);
         receiver
+    }
+
+    fn original_path_for_trash_id(&self, trash_id: TrashId) -> Option<PathBuf> {
+        self.state
+            .lock()
+            .trash
+            .lock()
+            .get(trash_id)
+            .map(|(entry, _)| entry.original_parent.join(&entry.name))
     }
 
     async fn restore(&self, trash_id: TrashId) -> Result<PathBuf, TrashRestoreError> {
