@@ -41,6 +41,8 @@ impl Render for Fixture {
         div()
             .size_full()
             .flex()
+            .gap_8()
+            .p_8()
             .bg(rgb(background))
             .child(div().w_1_4().h_full().bg(rgb(left)))
             .child(
@@ -49,6 +51,7 @@ impl Render for Fixture {
                     .h_full()
                     .flex()
                     .flex_col()
+                    .gap_8()
                     .child(div().h_1_2().w_full().bg(rgb(upper)))
                     .child(div().flex_1().w_full().bg(rgb(lower))),
             )

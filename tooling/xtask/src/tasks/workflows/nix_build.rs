@@ -1,6 +1,9 @@
 use crate::tasks::workflows::{
     runners::{Arch, Platform},
-    steps::{CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob},
+    steps::{
+        CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, IfNoFilesFound,
+        NamedJob,
+    },
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -12,6 +15,7 @@ use gh_workflow::*;
 /// them twice.
 pub fn nix_build() -> Workflow {
     let [nix_linux_x86_64, nix_mac_aarch64] = nix_pr_jobs(&["run-nix", "run-bundling"]);
+    let i3_workspace_redraw = i3_workspace_redraw_job();
     named::workflow()
         .with_minimal_permissions()
         .on(Event::default().pull_request(
@@ -27,6 +31,37 @@ pub fn nix_build() -> Workflow {
         .add_env(("RUST_BACKTRACE", "1"))
         .add_job(nix_linux_x86_64.name, nix_linux_x86_64.job)
         .add_job(nix_mac_aarch64.name, nix_mac_aarch64.job)
+        .add_job(i3_workspace_redraw.name, i3_workspace_redraw.job)
+}
+
+/// Runs the Linux-only graphical VM regression when maintainers opt a PR into
+/// Nix testing. Keeping this behind `run-nix` avoids adding a costly VM to the
+/// required checks while ensuring that the check does not silently rot.
+fn i3_workspace_redraw_job() -> NamedJob {
+    let mut job = build_nix(
+        Platform::Linux,
+        Arch::X86_64,
+        "checks.x86_64-linux.i3-workspace-redraw",
+        None,
+        &[],
+    );
+    job.name = "i3_workspace_redraw".to_owned();
+    job.job = job
+        .job
+        .continue_on_error(false)
+        .cond(Expression::new(format!(
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && \
+            ((github.event.action == 'labeled' && github.event.label.name == 'run-nix') || \
+            (github.event.action == 'synchronize' && \
+            contains(github.event.pull_request.labels.*.name, 'run-nix')))"
+        )))
+        .add_step(
+            steps::upload_artifact("i3-workspace-redraw-artifacts", "result/gpui-i3-artifacts")
+                .if_no_files_found(IfNoFilesFound::Warn)
+                .retention_days(14)
+                .if_condition(Expression::new("always()")),
+        );
+    job
 }
 
 /// Builds the pair of PR Nix jobs (Linux x86_64 + macOS aarch64), each gated so

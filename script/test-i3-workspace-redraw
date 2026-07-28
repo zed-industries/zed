@@ -112,7 +112,7 @@ done
 [[ "${XDG_SESSION_TYPE:-x11}" == x11 ]] || fail "an X11 session is required"
 [[ -z "${WAYLAND_DISPLAY:-}" ]] || fail "WAYLAND_DISPLAY must be unset"
 
-for command in awk compare convert grep i3-msg import jq readlink seq xdotool xprop; do
+for command in awk compare grep i3-msg identify import jq magick readlink seq xdotool xprop; do
     require_command "$command"
 done
 
@@ -137,6 +137,8 @@ original_con_id=$(i3-msg -t get_tree |
     head -n 1)
 test_pids=()
 test_cons=()
+captured_width=
+captured_height=
 
 stop_test_processes() {
     local con_id pid
@@ -250,9 +252,11 @@ capture_container() {
         fail "invalid target geometry: ${width}x${height}+${x}+${y}"
 
     import -window root "${output}.root.png"
-    convert "${output}.root.png" \
+    magick "${output}.root.png" \
         -crop "${width}x${height}+${x}+${y}" +repage "${output}.png"
     rm -f "${output}.root.png"
+    captured_width=$width
+    captured_height=$height
 }
 
 normalized_rmse() {
@@ -270,6 +274,87 @@ rmse_is_acceptable() {
         'BEGIN { exit !(value <= limit) }'
 }
 
+validate_target_palette() {
+    local image=$1
+    local expected_width=$2
+    local expected_height=$3
+    local oracle_name=$4
+    local dimensions width height histogram minimum_pixels color count
+    local index x y expected_pixel pixel_metric pixel_rmse
+    local failed=0
+    local colors=(172554 06b6d4 facc15 ef4444 22c55e)
+    local samples=(
+        "2 2"
+        "$((expected_width / 8)) $((expected_height / 2))"
+        "$((expected_width / 2)) $((expected_height / 4))"
+        "$((expected_width / 2)) $((expected_height * 3 / 4))"
+        "$((expected_width * 7 / 8)) $((expected_height / 2))"
+    )
+
+    dimensions=$(identify -format '%w %h' "$image")
+    IFS=' ' read -r width height <<<"$dimensions"
+    if [[ "$width" != "$expected_width" || "$height" != "$expected_height" ]]; then
+        printf 'oracle error: %s has size %sx%s, expected %sx%s\n' \
+            "$image" "$width" "$height" "$expected_width" "$expected_height" >&2
+        failed=1
+    fi
+    if ((width < 200 || height < 200)); then
+        printf 'oracle error: %s is too small for the fixture pattern: %sx%s\n' \
+            "$image" "$width" "$height" >&2
+        failed=1
+    fi
+
+    histogram="${image%.png}.histogram.txt"
+    magick "$image" -alpha off -depth 8 -format %c histogram:info:- >"$histogram"
+    minimum_pixels=$((expected_width * expected_height / 20))
+    for color in "${colors[@]}"; do
+        count=$(awk -v color="$color" '
+            index(toupper($0), "#" toupper(color)) {
+                sub(":", "", $1)
+                total += $1
+            }
+            END { print total + 0 }
+        ' "$histogram")
+        if ((count < minimum_pixels)); then
+            printf 'oracle error: %s has %d pixels of #%s, expected at least %d\n' \
+                "$image" "$count" "$color" "$minimum_pixels" >&2
+            failed=1
+        fi
+    done
+
+    for index in "${!colors[@]}"; do
+        color=${colors[$index]}
+        IFS=' ' read -r x y <<<"${samples[$index]}"
+        expected_pixel="${artifact_dir}/expected-${color}.png"
+        if [[ ! -f "$expected_pixel" ]]; then
+            magick -size 1x1 "xc:#${color}" "$expected_pixel"
+        fi
+        pixel_metric=$(
+            magick "$image" -crop "1x1+${x}+${y}" +repage miff:- |
+                compare -metric RMSE miff:- "$expected_pixel" null: 2>&1 || true
+        )
+        pixel_rmse=$(awk -F '[()]' 'NF >= 3 { print $(NF - 1) }' <<<"$pixel_metric")
+        if [[ ! "$pixel_rmse" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] ||
+            ! rmse_is_acceptable "$pixel_rmse"; then
+            printf 'oracle error: %s pixel %s,%s does not match #%s: %s\n' \
+                "$image" "$x" "$y" "$color" "$pixel_metric" >&2
+            failed=1
+        fi
+    done
+
+    if ((failed == 0)); then
+        printf '%s\t%s\t%sx%s\tpass\n' \
+            "$oracle_name" "$image" "$width" "$height" |
+            tee -a "${artifact_dir}/oracle.tsv"
+        return 0
+    fi
+
+    printf '%s\t%s\t%sx%s\tfail\n' \
+        "$oracle_name" "$image" "$width" "$height" |
+        tee -a "${artifact_dir}/oracle.tsv"
+    return 1
+}
+
 run_variant() {
     local label=$1
     local executable=$2
@@ -279,7 +364,8 @@ run_variant() {
     local helper_title="GPUI_I3_E2E_${run_id}_${label}_HELPER"
     local alternate_title="GPUI_I3_E2E_${run_id}_${label}_ALTERNATE"
     local target_con helper_con alternate_con focused_con iteration
-    local return_rmse control_rmse failures=0
+    local reference_width reference_height return_rmse control_rmse
+    local control_palette iteration_failed failures=0
 
     i3-msg "workspace $(i3_quote "$workspace_a")" >/dev/null
     launch_fixture "$executable" "$target_title" target \
@@ -292,6 +378,12 @@ run_variant() {
     i3-msg "[con_id=${helper_con}] focus" >/dev/null
     sleep "$settle"
     capture_container "$target_con" "${artifact_dir}/${label}-reference"
+    reference_width=$captured_width
+    reference_height=$captured_height
+    validate_target_palette \
+        "${artifact_dir}/${label}-reference.png" \
+        "$reference_width" "$reference_height" "${label}-reference" ||
+        fail "${label} reference image does not contain the expected target palette"
 
     i3-msg "workspace $(i3_quote "$workspace_b")" >/dev/null
     launch_fixture "$executable" "$alternate_title" alternate \
@@ -319,8 +411,9 @@ run_variant() {
         return_rmse=$(normalized_rmse \
             "${artifact_dir}/${label}-reference.png" \
             "${artifact_dir}/${label}-return-${iteration}.png")
+        iteration_failed=0
         if ! rmse_is_acceptable "$return_rmse"; then
-            ((failures += 1))
+            iteration_failed=1
         fi
 
         i3-msg "[con_id=${target_con}] focus" >/dev/null
@@ -332,9 +425,23 @@ run_variant() {
         control_rmse=$(normalized_rmse \
             "${artifact_dir}/${label}-reference.png" \
             "${artifact_dir}/${label}-control-${iteration}.png")
+        control_palette=pass
+        if ! rmse_is_acceptable "$control_rmse"; then
+            iteration_failed=1
+        fi
+        if ! validate_target_palette \
+            "${artifact_dir}/${label}-control-${iteration}.png" \
+            "$reference_width" "$reference_height" \
+            "${label}-control-${iteration}"; then
+            control_palette=fail
+            iteration_failed=1
+        fi
+        if ((iteration_failed != 0)); then
+            ((failures += 1))
+        fi
 
-        printf '%s\t%d\t%s\t%s\n' \
-            "$label" "$iteration" "$return_rmse" "$control_rmse" |
+        printf '%s\t%d\t%s\t%s\t%s\n' \
+            "$label" "$iteration" "$return_rmse" "$control_rmse" "$control_palette" |
             tee -a "${artifact_dir}/results.tsv"
     done
 
@@ -357,8 +464,9 @@ run_variant() {
         "$iterations" "$settle" "$threshold"
     printf 'candidate=%s\nbaseline=%s\n' "$candidate" "${baseline:-none}"
 } | tee "${artifact_dir}/environment.txt"
-printf 'variant\titeration\treturn_rmse\tcontrol_rmse\n' \
+printf 'variant\titeration\treturn_rmse\tcontrol_rmse\tcontrol_palette\n' \
     >"${artifact_dir}/results.tsv"
+printf 'oracle\timage\tsize\tresult\n' >"${artifact_dir}/oracle.tsv"
 printf 'artifacts=%s\n' "$artifact_dir"
 
 if [[ -n "$baseline" ]]; then

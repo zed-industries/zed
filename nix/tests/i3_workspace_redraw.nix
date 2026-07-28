@@ -259,10 +259,10 @@ pkgs.testers.nixosTest {
         "{ "
         "i3 --version; "
         "Xorg -version 2>&1 | head -n 2; "
-        "convert -version | head -n 1; "
+        "magick -version | head -n 1; "
         "} > /tmp/gpui-i3-artifacts/package-versions.txt"
     )
-    machine.succeed(
+    machine.execute(
         "runuser -u gpui-test -- env "
         "DISPLAY=:0 XAUTHORITY=/home/gpui-test/.Xauthority "
         "i3-msg 'shmlog on'"
