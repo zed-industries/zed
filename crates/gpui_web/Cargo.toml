@@ -24,13 +24,12 @@ http_client.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true
-smallvec.workspace = true
 uuid.workspace = true
 wasm-bindgen.workspace = true
-wasm-bindgen-futures = "0.4"
+wasm-bindgen-futures.workspace = true
 web-time.workspace = true
-console_error_panic_hook = "0.1.7"
-js-sys = "0.3"
+console_error_panic_hook.workspace = true
+js-sys.workspace = true
 raw-window-handle.workspace = true
 wasm_thread = { version = "0.3", features = ["es_modules"], optional = true }
 web-sys = { version = "0.3", features = [
@@ -45,8 +44,6 @@ web-sys = { version = "0.3", features = [
     "DragEvent",
     "Element",
     "EventTarget",
-    "File",
-    "FileList",
     "HtmlCanvasElement",
     "HtmlElement",
     "HtmlInputElement",
@@ -66,6 +63,7 @@ web-sys = { version = "0.3", features = [
     "VisualViewport",
     "Headers",
     "Request",
+    "RequestCredentials",
     "RequestInit",
     "RequestRedirect",
     "Response",

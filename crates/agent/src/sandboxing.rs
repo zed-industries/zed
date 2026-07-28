@@ -5,9 +5,10 @@
 //! caller see the same answer (and so the `target_os` gate lives in one
 //! place instead of scattered across the agent crate).
 //!
-//! The current policy is: enabled iff the project is local, the platform has an
-//! integration, and the user has not persistently allowed unsandboxed execution
-//! (the `allow_unsandboxed` sandbox setting). Setting `allow_unsandboxed`
+//! The current policy is: enabled iff the user has the `sandboxing` feature
+//! flag turned on, the project is local, the platform has an integration, and
+//! the user has not persistently allowed unsandboxed execution (the
+//! `allow_unsandboxed` sandbox setting). Setting `allow_unsandboxed`
 //! persistently turns sandboxing off for the model-facing surface entirely:
 //! the plain (non-sandboxed) `terminal` tool is exposed and the system prompt
 //! omits the sandbox section, since every command would run without a wrap
@@ -18,12 +19,14 @@
 //!
 //! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Bubblewrap via WSL)
 //! have real sandbox integrations; on platforms without one the per-command
-//! wrap is a no-op, so commands run with the agent's ambient permissions.
+//! wrap is a no-op, so commands run with the agent's ambient permissions even
+//! when the flag is on.
 //!
 //! Naming note: this module is about agent terminal sandboxing specifically.
 //! Other agent operations (e.g. file edits) are gated separately.
 
 use agent_settings::{AgentSettings, SandboxPermissions};
+use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
 use project::Project;
@@ -184,19 +187,26 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
 /// prompt in place, since the model is still operating in the sandbox model and
 /// only escaping individual commands (tracked in `ThreadSandboxGrants`).
 pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
-    sandboxing_available_for_project(project)
+    sandboxing_available_for_project(project, cx)
         && !AgentSettings::get_global(cx)
             .sandbox_permissions
             .allow_unsandboxed
 }
 
-/// Whether sandboxing is *applicable* for this project at all — the project is
-/// local and the platform has a sandbox integration — independent of the
-/// persistent `allow_unsandboxed` setting. Used by the UI to distinguish
-/// "sandboxing isn't relevant here" (don't show the indicator) from "sandboxing
-/// is available but turned off in settings" (show it, struck out).
-pub(crate) fn sandboxing_available_for_project(project: &Project) -> bool {
-    project.is_local()
+/// Whether agent-run terminal commands should be wrapped in an OS-level
+/// sandbox for this process. See module docs for the policy.
+pub(crate) fn sandboxing_enabled(cx: &App) -> bool {
+    cx.has_flag::<SandboxingFeatureFlag>()
+}
+
+/// Whether sandboxing is *applicable* for this project at all — the feature is
+/// enabled, the project is local, and the platform has a sandbox integration —
+/// independent of the persistent `allow_unsandboxed` setting. Used by the UI to
+/// distinguish "sandboxing isn't relevant here" (don't show the indicator) from
+/// "sandboxing is available but turned off in settings" (show it, struck out).
+pub(crate) fn sandboxing_available_for_project(project: &Project, cx: &App) -> bool {
+    sandboxing_enabled(cx)
+        && project.is_local()
         && cfg!(any(
             target_os = "macos",
             target_os = "linux",
