@@ -378,8 +378,10 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
         return;
     }
 
+    let should_show_notification = updater.read(cx).should_show_update_notification(cx);
+
     cx.spawn(async move |cx| {
-        let should_show_notification = true;
+        let should_show_notification = should_show_notification.await?;
 
         if should_show_notification {
             cx.update(|cx| {
