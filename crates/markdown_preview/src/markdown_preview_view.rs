@@ -456,14 +456,8 @@ impl MarkdownPreviewView {
             let view = item.downcast::<MarkdownPreviewView>()?;
             let view_read = view.read(cx);
 
-            (view_read.mode == MarkdownPreviewMode::Default
-                && view_read
-                    .active_editor
-                    .as_ref()
-                    .and_then(|state| state.editor.read(cx).buffer().read(cx).as_singleton())
-                    .as_ref()
-                    == Some(buffer))
-            .then_some((index, view))
+            (view_read.mode == MarkdownPreviewMode::Default && view_read.is_previewing(buffer, cx))
+                .then_some((index, view))
         });
 
         if let Some((index, view)) = existing {
@@ -1206,11 +1200,10 @@ impl project::ProjectItem for MarkdownPreviewBuffer {
             return None;
         }
         let languages = project.read(cx).languages().clone();
-        let markdown = languages.available_language_for_name("Markdown")?;
         // Match against the absolute path: for single-file worktrees the
         // worktree-relative path is empty and has no extension to match on.
         let abs_path = project.read(cx).absolute_path(path, cx)?;
-        if languages.language_for_file_path(&abs_path) != Some(markdown.id()) {
+        if !MarkdownPreviewView::is_markdown_path(&abs_path, &languages) {
             return None;
         }
         let open_buffer = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
@@ -1496,6 +1489,14 @@ fn open_markdown_link_in_preview(
                 Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
             });
             let preview = MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
+            // With open_preview_on_file_open enabled, previews are the user's
+            // markdown tabs: this link-opened preview is the file's only tab,
+            // so it takes over the editor tab's responsibilities (entry claim,
+            // dirty state). With the setting off, keep the pre-existing
+            // behavior where opening the path still opens a text editor.
+            if MarkdownPreviewSettings::get_global(cx).open_preview_on_file_open {
+                preview.update(cx, |preview, _| preview.replaces_editor = true);
+            }
             let pane = source_view
                 .as_ref()
                 .and_then(|view| view.upgrade())
@@ -2299,7 +2300,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        register_markdown_language(&project, cx);
+        register_markdown_language(
+            &project.read_with(cx, |project, _| project.languages().clone()),
+        );
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace =
@@ -2448,7 +2451,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        register_markdown_language(&project, cx);
+        register_markdown_language(
+            &project.read_with(cx, |project, _| project.languages().clone()),
+        );
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace =
@@ -2678,7 +2683,9 @@ mod tests {
         fs.insert_tree(path!("/project"), json!({ "notes.md": notes }))
             .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        register_markdown_language(&project, cx);
+        register_markdown_language(
+            &project.read_with(cx, |project, _| project.languages().clone()),
+        );
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace =
@@ -3644,7 +3651,7 @@ mod tests {
     #[gpui::test]
     async fn open_preview_on_file_open_opens_preview_instead_of_editor(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        app_state.languages.add(markdown_language());
+        register_markdown_language(&app_state.languages);
         set_open_preview_on_file_open(cx, true);
         app_state
             .fs
@@ -3745,7 +3752,7 @@ mod tests {
     #[gpui::test]
     async fn open_source_action_opens_editor_tab_alongside_preview(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        app_state.languages.add(markdown_language());
+        register_markdown_language(&app_state.languages);
         set_open_preview_on_file_open(cx, true);
         app_state
             .fs
@@ -3832,7 +3839,7 @@ mod tests {
     #[gpui::test]
     async fn alternate_buffer_opener_claims_only_markdown_buffers(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        app_state.languages.add(markdown_language());
+        register_markdown_language(&app_state.languages);
         set_open_preview_on_file_open(cx, true);
         app_state
             .fs
@@ -3967,18 +3974,74 @@ mod tests {
             .unwrap();
     }
 
-    fn markdown_language() -> Arc<language::Language> {
-        Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "Markdown".into(),
-                matcher: Arc::new(language::LanguageMatcher {
-                    path_suffixes: vec!["md".to_string()],
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            None,
-        ))
+    #[gpui::test]
+    async fn link_opened_preview_replaces_editor_when_setting_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_open_preview_on_file_open(cx, true);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({ "notes.md": "# Notes\n" }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        register_markdown_language(
+            &project.read_with(cx, |project, _| project.languages().clone()),
+        );
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_preview_url(
+                "notes.md".into(),
+                None,
+                Some(PathBuf::from(path!("/project"))),
+                None,
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let preview = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<MarkdownPreviewView>(cx)
+                .next()
+                .expect("link should open a preview")
+        });
+
+        // With the setting on, the link-opened preview is the file's tab:
+        // opening the same path must activate it instead of opening an editor
+        // alongside it.
+        let project_path = workspace.read_with(cx, |workspace, cx| {
+            let worktree_id = workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id();
+            project::ProjectPath::from((worktree_id, rel_path("notes.md")))
+        });
+        let item = multi_workspace
+            .update_in(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            item.item_id(),
+            preview.entity_id(),
+            "opening the path should activate the link-opened preview"
+        );
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.active_pane().read(cx).items_len(), 1);
+        });
     }
 
     fn set_open_preview_on_file_open(cx: &mut TestAppContext, enabled: bool) {
@@ -4001,8 +4064,7 @@ mod tests {
         })
     }
 
-    fn register_markdown_language(project: &Entity<Project>, cx: &mut TestAppContext) {
-        let languages = project.read_with(cx, |project, _| project.languages().clone());
+    fn register_markdown_language(languages: &Arc<language::LanguageRegistry>) {
         languages.add(Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Markdown".into(),
