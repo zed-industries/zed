@@ -11193,12 +11193,12 @@ fn ensure_no_open_items_and_panes(workspace: &Entity<Workspace>, cx: &mut Visual
     });
 }
 
-struct TestProjectItemView {
+pub(crate) struct TestProjectItemView {
     focus_handle: FocusHandle,
     path: ProjectPath,
 }
 
-struct TestProjectItem {
+pub(crate) struct TestProjectItem {
     path: ProjectPath,
 }
 

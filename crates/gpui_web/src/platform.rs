@@ -1,5 +1,6 @@
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
+use crate::events::EventListenerHandle;
 use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
@@ -120,6 +121,7 @@ impl Platform for WebPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         let wgpu_context = self.wgpu_context.clone();
+        let browser_window = self.browser_window.clone();
         wasm_bindgen_futures::spawn_local(async move {
             match WgpuContext::new_web().await {
                 Ok(context) => {
@@ -128,8 +130,11 @@ impl Platform for WebPlatform {
                     on_finish_launching();
                 }
                 Err(err) => {
+                    // Without a GPU context nothing can ever render, so
+                    // launching the app would only produce confusing
+                    // downstream errors. Leave a message in the page instead.
                     log::error!("Failed to initialize WebGPU context: {err:#}");
-                    on_finish_launching();
+                    show_webgpu_unavailable_message(&browser_window);
                 }
             }
         });
@@ -381,23 +386,6 @@ impl Platform for WebPlatform {
     }
 }
 
-struct EventListenerHandle {
-    target: web_sys::EventTarget,
-    event_name: &'static str,
-    closure: Closure<dyn FnMut(JsValue)>,
-}
-
-impl Drop for EventListenerHandle {
-    fn drop(&mut self) {
-        self.target
-            .remove_event_listener_with_callback(
-                self.event_name,
-                self.closure.as_ref().unchecked_ref(),
-            )
-            .ok();
-    }
-}
-
 fn cursor_restore_listeners(
     browser_window: &web_sys::Window,
     cursor_visible: Rc<Cell<bool>>,
@@ -408,26 +396,19 @@ fn cursor_restore_listeners(
         return handles;
     };
 
-    let make_restore_handler = |browser_window: web_sys::Window| {
+    let mut add_listener = |target: &web_sys::EventTarget, event_name: &'static str| {
+        let browser_window = browser_window.clone();
         let cursor_visible = cursor_visible.clone();
         let last_cursor_css = last_cursor_css.clone();
-        Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-            if !cursor_visible.replace(true) {
-                set_body_cursor(&browser_window, last_cursor_css.get());
-            }
-        })
-    };
-
-    let mut add_listener = |target: &web_sys::EventTarget, event_name: &'static str| {
-        let closure = make_restore_handler(browser_window.clone());
-        target
-            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
-            .ok();
-        handles.push(EventListenerHandle {
-            target: target.clone(),
+        handles.push(EventListenerHandle::add(
+            target,
             event_name,
-            closure,
-        });
+            move |_event: JsValue| {
+                if !cursor_visible.replace(true) {
+                    set_body_cursor(&browser_window, last_cursor_css.get());
+                }
+            },
+        ));
     };
 
     let document_target: &web_sys::EventTarget = document.as_ref();
@@ -439,6 +420,22 @@ fn cursor_restore_listeners(
     add_listener(document_target, "visibilitychange");
 
     handles
+}
+
+fn show_webgpu_unavailable_message(browser_window: &web_sys::Window) {
+    let Some(document) = browser_window.document() else {
+        return;
+    };
+    let Some(body) = document.body() else {
+        return;
+    };
+    let Ok(message) = document.create_element("p") else {
+        return;
+    };
+    message.set_text_content(Some(
+        "Failed to initialize WebGPU. This application requires a browser with WebGPU support.",
+    ));
+    body.append_child(&message).ok();
 }
 
 fn set_body_cursor(browser_window: &web_sys::Window, css_cursor: &str) {

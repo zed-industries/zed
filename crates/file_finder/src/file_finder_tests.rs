@@ -3347,7 +3347,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
             .expect("unable to create file");
     }
 
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
@@ -3516,7 +3516,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         .remove_file("/src/main.rs".as_ref(), Default::default())
         .await
         .expect("unable to remove file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // main.rs is in not among search results anymore
     picker.update(cx, |finder, _| {
@@ -3531,7 +3531,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         .create_file("/src/util.rs".as_ref(), Default::default())
         .await
         .expect("unable to create file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // util.rs is among search results
     picker.update(cx, |finder, _| {
@@ -3539,6 +3539,51 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "util.rs");
         assert_match_at_position(finder, 2, "rs");
+    });
+}
+
+#[gpui::test]
+async fn test_worktree_entry_updates_are_coalesced(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "lib.rs": "// Lib file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    simulate_input(cx, "rs");
+    let initial_search_count = picker.read_with(cx, |picker, _| picker.delegate.search_count);
+
+    for filename in ["one.rs", "two.rs", "three.rs"] {
+        app_state
+            .fs
+            .create_file(Path::new(&format!("/src/{filename}")), Default::default())
+            .await
+            .expect("unable to create file");
+        cx.executor().advance_clock(FS_WATCH_LATENCY);
+        cx.run_until_parked();
+    }
+
+    cx.executor()
+        .advance_clock(WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
+
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            picker.delegate.search_count,
+            initial_search_count + 1,
+            "bursty worktree entry updates should be coalesced into one search refresh"
+        );
+        assert_eq!(picker.delegate.matches.len(), 5);
     });
 }
 
@@ -3688,7 +3733,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
         })
         .await
         .expect("unable to create workdir");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // main.rs is among search results
     picker.update(cx, |finder, _| {
@@ -3918,10 +3963,14 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
             .create_file(Path::new(&filename), Default::default())
             .await
             .expect("unable to create file");
-        // Wait for each file system event to be fully processed before adding the next
+        // Wait for each file system event to be observed before adding the next.
         cx.executor().advance_clock(FS_WATCH_LATENCY);
         cx.run_until_parked();
     }
+
+    cx.executor()
+        .advance_clock(WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
 
     // file_13.txt is still selected
     picker.update(cx, |finder, _| {
@@ -3966,7 +4015,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
         .remove_file("/src/file_2.txt".as_ref(), Default::default())
         .await
         .expect("unable to remove file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // file_1.txt is now selected
     picker.update(cx, |finder, _| {
@@ -4568,6 +4617,12 @@ pub(crate) fn open_file_picker(
 fn simulate_input(cx: &mut VisualTestContext, input: &str) {
     cx.simulate_input(input);
     cx.executor().advance_clock(SEARCH_DEBOUNCE);
+    cx.run_until_parked();
+}
+
+fn advance_worktree_update_refresh(cx: &mut VisualTestContext) {
+    cx.executor()
+        .advance_clock(FS_WATCH_LATENCY + WORKTREE_UPDATE_REFRESH_DEBOUNCE);
     cx.run_until_parked();
 }
 

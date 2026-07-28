@@ -486,9 +486,20 @@ pub async fn open_paths_with_positions(
         .await?;
 
     if diff_all && !diff_paths.is_empty() {
+        let mut diff_pairs = Vec::with_capacity(diff_paths.len());
+        for diff_pair in diff_paths {
+            let parsed = derive_paths_with_position(app_state.fs.as_ref(), diff_pair).await;
+            let (Some(old_parsed), Some(new_parsed)) = (parsed.first(), parsed.get(1)) else {
+                continue;
+            };
+            diff_pairs.push([
+                old_parsed.path.to_string_lossy().into_owned(),
+                new_parsed.path.to_string_lossy().into_owned(),
+            ]);
+        }
         if let Ok(diff_view) = multi_workspace.update(cx, |multi_workspace, window, cx| {
             multi_workspace.workspace().update(cx, |workspace, cx| {
-                MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
+                MultiDiffView::open(diff_pairs, workspace, window, cx)
             })
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
@@ -499,16 +510,20 @@ pub async fn open_paths_with_positions(
         let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
             multi_workspace.workspace().downgrade()
         })?;
-        let canonicalize = async |raw: &str| {
+        let canonicalize = async |parsed: &PathWithPosition| {
             app_state
                 .fs
-                .canonicalize(Path::new(raw))
+                .canonicalize(&parsed.path)
                 .await
-                .with_context(|| format!("opening --diff path {raw:?}"))
+                .with_context(|| format!("opening --diff path {:?}", parsed.path))
         };
         for diff_pair in diff_paths {
+            let parsed = derive_paths_with_position(app_state.fs.as_ref(), diff_pair).await;
+            let (Some(old_parsed), Some(new_parsed)) = (parsed.first(), parsed.get(1)) else {
+                continue;
+            };
             let (old_path, new_path) =
-                match futures::join!(canonicalize(&diff_pair[0]), canonicalize(&diff_pair[1])) {
+                match futures::join!(canonicalize(old_parsed), canonicalize(new_parsed)) {
                     (Ok(old), Ok(new)) => (old, new),
                     (old, new) => {
                         for result in [old, new] {
@@ -519,8 +534,21 @@ pub async fn open_paths_with_positions(
                         continue;
                     }
                 };
+            let target_position = new_parsed.row.map(|row| {
+                language::Point::new(
+                    row.saturating_sub(1),
+                    new_parsed.column.unwrap_or(0).saturating_sub(1),
+                )
+            });
             if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
-                FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
+                FileDiffView::open(
+                    old_path,
+                    new_path,
+                    target_position,
+                    workspace_weak.clone(),
+                    window,
+                    cx,
+                )
             }) {
                 if let Some(diff_view) = diff_view.await.log_err() {
                     items.push(Some(Ok(Box::new(diff_view))))

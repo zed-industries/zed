@@ -1485,6 +1485,18 @@ impl LocalWorktree {
                             new_repos.next();
                         }
                         Ordering::Equal => {
+                            // A change to a repository's git state is signaled by bumping
+                            // `git_dir_scan_id`, and the diff below detects it via `!=`. If the
+                            // value ever regresses (e.g. a rescan re-inserting the repository
+                            // with a fresh scan id of 0), a bump from the same cycle is wiped
+                            // out and the corresponding git update is silently lost.
+                            debug_assert!(
+                                new_repo.git_dir_scan_id >= old_repo.git_dir_scan_id,
+                                "git_dir_scan_id for repository at {:?} regressed from {} to {}",
+                                new_repo.work_directory_abs_path,
+                                old_repo.git_dir_scan_id,
+                                new_repo.git_dir_scan_id,
+                            );
                             if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
                                 || new_repo.work_directory_abs_path
                                     != old_repo.work_directory_abs_path
@@ -3055,6 +3067,7 @@ impl LocalSnapshot {
         fs: &dyn Fs,
     ) -> IgnoreStack {
         let mut new_ignores = Vec::new();
+        let mut repo_excludes = Vec::new();
         let mut repo_root = None;
         for (index, ancestor) in abs_path.ancestors().enumerate() {
             if index > 0 {
@@ -3063,6 +3076,13 @@ impl LocalSnapshot {
                 } else {
                     new_ignores.push((ancestor, None));
                 }
+            }
+
+            // Collect the `info/exclude` rules of every containing repository, not just
+            // the innermost one: a nested repository's files are still governed by the
+            // exclude rules of the outer repository that contains it.
+            if let Some((repo_exclude, _)) = self.repo_exclude_by_work_dir_abs_path.get(ancestor) {
+                repo_excludes.push(repo_exclude.clone());
             }
 
             if repo_root.is_none() {
@@ -3079,11 +3099,8 @@ impl LocalSnapshot {
             IgnoreStack::none()
         };
 
-        if let Some((repo_exclude, _)) = repo_root
-            .as_ref()
-            .and_then(|abs_path| self.repo_exclude_by_work_dir_abs_path.get(abs_path))
-        {
-            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
+        for repo_exclude in repo_excludes.into_iter().rev() {
+            ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude);
         }
         ignore_stack.repo_root = repo_root;
         let mut ancestor_ignore_stack = ignore_stack.clone();
@@ -3570,11 +3587,28 @@ impl BackgroundScannerState {
 
         let work_directory_id = work_dir_entry.id;
 
+        // A repository can be re-inserted when its `.git` entry is re-discovered, e.g.
+        // during a watcher-forced rescan. Carry the existing `git_dir_scan_id` forward
+        // in that case: the snapshot diff detects git changes by comparing scan ids, so
+        // resetting the id would wipe out a bump made earlier in the same scan cycle,
+        // silently dropping the corresponding git update. Deliberately don't bump the
+        // id here either: re-insertion is snapshot bookkeeping, not evidence that git
+        // state changed. It also happens on non-lossy paths (explicit refreshes,
+        // path-prefix scans) where we know nothing in `.git` changed, and a bump would
+        // trigger a spurious full reload of the repository's git state. Only
+        // `update_git_repositories` claims that git state changed, by stamping the
+        // current scan id.
+        let git_dir_scan_id = self
+            .snapshot
+            .git_repositories
+            .get(&work_directory_id)
+            .map_or(0, |existing_repository| existing_repository.git_dir_scan_id);
+
         let local_repository = LocalRepositoryEntry {
             work_directory_id,
             work_directory,
             work_directory_abs_path: work_directory_abs_path.as_path().into(),
-            git_dir_scan_id: 0,
+            git_dir_scan_id,
             dot_git_abs_path,
             common_dir_abs_path,
             repository_dir_abs_path,
@@ -4739,6 +4773,18 @@ impl BackgroundScanner {
             let snapshot = &self.state.lock().await.snapshot;
 
             let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
+            // On Windows, creating or deleting a file directly inside `.git`
+            // updates the directory's last-write time, so the watcher reports a
+            // bare `.git` Changed event alongside the file's own event. When the
+            // file event is filtered out (e.g. git's transient `index.lock`), the
+            // bare event carries no information either, so acting on it would
+            // turn every ignored lock file into a git rescan. Since a rescan's
+            // own `git diff` can take `index.lock`, that feeds back into an
+            // infinite loop of rescans. So bare `.git` events are deferred here
+            // and only rescanned when nothing in the batch explains them; a
+            // standalone bare event (macOS coalescing) still triggers a rescan.
+            let mut bare_dot_git_abs_paths = Vec::new();
+            let mut dot_git_dirs_with_ignored_events = Vec::new();
 
             for (ix, event) in events.iter().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
@@ -4782,16 +4828,30 @@ impl BackgroundScanner {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );
+                        if !dot_git_dirs_with_ignored_events.contains(&dot_git_abs_path) {
+                            dot_git_dirs_with_ignored_events.push(dot_git_abs_path);
+                        }
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
                     }
+
                     if is_dot_git {
                         log::debug!(
                             "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
                             event.kind
                         );
+                        if !bare_dot_git_abs_paths.contains(&dot_git_abs_path) {
+                            bare_dot_git_abs_paths.push(dot_git_abs_path);
+                        }
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;
+                    }
+
+                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                        log::debug!(
+                            "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
+                        );
+                        dot_git_abs_paths.push(dot_git_abs_path);
                     }
 
                     // New directories can appear under the `refs` tree at any time, e.g. when a
@@ -4811,12 +4871,30 @@ impl BackgroundScanner {
                         )
                         .await;
                     }
+                }
 
-                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
-                        log::debug!(
-                            "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
-                        );
-                        dot_git_abs_paths.push(dot_git_abs_path);
+                // A rescan event means the watcher lost sync and events under the
+                // rescanned path were dropped, possibly including events inside `.git`
+                // directories. Reload the git state of every repository with a git
+                // directory under the rescanned path, since changes there may have
+                // gone unseen.
+                if self.track_git_repositories && matches!(event.kind, Some(PathEventKind::Rescan))
+                {
+                    for repository in snapshot.git_repositories.values() {
+                        let affected_by_rescan = [
+                            &repository.dot_git_abs_path,
+                            &repository.common_dir_abs_path,
+                            &repository.repository_dir_abs_path,
+                        ]
+                        .iter()
+                        .any(|git_dir_abs_path| git_dir_abs_path.starts_with(abs_path.as_path()));
+                        let dot_git_abs_path = repository.dot_git_abs_path.to_path_buf();
+                        if affected_by_rescan && !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                            log::debug!(
+                                "reloading git repo at {dot_git_abs_path:?} due to rescan of {abs_path:?}"
+                            );
+                            dot_git_abs_paths.push(dot_git_abs_path);
+                        }
                     }
                 }
 
@@ -4831,6 +4909,19 @@ impl BackgroundScanner {
                         work_dirs_needing_exclude_update
                             .push(repository.work_directory_abs_path.clone());
                     }
+                }
+            }
+
+            for dot_git_abs_path in bare_dot_git_abs_paths {
+                if dot_git_dirs_with_ignored_events.contains(&dot_git_abs_path) {
+                    log::debug!(
+                        "not reloading git repo at {dot_git_abs_path:?}: the bare .git event is explained by filtered events in the same batch"
+                    );
+                } else if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                    log::debug!(
+                        "detected update within git repo at {dot_git_abs_path:?}: bare .git directory event"
+                    );
+                    dot_git_abs_paths.push(dot_git_abs_path);
                 }
             }
 
@@ -5402,13 +5493,12 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if self.should_scan_directory(&state, entry) {
-                    job_ix += 1;
-                } else {
+                if !self.should_scan_directory(&state, entry) {
                     log::debug!("defer scanning directory {:?}", entry.path);
                     entry.kind = EntryKind::UnloadedDir;
-                    new_jobs.remove(job_ix);
+                    new_jobs[job_ix] = None;
                 }
+                job_ix += 1;
             }
             if entry.is_always_included {
                 state
@@ -6380,10 +6470,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
             };
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !file_exists() {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6400,10 +6496,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
             };
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !file_gone() {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_and_remove_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6468,10 +6570,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6480,10 +6588,16 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
 
             // Use select to avoid blocking indefinitely if events are delayed
+            let mut ticks = 0;
             while !tree.update(cx, |tree, _| scan_id_increased(tree, &mut git_dir_scan_id)) {
                 futures::select_biased! {
                     _ = events.next() => {}
-                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {}
+                    _ = futures::FutureExt::fuse(cx.background_executor.timer(std::time::Duration::from_millis(10))) => {
+                        ticks += 1;
+                        if ticks % SENTINEL_RETRY_TICKS == 0 {
+                            retouch_and_remove_sentinel(fs.as_ref(), &root_path.join(file_name)).await;
+                        }
+                    }
                 }
             }
 
@@ -6492,6 +6606,41 @@ impl WorktreeModelHandle for Entity<Worktree> {
         }
         .boxed_local()
     }
+}
+
+#[cfg(feature = "test-support")]
+const SENTINEL_RETRY_TICKS: usize = 10;
+
+// On macOS an FS event can rarely be dropped while notify's shared FSEventStream
+// is being swapped out by a concurrent watch/unwatch: events already queued for
+// the old stream's callback are discarded when it is stopped. A dropped sentinel
+// event would park the test forever, so touch the sentinel again to emit a fresh
+// event on the current stream.
+#[cfg(feature = "test-support")]
+async fn retouch_sentinel(fs: &dyn Fs, abs_path: &std::path::Path) {
+    fs.create_file(
+        abs_path,
+        fs::CreateOptions {
+            overwrite: true,
+            ignore_if_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[cfg(feature = "test-support")]
+async fn retouch_and_remove_sentinel(fs: &dyn Fs, abs_path: &std::path::Path) {
+    retouch_sentinel(fs, abs_path).await;
+    fs.remove_file(
+        abs_path,
+        RemoveOptions {
+            recursive: false,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .unwrap();
 }
 
 #[derive(Clone, Debug)]
