@@ -2,4 +2,5 @@
 
 (type) @type.jsdoc
 
-(identifier) @variable.jsdoc
+(parameter_name) @variable.jsdoc
+(property_name) @variable.jsdoc
