@@ -898,7 +898,12 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
-    fn open_source(&mut self, _: &OpenSource, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_markdown_file_source(
+        &mut self,
+        _: &OpenSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(editor) = self
             .active_editor
             .as_ref()
@@ -1591,7 +1596,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
             .on_action(cx.listener(MarkdownPreviewView::close_and_return_to_editor))
-            .on_action(cx.listener(MarkdownPreviewView::open_source))
+            .on_action(cx.listener(MarkdownPreviewView::open_markdown_file_source))
             .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
             .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
             .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
@@ -1610,7 +1615,7 @@ impl Render for MarkdownPreviewView {
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_source(&OpenSource, window, cx);
+                            this.open_markdown_file_source(&OpenSource, window, cx);
                         })),
                 ),
             )
