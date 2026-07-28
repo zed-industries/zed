@@ -5954,7 +5954,9 @@ impl ToolCallEventStream {
                 )))
             {
                 log::error!("Failed to send Windows-drive sandbox warning: {error}");
-                return Err(anyhow!("Failed to send Windows-drive sandbox warning: {error}"));
+                return Err(anyhow!(
+                    "Failed to send Windows-drive sandbox warning: {error}"
+                ));
             }
 
             let outcome = response_rx

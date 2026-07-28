@@ -305,8 +305,9 @@ mod imp {
         for path in &check.seed_files {
             let path = Path::new(path);
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create parent of seed file {}", path.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create parent of seed file {}", path.display())
+                })?;
             }
             std::fs::write(path, b"seed\n")
                 .with_context(|| format!("failed to create seed file {}", path.display()))?;

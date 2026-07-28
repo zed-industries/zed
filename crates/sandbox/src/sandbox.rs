@@ -28,16 +28,16 @@ mod windows_wsl;
 
 mod util;
 
+#[cfg(target_os = "macos")]
+use util::canonicalize_allowing_missing_leaf;
+#[cfg(target_os = "linux")]
+use util::{CanonicalPathBuf, linux_fd_identity};
 pub use util::{
     HostFilesystemLocation, HostFilesystemLocationDisplay, normalize_host_filesystem_locations,
     resolve_canonical,
 };
 #[cfg(target_os = "windows")]
 pub use windows_wsl::{ResolvedGrant, resolve_canonical_for_grant};
-#[cfg(target_os = "linux")]
-use util::{CanonicalPathBuf, linux_fd_identity};
-#[cfg(target_os = "macos")]
-use util::canonicalize_allowing_missing_leaf;
 
 #[cfg(target_os = "windows")]
 pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
@@ -947,8 +947,6 @@ pub fn run_sandbox_launcher_if_invoked() {
 // with no writable binds rather than re-deriving paths from the opaque
 // locations.
 
-
-
 #[cfg(not(target_os = "windows"))]
 fn resolve_restricted_network(allowed_domains: &[String]) -> Result<NetSetup, SandboxError> {
     let mut patterns = Vec::with_capacity(allowed_domains.len());
@@ -1130,7 +1128,8 @@ mod tests {
 
         let protected_git = HostFilesystemLocation::capture(&git_dir).expect("capture git dir");
         let writable_git = HostFilesystemLocation::capture(&git_dir).expect("capture git dir");
-        let writable_hooks = HostFilesystemLocation::capture(&hooks_dir).expect("capture hooks dir");
+        let writable_hooks =
+            HostFilesystemLocation::capture(&hooks_dir).expect("capture hooks dir");
 
         for writable_path in [writable_git, writable_hooks] {
             let result = Sandbox::new(SandboxPolicy {

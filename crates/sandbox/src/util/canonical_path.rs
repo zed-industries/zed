@@ -330,7 +330,12 @@ mod windows_tests {
     #[test]
     fn constructors_enforce_windows_grant_shape() {
         // Accepted: Windows drive paths (NTFS) and WSL absolute paths.
-        for ok in [r"C:\Users\me", r"\\?\C:\Users\me", "/home/me/proj", "/mnt/c/Users/me"] {
+        for ok in [
+            r"C:\Users\me",
+            r"\\?\C:\Users\me",
+            "/home/me/proj",
+            "/mnt/c/Users/me",
+        ] {
             assert!(
                 CanonicalPathBuf::from_canonical(PathBuf::from(ok)).is_ok(),
                 "{ok} should be accepted"

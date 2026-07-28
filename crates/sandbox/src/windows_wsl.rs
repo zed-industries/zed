@@ -622,8 +622,6 @@ fn parse_canonical_grant_output(stdout: &str) -> Result<ResolvedGrant> {
     })
 }
 
-
-
 fn split_resolved_paths(
     has_cwd: bool,
     writable_path_count: usize,
@@ -1673,7 +1671,6 @@ mod tests {
         assert!(resolved.on_windows_fs);
     }
 
-
     #[test]
     fn canonical_grant_output_rejects_malformed_protocol() {
         // Missing filesystem-class line.
@@ -1685,7 +1682,9 @@ mod tests {
         // Unknown filesystem class.
         assert!(parse_canonical_grant_output("Ubuntu\n/home/me/project\nmaybe-fs\n").is_err());
         // Trailing junk after the filesystem class.
-        assert!(parse_canonical_grant_output("Ubuntu\n/home/me/project\nnative-fs\nnoise\n").is_err());
+        assert!(
+            parse_canonical_grant_output("Ubuntu\n/home/me/project\nnative-fs\nnoise\n").is_err()
+        );
     }
 
     #[test]

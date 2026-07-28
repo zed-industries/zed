@@ -991,9 +991,9 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal};
     use serde_json::json;
-    use std::path::PathBuf;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
+    use std::path::PathBuf;
 
     #[test]
     fn test_parse_auto_compact_threshold() {

@@ -376,7 +376,8 @@ pub(crate) async fn prepare_sandbox_wrap(
         return Ok((program, args, env, None));
     };
 
-    let mut sandbox = sandbox::Sandbox::new(sandbox_wrap.to_policy()?).map_err(anyhow::Error::new)?;
+    let mut sandbox =
+        sandbox::Sandbox::new(sandbox_wrap.to_policy()?).map_err(anyhow::Error::new)?;
     // Windows/WSL only: tell the sandbox which Linux `zed` to provision inside
     // WSL as its `--wsl-sandbox-helper`. A no-op (and a no-op setter) elsewhere.
     #[cfg(target_os = "windows")]

@@ -4,9 +4,9 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use super::CanonicalPathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use super::lexically_normalized_absolute;
-use super::CanonicalPathBuf;
 
 #[cfg(target_os = "linux")]
 use std::os::fd::{BorrowedFd, OwnedFd};
@@ -359,8 +359,8 @@ mod host_filesystem_location_tests {
 
         let raw = link.join("child");
         let canonical_child = canonical(&raw); // .../real/child
-        let location = HostFilesystemLocation::reopen(&raw, &canonical_child)
-            .expect("reopen resolved child");
+        let location =
+            HostFilesystemLocation::reopen(&raw, &canonical_child).expect("reopen resolved child");
         assert_eq!(location.linux_canonical_path(), canonical_child);
     }
 
@@ -466,7 +466,8 @@ mod host_filesystem_location_tests {
     /// A path of 1..=4 components drawn from a tiny alphabet, so generated sets
     /// contain frequent nesting, siblings, and duplicates.
     fn path_specs() -> impl Strategy<Value = Vec<Vec<String>>> {
-        let component = prop::sample::select(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        let component =
+            prop::sample::select(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         let path = prop::collection::vec(component, 1..=4);
         prop::collection::vec(path, 0..=8)
     }
@@ -489,7 +490,10 @@ mod host_filesystem_location_tests {
 
         // Subset: every kept location came from the input (nothing synthesized).
         for kept in &normalized {
-            assert!(inputs.contains(kept), "kept a location that wasn't an input");
+            assert!(
+                inputs.contains(kept),
+                "kept a location that wasn't an input"
+            );
         }
 
         // Antichain: no kept canonical is nested under (or equal to) another

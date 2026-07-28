@@ -9112,11 +9112,9 @@ impl ThreadView {
                             .flex_1()
                             .gap_0p5()
                             .child(
-                                Label::new(
-                                    "This command can write to a file on a Windows drive",
-                                )
-                                .size(LabelSize::Small)
-                                .color(Color::Warning),
+                                Label::new("This command can write to a file on a Windows drive")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Warning),
                             )
                             .child(
                                 Label::new(
@@ -9126,13 +9124,11 @@ impl ThreadView {
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted),
                             )
-                            .child(
-                                h_flex().child(self.render_sandbox_docs_link(
-                                    "sandbox-windows-fs-docs-link",
-                                    Some("windows"),
-                                    cx,
-                                )),
-                            ),
+                            .child(h_flex().child(self.render_sandbox_docs_link(
+                                "sandbox-windows-fs-docs-link",
+                                Some("windows"),
+                                cx,
+                            ))),
                     )
                     .child(
                         IconButton::new("configure-ntfs-warning", IconName::Settings)
