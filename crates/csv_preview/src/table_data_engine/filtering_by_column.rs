@@ -12,8 +12,17 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FilterEntryState {
-    Available { is_applied: bool },
-    Unavailable { blocked_by: AnyColumn },
+    Available {
+        is_applied: bool,
+    },
+    /// Selecting this value would leave zero rows given every other active column's
+    /// filter. Still carries `is_applied`: a value can be both currently checked
+    /// *and* blocked (another column's filter was applied afterward), and the UI
+    /// needs to keep showing it checked so the user can uncheck it.
+    Unavailable {
+        blocked_by: AnyColumn,
+        is_applied: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +97,7 @@ impl TableDataEngine {
                     .copied()
                     .collect();
 
+                let is_applied = active_column_filters.contains(&entry.content);
                 let state = if adjusted_rows.is_empty() {
                     let blocked_by = blocking_column.ok_or_else(|| {
                         anyhow::anyhow!(
@@ -96,11 +106,12 @@ impl TableDataEngine {
                             entry.content
                         )
                     })?;
-                    FilterEntryState::Unavailable { blocked_by }
-                } else {
-                    FilterEntryState::Available {
-                        is_applied: active_column_filters.contains(&entry.content),
+                    FilterEntryState::Unavailable {
+                        blocked_by,
+                        is_applied,
                     }
+                } else {
+                    FilterEntryState::Available { is_applied }
                 };
 
                 Ok((
