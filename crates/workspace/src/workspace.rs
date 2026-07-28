@@ -8,6 +8,7 @@ mod multi_workspace;
 #[cfg(test)]
 mod multi_workspace_tests;
 pub mod notifications;
+pub mod open_project_prompt;
 pub mod pane;
 pub mod pane_group;
 pub mod path_list {
@@ -34,8 +35,8 @@ pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
     MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject,
     PreviousThread, ProjectGroup, ProjectGroupKey, SerializedProjectGroupState, Sidebar,
-    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
-    sidebar_side_context_menu,
+    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, SwitchProject,
+    ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use remote::{
@@ -267,6 +268,9 @@ actions!(
         ActivatePreviousWindow,
         /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Opens a folder as an additional project in this window, alongside the
+        /// projects already open, regardless of `default_open_behavior`.
+        AttachProject,
         /// Clears all bookmarks in the project.
         ClearBookmarks,
         /// Clears all notifications.
@@ -679,10 +683,39 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
+/// Where a path picked from the open dialog should end up, once an action's explicit
+/// override has been resolved against the `default_open_behavior` setting.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OpenPathTarget {
+    /// Open in a new window.
+    NewWindow,
+    /// Open in the window that prompted.
+    ExistingWindow,
+    /// Let the user pick per-folder, via [`OpenProjectPrompt`].
+    Ask,
+}
+
+impl OpenPathTarget {
+    /// Resolves an action's optional `create_new_window` override against the
+    /// `default_open_behavior` setting. An explicit override always wins, so
+    /// callers that already know where the path should go never prompt.
+    pub fn resolve(create_new_window: Option<bool>, cx: &App) -> Self {
+        match create_new_window {
+            Some(true) => Self::NewWindow,
+            Some(false) => Self::ExistingWindow,
+            None => match WorkspaceSettings::get_global(cx).default_open_behavior {
+                DefaultOpenBehavior::NewWindow => Self::NewWindow,
+                DefaultOpenBehavior::ExistingWindow => Self::ExistingWindow,
+                DefaultOpenBehavior::Ask => Self::Ask,
+            },
+        }
+    }
+}
+
 fn prompt_and_open_paths(
     app_state: Arc<AppState>,
     options: PathPromptOptions,
-    create_new_window: bool,
+    target: OpenPathTarget,
     cx: &mut App,
 ) {
     if let Some(workspace_window) =
@@ -695,12 +728,7 @@ fn prompt_and_open_paths(
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     prompt_for_open_path_and_open(
-                        workspace,
-                        app_state,
-                        options,
-                        create_new_window,
-                        window,
-                        cx,
+                        workspace, app_state, options, target, window, cx,
                     );
                 });
             })
@@ -722,12 +750,7 @@ fn prompt_and_open_paths(
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     prompt_for_open_path_and_open(
-                        workspace,
-                        app_state,
-                        options,
-                        create_new_window,
-                        window,
-                        cx,
+                        workspace, app_state, options, target, window, cx,
                     );
                 });
             })?;
@@ -741,7 +764,7 @@ pub fn prompt_for_open_path_and_open(
     workspace: &mut Workspace,
     app_state: Arc<AppState>,
     options: PathPromptOptions,
-    create_new_window: bool,
+    target: OpenPathTarget,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -756,7 +779,18 @@ pub fn prompt_for_open_path_and_open(
         let Some(paths) = paths.await.log_err().flatten() else {
             return;
         };
-        if !create_new_window {
+
+        if target == OpenPathTarget::Ask
+            && this
+                .update_in(cx, |workspace, window, cx| {
+                    open_project_prompt::prompt_if_asking(workspace, paths.clone(), window, cx)
+                })
+                .unwrap_or(false)
+        {
+            return;
+        }
+
+        if target != OpenPathTarget::NewWindow {
             if let Some(handle) = multi_workspace_handle {
                 if let Some(task) = handle
                     .update(cx, |multi_workspace, window, cx| {
@@ -799,12 +833,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window.unwrap_or_else(|| {
-                    matches!(
-                        WorkspaceSettings::get_global(cx).default_open_behavior,
-                        DefaultOpenBehavior::NewWindow
-                    )
-                }),
+                OpenPathTarget::resolve(action.create_new_window, cx),
                 cx,
             );
         })
@@ -819,7 +848,21 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                true,
+                OpenPathTarget::NewWindow,
+                cx,
+            );
+        })
+        .on_action(|_: &AttachProject, cx: &mut App| {
+            let app_state = AppState::global(cx);
+            prompt_and_open_paths(
+                app_state,
+                PathPromptOptions {
+                    files: false,
+                    directories: true,
+                    multiple: true,
+                    prompt: Some("Attach".into()),
+                },
+                OpenPathTarget::ExistingWindow,
                 cx,
             );
         });

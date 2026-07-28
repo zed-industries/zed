@@ -46,6 +46,8 @@ actions!(
         NextProject,
         /// Activates the previous project in the sidebar.
         PreviousProject,
+        /// Searches the projects open in this window together with recent projects.
+        SwitchProject,
         /// Activates the next thread in sidebar order.
         NextThread,
         /// Activates the previous thread in sidebar order.
@@ -138,6 +140,10 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     /// Activates the next or previous project.
     fn cycle_project(&mut self, _forward: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
+    /// Opens the project search popup, which covers both the projects open in this
+    /// window and recent ones.
+    fn switch_project(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
     /// Activates the next or previous thread in sidebar order.
     fn cycle_thread(&mut self, _forward: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
@@ -168,6 +174,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App);
     fn cycle_project(&self, forward: bool, window: &mut Window, cx: &mut App);
     fn cycle_thread(&self, forward: bool, window: &mut Window, cx: &mut App);
+    fn switch_project(&self, window: &mut Window, cx: &mut App);
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 
@@ -233,6 +240,15 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         window.defer(cx, move |window, cx| {
             entity.update(cx, |this, cx| {
                 this.cycle_project(forward, window, cx);
+            });
+        });
+    }
+
+    fn switch_project(&self, window: &mut Window, cx: &mut App) {
+        let entity = self.clone();
+        window.defer(cx, move |window, cx| {
+            entity.update(cx, |this, cx| {
+                this.switch_project(window, cx);
             });
         });
     }
@@ -2211,6 +2227,11 @@ impl Render for MultiWorkspace {
                             }
                         },
                     ))
+                    .on_action(cx.listener(|this: &mut Self, _: &SwitchProject, window, cx| {
+                        if let Some(sidebar) = &this.sidebar {
+                            sidebar.switch_project(window, cx);
+                        }
+                    }))
                     .on_action(cx.listener(|this: &mut Self, _: &NextProject, window, cx| {
                         if let Some(sidebar) = &this.sidebar {
                             sidebar.cycle_project(true, window, cx);

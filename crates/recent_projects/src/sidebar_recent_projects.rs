@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, TaskExt, WeakEntity, Window,
+    Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
 };
 use picker::{
     Picker, PickerDelegate,
@@ -11,7 +11,9 @@ use picker::{
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*,
+};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     MultiWorkspace, OpenMode, OpenOptions, ProjectGroupKey, RecentWorkspace,
@@ -31,6 +33,7 @@ impl SidebarRecentProjects {
     pub fn popover(
         workspace: WeakEntity<Workspace>,
         window_project_groups: Vec<ProjectGroupKey>,
+        active_project_group: Option<ProjectGroupKey>,
         _focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
@@ -38,15 +41,33 @@ impl SidebarRecentProjects {
         let fs = workspace
             .upgrade()
             .map(|ws| ws.read(cx).app_state().fs.clone());
+        let multi_workspace = window.window_handle().downcast::<MultiWorkspace>();
+
+        let open_projects: Vec<OpenProject> = window_project_groups
+            .into_iter()
+            .map(|key| OpenProject {
+                label: key
+                    .path_list()
+                    .ordered_paths()
+                    .map(|path| path.compact().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .into(),
+                is_active: active_project_group
+                    .as_ref()
+                    .is_some_and(|active| active.matches(&key)),
+                key,
+            })
+            .collect();
 
         cx.new(|cx| {
             let delegate = SidebarRecentProjectsDelegate {
                 workspace,
-                window_project_groups,
+                multi_workspace,
+                open_projects,
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
-                has_any_non_local_projects: false,
                 focus_handle: cx.focus_handle(),
             };
 
@@ -111,22 +132,74 @@ impl Render for SidebarRecentProjects {
     }
 }
 
+/// A project group already open in this window, which is switched to in place
+/// rather than opened again.
+struct OpenProject {
+    key: ProjectGroupKey,
+    label: SharedString,
+    is_active: bool,
+}
+
 pub struct SidebarRecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
-    window_project_groups: Vec<ProjectGroupKey>,
+    multi_workspace: Option<WindowHandle<MultiWorkspace>>,
+    open_projects: Vec<OpenProject>,
     workspaces: Vec<RecentWorkspace>,
     filtered_workspaces: Vec<StringMatch>,
     selected_index: usize,
-    has_any_non_local_projects: bool,
     focus_handle: FocusHandle,
 }
 
 impl SidebarRecentProjectsDelegate {
     pub fn set_workspaces(&mut self, workspaces: Vec<RecentWorkspace>) {
-        self.has_any_non_local_projects = workspaces
-            .iter()
-            .any(|workspace| !matches!(workspace.location, SerializedWorkspaceLocation::Local));
         self.workspaces = workspaces;
+    }
+
+    /// Candidate ids run over the open projects first and the recents after, so
+    /// that one fuzzy match set can cover both sections.
+    fn recent_at(&self, candidate_id: usize) -> Option<&RecentWorkspace> {
+        self.workspaces
+            .get(candidate_id.checked_sub(self.open_projects.len())?)
+    }
+
+    /// Mirrors what clicking a sidebar project header does: prefer the workspace the
+    /// group was last active in, fall back to any workspace on those paths, and only
+    /// reopen the paths when the group has no live workspace left.
+    fn activate_open_project(&self, key: ProjectGroupKey, cx: &mut Context<Picker<Self>>) {
+        let Some(handle) = self.multi_workspace else {
+            return;
+        };
+        cx.defer(move |cx| {
+            let task = handle
+                .update(cx, |multi_workspace, window, cx| {
+                    let workspace = multi_workspace
+                        .last_active_workspace_for_group(&key, cx)
+                        .or_else(|| {
+                            multi_workspace.workspace_for_paths(
+                                key.path_list(),
+                                key.host().as_ref(),
+                                cx,
+                            )
+                        });
+                    match workspace {
+                        Some(workspace) => {
+                            multi_workspace.activate(workspace, None, window, cx);
+                            None
+                        }
+                        None => Some(multi_workspace.open_project(
+                            key.path_list().paths().to_vec(),
+                            OpenMode::Activate,
+                            window,
+                            cx,
+                        )),
+                    }
+                })
+                .log_err()
+                .flatten();
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            }
+        });
     }
 }
 
@@ -140,7 +213,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search projects…".into()
+        "Switch or open a project…".into()
     }
 
     fn match_count(&self) -> usize {
@@ -149,6 +222,19 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
 
     fn selected_index(&self) -> usize {
         self.selected_index
+    }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        let open_count = self
+            .filtered_workspaces
+            .iter()
+            .filter(|hit| hit.candidate_id < self.open_projects.len())
+            .count();
+        if open_count > 0 && open_count < self.filtered_workspaces.len() {
+            vec![open_count - 1]
+        } else {
+            Vec::new()
+        }
     }
 
     fn set_selected_index(
@@ -175,27 +261,35 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .upgrade()
             .and_then(|ws| ws.read(cx).database_id());
 
-        let candidates: Vec<_> = self
-            .workspaces
+        let open_count = self.open_projects.len();
+        let mut candidates: Vec<_> = self
+            .open_projects
             .iter()
             .enumerate()
-            .filter(|(_, workspace)| {
-                Some(workspace.workspace_id) != current_workspace_id
-                    && !self
-                        .window_project_groups
-                        .iter()
-                        .any(|key| key.matches(&workspace.project_group_key()))
-            })
-            .map(|(id, workspace)| {
-                let combined_string = workspace
-                    .identity_paths
-                    .ordered_paths()
-                    .map(|path| path.compact().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .concat();
-                StringMatchCandidate::new(id, &combined_string)
-            })
+            .map(|(id, open)| StringMatchCandidate::new(id, &open.label))
             .collect();
+
+        candidates.extend(
+            self.workspaces
+                .iter()
+                .enumerate()
+                .filter(|(_, workspace)| {
+                    Some(workspace.workspace_id) != current_workspace_id
+                        && !self
+                            .open_projects
+                            .iter()
+                            .any(|open| open.key.matches(&workspace.project_group_key()))
+                })
+                .map(|(id, workspace)| {
+                    let combined_string = workspace
+                        .identity_paths
+                        .ordered_paths()
+                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .concat();
+                    StringMatchCandidate::new(open_count + id, &combined_string)
+                }),
+        );
 
         if is_empty_query {
             self.filtered_workspaces = candidates
@@ -217,6 +311,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             );
         }
 
+        // Fuzzy scores would otherwise interleave the two sections and the separator
+        // between them would stop meaning anything.
+        self.filtered_workspaces
+            .sort_by_key(|hit| hit.candidate_id >= open_count);
+
         self.selected_index = 0;
         Task::ready(())
     }
@@ -225,7 +324,16 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         let Some(hit) = self.filtered_workspaces.get(self.selected_index) else {
             return;
         };
-        let Some(recent_workspace) = self.workspaces.get(hit.candidate_id) else {
+
+        if let Some(open) = self.open_projects.get(hit.candidate_id) {
+            if !open.is_active {
+                self.activate_open_project(open.key.clone(), cx);
+            }
+            cx.emit(DismissEvent);
+            return;
+        }
+
+        let Some(recent_workspace) = self.recent_at(hit.candidate_id) else {
             return;
         };
 
@@ -298,7 +406,60 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = self.filtered_workspaces.get(ix)?;
-        let workspace = self.workspaces.get(hit.candidate_id)?;
+
+        if let Some(open) = self.open_projects.get(hit.candidate_id) {
+            let hint = if open.is_active {
+                Some("Active")
+            } else if selected {
+                Some("Switch")
+            } else {
+                None
+            };
+            return Some(
+                ListItem::new(ix)
+                    .toggle_state(selected)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_3()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_3()
+                                    .child(Icon::new(IconName::FileTree).color(
+                                        if open.is_active {
+                                            Color::Accent
+                                        } else {
+                                            Color::Muted
+                                        },
+                                    ))
+                                    .child(
+                                        HighlightedLabel::new(
+                                            open.label.clone(),
+                                            hit.positions.clone(),
+                                        )
+                                        .truncate(),
+                                    ),
+                            )
+                            .children(hint.map(|hint| {
+                                Label::new(hint).size(LabelSize::XSmall).color(Color::Muted)
+                            })),
+                    )
+                    .tooltip({
+                        let path = open.label.clone();
+                        move |_, cx| {
+                            Tooltip::with_meta("Switch to Project", None, path.clone(), cx)
+                        }
+                    })
+                    .into_any_element(),
+            );
+        }
+
+        let workspace = self.recent_at(hit.candidate_id)?;
 
         let ordered_paths: Vec<_> = workspace
             .identity_paths
@@ -345,10 +506,14 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             active: false,
         };
 
-        let icon = icon_for_remote_connection(match &workspace.location {
-            SerializedWorkspaceLocation::Local => None,
-            SerializedWorkspaceLocation::Remote(options) => Some(options),
-        });
+        // The icon is what separates a recent from an open project at a glance, so it
+        // is always shown here even for purely local lists.
+        let icon = match &workspace.location {
+            SerializedWorkspaceLocation::Local => IconName::HistoryRerun,
+            SerializedWorkspaceLocation::Remote(options) => {
+                icon_for_remote_connection(Some(options))
+            }
+        };
 
         Some(
             ListItem::new(ix)
@@ -360,11 +525,22 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         .w_full()
                         .min_w_0()
                         .gap_3()
-                        .flex_grow_1()
-                        .when(self.has_any_non_local_projects, |this| {
-                            this.child(Icon::new(icon).color(Color::Muted))
-                        })
-                        .child(highlighted_match.render(window, cx)),
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .min_w_0()
+                                .gap_3()
+                                .flex_grow_1()
+                                .child(Icon::new(icon).color(Color::Muted))
+                                .child(highlighted_match.render(window, cx)),
+                        )
+                        .when(selected, |this| {
+                            this.child(
+                                Label::new("Open")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        }),
                 )
                 .tooltip(move |_, cx| {
                     Tooltip::with_meta(

@@ -65,8 +65,8 @@ use util::path_list::PathList;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
     NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
-    Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
-    notifications::NotificationId, sidebar_side_context_menu,
+    Sidebar as WorkspaceSidebar, SidebarSide, SwitchProject, Toast, ToggleWorkspaceSidebar,
+    Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use git_ui::worktree_service::{RemoteBranchName, worktree_create_targets};
@@ -6758,6 +6758,8 @@ impl Sidebar {
             .map(|mw| mw.read(cx).project_group_keys())
             .unwrap_or_default();
 
+        let active_project_group = self.active_project_group_key(cx);
+
         let popover_handle = self.recent_projects_popover_handle.clone();
 
         PopoverMenu::new("sidebar-recent-projects-menu")
@@ -6767,6 +6769,7 @@ impl Sidebar {
                     SidebarRecentProjects::popover(
                         ws.clone(),
                         window_project_groups.clone(),
+                        active_project_group.clone(),
                         focus_handle.clone(),
                         window,
                         cx,
@@ -6777,7 +6780,7 @@ impl Sidebar {
                 IconButton::new("open-project", IconName::FolderAdd)
                     .icon_size(IconSize::Small)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
-                |_window, cx| Tooltip::for_action("Add Project", &OpenRecent::default(), cx),
+                |_window, cx| Tooltip::for_action("Switch Project", &SwitchProject, cx),
             )
             .offset(gpui::Point {
                 x: px(-2.0),
@@ -7995,6 +7998,22 @@ impl WorkspaceSidebar for Sidebar {
 
     fn cycle_project(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.cycle_project_impl(forward, window, cx);
+    }
+
+    fn switch_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        if multi_workspace.read(cx).sidebar_open() {
+            self.recent_projects_popover_handle.toggle(window, cx);
+            return;
+        }
+
+        multi_workspace.update(cx, |multi_workspace, cx| multi_workspace.open_sidebar(cx));
+        // The popover anchors to a button that only exists once the sidebar has been
+        // laid out, so its handle is not wired up until the next frame.
+        let popover_handle = self.recent_projects_popover_handle.clone();
+        window.on_next_frame(move |window, cx| popover_handle.show(window, cx));
     }
 
     fn cycle_thread(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {

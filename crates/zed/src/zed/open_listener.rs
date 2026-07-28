@@ -782,6 +782,9 @@ pub(crate) fn open_options_for_request(
         match workspace::WorkspaceSettings::get_global(cx).default_open_behavior {
             settings::DefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
             settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::PreferNewWindow,
+            // Requests arriving from the CLI resolve to open options synchronously and
+            // have their own `cli_default_open_behavior`, so there is nowhere to prompt.
+            settings::DefaultOpenBehavior::Ask => cli::OpenBehavior::ExistingWindow,
         }
     });
     open_options_for_behavior(open_behavior, location, cx)

@@ -4093,6 +4093,24 @@ impl Pane {
                         split_direction = None;
                     }
 
+                    // Dropping only folders is a project-level action, so offer the same
+                    // choice the open dialog does before falling back to today's behavior
+                    // of adding them as worktrees of the current project.
+                    if !has_files_to_open
+                        && workspace
+                            .update_in(cx, |workspace, window, cx| {
+                                crate::open_project_prompt::prompt_if_asking(
+                                    workspace,
+                                    paths.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .unwrap_or(false)
+                    {
+                        return;
+                    }
+
                     if let Ok((open_task, to_pane)) =
                         workspace.update_in(cx, |workspace, window, cx| {
                             if let Some(split_direction) = split_direction {

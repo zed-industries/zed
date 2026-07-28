@@ -124,6 +124,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Open Recent…", zed_actions::OpenRecent::default()),
                 MenuItem::action("Open Remote…", zed_actions::OpenRemote::default()),
                 MenuItem::separator(),
+                MenuItem::action("Attach Project…", workspace::AttachProject),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::separator(),
                 MenuItem::action("Save", workspace::Save { save_intent: None }),

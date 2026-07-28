@@ -55,6 +55,7 @@ pub struct WorkspaceSettingsContent {
     /// Default: existing_window
     pub cli_default_open_behavior: Option<CliDefaultOpenBehavior>,
     /// The default behavior when opening projects from the UI.
+    /// Set to `ask` to be prompted each time.
     ///
     /// Default: existing_window
     pub default_open_behavior: Option<DefaultOpenBehavior>,
@@ -441,6 +442,9 @@ pub enum DefaultOpenBehavior {
     /// Open projects in a new window.
     #[strum(serialize = "Open a New Window")]
     NewWindow,
+    /// Ask every time how the project should be opened.
+    #[strum(serialize = "Ask Every Time")]
+    Ask,
 }
 
 #[derive(

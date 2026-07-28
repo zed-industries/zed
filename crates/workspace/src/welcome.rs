@@ -310,6 +310,10 @@ impl WelcomePage {
                     let open_mode = match WorkspaceSettings::get_global(cx).default_open_behavior {
                         DefaultOpenBehavior::ExistingWindow => OpenMode::Activate,
                         DefaultOpenBehavior::NewWindow => OpenMode::NewWindow,
+                        // The welcome screen only exists in an empty workspace, which
+                        // `open_workspace_for_paths` always opens in place regardless of
+                        // the requested mode, so there is nothing to ask about here.
+                        DefaultOpenBehavior::Ask => OpenMode::Activate,
                     };
                     self.workspace
                         .update(cx, |workspace, cx| {
