@@ -8290,7 +8290,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    pub fn signoff_enabled(&self) -> bool {
+    pub fn signoff_should_be_enabled(&self) -> bool {
         self.signoff_by_default
     }
 
