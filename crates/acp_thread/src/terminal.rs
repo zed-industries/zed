@@ -666,8 +666,8 @@ pub async fn create_terminal_entity(
         .await
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
     use super::*;
 
     /// Regression test for the bug where enforcement-policy construction
@@ -676,7 +676,6 @@ mod tests {
     /// target no longer exists must fail policy construction with an error
     /// naming it, and nothing may be created — a required safety grant that
     /// can't be honored must stop the command, not silently shrink its access.
-    #[cfg(target_os = "linux")]
     #[test]
     fn to_policy_fails_on_missing_grant_and_never_creates_it() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
@@ -706,7 +705,6 @@ mod tests {
     /// A baseline writable path (worktree root / scratch dir) that doesn't
     /// exist must also fail: silently narrowing the sandbox would hand the
     /// command less access than the model was told it has.
-    #[cfg(target_os = "linux")]
     #[test]
     fn to_policy_fails_on_missing_writable_path() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
@@ -733,7 +731,6 @@ mod tests {
     /// inherent accepted loophole (`git init`), so failing here would only break
     /// legitimate cases. Unit-level companion to the `settings.json/.git` NixOS
     /// check.
-    #[cfg(target_os = "linux")]
     #[test]
     fn to_policy_skips_uncapturable_protected_paths() {
         let temp_dir = tempfile::tempdir().expect("create temp dir");
