@@ -7,7 +7,7 @@ use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{
     ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
 };
-use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
+use crate::{Agent, ArchiveSelectedThread, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
@@ -28,7 +28,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::{AgentId, AgentServerStore};
+use project::{AgentId, AgentServerStore, WorktreePaths};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
@@ -125,6 +125,41 @@ pub fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>>
     }
 
     None
+}
+
+/// Returns the highlight positions to render for `session` against `query`,
+/// or `None` if the session should be excluded from the filtered list.
+///
+/// Matches against `display_title()` (what the user actually sees), not the
+/// raw agent-generated `title`: once a thread is renamed, `title` keeps
+/// accumulating stale, unrelated agent-generated summaries that the user
+/// never sees, so matching against it surfaces threads that don't actually
+/// contain the query anywhere visible while burying ones that do.
+fn thread_highlight_positions(session: &ThreadMetadata, query: &str) -> Option<Vec<usize>> {
+    if query.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let title = session.display_title();
+    if let Some(positions) = fuzzy_match_positions(query, title.as_ref()) {
+        return Some(positions);
+    }
+
+    // If the title didn't match, also try matching the project name (the
+    // basename of any of the thread's worktree paths), so typing a project
+    // name surfaces its threads here too.
+    let worktree_matched = session.folder_paths().paths().iter().any(|p| {
+        p.as_path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| fuzzy_match_positions(query, name).is_some())
+    });
+
+    if worktree_matched {
+        Some(Vec::new())
+    } else {
+        None
+    }
 }
 
 pub enum ThreadsArchiveViewEvent {
@@ -298,31 +333,9 @@ impl ThreadsArchiveView {
         let mut current_bucket: Option<TimeBucket> = None;
 
         for session in sessions {
-            let highlight_positions = if !query.is_empty() {
-                let title = session
-                    .title
-                    .as_ref()
-                    .map(|t| t.as_ref())
-                    .unwrap_or(DEFAULT_THREAD_TITLE);
-                if let Some(positions) = fuzzy_match_positions(&query, title) {
-                    positions
-                } else {
-                    // If title didn't match, also try matching the project name
-                    // (the basename of any of the thread's worktree paths), so
-                    // typing a project name surfaces its threads here too.
-                    let worktree_matched = session.folder_paths().paths().iter().any(|p| {
-                        p.as_path()
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .is_some_and(|name| fuzzy_match_positions(&query, name).is_some())
-                    });
-                    if !worktree_matched {
-                        continue;
-                    }
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
+            let highlight_positions = match thread_highlight_positions(&session, &query) {
+                Some(positions) => positions,
+                None => continue,
             };
 
             let entry_bucket = {
@@ -1292,11 +1305,7 @@ impl PickerDelegate for ProjectPickerDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         format!(
             "Associate the \"{}\" thread with...",
-            self.thread
-                .title
-                .as_ref()
-                .map(|t| t.as_ref())
-                .unwrap_or(DEFAULT_THREAD_TITLE)
+            self.thread.display_title()
         )
         .into()
     }
@@ -1635,6 +1644,43 @@ impl PickerDelegate for ProjectPickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn thread_metadata_with_titles(title: &str, title_override: &str) -> ThreadMetadata {
+        ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: None,
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some(title.to_string().into()),
+            title_override: Some(title_override.to_string().into()),
+            updated_at: Utc::now(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::default(),
+            remote_connection: None,
+            archived: false,
+        }
+    }
+
+    #[test]
+    fn test_thread_highlight_positions_matches_display_title_not_raw_title() {
+        // The stale, agent-generated `title` is a paraphrase of the original
+        // request and happens to contain "widget", but the thread was since
+        // renamed and the user-visible `title_override` doesn't contain it
+        // at all.
+        let renamed = thread_metadata_with_titles(
+            "can you help me look into the widget backlog",
+            "Prepare quarterly planning doc",
+        );
+        assert_eq!(thread_highlight_positions(&renamed, "widget"), None);
+        assert!(thread_highlight_positions(&renamed, "quarterly").is_some());
+
+        // A thread whose displayed title does contain the query still matches.
+        let matching = thread_metadata_with_titles(
+            "summarize the notes from yesterday",
+            "Fix widget rendering bug",
+        );
+        assert!(thread_highlight_positions(&matching, "widget").is_some());
+    }
 
     #[test]
     fn test_fuzzy_match_positions_returns_byte_indices() {
