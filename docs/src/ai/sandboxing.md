@@ -363,7 +363,7 @@ could potentially allow writes outside the confines of the sandbox.
 sandbox.**
 
 In practice, the mapping tends to be quite stable. This is because the inode
-that gets generated in the Linux filesytem is derived from the _file reference_
+that gets generated in the Linux filesystem is derived from the _file reference_
 (very loosely, a "Windows inode"), which has similar stability to a Linux inode.
 The standard "rename a subcomponent" attack seems to produce a different inode
 number, and so the in-sandbox check would fail-closed.
