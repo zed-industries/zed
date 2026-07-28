@@ -6769,12 +6769,12 @@ fn breadcrumb_path_components(
         });
     }
 
-    let mut current_path = RelPath::empty_arc();
-    for component in project_path.path.components() {
-        let component_path = RelPath::unix(component).ok()?;
-        current_path = current_path.join(component_path);
+    let mut current_paths = project_path.path.ancestors().collect::<Vec<_>>();
+    current_paths.reverse();
+    for current_path in current_paths.into_iter().skip(1) {
+        let component = current_path.file_name()?;
         let is_file = worktree
-            .entry_for_path(&current_path)
+            .entry_for_path(current_path)
             .is_some_and(|entry| entry.is_file());
         let menu_root = if is_file {
             match current_path.parent() {
@@ -6782,7 +6782,7 @@ fn breadcrumb_path_components(
                 None => RelPath::empty_arc(),
             }
         } else {
-            current_path.clone()
+            current_path.into_arc()
         };
 
         components.push(BreadcrumbPathComponent {
