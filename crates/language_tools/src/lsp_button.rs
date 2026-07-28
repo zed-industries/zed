@@ -22,7 +22,8 @@ use project::{
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
-    ContextMenu, ContextMenuEntry, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    ContextMenu, ContextMenuEntry, CopyButton, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
 };
 
 use util::{ResultExt, paths::PathExt, rel_path::RelPath};
@@ -375,6 +376,7 @@ impl LanguageServerState {
             let server_message = message.clone();
 
             let submenu_server_name = server_info.name.clone();
+            let submenu_server_id = server_info.id.0;
             let submenu_server_info = server_info.clone();
 
             menu = menu.submenu_with_colored_icon(
@@ -584,6 +586,8 @@ impl LanguageServerState {
                             let binary_path = binary_path.clone();
                             let server_version = server_version.clone();
                             let server_message = server_message.clone();
+                            let server_name = submenu_server_name.clone();
+                            let server_id = submenu_server_id;
                             let process_memory_cache = process_memory_cache.clone();
                             move |_, cx| {
                                 let memory_usage = process_id.map(|pid| {
@@ -607,6 +611,44 @@ impl LanguageServerState {
                                 let separator_color =
                                     cx.theme().colors().icon_disabled.opacity(0.8);
 
+                                let status_details = h_flex()
+                                    .ml_neg_1()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::Circle)
+                                            .color(status_color)
+                                            .size(IconSize::Small),
+                                    )
+                                    .child(
+                                        Label::new(status_label)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .when_some(version_label.as_ref(), |row, version| {
+                                        row.child(
+                                            Icon::new(IconName::Dash)
+                                                .color(Color::Custom(separator_color))
+                                                .size(IconSize::XSmall),
+                                        )
+                                        .child(
+                                            Label::new(version)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .when_some(memory_label.as_ref(), |row, memory| {
+                                        row.child(
+                                            Icon::new(IconName::Dash)
+                                                .color(Color::Custom(separator_color))
+                                                .size(IconSize::XSmall),
+                                        )
+                                        .child(
+                                            Label::new(memory)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    });
+
                                 v_flex()
                                     .id("metadata-container")
                                     .gap_1()
@@ -615,40 +657,19 @@ impl LanguageServerState {
                                     })
                                     .child(
                                         h_flex()
-                                            .ml_neg_1()
-                                            .gap_1()
-                                            .child(
-                                                Icon::new(IconName::Circle)
-                                                    .color(status_color)
-                                                    .size(IconSize::Small),
-                                            )
-                                            .child(
-                                                Label::new(status_label)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .when_some(version_label.as_ref(), |row, version| {
-                                                row.child(
-                                                    Icon::new(IconName::Dash)
-                                                        .color(Color::Custom(separator_color))
-                                                        .size(IconSize::XSmall),
-                                                )
-                                                .child(
-                                                    Label::new(version)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
+                                            .when_some(server_message.as_ref(), |row, _| {
+                                                row.w_full().justify_between()
                                             })
-                                            .when_some(memory_label.as_ref(), |row, memory| {
+                                            .child(status_details)
+                                            .when_some(server_message.clone(), |row, message| {
                                                 row.child(
-                                                    Icon::new(IconName::Dash)
-                                                        .color(Color::Custom(separator_color))
-                                                        .size(IconSize::XSmall),
-                                                )
-                                                .child(
-                                                    Label::new(memory)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
+                                                    CopyButton::new(
+                                                        ("copy-lsp-server-message", server_id),
+                                                        format!(
+                                                            "Language server {server_name}:\n\n{message}"
+                                                        ),
+                                                    )
+                                                    .tooltip_label("Copy Message"),
                                                 )
                                             }),
                                     )
