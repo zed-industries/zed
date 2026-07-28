@@ -229,6 +229,7 @@ impl Model {
             | Self::Grok4_5
             | Self::KimiK2_6
             | Self::KimiK2_7Code
+            | Self::KimiK3
             | Self::MiniMaxM2_7
             | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
@@ -236,8 +237,7 @@ impl Model {
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::KimiK3
-            | Self::MimoV2_5Pro
+            Self::MimoV2_5Pro
             | Self::MimoV2_5
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
