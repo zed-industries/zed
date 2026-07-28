@@ -120,7 +120,6 @@ impl MainThreadMailbox {
 
 pub struct WebDispatcher {
     main_thread_id: std::thread::ThreadId,
-    browser_window: web_sys::Window,
     background_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_mailbox: Arc<MainThreadMailbox>,
     supports_threads: bool,
@@ -128,16 +127,8 @@ pub struct WebDispatcher {
     _background_threads: Vec<wasm_thread::JoinHandle<()>>,
 }
 
-// Safety: `web_sys::Window` is only accessed from the main thread
-// All other fields are `Send + Sync` by construction.
-unsafe impl Send for WebDispatcher {}
-unsafe impl Sync for WebDispatcher {}
-
 impl WebDispatcher {
-    pub fn new(
-        browser_window: web_sys::Window,
-        #[cfg_attr(not(feature = "multithreaded"), expect(unused_variables))] allow_threads: bool,
-    ) -> Self {
+    pub fn new(browser_window: web_sys::Window, allow_threads: bool) -> Self {
         #[cfg(feature = "multithreaded")]
         let (background_sender, background_receiver) = PriorityQueueReceiver::new();
         #[cfg(not(feature = "multithreaded"))]
@@ -145,10 +136,11 @@ impl WebDispatcher {
 
         let main_thread_mailbox = Arc::new(MainThreadMailbox::new());
 
+        let supports_shared_memory = shared_memory_supported();
         let supports_threads =
-            cfg!(feature = "multithreaded") && allow_threads && shared_memory_supported();
+            cfg!(feature = "multithreaded") && allow_threads && supports_shared_memory;
 
-        if supports_threads {
+        if supports_shared_memory {
             main_thread_mailbox.run_waker_loop(browser_window.clone());
         } else if cfg!(feature = "multithreaded") && allow_threads {
             log::warn!(
@@ -193,7 +185,6 @@ impl WebDispatcher {
 
         Self {
             main_thread_id: std::thread::current().id(),
-            browser_window,
             background_sender,
             main_thread_mailbox,
             supports_threads,
@@ -212,8 +203,7 @@ impl WebDispatcher {
     ) {
         if self.on_main_thread() {
             let callback = Closure::once_into_js(function);
-            self.browser_window
-                .queue_microtask(callback.unchecked_ref());
+            browser_window().queue_microtask(callback.unchecked_ref());
         } else {
             self.main_thread_mailbox
                 .post(Priority::High, MainThreadItem::Function(Box::new(function)));
@@ -245,7 +235,7 @@ impl PlatformDispatcher for WebDispatcher {
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         if self.on_main_thread() {
-            schedule_runnable(&self.browser_window, runnable, priority);
+            schedule_runnable(&browser_window(), runnable, priority);
         } else {
             self.main_thread_mailbox
                 .post(priority, MainThreadItem::Runnable(runnable));
@@ -258,7 +248,7 @@ impl PlatformDispatcher for WebDispatcher {
             let callback = Closure::once_into_js(move || {
                 runnable.run();
             });
-            self.browser_window
+            browser_window()
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
                     callback.unchecked_ref(),
                     millis,
@@ -275,8 +265,7 @@ impl PlatformDispatcher for WebDispatcher {
             let callback = Closure::once_into_js(move || {
                 function();
             });
-            self.browser_window
-                .queue_microtask(callback.unchecked_ref());
+            browser_window().queue_microtask(callback.unchecked_ref());
         } else {
             self.main_thread_mailbox
                 .post(Priority::High, MainThreadItem::RealtimeFunction(function));
@@ -286,6 +275,10 @@ impl PlatformDispatcher for WebDispatcher {
     fn now(&self) -> Instant {
         Instant::now()
     }
+}
+
+fn browser_window() -> web_sys::Window {
+    web_sys::window().expect("must be running in a browser window context")
 }
 
 fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
