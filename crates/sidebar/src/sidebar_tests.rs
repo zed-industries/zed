@@ -1056,6 +1056,80 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let header = |path: &str| ListEntry::ProjectHeader {
+        key: ProjectGroupKey::new(None, PathList::new(&[std::path::PathBuf::from(path)])),
+        label: path.into(),
+        highlight_positions: Vec::new(),
+        has_running_threads: false,
+        waiting_thread_count: 0,
+        has_notifications: false,
+        is_active: false,
+        has_threads: true,
+    };
+    let thread = |name: &str| {
+        ListEntry::Thread(Arc::new(ThreadEntry {
+            metadata: ThreadMetadata {
+                thread_id: ThreadId::new(),
+                session_id: Some(acp::SessionId::new(Arc::from(name))),
+                agent_id: AgentId::new("zed-agent"),
+                worktree_paths: WorktreePaths::default(),
+                title: Some(name.to_string().into()),
+                title_override: None,
+                updated_at: Utc::now(),
+                created_at: Some(Utc::now()),
+                interacted_at: None,
+                archived: false,
+                remote_connection: None,
+            },
+            icon: IconName::ZedAgent,
+            icon_from_external_svg: None,
+            status: AgentThreadStatus::Completed,
+            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+            is_live: false,
+            is_background: false,
+            is_title_generating: false,
+            draft: None,
+            highlight_positions: Vec::new(),
+            worktrees: Vec::new(),
+            diff_stats: DiffStats::default(),
+        }))
+    };
+
+    sidebar.update_in(cx, |s, _window, _cx| {
+        s.contents.entries = vec![
+            header("/project-a"),
+            thread("a-newest"),
+            thread("a-oldest"),
+            header("/project-b"),
+            thread("b-newest"),
+        ];
+
+        let neighbor_session = |position: usize| match s.neighboring_activatable_entry(position) {
+            Some(ActivatableEntry::Thread { metadata, .. }) => metadata.session_id,
+            _ => None,
+        };
+
+        assert_eq!(
+            neighbor_session(2),
+            Some(acp::SessionId::new(Arc::from("a-newest"))),
+            "the neighbor should be the sibling in the same project, not the next project's thread"
+        );
+        assert_eq!(
+            neighbor_session(4),
+            Some(acp::SessionId::new(Arc::from("a-oldest"))),
+            "an empty project should fall back to another project"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     use workspace::ProjectGroup;
 

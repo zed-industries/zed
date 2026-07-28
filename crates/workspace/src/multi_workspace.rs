@@ -286,10 +286,7 @@ pub struct ProjectGroupState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RemovalIntent {
-    /// Stay in the project, reopening its root worktrees if the removal leaves
-    /// it with no workspaces.
     KeepProject,
-    /// Move to another project.
     CloseProject,
 }
 
@@ -1868,8 +1865,6 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Entity<Workspace>>>> {
-        // Reopening a remote project would connect to its host, which is far
-        // too much to do just to pick a workspace to fall back to.
         if key.host().is_some() || key.path_list().is_empty() {
             return None;
         }

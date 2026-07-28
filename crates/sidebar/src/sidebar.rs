@@ -4381,21 +4381,43 @@ impl Sidebar {
         }
     }
 
-    /// Find the neighbor thread in the sidebar (by display position).
-    /// Look below first, then above, for the nearest thread that isn't
-    /// the one being archived. We capture both the neighbor's metadata
-    /// (for activation) and its workspace paths (for the workspace
-    /// removal fallback).
+    /// Find the entry to select after the entry at `current_position` is
+    /// removed: the nearest activatable entry in the same project section,
+    /// below first, then above. Only when that section has no other
+    /// activatable entry, the nearest one in the whole list.
     fn neighboring_activatable_entry(&self, current_position: usize) -> Option<ActivatableEntry> {
-        let after = self
-            .contents
-            .entries
-            .get(current_position.checked_add(1)?..)?;
-        let before = self.contents.entries.get(..current_position)?;
-        after
+        let entries = &self.contents.entries;
+        let is_header = |entry: &ListEntry| matches!(entry, ListEntry::ProjectHeader { .. });
+
+        let section_start = entries
+            .get(..current_position)?
             .iter()
-            .chain(before.iter().rev())
-            .find_map(ActivatableEntry::from_list_entry)
+            .rposition(is_header)
+            .map_or(0, |header| header + 1);
+        let section_end = entries
+            .get(current_position + 1..)?
+            .iter()
+            .position(is_header)
+            .map_or(entries.len(), |offset| current_position + 1 + offset);
+
+        for (start, end) in [(section_start, section_end), (0, entries.len())] {
+            let Some(before) = entries.get(start..current_position) else {
+                continue;
+            };
+            let Some(after) = entries.get(current_position + 1..end) else {
+                continue;
+            };
+
+            let Some(entry) = after
+                .iter()
+                .chain(before.iter().rev())
+                .find_map(ActivatableEntry::from_list_entry)
+            else {
+                continue;
+            };
+            return Some(entry);
+        }
+        None
     }
 
     fn activate_entry(
@@ -4879,12 +4901,8 @@ impl Sidebar {
         }
     }
 
-    /// Opens the workspace for `folder_paths` and runs `then` once its metadata
-    /// has loaded.
-    ///
-    /// Closed linked-worktree entries need an open workspace before they can be
-    /// archived, so archive root planning can inspect repositories before the
-    /// worktree is deleted.
+    /// Closed linked-worktree entries need an open workspace so archive root
+    /// planning can inspect repositories before deleting the worktree.
     fn open_workspace_for_archive(
         &mut self,
         folder_paths: PathList,
@@ -5105,11 +5123,6 @@ impl Sidebar {
         self.update_entries(cx);
     }
 
-    /// Removes `workspaces_to_remove`, waits for `close_item_tasks`, then runs
-    /// `finish` to update the sidebar's own bookkeeping.
-    ///
-    /// `finish` runs synchronously when there is nothing to wait for, so
-    /// callers that only need bookkeeping stay on the current stack.
     fn remove_workspaces_then(
         &mut self,
         workspaces_to_remove: Vec<Entity<Workspace>>,
