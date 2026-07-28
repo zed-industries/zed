@@ -42380,3 +42380,85 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }
+
+#[gpui::test]
+async fn test_in_preview_context_added_when_in_preview_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, None, cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(ProjectPath::from_relative("test.txt").unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    
+    let editor = cx.new(|cx| {
+        let mut editor = Editor::new(EditorMode::full(), MultiBuffer::singleton(buffer, cx), Some(project.clone()), cx);
+        editor
+    });
+    
+    let pane = workspace.update_in(cx, |workspace, _, _| workspace.active_pane().clone());
+    
+    // Add editor to pane and set it as preview
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+        pane.set_preview_item_id(Some(editor.entity_id()), cx);
+    });
+    
+    // Focus the editor and verify context
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        let key_context = editor.key_context(window, cx);
+        assert!(key_context.contains("in_preview"), 
+            "Expected 'in_preview' context to be present when editor is in preview mode");
+    });
+}
+
+#[gpui::test]
+async fn test_in_preview_context_not_added_when_not_in_preview_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, None, cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(ProjectPath::from_relative("test.txt").unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    
+    let editor = cx.new(|cx| {
+        let mut editor = Editor::new(EditorMode::full(), MultiBuffer::singleton(buffer, cx), Some(project.clone()), cx);
+        editor
+    });
+    
+    let pane = workspace.update_in(cx, |workspace, _, _| workspace.active_pane().clone());
+    
+    // Add editor to pane but do NOT set it as preview (default behavior)
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+        // Don't call set_preview_item_id, so it's a regular tab
+    });
+    
+    // Focus the editor and verify context
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        let key_context = editor.key_context(window, cx);
+        assert!(!key_context.contains("in_preview"), 
+            "Expected 'in_preview' context to NOT be present when editor is not in preview mode");
+    });
+}

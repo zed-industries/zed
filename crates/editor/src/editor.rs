@@ -2762,6 +2762,16 @@ impl Editor {
             key_context.add("diffs_expanded");
         }
 
+        // Add in_preview context if this editor is the preview item in its pane
+        if let Some(workspace) = self.workspace() {
+            let editor_entity_id = window.current_view();
+            if let Some(pane) = workspace.read(cx).pane_for_item_id(editor_entity_id) {
+                if pane.read(cx).is_active_preview_item(editor_entity_id) {
+                    key_context.add("in_preview");
+                }
+            }
+        }
+
         key_context
     }
 
