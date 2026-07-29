@@ -12,18 +12,18 @@ use db::kvp::KeyValueStore;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, Anchor, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, TaskExt, WeakEntity,
-    Window, actions,
+    Focusable, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels, Render,
+    StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
 use project::{Fs, Project};
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{Terminal, terminal_settings::TerminalSettings};
+use terminal::{TaskStatus, Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
-    Tooltip, prelude::*,
+    ButtonLike, Clickable, ContextMenu, FluentBuilder, ListItem, ListItemSpacing, PopoverMenu,
+    SplitButton, Toggleable, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -84,6 +84,15 @@ pub struct TerminalPanel {
     pending_terminals_to_add: usize,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
+    active: bool,
+}
+
+struct RunTaskEntry {
+    pane: Entity<Pane>,
+    item_index: usize,
+    label: String,
+    status: TaskStatus,
+    exit_code: Option<i32>,
     active: bool,
 }
 
@@ -739,6 +748,107 @@ impl TerminalPanel {
         })
     }
 
+    fn run_task_entries(&self, cx: &App) -> Vec<RunTaskEntry> {
+        self.center
+            .panes()
+            .into_iter()
+            .flat_map(|pane| {
+                let active_terminal = (pane == &self.active_pane)
+                    .then(|| pane.read(cx).active_item())
+                    .flatten()
+                    .and_then(|item| item.act_as::<TerminalView>(cx));
+
+                pane.read(cx)
+                    .items()
+                    .enumerate()
+                    .filter_map(|(item_index, item)| {
+                        let terminal_view = item.act_as::<TerminalView>(cx)?;
+                        let terminal = terminal_view.read(cx).terminal().clone();
+                        let terminal = terminal.read(cx);
+                        let task = terminal.task()?;
+                        Some(RunTaskEntry {
+                            pane: (*pane).clone(),
+                            item_index,
+                            label: task.spawned_task.label.clone(),
+                            status: task.status,
+                            exit_code: terminal.task_exit_code(),
+                            active: active_terminal
+                                .as_ref()
+                                .is_some_and(|active| active == &terminal_view),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn render_run_sidebar(
+        &self,
+        task_entries: Vec<RunTaskEntry>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rows = task_entries
+            .into_iter()
+            .enumerate()
+            .map(|(entry_index, entry)| {
+                let (icon, icon_color) = run_task_status_icon(entry.status);
+                let status = run_task_status_text(entry.status, entry.exit_code);
+                let aria_label = format!("{}: {}", entry.label, status);
+                let pane = entry.pane;
+                let item_index = entry.item_index;
+
+                ListItem::new(("run-task-entry", entry_index))
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(entry.active)
+                    .aria_label(aria_label)
+                    .start_slot(Icon::new(icon).size(IconSize::XSmall).color(icon_color))
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .child(Label::new(entry.label).size(LabelSize::Small).truncate())
+                            .child(
+                                Label::new(status)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_terminal_view(&pane, item_index, true, window, cx);
+                    }))
+            });
+
+        v_flex()
+            .id("run-task-sidebar")
+            .debug_selector(|| "run-task-sidebar".to_string())
+            .h_full()
+            .w_48()
+            .flex_none()
+            .border_r_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().panel_background)
+            .child(
+                h_flex()
+                    .h_8()
+                    .px_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Label::new("Run")
+                            .size(LabelSize::Small)
+                            .weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .id("run-task-list")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+            .into_any_element()
+    }
+
     pub fn add_center_terminal(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -1194,6 +1304,25 @@ pub fn prepare_task_for_spawn(
     }
 }
 
+fn run_task_status_icon(status: TaskStatus) -> (IconName, Color) {
+    match status {
+        TaskStatus::Running => (IconName::PlayFilled, Color::Accent),
+        TaskStatus::Unknown => (IconName::Warning, Color::Warning),
+        TaskStatus::Completed { success: true } => (IconName::Check, Color::Success),
+        TaskStatus::Completed { success: false } => (IconName::XCircle, Color::Error),
+    }
+}
+
+fn run_task_status_text(status: TaskStatus, exit_code: Option<i32>) -> String {
+    match status {
+        TaskStatus::Running => "Running".to_string(),
+        TaskStatus::Unknown => "Stopped".to_string(),
+        TaskStatus::Completed { .. } => exit_code
+            .map(|exit_code| format!("Exited with code {exit_code}"))
+            .unwrap_or_else(|| "Stopped".to_string()),
+    }
+}
+
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
 }
@@ -1366,6 +1495,9 @@ impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let task_entries = self.run_task_entries(cx);
+        let run_sidebar = (!task_entries.is_empty() && !self.active_pane.read(cx).is_zoomed())
+            .then(|| self.render_run_sidebar(task_entries, cx));
         let registrar = cx
             .try_global::<workspace::PaneSearchBarCallbacks>()
             .map(|callbacks| {
@@ -1374,23 +1506,24 @@ impl Render for TerminalPanel {
             .unwrap_or_else(div);
         self.workspace
             .update(cx, |workspace, cx| {
-                registrar
-                    .track_focus(&self.focus_handle)
-                    .size_full()
-                    .child(self.center.render(
-                        workspace.zoomed_item(),
-                        None,
-                        &workspace::PaneRenderContext {
-                            follower_states: &HashMap::default(),
-                            active_call: workspace.active_call(),
-                            active_pane: &self.active_pane,
-                            app_state: workspace.app_state(),
-                            project: workspace.project(),
-                            workspace: &workspace.weak_handle(),
-                        },
-                        window,
-                        cx,
-                    ))
+                registrar.track_focus(&self.focus_handle).size_full().child(
+                    h_flex().size_full().children(run_sidebar).child(
+                        div().h_full().min_w_0().flex_1().child(self.center.render(
+                            workspace.zoomed_item(),
+                            None,
+                            &workspace::PaneRenderContext {
+                                follower_states: &HashMap::default(),
+                                active_call: workspace.active_call(),
+                                active_pane: &self.active_pane,
+                                app_state: workspace.app_state(),
+                                project: workspace.project(),
+                                workspace: &workspace.weak_handle(),
+                            },
+                            window,
+                            cx,
+                        )),
+                    ),
+                )
             })
             .ok()
             .map(|div| {
@@ -1769,6 +1902,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_run_task_status_text() {
+        assert_eq!(run_task_status_text(TaskStatus::Running, None), "Running");
+        assert_eq!(run_task_status_text(TaskStatus::Unknown, None), "Stopped");
+        assert_eq!(
+            run_task_status_text(TaskStatus::Completed { success: true }, Some(0)),
+            "Exited with code 0"
+        );
+        assert_eq!(
+            run_task_status_text(TaskStatus::Completed { success: false }, Some(2)),
+            "Exited with code 2"
+        );
+        assert_eq!(
+            run_task_status_text(TaskStatus::Completed { success: false }, None),
+            "Stopped"
+        );
+    }
+
     #[gpui::test]
     async fn test_bypass_max_tabs_limit(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2110,6 +2261,46 @@ mod tests {
             .expect("Failed to initialize workspace with terminal panel");
 
         (window_handle, terminal_panel)
+    }
+
+    #[gpui::test]
+    async fn test_run_sidebar_uses_task_terminals(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let task = SpawnInTerminal {
+            id: TaskId("dev".to_string()),
+            full_label: "dev".to_string(),
+            label: "dev".to_string(),
+            command: Some("echo".to_string()),
+            args: vec!["ready".to_string()],
+            reveal: RevealStrategy::Always,
+            reveal_target: RevealTarget::Dock,
+            ..SpawnInTerminal::default()
+        };
+
+        terminal_panel
+            .update_in(cx, |terminal_panel, window, cx| {
+                terminal_panel.spawn_task(&task, window, cx)
+            })
+            .await
+            .expect("task terminal should spawn");
+        terminal_panel.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        terminal_panel.read_with(cx, |terminal_panel, cx| {
+            let entries = terminal_panel.run_task_entries(cx);
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].label, "dev");
+            assert!(entries[0].active);
+            assert!(!terminal_panel.active_pane.read(cx).is_zoomed());
+        });
+        assert!(
+            cx.debug_bounds("run-task-sidebar").is_some(),
+            "task terminals should be listed in the Run sidebar"
+        );
     }
 
     #[gpui::test]
