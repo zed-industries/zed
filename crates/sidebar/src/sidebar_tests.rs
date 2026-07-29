@@ -14912,3 +14912,80 @@ fn test_split_leading_icon_char() {
     assert_eq!(trimmed.as_ref(), "abc");
     assert_eq!(positions, vec![0, 1]);
 }
+
+async fn workspace_menu_labels_for_root(
+    fs: &Arc<FakeFs>,
+    root_path: &str,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    let project = project::Project::test(fs.clone(), [root_path.as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let workspace = window.root(cx).unwrap();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        workspace_menu_worktree_labels(&workspace, cx)
+            .iter()
+            .map(|label| match &label.secondary_name {
+                Some(secondary_name) => format!("{} / {}", label.primary_name, secondary_name),
+                None => label.primary_name.to_string(),
+            })
+            .collect()
+    })
+}
+
+#[gpui::test]
+async fn test_workspace_menu_labels_for_worktree_subdirectory(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "example": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/worktrees/sedge-beacon"),
+            ref_name: Some("refs/heads/sedge-beacon".into()),
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    fs.create_dir(Path::new("/worktrees/sedge-beacon/example"))
+        .await
+        .unwrap();
+
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+    // Opening a subdirectory of a linked worktree keeps the folder name as the
+    // primary label and names the worktree it belongs to.
+    assert_eq!(
+        workspace_menu_labels_for_root(&fs, "/worktrees/sedge-beacon/example", cx).await,
+        vec!["example / sedge-beacon".to_string()],
+    );
+
+    // The same subdirectory in the main checkout stays distinguishable.
+    assert_eq!(
+        workspace_menu_labels_for_root(&fs, "/project/example", cx).await,
+        vec!["example / main".to_string()],
+    );
+
+    // Opening a worktree root still shows just the worktree name.
+    assert_eq!(
+        workspace_menu_labels_for_root(&fs, "/worktrees/sedge-beacon", cx).await,
+        vec!["sedge-beacon".to_string()],
+    );
+}

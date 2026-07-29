@@ -633,6 +633,12 @@ impl WorkspaceMenuWorktreeLabel {
     }
 }
 
+fn path_file_name(path: &Path) -> SharedString {
+    path.file_name()
+        .map(|name| SharedString::from(name.to_string_lossy().to_string()))
+        .unwrap_or_default()
+}
+
 fn workspace_menu_worktree_labels(
     workspace: &Entity<Workspace>,
     cx: &App,
@@ -651,27 +657,31 @@ fn workspace_menu_worktree_labels(
         .into_iter()
         .map(|root_path| {
             let root_path = root_path.as_ref();
-            let folder_name = root_path
-                .file_name()
-                .map(|name| SharedString::from(name.to_string_lossy().to_string()))
-                .unwrap_or_default();
+            let folder_name = path_file_name(root_path);
+            // The opened folder is often a subdirectory of a worktree rather
+            // than its root, so resolve the repository by longest containing
+            // path instead of requiring an exact match. Requiring an exact
+            // match labeled every worktree's `example` subdirectory as a bare
+            // `example`, leaving them indistinguishable in the switcher.
             let repository_snapshot = repository_snapshots
                 .iter()
-                .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path);
+                .filter(|snapshot| root_path.starts_with(snapshot.work_directory_abs_path.as_ref()))
+                .max_by_key(|snapshot| snapshot.work_directory_abs_path.components().count());
 
             if let Some(snapshot) = repository_snapshot {
+                let work_directory = snapshot.work_directory_abs_path.as_ref();
                 let worktree_name = if snapshot.is_linked_worktree() {
                     snapshot
                         .main_worktree_abs_path()
                         .and_then(|main_worktree_path| {
-                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                            project::linked_worktree_short_name(main_worktree_path, work_directory)
                         })
-                        .unwrap_or_else(|| folder_name.clone())
+                        .unwrap_or_else(|| path_file_name(work_directory))
                 } else {
                     "main".into()
                 };
 
-                if show_folder_name {
+                if show_folder_name || work_directory != root_path {
                     WorkspaceMenuWorktreeLabel {
                         icon: Some(IconName::GitWorktree),
                         primary_name: folder_name,
