@@ -7169,6 +7169,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "nucleo",
+ "unicode-normalization",
+ "unicode-segmentation",
  "util",
 ]
 
