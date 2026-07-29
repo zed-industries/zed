@@ -156,8 +156,9 @@ pub fn load_selected_run_configuration(
     workspace_id: Option<WorkspaceId>,
     cx: &App,
 ) -> Option<RunConfigurationId> {
+    let workspace_id = workspace_id?;
     let (worktree_root, source_directory, task_label) = RunConfigurationsDb::global(cx)
-        .selected(workspace_id?)
+        .selected(workspace_id)
         .log_err()
         .flatten()?;
     Some(RunConfigurationId {
@@ -269,6 +270,14 @@ mod tests {
         );
         assert_eq!(
             cx.read(|cx| load_selected_run_configuration(Some(second_workspace), cx)),
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn transient_workspace_has_no_selection(cx: &mut TestAppContext) {
+        assert_eq!(
+            cx.read(|cx| load_selected_run_configuration(None, cx)),
             None
         );
     }
