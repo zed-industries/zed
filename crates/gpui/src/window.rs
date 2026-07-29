@@ -4947,7 +4947,7 @@ impl Window {
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
-                            external_payload: None,
+                            external_payload_source: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -5019,13 +5019,16 @@ impl Window {
         if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
             return;
         }
-        // Taking the payload latches the attempt to once per gesture: synthetic drag moves would
+        // Taking the source latches the attempt to once per gesture: synthetic drag moves would
         // otherwise replay this same out-of-bounds position every 16ms.
-        let Some(payload) = cx
+        let Some(payload_source) = cx
             .active_drag
             .as_mut()
-            .and_then(|drag| drag.external_payload.take())
+            .and_then(|drag| drag.external_payload_source.take())
         else {
+            return;
+        };
+        let Some(payload) = payload_source(self, cx) else {
             return;
         };
         if self.platform_window.start_external_drag(&payload) {

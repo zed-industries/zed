@@ -2815,9 +2815,15 @@ pub struct AnyDrag {
     /// The cursor style to use while dragging
     pub cursor_style: Option<CursorStyle>,
 
-    /// Payload to offer the platform if the drag leaves the window.
-    pub external_payload: Option<crate::ExternalDragPayload>,
+    /// Resolves the payload to offer the platform if the drag leaves the window.
+    /// Invoked at most once per drag gesture, at promotion time.
+    pub external_payload_source: Option<ExternalDragPayloadSource>,
 }
+
+/// Lazily resolves the payload handed to the platform when an internal drag is
+/// promoted to a native drag session.
+pub type ExternalDragPayloadSource =
+    Box<dyn FnOnce(&mut Window, &mut App) -> Option<crate::ExternalDragPayload> + 'static>;
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
 /// tooltip behavior on a custom element. Otherwise, use [Div::tooltip](crate::Interactivity::tooltip).

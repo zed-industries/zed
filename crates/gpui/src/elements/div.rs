@@ -604,7 +604,8 @@ impl Interactivity {
         self.set_drag_listener(value, constructor, None);
     }
 
-    /// On drag initiation, resolve a payload to offer the platform if the drag leaves the window.
+    /// Registers a callback resolving a payload to offer the platform if the drag leaves the
+    /// window. It is invoked at most once per drag gesture, when the pointer exits the viewport.
     pub fn on_drag_with_external_payload<T, W>(
         &mut self,
         value: T,
@@ -1553,7 +1554,8 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// On drag initiation, resolve a payload to offer the platform if the drag leaves the window.
+    /// Registers a callback resolving a payload to offer the platform if the drag leaves the
+    /// window. It is invoked at most once per drag gesture, when the pointer exits the viewport.
     fn on_drag_with_external_payload<T, W>(
         mut self,
         value: T,
@@ -2830,14 +2832,20 @@ impl Interactivity {
                             let cursor_offset = event.position - hitbox.origin;
                             let drag =
                                 (drag_listener)(drag_value.as_ref(), cursor_offset, window, cx);
-                            let external_payload = external_payload_extractor
-                                .and_then(|extractor| extractor(drag_value.as_ref(), window, cx));
+                            let external_payload_source =
+                                external_payload_extractor.map(|extractor| {
+                                    let value = drag_value.clone();
+                                    Box::new(move |window: &mut Window, cx: &mut App| {
+                                        extractor(value.as_ref(), window, cx)
+                                    })
+                                        as crate::ExternalDragPayloadSource
+                                });
                             cx.active_drag = Some(AnyDrag {
                                 view: drag,
                                 value: drag_value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
-                                external_payload,
+                                external_payload_source,
                             });
                             pending_mouse_down.take();
                             window.refresh();
