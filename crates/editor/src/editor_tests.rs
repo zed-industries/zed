@@ -13217,6 +13217,110 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_newline_below_auto_indent_none(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        hello
+            indented lineˇ
+        world
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline_below(&NewlineBelow, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        hello
+            indented line
+        ˇ
+        world
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_below_auto_indent_preserve(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        hello
+            indented lineˇ
+        world
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline_below(&NewlineBelow, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        hello
+            indented line
+            ˇ
+        world
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_above_auto_indent_none(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        hello
+            indented lineˇ
+        world
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline_above(&NewlineAbove, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        hello
+        ˇ
+            indented line
+        world
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_above_auto_indent_preserve(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        hello
+            indented lineˇ
+        world
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline_above(&NewlineAbove, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        hello
+            ˇ
+            indented line
+        world
+    "});
+}
+
+#[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware);
