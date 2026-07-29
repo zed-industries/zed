@@ -247,7 +247,7 @@ def build_eval_cli(build_request: dict[str, Any]) -> dict[str, Any]:
     )
 
     built = workdir / "target/x86_64-unknown-linux-musl/release/eval-cli"
-    run(f"strip {built}")
+    subprocess.run(["strip", str(built)], check=True)
     binary_bytes = built.read_bytes()
     binary_sha256 = hashlib.sha256(binary_bytes).hexdigest()
 
