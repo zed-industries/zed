@@ -650,7 +650,7 @@ impl LlamaCppLanguageModel {
     fn to_llama_cpp_request(
         &self,
         request: LanguageModelRequest,
-    ) -> llama_cpp::ChatCompletionRequest {
+    ) -> Result<llama_cpp::ChatCompletionRequest> {
         build_llama_cpp_request(
             &self.name,
             self.supports_images,
@@ -697,7 +697,11 @@ fn build_llama_cpp_request(
     supports_images: bool,
     capabilities: LiveCapabilities,
     request: LanguageModelRequest,
-) -> llama_cpp::ChatCompletionRequest {
+) -> Result<llama_cpp::ChatCompletionRequest> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("llama.cpp does not support custom tools");
+    }
+
     let supports_tools = capabilities.supports_tools;
     let supports_thinking = capabilities.supports_thinking;
     let mut messages = Vec::new();
@@ -743,13 +747,15 @@ fn build_llama_cpp_request(
                     }
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use.input.as_json().ok_or_else(|| {
+                        anyhow::anyhow!("llama.cpp does not support custom tool calls")
+                    })?;
                     let tool_call = llama_cpp::ToolCall {
                         id: tool_use.id.to_string(),
                         content: llama_cpp::ToolCallContent::Function {
                             function: llama_cpp::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -811,14 +817,25 @@ fn build_llama_cpp_request(
         request
             .tools
             .into_iter()
-            .map(|tool| llama_cpp::ToolDefinition::Function {
-                function: llama_cpp::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("llama.cpp does not support custom tools"));
+                    }
+                };
+                Ok(llama_cpp::ToolDefinition::Function {
+                    function: llama_cpp::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect()
+            .collect::<Result<_>>()?
     } else {
         Vec::new()
     };
@@ -834,7 +851,7 @@ fn build_llama_cpp_request(
         })
     };
 
-    llama_cpp::ChatCompletionRequest {
+    Ok(llama_cpp::ChatCompletionRequest {
         model: model_name.to_string(),
         messages,
         stream: true,
@@ -853,7 +870,7 @@ fn build_llama_cpp_request(
         stream_options: Some(llama_cpp::StreamOptions {
             include_usage: true,
         }),
-    }
+    })
 }
 
 impl LanguageModel for LlamaCppLanguageModel {
@@ -919,7 +936,10 @@ impl LanguageModel for LlamaCppLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_llama_cpp_request(request);
+        let request = match self.to_llama_cpp_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LlamaCppEventMapper::new();
@@ -1019,7 +1039,9 @@ impl LlamaCppEventMapper {
                                         id: tool_call.id.into(),
                                         name: tool_call.name.into(),
                                         is_input_complete: true,
-                                        input,
+                                        input: language_model::LanguageModelToolUseInput::Json(
+                                            input,
+                                        ),
                                         raw_input: tool_call.arguments,
                                         thought_signature: None,
                                     },
@@ -1829,7 +1851,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1872,7 +1895,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1882,7 +1906,7 @@ mod tests {
                 tool_calls,
             } => {
                 assert_eq!(content, "answer");
-                assert_eq!(reasoning_content, &None);
+                assert!(reasoning_content.is_none());
                 assert!(tool_calls.is_empty());
             }
             message => panic!("unexpected message: {message:?}"),
@@ -1911,7 +1935,9 @@ mod tests {
                             id: "call_1".into(),
                             name: "weather".into(),
                             raw_input: r#"{"city":"Oslo"}"#.to_string(),
-                            input: serde_json::json!({ "city": "Oslo" }),
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                serde_json::json!({ "city": "Oslo" }),
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         }),
@@ -1921,7 +1947,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {

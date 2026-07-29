@@ -29,12 +29,12 @@ The scrollbar ones are configured with the
 
 configuration (possible values: `"none"`, `"error"`, `"warning"`, `"information"`, `"all"` (default))
 
-The diagnostics could be hovered to display a tooltip with full, rendered diagnostic message.
+The diagnostics could be hovered to display a tooltip with a full, rendered diagnostic message.
 Or, `editor::GoToDiagnostic` and `editor::GoToPreviousDiagnostic` could be used to navigate between diagnostics in the editor, showing a popover for the currently active diagnostic.
 
 # Inline diagnostics (Error lens)
 
-Zed supports showing diagnostic as lens to the right of the code.
+Zed supports showing diagnostics as a lens to the right of the code.
 This is disabled by default, but can either be temporarily turned on (or off) using the editor menu, or permanently, using the
 
 ```json [settings]

@@ -258,6 +258,11 @@ pub struct AgentSettingsContent {
     pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
+    /// Model to use for context compaction (`/compact` and auto-compaction).
+    /// Falls back to the thread's currently selected model when not specified.
+    /// If the configured model is unavailable (provider not registered, model
+    /// not found), the thread's current model is used instead.
+    pub compaction_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     pub inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// The default profile to use in the Agent.
@@ -812,6 +817,14 @@ pub struct SandboxPermissionsContent {
     /// to without prompting. Paths written by Zed are absolute.
     /// Default: []
     pub write_paths: Option<ExtendingVec<PathBuf>>,
+
+    /// Whether to warn when a sandbox escalation prompt requests a domain or
+    /// write path that contains potentially confusable Unicode characters
+    /// (homoglyphs, invisible characters, or bidirectional overrides). When
+    /// enabled, such prompts show a warning that must be acknowledged before
+    /// the request can be allowed.
+    /// Default: true
+    pub warn_confusable_unicode: Option<bool>,
 }
 
 #[with_fallible_options]
