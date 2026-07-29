@@ -49,6 +49,10 @@ actions!(
         OpenProjectSettings,
         /// Opens the project tasks configuration.
         OpenProjectTasks,
+        /// Opens the global tasks configuration.
+        OpenTasks,
+        /// Opens the project tasks configuration and inserts a new task.
+        CreateTask,
         /// Opens the project tasks configuration with worktree setup guidance.
         OpenWorktreeSetupTasks,
         /// Opens the default keymap file.

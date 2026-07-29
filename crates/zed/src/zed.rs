@@ -104,8 +104,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
-    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    About, CreateTask, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
+    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenTasks, OpenZedUrl, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
@@ -131,8 +131,6 @@ actions!(
         OpenDefaultSettings,
         /// Opens project-specific settings file.
         OpenProjectSettingsFile,
-        /// Opens the tasks panel.
-        OpenTasks,
         /// Opens debug tasks configuration.
         OpenDebugTasks,
         /// Shows the default semantic token rules (read-only).
@@ -1261,6 +1259,7 @@ fn register_actions(
         })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
+        .register_action(create_task)
         .register_action(open_worktree_setup_tasks_file)
         .register_action(open_project_debug_tasks_file)
         .register_action(
@@ -2471,6 +2470,37 @@ fn open_project_tasks_file(
     }
 }
 
+fn create_task(
+    workspace: &mut Workspace,
+    _: &CreateTask,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    const NEW_TASK: &str = r#"  {
+    "label": "New task",
+    "command": "echo",
+    "args": ["Hello from Zed"]
+  }"#;
+
+    let Some(open_task) = open_local_file(
+        workspace,
+        local_tasks_file_relative_path(),
+        Cow::Borrowed("[]"),
+        window,
+        cx,
+    ) else {
+        return;
+    };
+
+    cx.spawn_in(window, async move |_, cx| {
+        let editor = open_task.await?;
+        editor.update_in(cx, |editor, window, cx| {
+            tasks_ui::insert_task_json_into_editor(editor, NEW_TASK.to_string(), window, cx)
+        })?
+    })
+    .detach_and_prompt_err("Failed to create task", window, cx, |_, _, _| None);
+}
+
 fn open_worktree_setup_tasks_file(
     workspace: &mut Workspace,
     _: &zed_actions::OpenWorktreeSetupTasks,
@@ -2892,6 +2922,57 @@ mod tests {
             .unwrap();
 
         futures::future::join_all(all_tasks).await;
+    }
+
+    #[gpui::test]
+    async fn test_create_task_opens_project_tasks_and_inserts_template(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({}))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx
+            .windows()
+            .first()
+            .expect("workspace window should open")
+            .downcast::<MultiWorkspace>()
+            .expect("window should contain a workspace");
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(CreateTask), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let editor = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item_as::<Editor>(cx)
+                    .expect("tasks file should open");
+                editor.update(cx, |editor, cx| {
+                    let text = editor.text(cx);
+                    assert!(text.contains(r#""label": "New task""#));
+                    assert!(text.contains(r#""args": ["Hello from Zed"]"#));
+                    assert!(!text.contains("Example task"));
+                    assert!(editor.is_dirty(cx));
+                });
+            })
+            .unwrap();
     }
 
     #[gpui::test]

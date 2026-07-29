@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Task, WeakEntity, Window};
+use gpui::{
+    Action as _, App, Context, Entity, IntoElement, Render, Subscription, Task, WeakEntity, Window,
+};
 use project::{Event as ProjectEvent, Project};
 use task::TaskId;
 use tasks_ui::{
@@ -275,6 +277,22 @@ impl RunConfigurationsToolbar {
             menu
         })
     }
+
+    fn build_configuration_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, _, _| {
+            menu.action(
+                "Edit Project Tasks",
+                zed_actions::OpenProjectTasks.boxed_clone(),
+            )
+            .action("Edit Global Tasks", zed_actions::OpenTasks.boxed_clone())
+            .separator()
+            .action("Create Task", zed_actions::CreateTask.boxed_clone())
+        })
+    }
 }
 
 impl Render for RunConfigurationsToolbar {
@@ -288,6 +306,7 @@ impl Render for RunConfigurationsToolbar {
         let is_running = task_status == Some(TaskStatus::Running);
         let can_restart = self.selected_task_id().is_some();
         let this = cx.weak_entity();
+        let menu_this = this.clone();
 
         h_flex()
             .gap_0p5()
@@ -336,6 +355,22 @@ impl Render for RunConfigurationsToolbar {
                     .disabled(!can_restart)
                     .tooltip(|_, cx| Tooltip::simple("Restart", cx))
                     .on_click(cx.listener(|this, _, window, cx| this.restart(window, cx))),
+            )
+            .child(
+                PopoverMenu::new("run-configuration-menu")
+                    .trigger(
+                        IconButton::new("run-configuration-menu-trigger", IconName::Ellipsis)
+                            .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Compact)
+                            .aria_label("Run configuration menu")
+                            .tooltip(|_, cx| Tooltip::simple("Run Configuration Menu", cx)),
+                    )
+                    .anchor(gpui::Anchor::TopRight)
+                    .menu(move |window, cx| {
+                        menu_this
+                            .update(cx, |this, cx| this.build_configuration_menu(window, cx))
+                            .log_err()
+                    }),
             )
     }
 }
