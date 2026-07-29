@@ -1202,7 +1202,7 @@ impl Fs for RealFs {
         if !output.status.success() {
             anyhow::bail!(
                 "git clone failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&output.stderr).trim_end()
             );
         }
 
