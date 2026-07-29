@@ -3109,9 +3109,9 @@ extern "C" fn dragging_session_source_operation_mask(
     context: NSInteger,
 ) -> NSDragOperation {
     let operation = match context {
-        NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION => NSDragOperationCopy | NSDragOperationMove,
-        NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationCopy,
-        _ => NSDragOperationNone,
+        NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION => NSDragOperationCopy,
+        NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationCopy | NSDragOperationMove,
+        _ => NSDragOperationCopy | NSDragOperationMove,
     };
     log::debug!(
         "dragging_session_source_operation_mask: context={}, operation={}",
