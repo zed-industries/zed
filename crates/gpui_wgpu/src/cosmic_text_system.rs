@@ -14,7 +14,7 @@ use gpui::{
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, ops::Range, sync::Arc};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
     zeno::{Format, Vector},
@@ -454,6 +454,106 @@ impl CosmicTextSystemState {
 
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+        if contains_paragraph_separator(text) {
+            self.layout_line_with_separators(text, font_size, font_runs)
+        } else {
+            self.layout_line_no_separators(text, font_size, font_runs)
+        }
+    }
+
+    fn layout_line_with_separators(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> LineLayout {
+        let mut layout = LineLayout {
+            font_size,
+            len: text.len(),
+            ..Default::default()
+        };
+        let mut paragraph_start = 0;
+
+        for (separator_start, separator) in text
+            .char_indices()
+            .filter(|(_, character)| is_paragraph_separator(*character))
+        {
+            let separator_end = separator_start + separator.len_utf8();
+            self.shape_segment(
+                text,
+                paragraph_start..separator_start,
+                font_size,
+                font_runs,
+                &mut layout,
+            );
+            self.shape_segment(
+                text,
+                separator_start..separator_end,
+                font_size,
+                font_runs,
+                &mut layout,
+            );
+            paragraph_start = separator_end;
+        }
+
+        self.shape_segment(
+            text,
+            paragraph_start..text.len(),
+            font_size,
+            font_runs,
+            &mut layout,
+        );
+
+        layout
+    }
+
+    fn shape_segment(
+        &mut self,
+        text: &str,
+        range: Range<usize>,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        layout: &mut LineLayout,
+    ) {
+        if range.is_empty() {
+            return;
+        }
+
+        let segment_font_runs = clip_font_runs(font_runs, range.clone());
+        let segment =
+            self.layout_line_no_separators(&text[range.clone()], font_size, &segment_font_runs);
+
+        let mut segment_runs = segment.runs;
+        for run in &mut segment_runs {
+            for glyph in &mut run.glyphs {
+                glyph.index += range.start;
+                glyph.position.x += layout.width;
+            }
+        }
+
+        for mut run in segment_runs {
+            if let Some(same_run) = layout
+                .runs
+                .last_mut()
+                .filter(|last| last.font_id == run.font_id)
+            {
+                same_run.glyphs.append(&mut run.glyphs);
+            } else {
+                layout.runs.push(run);
+            }
+        }
+
+        layout.width += segment.width;
+        layout.ascent = layout.ascent.max(segment.ascent);
+        layout.descent = layout.descent.max(segment.descent);
+    }
+
+    fn layout_line_no_separators(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> LineLayout {
         let mut attrs_list = AttrsList::new(&Attrs::new());
         let mut offs = 0;
         for run in font_runs {
@@ -617,6 +717,46 @@ impl CosmicTextSystemState {
             len: text.len(),
         }
     }
+}
+
+#[inline(always)]
+fn is_paragraph_separator(character: char) -> bool {
+    unicode_bidi::bidi_class(character) == unicode_bidi::BidiClass::B
+}
+
+fn contains_paragraph_separator(text: &str) -> bool {
+    if text
+        .bytes()
+        .any(|byte| matches!(byte, b'\n' | b'\r' | 0x1c | 0x1d | 0x1e))
+    {
+        return true;
+    }
+
+    !text.is_ascii() && text.chars().any(is_paragraph_separator)
+}
+
+fn clip_font_runs(font_runs: &[FontRun], range: Range<usize>) -> SmallVec<[FontRun; 4]> {
+    let mut clipped = SmallVec::new();
+    let mut offs = 0;
+    for run in font_runs {
+        let run_start = offs;
+        offs += run.len;
+        if offs <= range.start {
+            continue;
+        }
+        if run_start >= range.end {
+            break;
+        }
+        let start = run_start.max(range.start);
+        let end = offs.min(range.end);
+        if start < end {
+            clipped.push(FontRun {
+                len: end - start,
+                font_id: run.font_id,
+            });
+        }
+    }
+    clipped
 }
 
 #[cfg(feature = "font-kit")]
@@ -883,6 +1023,223 @@ mod tests {
             slot,
             font_id,
         }
+    }
+
+    const IBM_PLEX: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+
+    /// Every code point of `Bidi_Class=B`, each of which starts a new bidi
+    /// paragraph and so can split one line into mixed-direction paragraphs.
+    const SEPARATORS: &[char] = &[
+        '\u{000a}', '\u{000d}', '\u{001c}', '\u{001d}', '\u{001e}', '\u{0085}', '\u{2029}',
+    ];
+
+    fn text_system() -> Result<CosmicTextSystem> {
+        let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
+        text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
+        Ok(text_system)
+    }
+
+    fn layout_text(text_system: &CosmicTextSystem, text: &str) -> Result<LineLayout> {
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let runs = [FontRun {
+            len: text.len(),
+            font_id,
+        }];
+        Ok(text_system.layout_line(text, gpui::px(14.0), &runs))
+    }
+
+    /// Mirrors the original crash: mixed-direction text reaching the shaper
+    /// through `shape_text`, which only splits lines on `\n`.
+    #[test]
+    fn shape_text_with_mixed_direction_paragraphs() -> Result<()> {
+        let platform_text_system = Arc::new(text_system()?);
+        let text_system = Arc::new(gpui::TextSystem::new(platform_text_system));
+        let window_text_system = gpui::WindowTextSystem::new(text_system);
+
+        let text: SharedString = "first line\n\u{05d0}\u{001c}A".into();
+        let runs = [gpui::TextRun {
+            len: text.len(),
+            font: gpui::font("IBM Plex Sans"),
+            ..Default::default()
+        }];
+
+        let lines = window_text_system.shape_text(text, gpui::px(14.0), &runs, None, None)?;
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].len(), "\u{05d0}\u{001c}A".len());
+        assert!(lines[1].width() > Pixels::ZERO);
+        Ok(())
+    }
+
+    #[test]
+    fn layout_line_with_mixed_direction_paragraphs() -> Result<()> {
+        let text_system = text_system()?;
+
+        for separator in SEPARATORS {
+            for text in [
+                format!("\u{05d0}{separator}A"),
+                format!("A{separator}\u{05d0}"),
+            ] {
+                let layout = layout_text(&text_system, &text)?;
+
+                assert_eq!(layout.len, text.len(), "{text:?}");
+                assert!(layout.width > Pixels::ZERO, "{text:?}");
+                assert!(
+                    layout.runs.iter().any(|run| !run.glyphs.is_empty()),
+                    "{text:?}"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn layout_line_with_separators_at_line_edges() -> Result<()> {
+        let text_system = text_system()?;
+
+        for text in [
+            "\u{001c}",
+            "\u{001c}\u{001c}",
+            "\u{001c}\u{05d0}",
+            "\u{05d0}\u{001c}",
+            "\u{05d0}\u{001c}\u{001c}A",
+            "\u{001c}\u{05d0}\u{001c}A\u{001c}",
+        ] {
+            let layout = layout_text(&text_system, text)?;
+            assert_eq!(layout.len, text.len(), "{text:?}");
+        }
+
+        Ok(())
+    }
+
+    /// Glyph indices must stay absolute and positions ordered across segment
+    /// boundaries, otherwise cursor placement and hit testing desync. Uses
+    /// single-direction text so visual order matches logical order.
+    #[test]
+    fn layout_line_keeps_indices_and_positions_ordered_across_paragraphs() -> Result<()> {
+        let text_system = text_system()?;
+        let text = "ab\u{001c}cd\u{2029}ef";
+        let layout = layout_text(&text_system, text)?;
+
+        let glyphs: Vec<_> = layout.runs.iter().flat_map(|run| &run.glyphs).collect();
+        assert!(!glyphs.is_empty());
+
+        for glyph in &glyphs {
+            assert!(glyph.index < text.len(), "{:?}", glyph.index);
+            assert!(text.is_char_boundary(glyph.index), "{:?}", glyph.index);
+        }
+        for pair in glyphs.windows(2) {
+            assert!(pair[0].index < pair[1].index);
+            assert!(pair[0].position.x <= pair[1].position.x);
+        }
+
+        // Every segment contributes width, so the whole line is wider than its
+        // leading paragraph alone.
+        assert!(layout.width > layout_text(&text_system, "ab")?.width);
+        Ok(())
+    }
+
+    /// A font run boundary that does not line up with a paragraph boundary must
+    /// still be clipped to the right segments.
+    #[test]
+    fn layout_line_with_font_run_straddling_a_separator() -> Result<()> {
+        let text_system = text_system()?;
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let text = "ab\u{001c}\u{05d0}\u{05d1}";
+
+        // The run boundary falls inside the trailing RTL paragraph.
+        let runs = [
+            FontRun {
+                len: "ab\u{001c}\u{05d0}".len(),
+                font_id,
+            },
+            FontRun {
+                len: "\u{05d1}".len(),
+                font_id,
+            },
+        ];
+        let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
+
+        assert_eq!(layout.len, text.len());
+        assert!(layout.width > Pixels::ZERO);
+        Ok(())
+    }
+
+    /// Lines with no separator take the fast path and must be shaped exactly as
+    /// they were before paragraph splitting existed.
+    #[test]
+    fn layout_line_without_separators_takes_fast_path() -> Result<()> {
+        let text_system = text_system()?;
+
+        for text in [
+            "hello world",
+            "\u{05d0}\u{05d1}\u{05d2}",
+            "mixed \u{05d0}\u{05d1}",
+        ] {
+            assert!(!contains_paragraph_separator(text), "{text:?}");
+            let layout = layout_text(&text_system, text)?;
+            assert_eq!(layout.len, text.len(), "{text:?}");
+            assert!(layout.width > Pixels::ZERO, "{text:?}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn paragraph_separator_detection() {
+        for separator in SEPARATORS {
+            assert!(is_paragraph_separator(*separator), "{separator:?}");
+            assert!(contains_paragraph_separator(&format!("a{separator}b")));
+        }
+
+        for text in [
+            "",
+            "plain ascii",
+            "\u{05d0}",
+            "tab\there",
+            "emoji \u{1f600}",
+        ] {
+            assert!(!contains_paragraph_separator(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn font_runs_are_clipped_to_segment() {
+        let runs = [
+            FontRun {
+                len: 3,
+                font_id: fid(1),
+            },
+            FontRun {
+                len: 4,
+                font_id: fid(2),
+            },
+        ];
+
+        assert_eq!(clip_font_runs(&runs, 0..7).as_slice(), &runs);
+        assert_eq!(
+            clip_font_runs(&runs, 2..5).as_slice(),
+            &[
+                FontRun {
+                    len: 1,
+                    font_id: fid(1)
+                },
+                FontRun {
+                    len: 2,
+                    font_id: fid(2)
+                },
+            ]
+        );
+        assert_eq!(
+            clip_font_runs(&runs, 3..7).as_slice(),
+            &[FontRun {
+                len: 4,
+                font_id: fid(2)
+            }]
+        );
+        assert!(clip_font_runs(&runs, 5..5).is_empty());
     }
 
     #[test]
