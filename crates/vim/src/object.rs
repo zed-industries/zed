@@ -1833,7 +1833,9 @@ pub fn surrounding_markers(
 
 #[cfg(test)]
 mod test {
-    use editor::{Editor, EditorMode, MultiBuffer, test::editor_test_context::EditorTestContext};
+    use editor::{
+        Editor, EditorModeConfig, MultiBuffer, test::editor_test_context::EditorTestContext,
+    };
     use gpui::KeyBinding;
     use indoc::indoc;
     use text::Point;
@@ -3369,7 +3371,13 @@ mod test {
             // is handled automatically when simply using `VimTestContext::new`
             // but, since this is being set manually, the language isn't
             // automatically set.
-            let editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+            let editor = Editor::new(
+                EditorModeConfig::full(),
+                multi_buffer.clone(),
+                None,
+                window,
+                cx,
+            );
             let buffer_ids = multi_buffer
                 .read(cx)
                 .snapshot(cx)

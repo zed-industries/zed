@@ -212,7 +212,7 @@ impl Editor {
         _window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.lsp_data_enabled() || self.code_lens.is_none() {
+        if !self.lsp_data_enabled() || !self.code_lens_enabled() {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -237,7 +237,10 @@ impl Editor {
         }
 
         let project = project.downgrade();
-        self.refresh_code_lens_task = cx.spawn(async move |editor, cx| {
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        lsp_data.refresh_code_lens_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
@@ -328,7 +331,12 @@ impl Editor {
             .collect::<HashMap<_, _>>();
 
         let editor_handle = cx.entity().downgrade();
-        let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        let code_lens = lsp_data
+            .code_lens
+            .get_or_insert_with(CodeLensState::default);
         let old_blocks = code_lens.blocks.remove(&buffer_id).unwrap_or_default();
 
         let mut kept_blocks = Vec::new();
@@ -408,7 +416,12 @@ impl Editor {
             }
         }
 
-        let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        let code_lens = lsp_data
+            .code_lens
+            .get_or_insert_with(CodeLensState::default);
         if actions.is_empty() {
             code_lens.actions.remove(&buffer_id);
         } else {
@@ -434,7 +447,8 @@ impl Editor {
     }
 
     pub fn code_lens_enabled(&self) -> bool {
-        self.code_lens.is_some()
+        self.lsp_data()
+            .is_some_and(|lsp_data| lsp_data.code_lens.is_some())
     }
 
     pub fn toggle_code_lens_action(
@@ -443,7 +457,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let currently_enabled = self.code_lens.is_some();
+        let currently_enabled = self.code_lens_enabled();
         self.toggle_code_lens(!currently_enabled, window, cx);
     }
 
@@ -454,7 +468,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if enabled {
-            self.code_lens.get_or_insert_with(CodeLensState::default);
+            let Some(lsp_data) = self.lsp_data_mut() else {
+                return;
+            };
+            lsp_data
+                .code_lens
+                .get_or_insert_with(CodeLensState::default);
             self.refresh_code_lenses(None, window, cx);
         } else {
             self.clear_code_lenses(cx);
@@ -462,7 +481,7 @@ impl Editor {
     }
 
     pub(super) fn resolve_visible_code_lenses(&mut self, cx: &mut Context<Self>) {
-        if !self.lsp_data_enabled() || self.code_lens.is_none() {
+        if !self.lsp_data_enabled() || !self.code_lens_enabled() {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -478,8 +497,8 @@ impl Editor {
                 continue;
             };
             let Some(actions) = self
-                .code_lens
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                 .and_then(|state| state.actions.get(&buffer_id))
             else {
                 continue;
@@ -507,7 +526,12 @@ impl Editor {
             return;
         }
 
-        let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        let code_lens = lsp_data
+            .code_lens
+            .get_or_insert_with(CodeLensState::default);
         code_lens.resolve_task = cx.spawn(async move |editor, cx| {
             let mut resolves_in_progress = pending_resolves
                 .into_iter()
@@ -521,8 +545,8 @@ impl Editor {
                     .update(cx, |editor, cx| {
                         let snapshot = editor.buffer().read(cx).snapshot(cx);
                         let Some(mut actions) = editor
-                            .code_lens
-                            .as_ref()
+                            .lsp_data()
+                            .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                             .and_then(|state| state.actions.get(&buffer_id))
                             .cloned()
                         else {
@@ -539,7 +563,10 @@ impl Editor {
     }
 
     pub(super) fn clear_code_lenses(&mut self, cx: &mut Context<Self>) {
-        if let Some(code_lens) = self.code_lens.take() {
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        if let Some(code_lens) = lsp_data.code_lens.take() {
             let all_blocks = code_lens
                 .blocks
                 .into_values()
@@ -551,7 +578,9 @@ impl Editor {
             }
             cx.notify();
         }
-        self.refresh_code_lens_task = Task::ready(());
+        if let Some(lsp_data) = self.lsp_data_mut() {
+            lsp_data.refresh_code_lens_task = Task::ready(());
+        }
     }
 }
 
@@ -1024,8 +1053,8 @@ mod tests {
                 "initial fetch should render the server title"
             );
             editor
-                .code_lens
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                 .map(|s| {
                     s.blocks
                         .values()
@@ -1058,8 +1087,8 @@ mod tests {
                 "refreshed block should keep rendering the same title"
             );
             editor
-                .code_lens
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                 .map(|s| {
                     s.blocks
                         .values()
@@ -1137,8 +1166,8 @@ mod tests {
                 "resolve should fill the placeholder with the server title"
             );
             editor
-                .code_lens
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                 .map(|s| {
                     s.blocks
                         .values()
@@ -1172,8 +1201,8 @@ mod tests {
                     "refresh+resolve cycle should keep rendering the same title"
                 );
                 editor
-                    .code_lens
-                    .as_ref()
+                    .lsp_data()
+                    .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                     .map(|s| {
                         s.blocks
                             .values()
@@ -1577,8 +1606,8 @@ mod tests {
                 "code lens should be enabled"
             );
             let total_blocks: usize = editor
-                .code_lens
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                 .map(|s| s.blocks.values().map(|v| v.len()).sum())
                 .unwrap_or(0);
             assert_eq!(total_blocks, 1, "Should have one code lens block");
@@ -1664,8 +1693,8 @@ mod tests {
 
         cx.editor(|editor, _, _cx| {
             let total_blocks: usize = editor
-                .code_lens
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.code_lens.as_ref())
                 .map(|s| s.blocks.values().map(|v| v.len()).sum())
                 .unwrap_or(0);
             assert_eq!(
@@ -1833,8 +1862,8 @@ mod tests {
     fn code_lens_assertion_text(editor: &Editor, cx: &ui::App) -> String {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let mut blocks = editor
-            .code_lens
-            .as_ref()
+            .lsp_data()
+            .and_then(|lsp_data| lsp_data.code_lens.as_ref())
             .map(|state| state.blocks.values().flatten().collect::<Vec<_>>())
             .unwrap_or_default();
         blocks.sort_by_key(|block| block.anchor.to_point(&snapshot).row);

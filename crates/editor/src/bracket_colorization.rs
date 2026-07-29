@@ -396,7 +396,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DisplayPoint, EditorMode, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
+        DisplayPoint, EditorModeConfig, EditorSnapshot, MoveToBeginning, MoveToEnd, MoveUp,
         display_map::{DisplayRow, ToDisplayPoint},
         editor_tests::init_test,
         test::{
@@ -667,7 +667,7 @@ where
                         buffer.set_language(Some(rust_lang()), cx);
                     });
             });
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
         });
 
         cx.executor().advance_clock(Duration::from_millis(100));

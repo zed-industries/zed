@@ -1,5 +1,5 @@
 use editor::{
-    Editor, EditorMode, MultiBuffer,
+    Editor, EditorModeConfig, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
 use gpui::{AppContext as _, BenchAppContext, Focusable as _};
@@ -23,7 +23,7 @@ fn editor_multi_cursor_input(line_count: &usize, cx: &mut BenchAppContext) {
     let mut window = cx.add_empty_window();
     let editor = window.update(|window, cx| {
         let editor = cx.new(|cx| {
-            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            let mut editor = Editor::new(EditorModeConfig::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor.select_all(&SelectAll, window, cx);
             editor.split_selection_into_lines(
@@ -75,7 +75,7 @@ fn open_editor_with_one_long_line(cx: &mut BenchAppContext) {
         let mut window = cx.add_empty_window();
         window.update(|window, cx| {
             let editor = cx.new(|cx| {
-                let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                let mut editor = Editor::new(EditorModeConfig::full(), buffer, None, window, cx);
                 editor.set_style(editor::EditorStyle::default(), window, cx);
                 editor
             });
@@ -105,7 +105,7 @@ fn editor_render(cx: &mut BenchAppContext) {
     let mut window = cx.add_empty_window();
     let editor = window.update(|window, cx| {
         let editor = window.replace_root(cx, |window, cx| {
-            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            let mut editor = Editor::new(EditorModeConfig::full(), buffer, None, window, cx);
             editor.set_style(editor::EditorStyle::default(), window, cx);
             editor
         });

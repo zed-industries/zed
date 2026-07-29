@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, MinimapVisibility, MultiBuffer,
+    Bias, CompletionProvider, Editor, EditorEvent, EditorModeConfig, MinimapVisibility, MultiBuffer,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -486,7 +486,7 @@ impl DivInspector {
         cx.new(|cx| {
             let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
             let mut editor = Editor::new(
-                EditorMode::full(),
+                EditorModeConfig::full(),
                 multi_buffer,
                 Some(self.project.clone()),
                 window,

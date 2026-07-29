@@ -6,7 +6,8 @@ use editor::code_context_menus::CodeContextMenu;
 use editor::display_map::{CreaseId, EditorMargins};
 use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
-    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorModeConfig, EditorStyle,
+    MultiBuffer,
 };
 use fs::Fs;
 use gpui::{
@@ -1250,7 +1251,7 @@ impl PromptEditor<BufferCodegen> {
 
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
+                EditorModeConfig::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(Self::MAX_LINES as usize),
                 },
@@ -1404,7 +1405,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
+                EditorModeConfig::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(Self::MAX_LINES as usize),
                 },

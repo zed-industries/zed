@@ -13,7 +13,11 @@ impl Editor {
         _window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.lsp_data_enabled() || !self.use_document_folding_ranges {
+        if !self.lsp_data_enabled()
+            || !self
+                .lsp_data()
+                .is_some_and(|lsp_data| lsp_data.use_document_folding_ranges)
+        {
             return;
         }
         let Some(project) = self.project.as_ref().map(|p| p.downgrade()) else {
@@ -36,7 +40,10 @@ impl Editor {
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
-        self.refresh_folding_ranges_task = cx.spawn(async move |editor, cx| {
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        lsp_data.refresh_folding_ranges_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
@@ -80,7 +87,9 @@ impl Editor {
     }
 
     pub fn document_folding_ranges_enabled(&self, cx: &ui::App) -> bool {
-        self.use_document_folding_ranges && self.display_map.read(cx).has_lsp_folding_ranges()
+        self.lsp_data()
+            .is_some_and(|lsp_data| lsp_data.use_document_folding_ranges)
+            && self.display_map.read(cx).has_lsp_folding_ranges()
     }
 
     /// Removes LSP folding creases for buffers whose `lsp_folding_ranges`
@@ -91,7 +100,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.use_document_folding_ranges {
+        if !self
+            .lsp_data()
+            .is_some_and(|lsp_data| lsp_data.use_document_folding_ranges)
+        {
             return;
         }
 

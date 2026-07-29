@@ -91,7 +91,8 @@ impl Editor {
     }
 
     pub fn semantic_highlights_enabled(&self) -> bool {
-        self.semantic_token_state.enabled()
+        self.lsp_data()
+            .is_some_and(|lsp_data| lsp_data.semantic_token_state.enabled())
     }
 
     pub fn toggle_semantic_highlights(
@@ -100,15 +101,21 @@ impl Editor {
         _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        self.semantic_token_state.toggle_enabled();
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        lsp_data.semantic_token_state.toggle_enabled();
         self.invalidate_semantic_tokens(None);
         self.refresh_semantic_tokens(None, false, cx);
     }
 
     pub(super) fn invalidate_semantic_tokens(&mut self, for_buffer: Option<BufferId>) {
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
         match for_buffer {
-            Some(for_buffer) => self.semantic_token_state.invalidate_buffer(&for_buffer),
-            None => self.semantic_token_state.fetched_for_buffers.clear(),
+            Some(for_buffer) => lsp_data.semantic_token_state.invalidate_buffer(&for_buffer),
+            None => lsp_data.semantic_token_state.fetched_for_buffers.clear(),
         }
     }
 
@@ -118,7 +125,7 @@ impl Editor {
         server_refreshed: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
+        if !self.lsp_data_enabled() || !self.semantic_highlights_enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
                 match Arc::get_mut(&mut display_map.semantic_token_highlights) {
@@ -126,15 +133,18 @@ impl Editor {
                     None => display_map.semantic_token_highlights = Arc::new(Default::default()),
                 };
             });
-            self.semantic_token_state.update_task = Task::ready(());
+            if let Some(lsp_data) = self.lsp_data_mut() {
+                lsp_data.semantic_token_state.update_task = Task::ready(());
+            }
             cx.notify();
             return;
         }
 
         let mut invalidate_semantic_highlights_for_buffers = HashSet::default();
-        if server_refreshed {
+        if server_refreshed && let Some(lsp_data) = self.lsp_data_mut() {
             invalidate_semantic_highlights_for_buffers.extend(
-                self.semantic_token_state
+                lsp_data
+                    .semantic_token_state
                     .fetched_for_buffers
                     .drain()
                     .map(|(buffer_id, _)| buffer_id),
@@ -189,14 +199,13 @@ impl Editor {
             })
             .collect::<Vec<_>>()
         {
-            self.semantic_token_state
-                .invalidate_buffer(&buffer_with_disabled_tokens);
+            self.invalidate_semantic_tokens(Some(buffer_with_disabled_tokens));
             self.display_map.update(cx, |display_map, _| {
                 display_map.invalidate_semantic_highlights(buffer_with_disabled_tokens);
             });
         }
 
-        self.semantic_token_state.update_task = cx.spawn(async move |editor, cx| {
+        let update_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
                 .await;
@@ -205,10 +214,12 @@ impl Editor {
                     buffers_to_query
                         .into_iter()
                         .filter_map(|(buffer_id, buffer)| {
-                            let known_version = editor
-                                .semantic_token_state
-                                .fetched_for_buffers
-                                .get(&buffer_id);
+                            let known_version = editor.lsp_data().and_then(|lsp_data| {
+                                lsp_data
+                                    .semantic_token_state
+                                    .fetched_for_buffers
+                                    .get(&buffer_id)
+                            });
                             let query_version = buffer.read(cx).version();
                             if known_version.is_some_and(|known_version| {
                                 !query_version.changed_since(known_version)
@@ -231,11 +242,15 @@ impl Editor {
             editor
                 .update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, _| {
-                        for buffer_id in invalidate_semantic_highlights_for_buffers {
-                            display_map.invalidate_semantic_highlights(buffer_id);
-                            editor.semantic_token_state.invalidate_buffer(&buffer_id);
+                        for buffer_id in &invalidate_semantic_highlights_for_buffers {
+                            display_map.invalidate_semantic_highlights(*buffer_id);
                         }
                     });
+                    if let Some(lsp_data) = editor.lsp_data_mut() {
+                        for buffer_id in invalidate_semantic_highlights_for_buffers {
+                            lsp_data.semantic_token_state.invalidate_buffer(&buffer_id);
+                        }
+                    }
 
                     if all_semantic_tokens.is_empty() {
                         return;
@@ -262,7 +277,10 @@ impl Editor {
                             }
                         };
 
-                        match editor
+                        let Some(lsp_data) = editor.lsp_data_mut() else {
+                            continue;
+                        };
+                        match lsp_data
                             .semantic_token_state
                             .fetched_for_buffers
                             .entry(buffer_id)
@@ -339,6 +357,9 @@ impl Editor {
                 })
                 .ok();
         });
+        if let Some(lsp_data) = self.lsp_data_mut() {
+            lsp_data.semantic_token_state.update_task = update_task;
+        }
     }
 }
 
@@ -783,13 +804,23 @@ mod tests {
         cx.set_state("ˇfn main() {}");
         assert!(full_request.next().await.is_some());
 
-        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        let task = cx.update_editor(|e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         task.await;
 
         cx.set_state("ˇfn main() { a }");
         assert!(full_request.next().await.is_some());
 
-        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        let task = cx.update_editor(|e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         task.await;
         assert_eq!(
             extract_semantic_highlights(&cx.editor, &cx),
@@ -877,12 +908,22 @@ mod tests {
         // Initial request, for the empty buffer.
         cx.set_state("ˇfn main() {}");
         assert!(full_request.next().await.is_some());
-        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        let task = cx.update_editor(|e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         task.await;
 
         cx.set_state("ˇfn main() { a }");
         assert!(delta_request.next().await.is_some());
-        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        let task = cx.update_editor(|e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         task.await;
 
         assert_eq!(
@@ -1099,7 +1140,12 @@ mod tests {
             editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
         });
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         cx.run_until_parked();
         task.await;
 
@@ -1643,7 +1689,12 @@ mod tests {
 
         // Initial request.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         cx.run_until_parked();
         task.await;
         assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
@@ -1675,7 +1726,12 @@ mod tests {
 
         // Wait for semantic tokens to be re-fetched after expansion.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         cx.run_until_parked();
         task.await;
 
@@ -1829,7 +1885,12 @@ mod tests {
         let _rust_server = rust_server.next().await.unwrap();
 
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = bar_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = bar_editor.update_in(cx, |e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         cx.run_until_parked();
         task.await;
         cx.run_until_parked();
@@ -1939,7 +2000,12 @@ mod tests {
 
         // Wait for semantic tokens on the singleton.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = active_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = active_editor.update_in(cx, |e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         task.await;
         cx.run_until_parked();
 
@@ -2832,7 +2898,12 @@ mod tests {
         cx.set_state("ˇfn main() {}");
         assert!(full_request.next().await.is_some());
 
-        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        let task = cx.update_editor(|e, _, _| {
+            e.lsp_data_mut()
+                .unwrap()
+                .semantic_token_state
+                .take_update_task()
+        });
         task.await;
 
         cx.update_buffer(|buffer, cx| {

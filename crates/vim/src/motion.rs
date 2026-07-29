@@ -3410,7 +3410,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::{
-        Editor, EditorMode, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext,
+        Editor, EditorModeConfig, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext,
     };
     use gpui::KeyBinding;
     use indoc::indoc;
@@ -3592,7 +3592,7 @@ mod test {
                 }
             }
 
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
         });
 
         let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;

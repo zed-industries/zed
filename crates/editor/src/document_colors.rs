@@ -152,8 +152,8 @@ impl Editor {
             return;
         };
         if self
-            .colors
-            .as_ref()
+            .lsp_data()
+            .and_then(|lsp_data| lsp_data.colors.as_ref())
             .is_none_or(|colors| colors.render_mode == DocumentColorsRenderMode::None)
         {
             return;
@@ -173,7 +173,10 @@ impl Editor {
             .collect::<Vec<_>>();
 
         let project = project.downgrade();
-        self.refresh_colors_task = cx.spawn(async move |editor, cx| {
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        lsp_data.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
@@ -259,7 +262,10 @@ impl Editor {
             editor
                 .update(cx, |editor, cx| {
                     let mut colors_splice = InlaySplice::default();
-                    let Some(colors) = &mut editor.colors else {
+                    let Some(lsp_data) = editor.lsp_data_mut() else {
+                        return;
+                    };
+                    let Some(colors) = &mut lsp_data.colors else {
                         return;
                     };
                     let mut updated = false;
@@ -310,7 +316,7 @@ impl Editor {
                                                         .push(*existing_inlay_id);
 
                                                     let inlay = Inlay::color(
-                                                        post_inc(&mut editor.next_color_inlay_id),
+                                                        post_inc(&mut lsp_data.next_color_inlay_id),
                                                         new_range.start,
                                                         rgba_color,
                                                     );
@@ -324,7 +330,7 @@ impl Editor {
                                             }
                                             cmp::Ordering::Greater => {
                                                 let inlay = Inlay::color(
-                                                    post_inc(&mut editor.next_color_inlay_id),
+                                                    post_inc(&mut lsp_data.next_color_inlay_id),
                                                     new_range.start,
                                                     rgba_color,
                                                 );
@@ -338,7 +344,7 @@ impl Editor {
                                     }
                                     None => {
                                         let inlay = Inlay::color(
-                                            post_inc(&mut editor.next_color_inlay_id),
+                                            post_inc(&mut lsp_data.next_color_inlay_id),
                                             new_range.start,
                                             rgba_color,
                                         );

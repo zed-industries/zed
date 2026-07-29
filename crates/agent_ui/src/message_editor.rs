@@ -15,8 +15,9 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use editor::{
-    Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
+    Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent,
+    EditorModeConfig, EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot,
+    ToOffset,
     actions::{Copy, Cut, Paste},
     code_context_menus::CodeContextMenu,
     display_map::{CreaseId, CreaseSnapshot},
@@ -455,7 +456,7 @@ impl MessageEditor {
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
         placeholder: &str,
-        mode: EditorMode,
+        mode: EditorModeConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1673,10 +1674,15 @@ impl MessageEditor {
         })
     }
 
-    pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
+    pub fn set_mode(
+        &mut self,
+        mode: EditorModeConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.editor.update(cx, |editor, cx| {
-            if *editor.mode() != mode {
-                editor.set_mode(mode);
+            if editor.mode_config() != mode {
+                editor.set_mode(mode, window, cx);
                 cx.notify()
             }
         });
@@ -2252,7 +2258,7 @@ mod tests {
     use agent_client_protocol::schema::v1 as acp;
     use base64::Engine as _;
     use editor::{
-        AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
+        AnchorRangeExt as _, Editor, EditorModeConfig, MultiBufferOffset, SelectionEffects,
         actions::{Cut, Paste},
     };
 
@@ -2553,7 +2559,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -2653,7 +2659,7 @@ mod tests {
                     session_capabilities.clone(),
                     "Claude Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -2818,7 +2824,7 @@ mod tests {
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -2982,7 +2988,7 @@ mod tests {
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -3102,7 +3108,7 @@ mod tests {
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -3250,7 +3256,7 @@ mod tests {
                     session_capabilities.clone(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -3742,7 +3748,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -3842,7 +3848,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -3910,7 +3916,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -3962,7 +3968,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -4018,7 +4024,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -4075,7 +4081,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -4136,7 +4142,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -4282,7 +4288,7 @@ mod tests {
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
 
-        // Create a new `MessageEditor`. The `EditorMode::full()` has to be used
+        // Create a new `MessageEditor`. The `EditorModeConfig::full()` has to be used
         // to ensure we have a fixed viewport, so we can eventually actually
         // place the cursor outside of the visible area.
         let message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -4295,7 +4301,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::full(),
+                    EditorModeConfig::full(),
                     window,
                     cx,
                 )
@@ -4414,7 +4420,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -4492,7 +4498,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -4669,7 +4675,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -5080,7 +5086,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -5416,7 +5422,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
                     },
@@ -5538,7 +5544,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },
@@ -5713,7 +5719,7 @@ mod tests {
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
-                    EditorMode::AutoHeight {
+                    EditorModeConfig::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
                     },

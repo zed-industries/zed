@@ -3315,7 +3315,7 @@ mod test {
     // been set, panicking on `unwrap()`.
     #[gpui::test]
     async fn test_helix_motion_on_unrendered_editor(cx: &mut gpui::TestAppContext) {
-        use editor::{Editor, EditorMode, SelectionEffects};
+        use editor::{Editor, EditorModeConfig, SelectionEffects};
         use multi_buffer::{MultiBuffer, MultiBufferOffset};
 
         VimTestContext::init(cx);
@@ -3335,7 +3335,7 @@ mod test {
             use gpui::AppContext as _;
             let buffer = MultiBuffer::build_simple("one two three", cx);
             cx.new(|cx| {
-                let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                let mut editor = Editor::new(EditorModeConfig::full(), buffer, None, window, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([MultiBufferOffset(4)..MultiBufferOffset(4)])
                 });

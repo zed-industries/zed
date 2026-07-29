@@ -3604,11 +3604,15 @@ async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppC
     let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.update_editor(|editor, window, cx| {
-        editor.set_mode(EditorMode::Full {
-            scale_ui_elements_with_buffer_font_size: false,
-            show_active_line_background: false,
-            sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-        });
+        editor.set_mode(
+            EditorModeConfig::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+            },
+            window,
+            cx,
+        );
         editor
             .style(cx)
             .text
@@ -12887,7 +12891,7 @@ async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     });
 
     let editor2 = cx.new_window_entity(|window, cx| {
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     let mut cx = EditorTestContext::for_editor_in(editor2, &mut cx).await;
@@ -15636,7 +15640,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -15888,7 +15892,7 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
 
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -20033,7 +20037,7 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     let editor = workspace.update_in(cx, |_, window, cx| {
         cx.new(|cx| {
             Editor::new(
-                EditorMode::Full {
+                EditorModeConfig::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sizing_behavior: SizingBehavior::Default,
@@ -20193,7 +20197,7 @@ async fn test_completion_in_multibuffer_with_newest_selection_in_other_buffer(
     let editor = workspace.update_in(cx, |_, window, cx| {
         cx.new(|cx| {
             Editor::new(
-                EditorMode::Full {
+                EditorModeConfig::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sizing_behavior: SizingBehavior::Default,
@@ -26603,7 +26607,7 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -27207,8 +27211,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
+    let editor = cx.add_window(|window, cx| {
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
+    });
     editor
         .update(cx, |editor, _window, cx| {
             for (buffer, diff_base) in [
@@ -27311,8 +27316,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
+    let editor = cx.add_window(|window, cx| {
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
+    });
     editor
         .update(cx, |editor, _window, cx| {
             let diff = cx.new(|cx| {
@@ -29203,7 +29209,13 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::full(), multibuffer, Some(project), window, cx)
+        Editor::new(
+            EditorModeConfig::full(),
+            multibuffer,
+            Some(project),
+            window,
+            cx,
+        )
     });
     cx.run_until_parked();
 
@@ -30309,7 +30321,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -30319,7 +30331,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     editor.update_in(cx, |editor, window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.runnables.insert(
+        editor.runnable_data_mut().unwrap().insert(
             buffer.read(cx).remote_id(),
             3,
             buffer.read(cx).version(),
@@ -30331,7 +30343,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
                 context_range: BufferOffset(43)..BufferOffset(85),
             },
         );
-        editor.runnables.insert(
+        editor.runnable_data_mut().unwrap().insert(
             buffer.read(cx).remote_id(),
             8,
             buffer.read(cx).version(),
@@ -30420,7 +30432,7 @@ async fn test_toggle_code_actions_build_tasks_context_error_notifies(cx: &mut Te
         });
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.runnables.insert(
+        editor.runnable_data_mut().unwrap().insert(
             buffer.read(cx).remote_id(),
             0,
             buffer.read(cx).version(),
@@ -30539,7 +30551,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer.clone(),
             Some(project.clone()),
             window,
@@ -30676,7 +30688,7 @@ async fn test_folded_buffers_cleared_on_excerpts_removed(cx: &mut TestAppContext
 
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer.clone(),
             Some(project.clone()),
             window,
@@ -30773,7 +30785,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -30891,7 +30903,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -30943,7 +30955,13 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(
+            EditorModeConfig::full(),
+            multi_buffer.clone(),
+            None,
+            window,
+            cx,
+        );
 
         let buffer_ids = multi_buffer
             .read(cx)
@@ -31260,7 +31278,7 @@ async fn assert_highlighted_edits(
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
-        Editor::new(EditorMode::full(), buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
@@ -31466,7 +31484,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -31769,7 +31787,7 @@ async fn test_gutter_context_menu_anchor_in_multibuffer(cx: &mut TestAppContext)
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -31852,7 +31870,7 @@ async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
 
     let (first_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(first_buffer, cx),
             Some(project.clone()),
             window,
@@ -31883,7 +31901,7 @@ async fn test_breakpoint_after_save_as_existing_path(cx: &mut TestAppContext) {
 
     let (replacement_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(replacement_buffer, cx),
             Some(project.clone()),
             window,
@@ -31957,7 +31975,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -32128,7 +32146,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -32280,7 +32298,7 @@ impl BookmarkTestContext {
 
         let (editor, editor_cx) = cx.add_window_view(|window, cx| {
             Editor::new(
-                EditorMode::full(),
+                EditorModeConfig::full(),
                 MultiBuffer::build_from_buffer(buffer, cx),
                 Some(project.clone()),
                 window,
@@ -32728,7 +32746,7 @@ async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppConte
 
     editor.update(cx, |editor, _cx| {
         assert!(
-            editor.bookmark_store.is_none(),
+            editor.bookmark_store().is_none(),
             "Single-line editors should not have a bookmark store"
         );
     });
@@ -33927,7 +33945,7 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             buffer,
             Some(project.clone()),
             window,
@@ -33973,7 +33991,7 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -33986,9 +34004,9 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
     });
 
     editor.update_in(cx, |editor, _, cx| {
-        editor.blame = Some(
-            cx.new(|cx| GitBlame::new(editor.buffer.clone(), project.clone(), false, true, cx)),
-        );
+        let blame =
+            cx.new(|cx| GitBlame::new(editor.buffer.clone(), project.clone(), false, true, cx));
+        editor.mode.full_mut().unwrap().git_blame.blame = Some(blame);
         editor.show_blame_popover(
             buffer_id,
             &::git::blame::BlameEntry {
@@ -34012,8 +34030,16 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
             cx,
         );
 
-        assert!(editor.inline_blame_popover_show_task.is_some());
-        assert!(editor.inline_blame_popover.is_none());
+        assert!(
+            editor
+                .mode()
+                .full()
+                .unwrap()
+                .git_blame
+                .inline_blame_popover_show_task
+                .is_some()
+        );
+        assert!(editor.inline_blame_popover().is_none());
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -34023,8 +34049,16 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
     // Toggling a modal while the blame popover task is still pending should
     // clear both the task and any rendered popover.
     editor.update_in(cx, |editor, _, _| {
-        assert!(editor.inline_blame_popover.is_none());
-        assert!(editor.inline_blame_popover_show_task.is_none());
+        assert!(editor.inline_blame_popover().is_none());
+        assert!(
+            editor
+                .mode()
+                .full()
+                .unwrap()
+                .git_blame
+                .inline_blame_popover_show_task
+                .is_none()
+        );
     });
 }
 
@@ -37131,7 +37165,13 @@ async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_mult
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(
+            EditorModeConfig::full(),
+            multi_buffer.clone(),
+            None,
+            window,
+            cx,
+        );
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(vec![
                 Point::new(0, 19)..Point::new(0, 23),
@@ -37488,7 +37528,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -37664,47 +37704,59 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
 
     cx.set_state("line1\nline2ˇ");
     cx.update_editor(|e, window, cx| {
-        e.set_mode(EditorMode::SingleLine);
+        e.set_mode(EditorModeConfig::SingleLine, window, cx);
         assert!(!e.key_context(window, cx).contains("start_of_input"));
         assert!(e.key_context(window, cx).contains("end_of_input"));
     });
     cx.set_state("ˇline1\nline2");
     cx.update_editor(|e, window, cx| {
-        e.set_mode(EditorMode::SingleLine);
+        e.set_mode(EditorModeConfig::SingleLine, window, cx);
         assert!(e.key_context(window, cx).contains("start_of_input"));
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
     cx.set_state("line1ˇ\nline2");
     cx.update_editor(|e, window, cx| {
-        e.set_mode(EditorMode::SingleLine);
+        e.set_mode(EditorModeConfig::SingleLine, window, cx);
         assert!(!e.key_context(window, cx).contains("start_of_input"));
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
 
     cx.set_state("line1\nline2ˇ");
     cx.update_editor(|e, window, cx| {
-        e.set_mode(EditorMode::AutoHeight {
-            min_lines: 1,
-            max_lines: Some(4),
-        });
+        e.set_mode(
+            EditorModeConfig::AutoHeight {
+                min_lines: 1,
+                max_lines: Some(4),
+            },
+            window,
+            cx,
+        );
         assert!(!e.key_context(window, cx).contains("start_of_input"));
         assert!(e.key_context(window, cx).contains("end_of_input"));
     });
     cx.set_state("ˇline1\nline2");
     cx.update_editor(|e, window, cx| {
-        e.set_mode(EditorMode::AutoHeight {
-            min_lines: 1,
-            max_lines: Some(4),
-        });
+        e.set_mode(
+            EditorModeConfig::AutoHeight {
+                min_lines: 1,
+                max_lines: Some(4),
+            },
+            window,
+            cx,
+        );
         assert!(e.key_context(window, cx).contains("start_of_input"));
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
     cx.set_state("line1ˇ\nline2");
     cx.update_editor(|e, window, cx| {
-        e.set_mode(EditorMode::AutoHeight {
-            min_lines: 1,
-            max_lines: Some(4),
-        });
+        e.set_mode(
+            EditorModeConfig::AutoHeight {
+                min_lines: 1,
+                max_lines: Some(4),
+            },
+            window,
+            cx,
+        );
         assert!(!e.key_context(window, cx).contains("start_of_input"));
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
@@ -38654,7 +38706,7 @@ async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
             ],
             cx,
         );
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
@@ -38868,7 +38920,7 @@ async fn test_multibuffer_scroll_cursor_top_margin(cx: &mut TestAppContext) {
             ],
             cx,
         );
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
@@ -39778,7 +39830,7 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             cx.new(|cx| MultiBuffer::singleton(buffer_before_approval.clone(), cx)),
             Some(project.clone()),
             window,
@@ -39926,7 +39978,12 @@ async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppCont
     // Initially, no indicator should be present
     editor.update(cx, |editor, _cx| {
         assert!(
-            editor.gutter_diff_review_indicator.0.is_none(),
+            editor
+                .diff_review()
+                .unwrap()
+                .gutter_diff_review_indicator
+                .0
+                .is_none(),
             "Indicator should be None initially"
         );
     });
@@ -39987,7 +40044,12 @@ async fn test_diff_review_button_hidden_when_ai_disabled(cx: &mut TestAppContext
     // (The mouse_moved handler checks DisableAiSettings before creating the indicator)
     editor.update(cx, |editor, _cx| {
         assert!(
-            editor.gutter_diff_review_indicator.0.is_none(),
+            editor
+                .diff_review()
+                .unwrap()
+                .gutter_diff_review_indicator
+                .0
+                .is_none(),
             "Indicator should be None when AI is disabled"
         );
     });
@@ -40093,7 +40155,7 @@ fn add_test_comment(
 fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let key = test_hunk_key("");
@@ -40115,7 +40177,7 @@ fn test_review_comment_add_to_hunk(cx: &mut TestAppContext) {
 fn test_review_comments_are_per_hunk(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -40147,7 +40209,7 @@ fn test_review_comments_are_per_hunk(cx: &mut TestAppContext) {
 fn test_review_comment_remove(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let key = test_hunk_key("");
@@ -40170,7 +40232,7 @@ fn test_review_comment_remove(cx: &mut TestAppContext) {
 fn test_review_comment_update(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let key = test_hunk_key("");
@@ -40191,7 +40253,7 @@ fn test_review_comment_update(cx: &mut TestAppContext) {
 fn test_review_comment_take_all(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor: &mut Editor, _window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -40240,7 +40302,7 @@ fn test_review_comment_take_all(cx: &mut TestAppContext) {
 fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     // Show overlay
     editor
@@ -40252,7 +40314,11 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     // Verify overlay is shown
     editor
         .update(cx, |editor, _window, cx| {
-            assert!(!editor.diff_review_overlays.is_empty());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_some_and(|diff_review| !diff_review.diff_review_overlays.is_empty())
+            );
             assert_eq!(editor.diff_review_line_range(cx), Some((0, 0)));
             assert!(editor.diff_review_prompt_editor().is_some());
         })
@@ -40268,7 +40334,11 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
     // Verify overlay is dismissed
     editor
         .update(cx, |editor, _window, cx| {
-            assert!(editor.diff_review_overlays.is_empty());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_none_or(|diff_review| diff_review.diff_review_overlays.is_empty())
+            );
             assert_eq!(editor.diff_review_line_range(cx), None);
             assert!(editor.diff_review_prompt_editor().is_none());
         })
@@ -40279,7 +40349,7 @@ fn test_diff_review_overlay_show_and_dismiss(cx: &mut TestAppContext) {
 fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     // Show overlay
     editor
@@ -40291,7 +40361,11 @@ fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
     // Verify overlay is shown
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(!editor.diff_review_overlays.is_empty());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_some_and(|diff_review| !diff_review.diff_review_overlays.is_empty())
+            );
         })
         .unwrap();
 
@@ -40305,7 +40379,11 @@ fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
     // Verify overlay is dismissed
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_overlays.is_empty());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_none_or(|diff_review| diff_review.diff_review_overlays.is_empty())
+            );
         })
         .unwrap();
 }
@@ -40314,7 +40392,7 @@ fn test_diff_review_overlay_dismiss_via_cancel(cx: &mut TestAppContext) {
 fn test_diff_review_empty_comment_not_submitted(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     // Show overlay
     editor
@@ -40361,7 +40439,7 @@ fn test_diff_review_empty_comment_not_submitted(cx: &mut TestAppContext) {
 fn test_diff_review_inline_edit_flow(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     // Add a comment directly
     let comment_id = editor
@@ -40418,7 +40496,7 @@ fn test_orphaned_comments_are_cleaned_up(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| {
         let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\n", cx));
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     // Add a comment with an anchor on line 2
@@ -40461,7 +40539,7 @@ fn test_orphaned_comments_cleanup_called_on_buffer_edit(cx: &mut TestAppContext)
     let editor = cx.add_window(|window, cx| {
         let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\n", cx));
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     // Add a comment with an anchor on line 2
@@ -40504,7 +40582,7 @@ fn test_comments_stored_for_multiple_hunks(cx: &mut TestAppContext) {
 
     // This test verifies that comments can be stored for multiple different hunks
     // and that hunk_comment_count correctly identifies comments per hunk.
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor, _window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -40576,7 +40654,7 @@ fn test_same_hunk_detected_by_matching_keys(cx: &mut TestAppContext) {
 
     // This test verifies that hunk_keys_match correctly identifies when two
     // DiffHunkKeys refer to the same hunk (same file path and anchor point).
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor, _window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -40624,7 +40702,7 @@ fn test_overlay_comments_expanded_state(cx: &mut TestAppContext) {
 
     // This test verifies that set_diff_review_comments_expanded correctly
     // updates the expanded state of overlays.
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     // Show overlay
     editor
@@ -40637,7 +40715,7 @@ fn test_overlay_comments_expanded_state(cx: &mut TestAppContext) {
     editor
         .update(cx, |editor, _window, _cx| {
             assert!(
-                editor.diff_review_overlays[0].comments_expanded,
+                editor.diff_review().unwrap().diff_review_overlays[0].comments_expanded,
                 "Should be expanded by default"
             );
         })
@@ -40654,7 +40732,7 @@ fn test_overlay_comments_expanded_state(cx: &mut TestAppContext) {
     editor
         .update(cx, |editor, _window, _cx| {
             assert!(
-                !editor.diff_review_overlays[0].comments_expanded,
+                !editor.diff_review().unwrap().diff_review_overlays[0].comments_expanded,
                 "Should be collapsed after setting to false"
             );
         })
@@ -40671,7 +40749,7 @@ fn test_overlay_comments_expanded_state(cx: &mut TestAppContext) {
     editor
         .update(cx, |editor, _window, _cx| {
             assert!(
-                editor.diff_review_overlays[0].comments_expanded,
+                editor.diff_review().unwrap().diff_review_overlays[0].comments_expanded,
                 "Should be expanded after setting to true"
             );
         })
@@ -40686,7 +40764,7 @@ fn test_diff_review_multiline_selection(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| {
         let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\nline 4\nline 5\n", cx));
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     // Test showing overlay with a multi-line selection (lines 1-3, which are rows 0-2)
@@ -40699,7 +40777,11 @@ fn test_diff_review_multiline_selection(cx: &mut TestAppContext) {
     // Verify line range
     editor
         .update(cx, |editor, _window, cx| {
-            assert!(!editor.diff_review_overlays.is_empty());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_some_and(|diff_review| !diff_review.diff_review_overlays.is_empty())
+            );
             assert_eq!(editor.diff_review_line_range(cx), Some((0, 2)));
         })
         .unwrap();
@@ -40733,13 +40815,17 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
     let editor = cx.add_window(|window, cx| {
         let buffer = cx.new(|cx| Buffer::local("line 1\nline 2\nline 3\n", cx));
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        Editor::new(EditorModeConfig::full(), multi_buffer, None, window, cx)
     });
 
     // Initially no drag state
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_drag_state.is_none());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_none_or(|diff_review| diff_review.diff_review_drag_state.is_none())
+            );
         })
         .unwrap();
 
@@ -40753,9 +40839,10 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
     // Verify drag state is set
     editor
         .update(cx, |editor, window, cx| {
-            assert!(editor.diff_review_drag_state.is_some());
             let snapshot = editor.snapshot(window, cx);
             let range = editor
+                .diff_review()
+                .unwrap()
                 .diff_review_drag_state
                 .as_ref()
                 .unwrap()
@@ -40775,9 +40862,10 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
     // Verify drag state is updated
     editor
         .update(cx, |editor, window, cx| {
-            assert!(editor.diff_review_drag_state.is_some());
             let snapshot = editor.snapshot(window, cx);
             let range = editor
+                .diff_review()
+                .unwrap()
                 .diff_review_drag_state
                 .as_ref()
                 .unwrap()
@@ -40797,8 +40885,9 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
     // Verify drag state is cleared and overlay is shown
     editor
         .update(cx, |editor, _window, cx| {
-            assert!(editor.diff_review_drag_state.is_none());
-            assert!(!editor.diff_review_overlays.is_empty());
+            let diff_review = editor.diff_review().unwrap();
+            assert!(diff_review.diff_review_drag_state.is_none());
+            assert!(!diff_review.diff_review_overlays.is_empty());
             assert_eq!(editor.diff_review_line_range(cx), Some((1, 3)));
         })
         .unwrap();
@@ -40808,7 +40897,7 @@ fn test_diff_review_drag_state(cx: &mut TestAppContext) {
 fn test_diff_review_drag_cancel(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     // Start drag
     editor
@@ -40820,7 +40909,11 @@ fn test_diff_review_drag_cancel(cx: &mut TestAppContext) {
     // Verify drag state is set
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_drag_state.is_some());
+            assert!(
+                editor
+                    .diff_review()
+                    .is_some_and(|diff_review| diff_review.diff_review_drag_state.is_some())
+            );
         })
         .unwrap();
 
@@ -40834,8 +40927,10 @@ fn test_diff_review_drag_cancel(cx: &mut TestAppContext) {
     // Verify drag state is cleared and no overlay was created
     editor
         .update(cx, |editor, _window, _cx| {
-            assert!(editor.diff_review_drag_state.is_none());
-            assert!(editor.diff_review_overlays.is_empty());
+            assert!(editor.diff_review().is_none_or(|diff_review| {
+                diff_review.diff_review_drag_state.is_none()
+                    && diff_review.diff_review_overlays.is_empty()
+            }));
         })
         .unwrap();
 }
@@ -40846,7 +40941,7 @@ fn test_calculate_overlay_height(cx: &mut TestAppContext) {
 
     // This test verifies that calculate_overlay_height returns correct heights
     // based on comment count and expanded state.
-    let editor = cx.add_window(|window, cx| Editor::single_line(window, cx));
+    let editor = cx.add_window(|window, cx| Editor::multi_line(window, cx));
 
     _ = editor.update(cx, |editor, _window, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);

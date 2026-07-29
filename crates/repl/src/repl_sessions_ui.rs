@@ -317,7 +317,7 @@ mod tests {
 
     use async_trait::async_trait;
     use collections::HashMap;
-    use editor::EditorMode;
+    use editor::EditorModeConfig;
     use gpui::TestAppContext;
     use language::{
         Language, LanguageConfig, LanguageMatcher, LanguageName, ManifestName, Toolchain,
@@ -434,7 +434,7 @@ mod tests {
         cx.add_window(|window, cx| {
             let multi_buffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
             Editor::new(
-                EditorMode::full(),
+                EditorModeConfig::full(),
                 multi_buffer,
                 Some(project.clone()),
                 window,

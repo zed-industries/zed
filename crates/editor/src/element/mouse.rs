@@ -46,7 +46,10 @@ impl EditorElement {
         let valid_point = point_for_position.nearest_valid;
 
         // Update diff review drag state if we're dragging
-        if editor.diff_review_drag_state.is_some() {
+        if editor
+            .diff_review()
+            .is_some_and(|diff_review| diff_review.diff_review_drag_state.is_some())
+        {
             editor.update_diff_review_drag(valid_point.row(), window, cx);
         }
 
@@ -78,8 +81,10 @@ impl EditorElement {
             None
         };
 
-        if hovered_diff_hunk_row != editor.hovered_diff_hunk_row {
-            editor.hovered_diff_hunk_row = hovered_diff_hunk_row;
+        if let Some(diff_review) = editor.diff_review_mut()
+            && hovered_diff_hunk_row != diff_review.hovered_diff_hunk_row
+        {
+            diff_review.hovered_diff_hunk_row = hovered_diff_hunk_row;
             cx.notify();
         }
 
@@ -88,13 +93,11 @@ impl EditorElement {
         {
             let mouse_over_inline_blame = bounds.contains(&event.position);
             let mouse_over_popover = editor
-                .inline_blame_popover
-                .as_ref()
+                .inline_blame_popover()
                 .and_then(|state| state.popover_bounds)
                 .is_some_and(|bounds| bounds.contains(&event.position));
             let keyboard_grace = editor
-                .inline_blame_popover
-                .as_ref()
+                .inline_blame_popover()
                 .is_some_and(|state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
@@ -104,8 +107,7 @@ impl EditorElement {
             }
         } else {
             let keyboard_grace = editor
-                .inline_blame_popover
-                .as_ref()
+                .inline_blame_popover()
                 .is_some_and(|state| state.keyboard_grace);
             if !keyboard_grace {
                 editor.hide_blame_popover(false, cx);
@@ -122,12 +124,12 @@ impl EditorElement {
 
         let diff_review_indicator = if gutter_hovered && show_diff_review {
             let is_visible = editor
-                .gutter_diff_review_indicator
-                .0
+                .diff_review()
+                .and_then(|diff_review| diff_review.gutter_diff_review_indicator.0)
                 .is_some_and(|indicator| indicator.is_active);
 
-            if !is_visible {
-                editor
+            if !is_visible && let Some(diff_review) = editor.diff_review_mut() {
+                diff_review
                     .gutter_diff_review_indicator
                     .1
                     .get_or_insert_with(|| {
@@ -138,7 +140,9 @@ impl EditorElement {
 
                             this.update(cx, |this, cx| {
                                 if let Some(indicator) =
-                                    this.gutter_diff_review_indicator.0.as_mut()
+                                    this.diff_review_mut().and_then(|diff_review| {
+                                        diff_review.gutter_diff_review_indicator.0.as_mut()
+                                    })
                                 {
                                     indicator.is_active = true;
                                     cx.notify();
@@ -158,12 +162,16 @@ impl EditorElement {
                 is_active: is_visible,
             })
         } else {
-            editor.gutter_diff_review_indicator.1 = None;
+            if let Some(diff_review) = editor.diff_review_mut() {
+                diff_review.gutter_diff_review_indicator.1 = None;
+            }
             None
         };
 
-        if diff_review_indicator != editor.gutter_diff_review_indicator.0 {
-            editor.gutter_diff_review_indicator.0 = diff_review_indicator;
+        if let Some(diff_review) = editor.diff_review_mut()
+            && diff_review_indicator != diff_review.gutter_diff_review_indicator.0
+        {
+            diff_review.gutter_diff_review_indicator.0 = diff_review_indicator;
             cx.notify();
         }
 
@@ -835,7 +843,10 @@ impl EditorElement {
         cx: &mut Context<Editor>,
     ) {
         // Handle diff review drag completion
-        if editor.diff_review_drag_state.is_some() {
+        if editor
+            .diff_review()
+            .is_some_and(|diff_review| diff_review.diff_review_drag_state.is_some())
+        {
             editor.end_diff_review_drag(window, cx);
             cx.stop_propagation();
             return;
