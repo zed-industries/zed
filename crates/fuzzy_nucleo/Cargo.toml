@@ -13,9 +13,16 @@ path = "src/fuzzy_nucleo.rs"
 doctest = false
 
 [dependencies]
+fuzzy.workspace = true
 nucleo.workspace = true
 gpui.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-util = {workspace = true, features = ["test-support"]}
+criterion.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "match_benchmark"
+harness = false

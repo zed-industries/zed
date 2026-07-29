@@ -1,19 +1,10 @@
 use std::sync::Arc;
 
+use agent_settings::{AgentSettings, language_model_to_selection};
 use fs::Fs;
 use language_model::LanguageModel;
-use settings::{LanguageModelSelection, update_settings_file};
+use settings::{Settings as _, update_settings_file};
 use ui::App;
-
-fn language_model_to_selection(model: &Arc<dyn LanguageModel>) -> LanguageModelSelection {
-    LanguageModelSelection {
-        provider: model.provider_id().to_string().into(),
-        model: model.id().0.to_string(),
-        enable_thinking: false,
-        effort: None,
-        speed: None,
-    }
-}
 
 pub fn toggle_in_settings(
     model: Arc<dyn LanguageModel>,
@@ -21,7 +12,16 @@ pub fn toggle_in_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    let selection = language_model_to_selection(&model);
+    let current_user_selection = AgentSettings::get_global(cx)
+        .default_model
+        .as_ref()
+        .filter(|selection| {
+            selection.provider.0 == model.provider_id().0.as_ref()
+                && selection.model == model.id().0.as_ref()
+        })
+        .cloned();
+
+    let selection = language_model_to_selection(&model, current_user_selection.as_ref());
     update_settings_file(fs, cx, move |settings, _| {
         let agent = settings.agent.get_or_insert_default();
         if should_be_favorite {

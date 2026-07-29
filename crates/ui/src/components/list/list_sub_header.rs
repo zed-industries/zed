@@ -91,59 +91,54 @@ impl Component for ListSubHeader {
         ComponentScope::DataDisplay
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "A sub-header component for organizing list content into subsections with optional icons and end slots.",
-        )
+    fn description() -> &'static str {
+        "A sub-header component for organizing list content into subsections \
+        with optional icons and end slots."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic Sub-headers",
-                        vec![
-                            single_example(
-                                "Simple",
-                                ListSubHeader::new("Subsection").into_any_element(),
-                            ),
-                            single_example(
-                                "With Icon",
-                                ListSubHeader::new("Documents")
-                                    .left_icon(Some(IconName::File))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "With End Slot",
-                                ListSubHeader::new("Recent")
-                                    .end_slot(
-                                        Label::new("3").color(Color::Muted).into_any_element(),
-                                    )
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "States",
-                        vec![
-                            single_example(
-                                "Selected",
-                                ListSubHeader::new("Selected")
-                                    .toggle_state(true)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Inset",
-                                ListSubHeader::new("Inset Sub-header")
-                                    .inset(true)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic Sub-headers",
+                    vec![
+                        single_example(
+                            "Simple",
+                            ListSubHeader::new("Subsection").into_any_element(),
+                        ),
+                        single_example(
+                            "With Icon",
+                            ListSubHeader::new("Documents")
+                                .left_icon(Some(IconName::File))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With End Slot",
+                            ListSubHeader::new("Recent")
+                                .end_slot(Label::new("3").color(Color::Muted).into_any_element())
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Selected",
+                            ListSubHeader::new("Selected")
+                                .toggle_state(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Inset",
+                            ListSubHeader::new("Inset Sub-header")
+                                .inset(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

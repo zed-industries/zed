@@ -27,7 +27,6 @@ use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use project::{DisableAiSettings, Project};
 use request::DidChangeStatus;
-use semver::Version;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
 use std::{
@@ -512,8 +511,14 @@ impl Copilot {
             };
         }
 
-        if let Ok(oauth_token) = env::var(copilot_chat::COPILOT_OAUTH_ENV_VAR) {
-            env.insert(copilot_chat::COPILOT_OAUTH_ENV_VAR.to_string(), oauth_token);
+        for env_var in [
+            copilot_chat::COPILOT_OAUTH_ENV_VAR,
+            copilot_chat::GITHUB_COPILOT_OAUTH_ENV_VAR,
+        ] {
+            if let Ok(oauth_token) = env::var(env_var) {
+                env.insert(env_var.to_string(), oauth_token);
+                break;
+            }
         }
 
         if env.is_empty() { None } else { Some(env) }
@@ -567,17 +572,11 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
-            let node_path = node_runtime.binary_path().await?;
-            ensure_node_version_for_copilot(&node_path).await?;
+            let server_path = get_copilot_lsp(fs, node_runtime).await?;
 
-            let arguments: Vec<OsString> = vec![
-                "--experimental-sqlite".into(),
-                server_path.into(),
-                "--stdio".into(),
-            ];
+            let arguments: Vec<OsString> = vec!["--stdio".into()];
             let binary = LanguageServerBinary {
-                path: node_path,
+                path: server_path,
                 arguments,
                 env,
             };
@@ -1266,6 +1265,7 @@ impl Copilot {
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
                     cx.emit(Event::CopilotAuthSignedIn);
+                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -1285,6 +1285,7 @@ impl Copilot {
                         };
                     }
                     cx.emit(Event::CopilotAuthSignedOut);
+                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
@@ -1388,50 +1389,21 @@ fn notify_did_change_config_to_server(
     Ok(())
 }
 
+/// Notify Copilot Chat after the Copilot LSP reports an auth state change.
+/// This replaces watching the SDK's token files, which is unreliable for
+/// SQLite backed auth because writes may go through WAL files.
+fn notify_copilot_chat_auth_changed(cx: &mut Context<Copilot>) {
+    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+        copilot_chat.update(cx, |chat, cx| chat.reload_auth(cx));
+    }
+}
+
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
 }
 
 async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
-}
-
-async fn ensure_node_version_for_copilot(node_path: &Path) -> anyhow::Result<()> {
-    const MIN_COPILOT_NODE_VERSION: Version = Version::new(20, 8, 0);
-
-    log::info!("Checking Node.js version for Copilot at: {:?}", node_path);
-
-    let output = util::command::new_command(node_path)
-        .arg("--version")
-        .output()
-        .await
-        .with_context(|| format!("checking Node.js version at {:?}", node_path))?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "failed to run node --version for Copilot. stdout: {}, stderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-
-    let version_str = String::from_utf8_lossy(&output.stdout);
-    let version = Version::parse(version_str.trim().trim_start_matches('v'))
-        .with_context(|| format!("parsing Node.js version from '{}'", version_str.trim()))?;
-
-    if version < MIN_COPILOT_NODE_VERSION {
-        anyhow::bail!(
-            "GitHub Copilot language server requires Node.js {MIN_COPILOT_NODE_VERSION} or later, but found {version}. \
-            Please update your Node.js version or configure a different Node.js path in settings."
-        );
-    }
-
-    log::info!(
-        "Node.js version {} meets Copilot requirements (>= {})",
-        version,
-        MIN_COPILOT_NODE_VERSION
-    );
-    Ok(())
 }
 
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
@@ -1443,27 +1415,59 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
         .npm_package_latest_version(PACKAGE_NAME)
         .await?;
     let server_path = paths::copilot_dir().join(SERVER_PATH);
+    let binary_path = copilot_lsp_native_binary_path()?;
 
     fs.create_dir(paths::copilot_dir()).await?;
 
-    let should_install = node_runtime
-        .should_install_npm_package(
-            PACKAGE_NAME,
-            &server_path,
-            paths::copilot_dir(),
-            VersionStrategy::Latest(&latest_version),
-        )
-        .await;
+    let should_install = !fs.is_file(&binary_path).await
+        || node_runtime
+            .should_install_npm_package(
+                PACKAGE_NAME,
+                &server_path,
+                paths::copilot_dir(),
+                VersionStrategy::Latest(&latest_version),
+            )
+            .await;
     if should_install {
         node_runtime
-            .npm_install_packages(
-                paths::copilot_dir(),
-                &[(PACKAGE_NAME, &latest_version.to_string())],
-            )
+            .npm_install_latest_packages(paths::copilot_dir(), &[PACKAGE_NAME])
             .await?;
     }
 
-    Ok(server_path)
+    if fs.is_file(&binary_path).await {
+        return Ok(binary_path);
+    }
+
+    anyhow::bail!("GitHub Copilot native language server binary was not installed")
+}
+
+fn copilot_lsp_native_binary_path() -> anyhow::Result<PathBuf> {
+    let platform = match env::consts::OS {
+        "linux" => "linux",
+        "macos" => "darwin",
+        "windows" => "win32",
+        platform => anyhow::bail!("unsupported Copilot language server platform: {platform}"),
+    };
+    let architecture = match env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        architecture => {
+            anyhow::bail!("unsupported Copilot language server architecture: {architecture}")
+        }
+    };
+
+    let package_name = format!("copilot-language-server-{platform}-{architecture}");
+
+    let executable_name = if cfg!(target_os = "windows") {
+        "copilot-language-server.exe"
+    } else {
+        "copilot-language-server"
+    };
+    Ok(paths::copilot_dir()
+        .join("node_modules")
+        .join("@github")
+        .join(package_name)
+        .join(executable_name))
 }
 
 #[cfg(test)]

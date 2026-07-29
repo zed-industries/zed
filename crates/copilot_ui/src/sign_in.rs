@@ -6,9 +6,10 @@ use copilot::{
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window, WindowBounds, WindowOptions, div, point,
+    Subscription, TaskExt, Window, WindowBounds, WindowOptions, div, point,
 };
 use project::project_settings::ProjectSettings;
+use release_channel::ReleaseChannel;
 use settings::Settings as _;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
@@ -37,7 +38,7 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
+                        workspace.show_error(format!("Error: {err}"), cx);
                     })
                 } else {
                     log::error!("{:?}", err);
@@ -55,22 +56,25 @@ pub fn reinstall_and_sign_in(copilot: Entity<Copilot>, window: &mut Window, cx: 
 
 fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Window, cx: &mut App) {
     let current_window_center = window.bounds().center();
-    let height = px(450.);
-    let width = px(350.);
+    let width = px(450.);
+    let height = px(350.);
     let window_bounds = WindowBounds::Windowed(gpui::bounds(
-        current_window_center - point(height / 2.0, width / 2.0),
-        gpui::size(height, width),
+        current_window_center - point(width / 2.0, height / 2.0),
+        gpui::size(width, height),
     ));
+    let app_id = ReleaseChannel::global(cx).app_id();
     cx.open_window(
         WindowOptions {
-            kind: gpui::WindowKind::PopUp,
+            kind: gpui::WindowKind::Floating,
             window_bounds: Some(window_bounds),
             is_resizable: false,
             is_movable: true,
             titlebar: Some(gpui::TitlebarOptions {
+                title: Some("Use GitHub Copilot in Zed".into()),
                 appears_transparent: true,
                 ..Default::default()
             }),
+            app_id: Some(app_id.to_owned()),
             ..Default::default()
         },
         |window, cx| cx.new(|cx| CopilotCodeVerification::new(&copilot, window, cx)),
@@ -466,6 +470,10 @@ pub struct ConfigurationView {
     copilot_status: Option<Status>,
     is_authenticated: Box<dyn Fn(&mut App) -> bool + 'static>,
     edit_prediction: bool,
+    /// When `true`, renders a compact control suitable for an inline settings
+    /// row: no explanatory labels (those live in the row's left column) and
+    /// content-sized buttons instead of full-width ones.
+    compact: bool,
     _subscription: Option<Subscription>,
 }
 
@@ -487,6 +495,7 @@ impl ConfigurationView {
             copilot_status: copilot.as_ref().map(|copilot| copilot.0.read(cx).status()),
             is_authenticated: Box::new(is_authenticated),
             edit_prediction: matches!(mode, ConfigurationMode::EditPrediction),
+            compact: false,
             _subscription: copilot.as_ref().map(|copilot| {
                 cx.observe(&copilot.0, |this, model, cx| {
                     this.copilot_status = Some(model.read(cx).status());
@@ -494,6 +503,14 @@ impl ConfigurationView {
                 })
             }),
         }
+    }
+
+    /// Renders the view compactly for an inline settings row (no labels,
+    /// content-sized buttons). The explanatory copy is expected to be shown
+    /// elsewhere (e.g. the row's left column).
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
     }
 }
 
@@ -535,46 +552,35 @@ impl ConfigurationView {
         label: impl Into<SharedString>,
         edit_prediction: bool,
     ) -> impl IntoElement {
-        ButtonLike::new("loading_button")
+        Button::new("loading_button", label)
+            .map(|this| {
+                if edit_prediction || self.compact {
+                    this.size(ButtonSize::Medium)
+                } else {
+                    this.full_width()
+                }
+            })
             .disabled(true)
+            .loading(true)
             .style(ButtonStyle::Outlined)
-            .when(edit_prediction, |this| this.size(ButtonSize::Medium))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .justify_center()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(4),
-                    )
-                    .child(Label::new(label)),
-            )
     }
 
     fn render_sign_in_button(&self, edit_prediction: bool) -> impl IntoElement {
         let label = if edit_prediction {
             "Sign in to GitHub"
         } else {
-            "Sign in to use GitHub Copilot"
+            "Sign In"
         };
 
         Button::new("sign_in", label)
             .map(|this| {
-                if edit_prediction {
+                if edit_prediction || self.compact {
                     this.size(ButtonSize::Medium)
                 } else {
                     this.full_width()
                 }
             })
             .style(ButtonStyle::Outlined)
-            .start_icon(
-                Icon::new(IconName::Github)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .when(edit_prediction, |this| this.tab_index(0isize))
             .on_click(|_, window, cx| {
                 let app_state = AppState::global(cx);
@@ -593,7 +599,7 @@ impl ConfigurationView {
 
         Button::new("reinstall_and_sign_in", label)
             .map(|this| {
-                if edit_prediction {
+                if edit_prediction || self.compact {
                     this.size(ButtonSize::Medium)
                 } else {
                     this.full_width()
@@ -667,31 +673,32 @@ impl ConfigurationView {
         let start_label = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
         let no_status_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different LLM provider.";
 
-        if let Some(msg) = self.loading_message() {
-            v_flex()
-                .gap_2()
-                .child(Label::new(start_label))
-                .child(self.render_loading_button(msg, false))
-                .into_any_element()
+        let (label, button) = if let Some(msg) = self.loading_message() {
+            (
+                start_label,
+                self.render_loading_button(msg, false).into_any_element(),
+            )
         } else if self.is_error() {
-            v_flex()
-                .gap_2()
-                .child(Label::new(ERROR_LABEL))
-                .child(self.render_reinstall_button(false))
-                .into_any_element()
+            (
+                ERROR_LABEL,
+                self.render_reinstall_button(false).into_any_element(),
+            )
         } else if self.has_no_status() {
-            v_flex()
-                .gap_2()
-                .child(Label::new(no_status_label))
-                .child(self.render_sign_in_button(false))
-                .into_any_element()
+            (
+                no_status_label,
+                self.render_sign_in_button(false).into_any_element(),
+            )
         } else {
-            v_flex()
-                .gap_2()
-                .child(Label::new(start_label))
-                .child(self.render_sign_in_button(false))
-                .into_any_element()
-        }
+            (
+                start_label,
+                self.render_sign_in_button(false).into_any_element(),
+            )
+        };
+
+        v_flex()
+            .gap_2()
+            .when(!self.compact, |this| this.child(Label::new(label)))
+            .child(button)
     }
 }
 
@@ -700,13 +707,15 @@ impl Render for ConfigurationView {
         let is_authenticated = &self.is_authenticated;
 
         if is_authenticated(cx) {
-            return ConfiguredApiCard::new("Authorized")
+            let sign_out = |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                if let Some(auth) = GlobalCopilotAuth::try_global(cx) {
+                    initiate_sign_out(auth.0.clone(), window, cx);
+                }
+            };
+
+            return ConfiguredApiCard::new("copilot-authorized", "Authorized")
                 .button_label("Sign Out")
-                .on_click(|_, window, cx| {
-                    if let Some(auth) = GlobalCopilotAuth::try_global(cx) {
-                        initiate_sign_out(auth.0.clone(), window, cx);
-                    }
-                })
+                .on_click(sign_out)
                 .into_any_element();
         }
 

@@ -27,7 +27,7 @@ wasmtime::component::bindgen!({
         "zed:extension/http-client": latest::zed::extension::http_client,
         "zed:extension/lsp": since_v0_6_0::zed::extension::lsp,
         "zed:extension/nodejs": latest::zed::extension::nodejs,
-        "zed:extension/platform": latest::zed::extension::platform,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
         "zed:extension/process": latest::zed::extension::process,
         "zed:extension/slash-command": latest::zed::extension::slash_command,
     },

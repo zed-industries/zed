@@ -99,19 +99,17 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
+                    ShellKind::Fish | ShellKind::Posix => {
+                        combined_command.insert_str(0, "exec </dev/null; ");
                     }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
+                    ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
                     | ShellKind::Elvish => {
                         combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
+                        combined_command.push_str("\n) </dev/null");
                     }
                     ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
@@ -145,19 +143,17 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
+                    ShellKind::Fish | ShellKind::Posix => {
+                        combined_command.insert_str(0, "exec </dev/null; ");
                     }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
+                    ShellKind::Nushell
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
                     | ShellKind::Xonsh
                     | ShellKind::Elvish => {
                         combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
+                        combined_command.push_str("\n) </dev/null");
                     }
                     ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
@@ -273,7 +269,7 @@ mod test {
             .build(Some("echo".into()), &["nothing".to_string()]);
 
         assert_eq!(program, "nu");
-        assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "(echo nothing\n) </dev/null"]);
     }
 
     #[test]
@@ -286,7 +282,41 @@ mod test {
             .build(Some("echo".into()), &["test".to_string()]);
 
         assert_eq!(program, "fish");
-        assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "exec </dev/null; echo test"]);
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_preserves_heredoc() {
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let command = "cat <<EOF\nhello\nEOF";
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some(command.into()), &[]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(
+            args,
+            vec!["-i", "-c", "exec </dev/null; cat <<EOF\nhello\nEOF"]
+        );
+    }
+
+    #[test]
+    fn non_interactive_omits_interactive_flag() {
+        // Headless hosts (e.g. the eval CLI) build the agent's shell command
+        // non-interactively so it works without a controlling TTY.
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false).non_interactive();
+
+        let (program, args) = shell_builder.build(Some("echo hello".into()), &[]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(args, vec!["-c", "echo hello"]);
+        assert!(
+            !args.iter().any(|arg| arg == "-i"),
+            "non-interactive shell command must not include `-i`"
+        );
     }
 
     #[test]

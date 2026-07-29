@@ -446,7 +446,8 @@ impl DebugAdapter for GoDebugAdapter {
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-        let dlv_path = adapter_path.join("dlv");
+        let dlv_binary = format!("dlv{}", consts::EXE_SUFFIX);
+        let dlv_path = adapter_path.join(&dlv_binary);
 
         let delve_path = if let Some(path) = user_installed_path {
             path.to_string_lossy().into_owned()
@@ -477,7 +478,10 @@ impl DebugAdapter for GoDebugAdapter {
                 );
             }
 
-            adapter_path.join("dlv").to_string_lossy().into_owned()
+            adapter_path
+                .join(&dlv_binary)
+                .to_string_lossy()
+                .into_owned()
         };
 
         let cwd = Some(

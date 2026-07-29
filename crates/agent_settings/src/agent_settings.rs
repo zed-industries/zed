@@ -1,28 +1,35 @@
 mod agent_profile;
+mod user_agents_md;
 
+use std::cmp::Ordering::{Equal, Greater, Less};
+use std::fmt;
 use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock};
 
-use agent_client_protocol::ModelId;
+use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
-use gpui::{App, Pixels, px};
+use futures::channel::oneshot;
+use gpui::{App, Pixels, SharedString, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
+    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file,
+    update_settings_file, update_settings_file_with_completion,
 };
+use util::ResultExt as _;
 
 pub use crate::agent_profile::*;
+pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
     include_str!("prompts/summarize_thread_detailed_prompt.txt");
+pub const COMPACTION_PROMPT: &str = include_str!("prompts/compaction_prompt.txt");
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PanelLayout {
@@ -132,6 +139,68 @@ impl WindowLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AutoCompactThreshold {
+    /// Compact once the context window is at least this full, as a fraction in
+    /// the range `(0.0, 1.0]`.
+    Percentage(f64),
+    /// Compact once at least this many tokens have been used.
+    TokensUsed(u64),
+    /// Compact once fewer than this many tokens remain in the context window.
+    TokensRemaining(u64),
+}
+
+impl AutoCompactThreshold {
+    /// The threshold used when none is configured, or when the configured value
+    /// is invalid (90% of the context window).
+    pub const DEFAULT: Self = Self::Percentage(0.9);
+}
+
+impl fmt::Display for AutoCompactThreshold {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Percentage(percent) => write!(formatter, "{}%", percent * 100.0),
+            Self::TokensUsed(tokens) => write!(formatter, "{tokens}"),
+            Self::TokensRemaining(tokens) => write!(formatter, "-{tokens}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoCompactSettings {
+    pub enabled: bool,
+    pub threshold: AutoCompactThreshold,
+}
+
+fn parse_auto_compact_threshold(raw: &str) -> anyhow::Result<AutoCompactThreshold> {
+    let trimmed = raw.trim();
+    if let Some(percent) = trimmed.strip_suffix('%') {
+        let value: f64 = percent
+            .trim_end()
+            .parse()
+            .with_context(|| format!("invalid auto_compact threshold percentage {raw:?}"))?;
+        anyhow::ensure!(
+            value > 0.0 && value <= 100.0,
+            "auto_compact threshold percentage must be between 0% and 100%, got {raw:?}"
+        );
+        Ok(AutoCompactThreshold::Percentage(value / 100.0))
+    } else {
+        let tokens: i64 = trimmed.parse().with_context(|| {
+            format!(
+                "invalid auto_compact threshold {raw:?}; \
+                 expected a percentage like \"90%\" or an integer number of tokens"
+            )
+        })?;
+        match tokens.cmp(&0) {
+            Greater => Ok(AutoCompactThreshold::TokensUsed(tokens as u64)),
+            Less => Ok(AutoCompactThreshold::TokensRemaining(tokens.unsigned_abs())),
+            Equal => {
+                anyhow::bail!("auto_compact threshold of 0 is not valid")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, RegisterSetting)]
 pub struct AgentSettings {
     pub enabled: bool,
@@ -141,12 +210,16 @@ pub struct AgentSettings {
     pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub max_content_width: Pixels,
+    pub max_content_width: Option<Pixels>,
     pub default_model: Option<LanguageModelSelection>,
+    pub subagent_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_include_project_rules: bool,
+    pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
+    pub compaction_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
@@ -156,9 +229,11 @@ pub struct AgentSettings {
     pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
+    pub auto_compact: AutoCompactSettings,
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
+    pub terminal_init_command: Option<String>,
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
@@ -166,7 +241,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
-    pub new_thread_location: NewThreadLocation,
+    pub sandbox_permissions: SandboxPermissions,
 }
 
 impl AgentSettings {
@@ -203,13 +278,54 @@ impl AgentSettings {
         self.message_editor_min_lines * 2
     }
 
-    pub fn favorite_model_ids(&self) -> HashSet<ModelId> {
+    pub fn favorite_model_ids(&self) -> HashSet<SharedString> {
         self.favorite_models
             .iter()
-            .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
+            .map(|sel| SharedString::from(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
+}
 
+pub fn language_model_to_selection(
+    model: &Arc<dyn LanguageModel>,
+    override_selection: Option<&LanguageModelSelection>,
+) -> LanguageModelSelection {
+    let provider = model.provider_id().0.to_string().into();
+    let model_name = model.id().0.to_string();
+    match override_selection {
+        Some(current) => LanguageModelSelection {
+            provider,
+            model: model_name,
+            enable_thinking: current.enable_thinking && model.supports_thinking(),
+            effort: current
+                .effort
+                .clone()
+                .filter(|value| {
+                    model
+                        .supported_effort_levels()
+                        .iter()
+                        .any(|level| level.value.as_ref() == value.as_str())
+                })
+                .or_else(|| {
+                    model
+                        .default_effort_level()
+                        .map(|effort| effort.value.to_string())
+                }),
+            speed: current.speed.filter(|_| model.supports_fast_mode()),
+        },
+        None => LanguageModelSelection {
+            provider,
+            model: model_name,
+            enable_thinking: model.supports_thinking(),
+            effort: model
+                .default_effort_level()
+                .map(|effort| effort.value.to_string()),
+            speed: None,
+        },
+    }
+}
+
+impl AgentSettings {
     pub fn get_layout(cx: &App) -> WindowLayout {
         let store = cx.global::<SettingsStore>();
         let merged = store.merged_settings();
@@ -242,26 +358,30 @@ impl AgentSettings {
         });
     }
 
-    pub fn set_layout(layout: WindowLayout, fs: Arc<dyn Fs>, cx: &App) {
+    pub fn set_layout(
+        layout: WindowLayout,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let merged = PanelLayout::read_from(cx.global::<SettingsStore>().merged_settings());
 
         match layout {
             WindowLayout::Agent(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::AGENT.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Editor(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Agent(Some(saved))
             | WindowLayout::Editor(Some(saved))
             | WindowLayout::Custom(saved) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     saved.write_to(settings);
-                });
+                })
             }
         }
     }
@@ -285,6 +405,59 @@ impl std::fmt::Display for AgentProfileId {
 impl Default for AgentProfileId {
     fn default() -> Self {
         Self("write".into())
+    }
+}
+
+/// Persistent "allow always" sandbox grants for agent-run terminal commands.
+///
+/// Coverage decisions for these grants are made in
+/// `agent::sandboxing::ThreadSandboxGrants::covers_with_persistent`, which
+/// combines them with the in-memory per-thread grants. `write_paths` are
+/// stored as minimal, lexically-normalized subtrees (see
+/// [`compile_sandbox_permissions`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SandboxPermissions {
+    /// Allow sandboxed commands to reach any host over the network.
+    pub allow_all_hosts: bool,
+    /// Hosts sandboxed commands may always reach, in canonical form (exact
+    /// hostnames or leading-`*.` subdomain wildcards). Parsed/validated where
+    /// consumed (`agent::sandboxing`).
+    pub network_hosts: Vec<String>,
+    pub allow_fs_write_all: bool,
+    /// Persistently run agent terminal commands outside the OS sandbox. This is
+    /// the model-facing "off switch": when set, the sandboxed terminal tool is
+    /// not exposed and the system prompt omits the sandbox section, so the
+    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
+    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
+    /// approved "once" or "for this thread", which keeps the sandboxed
+    /// tool/prompt in place — see `agent::sandboxing`.
+    pub allow_unsandboxed: bool,
+    /// Directory subtree grants, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved.
+    pub write_paths: Vec<settings::GrantedWritePath>,
+    /// Whether sandbox escalation prompts warn about domains or write paths
+    /// that contain potentially confusable Unicode characters (homoglyphs,
+    /// invisible characters, or bidirectional overrides). Enabled by default.
+    pub warn_confusable_unicode: bool,
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem, whose sandbox-integrity guarantees
+    /// are weaker than a distro-native filesystem. Enabled by default.
+    pub warn_ntfs_grants: bool,
+}
+
+impl Default for SandboxPermissions {
+    fn default() -> Self {
+        Self {
+            allow_all_hosts: false,
+            network_hosts: Vec::new(),
+            allow_fs_write_all: false,
+            allow_unsandboxed: false,
+            write_paths: Vec::new(),
+            // The confusable-Unicode warning is a safety net, so it defaults on.
+            warn_confusable_unicode: true,
+            // The weaker-guarantee warning for Windows-hosted grants defaults on.
+            warn_ntfs_grants: true,
+        }
     }
 }
 
@@ -588,15 +761,25 @@ impl Settings for AgentSettings {
             sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
-            max_content_width: px(agent.max_content_width.unwrap()),
+            max_content_width: if agent.limit_content_width.unwrap() {
+                Some(px(agent.max_content_width.unwrap()))
+            } else {
+                None
+            },
             flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
+            subagent_model: agent.subagent_model,
             inline_assistant_model: agent.inline_assistant_model,
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
+            commit_message_include_project_rules: agent
+                .commit_message_include_project_rules
+                .unwrap(),
             commit_message_model: agent.commit_message_model,
+            commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
+            compaction_model: agent.compaction_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
@@ -611,9 +794,22 @@ impl Settings for AgentSettings {
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
+            auto_compact: {
+                let auto_compact = agent.auto_compact.unwrap();
+                let threshold = parse_auto_compact_threshold(&auto_compact.threshold.unwrap().0)
+                    .log_err()
+                    .unwrap_or(AutoCompactThreshold::DEFAULT);
+                AutoCompactSettings {
+                    enabled: auto_compact.enabled.unwrap(),
+                    threshold,
+                }
+            },
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
+            terminal_init_command: agent
+                .terminal_init_command
+                .filter(|command| !command.trim().is_empty()),
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
@@ -621,9 +817,79 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
-            new_thread_location: agent.new_thread_location.unwrap_or_default(),
+            sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
     }
+}
+
+fn compile_sandbox_permissions(
+    content: Option<settings::SandboxPermissionsContent>,
+) -> SandboxPermissions {
+    let Some(content) = content else {
+        return SandboxPermissions::default();
+    };
+
+    let mut write_paths: Vec<settings::GrantedWritePath> = Vec::new();
+    for entry in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
+        // Normalize away `..`/`.` before storing, since coverage checks are
+        // purely lexical; drop entries whose requested (or resolved) path
+        // escapes the filesystem root.
+        let Ok(requested) = util::paths::normalize_lexically(&entry.requested) else {
+            continue;
+        };
+        let granted = match entry.resolved {
+            Some(resolved) => {
+                let Ok(resolved) = util::paths::normalize_lexically(&resolved) else {
+                    continue;
+                };
+                settings::GrantedWritePath::resolved_on_fs(requested, resolved, entry.on_windows_fs)
+            }
+            None => settings::GrantedWritePath::from_requested(requested),
+        };
+        insert_granted_subtree(&mut write_paths, granted);
+    }
+
+    let network_hosts = content
+        .network_hosts
+        .map(|hosts| hosts.0)
+        .unwrap_or_default();
+
+    SandboxPermissions {
+        allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
+        network_hosts,
+        allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
+        allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
+        write_paths,
+        warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
+        warn_ntfs_grants: content.warn_ntfs_grants.unwrap_or(true),
+    }
+}
+
+/// Subtree-insert mirroring [`util::paths::insert_subtree`], but over
+/// [`settings::GrantedWritePath`] entries compared by their canonical
+/// (symlink-resolved) grant path — the path actually enforced at write time.
+///
+/// Insertion is a no-op when the new grant's canonical path is already covered
+/// by an existing entry; otherwise the new grant is added and any existing
+/// entries whose canonical path is a descendant of it are pruned. Containment
+/// is purely lexical, so callers should normalize paths first.
+fn insert_granted_subtree(
+    subtrees: &mut Vec<settings::GrantedWritePath>,
+    granted: settings::GrantedWritePath,
+) {
+    if subtrees.iter().any(|existing| {
+        granted
+            .canonical_or_requested()
+            .starts_with(existing.canonical_or_requested())
+    }) {
+        return;
+    }
+    subtrees.retain(|existing| {
+        !existing
+            .canonical_or_requested()
+            .starts_with(granted.canonical_or_requested())
+    });
+    subtrees.push(granted);
 }
 
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
@@ -727,6 +993,53 @@ mod tests {
     use serde_json::json;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_parse_auto_compact_threshold() {
+        use AutoCompactThreshold::*;
+
+        assert_eq!(
+            parse_auto_compact_threshold("90%").unwrap(),
+            Percentage(0.9)
+        );
+        assert_eq!(AutoCompactThreshold::DEFAULT, Percentage(0.9));
+        assert_eq!(
+            parse_auto_compact_threshold("  92.5% ").unwrap(),
+            Percentage(0.925)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("95.5%").unwrap(),
+            Percentage(0.955)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("100%").unwrap(),
+            Percentage(1.0)
+        );
+        // Token counts must be integers; a non-integer token value is invalid.
+        assert!(parse_auto_compact_threshold("100.5").is_err());
+        assert_eq!(
+            parse_auto_compact_threshold("100000").unwrap(),
+            TokensUsed(100_000)
+        );
+        assert_eq!(
+            parse_auto_compact_threshold("-20000").unwrap(),
+            TokensRemaining(20_000)
+        );
+
+        assert_eq!(Percentage(0.9).to_string(), "90%");
+        assert_eq!(Percentage(0.925).to_string(), "92.5%");
+        assert_eq!(TokensUsed(100_000).to_string(), "100000");
+        assert_eq!(TokensRemaining(20_000).to_string(), "-20000");
+
+        // 0 is invalid in every form.
+        assert!(parse_auto_compact_threshold("0").is_err());
+        assert!(parse_auto_compact_threshold("0%").is_err());
+        // Out-of-range percentages and bare decimals are invalid.
+        assert!(parse_auto_compact_threshold("150%").is_err());
+        assert!(parse_auto_compact_threshold("0.8").is_err());
+        assert!(parse_auto_compact_threshold("eighty percent").is_err());
+    }
 
     #[test]
     fn test_compiled_regex_case_insensitive() {
@@ -747,6 +1060,56 @@ mod tests {
     fn test_invalid_regex_returns_none() {
         let result = CompiledRegex::new("[invalid(regex", false);
         assert!(result.is_none());
+    }
+
+    #[gpui::test]
+    fn test_terminal_init_command_filters_empty_without_trimming(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            let new_text = store
+                .new_text_for_update("{}".to_string(), |settings| {
+                    settings.agent.get_or_insert_default().terminal_init_command =
+                        Some(" claude --resume ".to_string());
+                })
+                .unwrap();
+            assert!(
+                new_text.contains(r#""terminal_init_command": " claude --resume ""#),
+                "updated settings JSON should include terminal_init_command, got {new_text}"
+            );
+            store.set_user_settings(&new_text, cx).unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .as_deref(),
+            Some(" claude --resume ")
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": "   " } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": null } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
     }
 
     #[test]
@@ -798,6 +1161,147 @@ mod tests {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
         assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_empty() {
+        let permissions = compile_sandbox_permissions(None);
+        assert_eq!(permissions, SandboxPermissions::default());
+        // The confusable-Unicode warning is a safety net, so it's on by default.
+        assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_warn_confusable_unicode_can_be_disabled() {
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({ "warn_confusable_unicode": false })).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(!permissions.warn_confusable_unicode);
+
+        // Omitting the key keeps the warning enabled.
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({})).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_parsing_and_pruning() {
+        let json = json!({
+            "allow_all_hosts": true,
+            "network_hosts": ["github.com", "*.npmjs.org"],
+            "allow_unsandboxed": true,
+            "write_paths": [
+                "/tmp/build/cache",
+                "/tmp/build",
+                "/var/log"
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert!(permissions.allow_all_hosts);
+        assert_eq!(
+            permissions.network_hosts,
+            vec!["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
+        assert!(!permissions.allow_fs_write_all);
+        assert!(permissions.allow_unsandboxed);
+        assert_eq!(
+            permissions.write_paths,
+            vec![
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::from_requested(PathBuf::from("/var/log")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_normalizes_and_prunes_parent_traversal() {
+        let json = json!({
+            "write_paths": [
+                "/tmp/build/../build/cache",
+                "/tmp/build",
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        // `/tmp/build/../build/cache` normalizes to `/tmp/build/cache`, which is
+        // then pruned as a redundant child of `/tmp/build`.
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_bare_string_has_no_resolved() {
+        let json = json!({
+            "write_paths": ["/tmp/build"]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+        assert_eq!(permissions.write_paths[0].resolved, None);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_object_preserves_resolved() {
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link", "resolved": "/tmp/real" }
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/link"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
+        assert_eq!(
+            permissions.write_paths[0].resolved,
+            Some(PathBuf::from("/tmp/real"))
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_dedup_keys_on_resolved_path() {
+        // The requested paths are unrelated, but the resolved (canonical)
+        // targets form a subtree, so dedup must prune by the resolved path.
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link/cache", "resolved": "/tmp/real/cache" },
+                { "requested": "/tmp/other", "resolved": "/tmp/real" },
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/other"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
     }
 
     #[test]
@@ -1356,8 +1860,10 @@ mod tests {
             let layout = AgentSettings::get_layout(cx);
             assert!(matches!(layout, WindowLayout::Custom(_)));
 
-            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx);
-        });
+            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx)
+        })
+        .await
+        .ok();
 
         cx.run_until_parked();
 

@@ -103,7 +103,7 @@ impl JsDebugAdapter {
             if let Some(env) = configuration.get("env").cloned()
                 && let Ok(env) = serde_json::from_value::<HashMap<String, String>>(env)
             {
-                envs.extend(env.into_iter());
+                envs.extend(env);
             }
 
             configuration

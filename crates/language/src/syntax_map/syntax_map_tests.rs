@@ -350,6 +350,56 @@ fn test_dynamic_language_injection(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_rust_json_macro_empty_string_highlighting(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let language = rust_lang();
+    registry.add(language.clone());
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+            serde_json::json!({
+                "email": "",
+                "password": "password123",
+                "requires2FA": false
+            })
+        "#
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(language, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["string"],
+        r#"
+            serde_json::json!({
+                «"email"»: «""»,
+                «"password"»: «"password123"»,
+                «"requires2FA"»: false
+            })
+        "#,
+    );
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["boolean"],
+        r#"
+            serde_json::json!({
+                "email": "",
+                "password": "password123",
+                "requires2FA": «false»
+            })
+        "#,
+    );
+}
+
+#[gpui::test]
 fn test_typing_multiple_new_injections(cx: &mut App) {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
@@ -1163,7 +1213,7 @@ fn test_random_edits(
 
     let layers = syntax_map.layers(&buffer);
     let reference_layers = reference_syntax_map.layers(&buffer);
-    for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter()) {
+    for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers) {
         assert_eq!(
             edited_layer.node().to_sexp(),
             reference_layer.node().to_sexp()
@@ -1326,9 +1376,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
             reference_layers.len(),
             "wrong number of layers at step {i}"
         );
-        for (edited_layer, reference_layer) in
-            mutated_layers.into_iter().zip(reference_layers.into_iter())
-        {
+        for (edited_layer, reference_layer) in mutated_layers.into_iter().zip(reference_layers) {
             assert_eq!(
                 edited_layer.node().to_sexp(),
                 reference_layer.node().to_sexp(),
@@ -1349,10 +1397,11 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_html::LANGUAGE.into()),
@@ -1371,10 +1420,11 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_ruby::LANGUAGE.into()),
@@ -1393,10 +1443,11 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "ERB".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::LANGUAGE.into()),
@@ -1429,10 +1480,11 @@ fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Elixir".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_elixir::LANGUAGE.into()),
@@ -1449,10 +1501,11 @@ fn heex_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HEEx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["heex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_heex::LANGUAGE.into()),
@@ -1481,10 +1534,11 @@ fn python_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Python".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["py".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
