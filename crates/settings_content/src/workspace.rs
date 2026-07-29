@@ -357,8 +357,8 @@ pub enum WindowDecorations {
     /// Zed draws its own window decorations/titlebar (client-side decoration).
     #[default]
     Client,
-    /// The window manager or compositor draws the window decorations
-    /// (server-side decoration; not supported by GNOME Wayland).
+    /// The window manager or compositor draws the server-side window
+    /// decorations (not supported by GNOME Wayland).
     Server,
 }
 
