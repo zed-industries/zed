@@ -13,8 +13,13 @@ use tree_sitter::{Query, StreamingIterator as _};
 use workspace::Workspace;
 
 mod modal;
+mod run_configurations;
 
 pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
+pub use run_configurations::{
+    RunConfiguration, RunConfigurationId, discover_run_configurations,
+    load_selected_run_configuration, persist_selected_run_configuration,
+};
 
 /// Inserts `new_task` (pretty-printed JSON object text) at the end of the top-level JSON
 /// array in the editor's buffer, creating the array if the buffer has none, and moves the
