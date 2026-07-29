@@ -149,8 +149,11 @@ fn display_point_range_to_offset_range(
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZero;
+
     use db::indoc;
     use editor::{Inlay, MultiBufferOffset};
+    use settings::SettingsStore;
 
     use crate::{state::Mode, test::VimTestContext};
 
@@ -351,6 +354,59 @@ let y: i32 = 2;",
             indoc! {"
                let x = «1ˇ»;
                let y = «2ˇ»;"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selection_duplication_with_tab(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.hard_tabs = Some(true);
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                \t1234«5ˇ»
+                \t\t5
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("C");
+
+        cx.assert_state(
+            indoc! {"
+                \t1234«5ˇ»
+                \t\t«5ˇ»
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.tab_size = NonZero::new(1);
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                \t1«2ˇ»345
+                \t\t2
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("C");
+
+        cx.assert_state(
+            indoc! {"
+                \t1«2ˇ»345
+                \t\t«2ˇ»
+            "},
             Mode::HelixNormal,
         );
     }
