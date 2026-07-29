@@ -42109,6 +42109,87 @@ async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_columnar_selection_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇ1. Very long line to show how a wrapped line would look
+        2. Very long line to show how a wrapped line would look
+    "});
+
+    let soft_wrap_second_line_row = |editor: &mut Editor, cx: &mut Context<Editor>| {
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        let snapshot = editor.display_snapshot(cx);
+        let second_line_row = Point::new(1, 0).to_display_point(&snapshot).row();
+        assert!(
+            second_line_row.0 > 1,
+            "expected the first line to be soft wrapped"
+        );
+        second_line_row
+    };
+
+    // Dragging a columnar selection across the soft-wrapped rows of the first
+    // line must produce one selection per buffer line, not one per display row.
+    cx.update_editor(|editor, window, cx| {
+        let second_line_row = soft_wrap_second_line_row(editor, cx);
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(second_line_row, 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «1ˇ». Very long line to show how a wrapped line would look
+        «2ˇ». Very long line to show how a wrapped line would look
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        let second_line_row = soft_wrap_second_line_row(editor, cx);
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(second_line_row, 0),
+                goal_column: 0,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        ˇ1. Very long line to show how a wrapped line would look
+        ˇ2. Very long line to show how a wrapped line would look
+    "});
+}
+
+#[gpui::test]
 async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

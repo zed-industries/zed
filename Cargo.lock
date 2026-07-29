@@ -2700,6 +2700,7 @@ dependencies = [
  "postage",
  "project",
  "serde",
+ "serde_json",
  "settings",
  "telemetry",
  "util",
@@ -3526,6 +3527,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "telemetry",
  "theme",
  "theme_settings",
@@ -9887,10 +9889,10 @@ dependencies = [
  "log",
  "menu",
  "mistral",
- "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
+ "openai_subscribed",
  "opencode",
  "parking_lot",
  "pretty_assertions",
@@ -9900,13 +9902,10 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sha2",
- "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
- "url",
  "util",
  "x_ai",
 ]
@@ -12462,6 +12461,30 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "openai_subscribed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "http_client",
+ "language_model",
+ "log",
+ "oauth_callback_server",
+ "open_ai",
+ "parking_lot",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smol",
+ "url",
+ "util",
 ]
 
 [[package]]
@@ -20592,8 +20615,7 @@ dependencies = [
 [[package]]
 name = "wasm_thread"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7516db7f32decdadb1c3b8deb1b7d78b9df7606c5cc2f6241737c2ab3a0258e"
+source = "git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937#0cf96c7708dfb97ccf3da50347e25edcf75d6937"
 dependencies = [
  "futures 0.3.32",
  "js-sys",

@@ -1092,7 +1092,11 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
-            let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
+            let is_markdown = !is_dir
+                && MarkdownPreviewView::is_markdown_path(
+                    entry.path.as_std_path(),
+                    project.languages(),
+                );
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1783,7 +1787,12 @@ impl ProjectPanel {
         let Some((worktree, entry)) = self.selected_entry(cx) else {
             return;
         };
-        if !entry.is_file() || !MarkdownPreviewView::is_markdown_path(&*entry.path) {
+        if !entry.is_file()
+            || !MarkdownPreviewView::is_markdown_path(
+                entry.path.as_std_path(),
+                self.project.read(cx).languages(),
+            )
+        {
             return;
         }
         let project_path = ProjectPath {
