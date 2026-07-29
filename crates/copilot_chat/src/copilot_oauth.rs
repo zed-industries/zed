@@ -20,7 +20,7 @@ use crate::CopilotChatConfiguration;
 /// The public OAuth application client ID used by GitHub Copilot editor
 /// integrations (the same one the Copilot language server uses). Reusing it
 /// lets Zed request the same Copilot scopes without registering its own app.
-pub const GITHUB_COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+pub const GITHUB_COPILOT_CLIENT_ID: &str = "6e3a0413e62d19d75ff1";
 
 const DEVICE_CODE_SCOPE: &str = "read:user";
 const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
