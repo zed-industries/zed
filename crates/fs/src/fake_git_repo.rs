@@ -12,10 +12,10 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
-        commit_hash_search_query,
+        CreateTagOptions, CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets,
+        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
+        LogSource, MergeMode, PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs,
+        Worktree, commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -338,13 +338,145 @@ impl GitRepository for FakeGitRepository {
                 ResetMode::Soft => {
                     state.head_contents = snapshot.head_contents;
                 }
-                ResetMode::Mixed => {
+                ResetMode::Mixed | ResetMode::Hard => {
                     state.head_contents = snapshot.head_contents;
                     state.index_contents = state.head_contents.clone();
                 }
             }
 
             state.refs.insert("HEAD".into(), snapshot.sha);
+            Ok(())
+        })
+    }
+
+    fn checkout_commit(
+        &self,
+        commit: String,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            let commit = state.refs.get(&commit).cloned().unwrap_or(commit);
+            let snapshot = state
+                .commit_history
+                .iter()
+                .find(|entry| entry.sha == commit)
+                .cloned()
+                .with_context(|| format!("Unknown commit ref: {commit}"))?;
+            state.head_contents = snapshot.head_contents;
+            state.index_contents = snapshot.index_contents;
+            state.refs.insert("HEAD".into(), snapshot.sha);
+            state.current_branch_name = None;
+            Ok(())
+        })
+    }
+
+    fn create_tag(
+        &self,
+        options: CreateTagOptions,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            anyhow::ensure!(!options.name.is_empty(), "tag name cannot be empty");
+            let target = state
+                .refs
+                .get(&options.target)
+                .cloned()
+                .unwrap_or(options.target);
+            anyhow::ensure!(
+                state.commit_history.iter().any(|entry| entry.sha == target),
+                "Unknown commit ref: {target}"
+            );
+            state
+                .refs
+                .insert(format!("refs/tags/{}", options.name), target);
+            Ok(())
+        })
+    }
+
+    fn cherry_pick(
+        &self,
+        commits: Vec<String>,
+        _no_commit: bool,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            anyhow::ensure!(
+                !commits.is_empty(),
+                "cherry-pick requires at least one commit"
+            );
+            for commit in commits {
+                let commit = state.refs.get(&commit).cloned().unwrap_or(commit);
+                let snapshot = state
+                    .commit_history
+                    .iter()
+                    .find(|entry| entry.sha == commit)
+                    .cloned()
+                    .with_context(|| format!("Unknown commit ref: {commit}"))?;
+                state.head_contents = snapshot.head_contents.clone();
+                state.index_contents = snapshot.index_contents.clone();
+                state.refs.insert("HEAD".into(), snapshot.sha.clone());
+                state.commit_history.push(snapshot);
+            }
+            Ok(())
+        })
+    }
+
+    fn revert(
+        &self,
+        commit: String,
+        _no_commit: bool,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            let commit = state.refs.get(&commit).cloned().unwrap_or(commit);
+            let index = state
+                .commit_history
+                .iter()
+                .position(|entry| entry.sha == commit)
+                .with_context(|| format!("Unknown commit ref: {commit}"))?;
+            let previous = index
+                .checked_sub(1)
+                .and_then(|index| state.commit_history.get(index))
+                .cloned()
+                .unwrap_or_else(|| FakeCommitSnapshot {
+                    head_contents: HashMap::default(),
+                    index_contents: HashMap::default(),
+                    sha: format!("revert-{commit}"),
+                });
+            state.head_contents = previous.head_contents.clone();
+            state.index_contents = previous.index_contents.clone();
+            let sha = format!("revert-{commit}");
+            state.refs.insert("HEAD".into(), sha.clone());
+            state.commit_history.push(FakeCommitSnapshot {
+                head_contents: previous.head_contents,
+                index_contents: previous.index_contents,
+                sha,
+            });
+            Ok(())
+        })
+    }
+
+    fn merge(
+        &self,
+        commit: String,
+        mode: MergeMode,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            let commit = state.refs.get(&commit).cloned().unwrap_or(commit);
+            let snapshot = state
+                .commit_history
+                .iter()
+                .find(|entry| entry.sha == commit)
+                .cloned()
+                .with_context(|| format!("Unknown commit ref: {commit}"))?;
+            if mode == MergeMode::Squash {
+                state.index_contents = snapshot.head_contents;
+            } else {
+                state.head_contents = snapshot.head_contents;
+                state.index_contents = snapshot.index_contents;
+                state.refs.insert("HEAD".into(), snapshot.sha);
+            }
             Ok(())
         })
     }

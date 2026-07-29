@@ -631,6 +631,7 @@ pub struct Remote {
     pub name: SharedString,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResetMode {
     /// Reset the branch pointer, leave index and worktree unchanged (this will make it look like things that were
     /// committed are now staged).
@@ -638,6 +639,24 @@ pub enum ResetMode {
     /// Reset the branch pointer and index, leave worktree unchanged (this makes it look as though things that were
     /// committed are now unstaged).
     Mixed,
+    /// Reset the branch pointer, index, and worktree.
+    Hard,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MergeMode {
+    #[default]
+    Default,
+    FastForwardOnly,
+    NoFastForward,
+    Squash,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateTagOptions {
+    pub name: String,
+    pub target: String,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -869,6 +888,39 @@ pub trait GitRepository: Send + Sync {
         &self,
         commit: String,
         mode: ResetMode,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn checkout_commit(
+        &self,
+        commit: String,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn create_tag(
+        &self,
+        options: CreateTagOptions,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn cherry_pick(
+        &self,
+        commits: Vec<String>,
+        no_commit: bool,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn revert(
+        &self,
+        commit: String,
+        no_commit: bool,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn merge(
+        &self,
+        commit: String,
+        mode: MergeMode,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1332,6 +1384,32 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+async fn resolve_commit_oid(git: &GitBinary, commit: &str) -> Result<String> {
+    let commit = format!("{commit}^{{commit}}");
+    git.run(&["rev-parse", "--verify", "--end-of-options", &commit])
+        .await
+}
+
+async fn run_git_mutation<S>(
+    git: &GitBinary,
+    args: &[S],
+    env: &HashMap<String, String>,
+) -> Result<()>
+where
+    S: AsRef<OsStr>,
+{
+    let output = git.build_command(args).envs(env.iter()).output().await?;
+    anyhow::ensure!(
+        output.status.success(),
+        GitBinaryCommandError {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status: output.status,
+        }
+    );
+    Ok(())
+}
+
 impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
         self.git_dir.clone()
@@ -1492,22 +1570,122 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary_in_worktree();
         async move {
             let git = git?;
+            let commit = resolve_commit_oid(&git, &commit).await?;
             let mode_flag = match mode {
                 ResetMode::Mixed => "--mixed",
                 ResetMode::Soft => "--soft",
+                ResetMode::Hard => "--hard",
             };
+            run_git_mutation(&git, &["reset", mode_flag, &commit], &env).await
+        }
+        .boxed()
+    }
 
-            let output = git
-                .build_command(&["reset", mode_flag, &commit])
-                .envs(env.iter())
-                .output()
-                .await?;
+    fn checkout_commit(
+        &self,
+        commit: String,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        async move {
+            let git = git?;
+            let commit = resolve_commit_oid(&git, &commit).await?;
+            run_git_mutation(&git, &["checkout", "--detach", &commit], &env).await
+        }
+        .boxed()
+    }
+
+    fn create_tag(
+        &self,
+        options: CreateTagOptions,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        async move {
+            let git = git?;
             anyhow::ensure!(
-                output.status.success(),
-                "Failed to reset:\n{}",
-                String::from_utf8_lossy(&output.stderr),
+                !options.name.starts_with('-'),
+                "tag name cannot start with '-'"
             );
-            Ok(())
+            let target = resolve_commit_oid(&git, &options.target).await?;
+            let tag_ref = format!("refs/tags/{}", options.name);
+            git.run(&["check-ref-format", &tag_ref]).await?;
+
+            let mut args = vec!["tag".to_string()];
+            if let Some(message) = options.message {
+                args.extend(["-a".into(), "-m".into(), message]);
+            }
+            args.push("--".into());
+            args.extend([options.name, target]);
+            run_git_mutation(&git, &args, &env).await
+        }
+        .boxed()
+    }
+
+    fn cherry_pick(
+        &self,
+        commits: Vec<String>,
+        no_commit: bool,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        async move {
+            anyhow::ensure!(
+                !commits.is_empty(),
+                "cherry-pick requires at least one commit"
+            );
+            let git = git?;
+            let mut args = vec!["cherry-pick".to_string()];
+            if no_commit {
+                args.push("--no-commit".into());
+            }
+            for commit in commits {
+                args.push(resolve_commit_oid(&git, &commit).await?);
+            }
+            run_git_mutation(&git, &args, &env).await
+        }
+        .boxed()
+    }
+
+    fn revert(
+        &self,
+        commit: String,
+        no_commit: bool,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        async move {
+            let git = git?;
+            let commit = resolve_commit_oid(&git, &commit).await?;
+            let mut args = vec!["revert".to_string(), "--no-edit".into()];
+            if no_commit {
+                args.push("--no-commit".into());
+            }
+            args.push(commit);
+            run_git_mutation(&git, &args, &env).await
+        }
+        .boxed()
+    }
+
+    fn merge(
+        &self,
+        commit: String,
+        mode: MergeMode,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        async move {
+            let git = git?;
+            let commit = resolve_commit_oid(&git, &commit).await?;
+            let mut args = vec!["merge".to_string(), "--no-edit".into()];
+            match mode {
+                MergeMode::Default => {}
+                MergeMode::FastForwardOnly => args.push("--ff-only".into()),
+                MergeMode::NoFastForward => args.push("--no-ff".into()),
+                MergeMode::Squash => args.push("--squash".into()),
+            }
+            args.push(commit);
+            run_git_mutation(&git, &args, &env).await
         }
         .boxed()
     }
@@ -6313,6 +6491,291 @@ mod tests {
         assert_eq!(
             repo.default_branch(true).await.unwrap(),
             Some("origin/main".into())
+        );
+    }
+
+    fn graph_mutation_repository(path: &Path, cx: &TestAppContext) -> RealGitRepository {
+        RealGitRepository::new(&path.join(".git"), None, Some("git".into()), cx.executor()).unwrap()
+    }
+
+    fn graph_mutation_commit(path: &Path, file: &str, contents: &str, message: &str) -> String {
+        fs::write(path.join(file), contents).unwrap();
+        git_command(path, ["add", file]);
+        git_command(path, ["commit", "-m", message]);
+        git_command_output(path, ["rev-parse", "HEAD"])
+    }
+
+    fn graph_mutation_env() -> Arc<HashMap<String, String>> {
+        Arc::new(test_commit_envs())
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_checkout_commit_detaches_head(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let initial = graph_mutation_commit(repo_dir.path(), "file.txt", "one", "one");
+        graph_mutation_commit(repo_dir.path(), "file.txt", "two", "two");
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        repo.checkout_commit(initial.clone(), graph_mutation_env())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]),
+            initial
+        );
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["branch", "--show-current"]),
+            ""
+        );
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_create_lightweight_and_annotated_tags(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let target = graph_mutation_commit(repo_dir.path(), "file.txt", "one", "one");
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        repo.create_tag(
+            CreateTagOptions {
+                name: "lightweight".into(),
+                target: target.clone(),
+                message: None,
+            },
+            graph_mutation_env(),
+        )
+        .await
+        .unwrap();
+        repo.create_tag(
+            CreateTagOptions {
+                name: "annotated".into(),
+                target: target.clone(),
+                message: Some("release notes".into()),
+            },
+            graph_mutation_env(),
+        )
+        .await
+        .unwrap();
+        let error = repo
+            .create_tag(
+                CreateTagOptions {
+                    name: "-leading-hyphen".into(),
+                    target: target.clone(),
+                    message: None,
+                },
+                graph_mutation_env(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("cannot start with"));
+
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["rev-parse", "lightweight"]),
+            target
+        );
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["rev-parse", "annotated^{}"]),
+            target
+        );
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["cat-file", "-t", "annotated"]),
+            "tag"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_cherry_pick_preserves_supplied_order(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        graph_mutation_commit(repo_dir.path(), "base.txt", "base", "base");
+        git_command(repo_dir.path(), ["switch", "-c", "source"]);
+        let first = graph_mutation_commit(repo_dir.path(), "first.txt", "first", "first");
+        let second = graph_mutation_commit(repo_dir.path(), "second.txt", "second", "second");
+        git_command(repo_dir.path(), ["switch", "main"]);
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        repo.cherry_pick(vec![first, second], false, graph_mutation_env())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["log", "-2", "--format=%s"]),
+            "second\nfirst"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_cherry_pick_rejects_empty_input(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        graph_mutation_commit(repo_dir.path(), "base.txt", "base", "base");
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        let error = repo
+            .cherry_pick(Vec::new(), false, graph_mutation_env())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("at least one commit"));
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_revert_restores_previous_tree(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        graph_mutation_commit(repo_dir.path(), "file.txt", "before", "before");
+        let change = graph_mutation_commit(repo_dir.path(), "file.txt", "after", "after");
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        repo.revert(change, false, graph_mutation_env())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "before"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_merge_modes(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git_init_repo(repo_dir.path());
+            graph_mutation_commit(repo_dir.path(), "base.txt", "base", "base");
+            git_command(repo_dir.path(), ["switch", "-c", "feature"]);
+            let feature =
+                graph_mutation_commit(repo_dir.path(), "feature.txt", "feature", "feature");
+            git_command(repo_dir.path(), ["switch", "main"]);
+            let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+            repo.merge(feature.clone(), MergeMode::Default, graph_mutation_env())
+                .await
+                .unwrap();
+
+            assert_eq!(
+                git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]),
+                feature
+            );
+        }
+
+        {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git_init_repo(repo_dir.path());
+            graph_mutation_commit(repo_dir.path(), "base.txt", "base", "base");
+            git_command(repo_dir.path(), ["switch", "-c", "feature"]);
+            let feature =
+                graph_mutation_commit(repo_dir.path(), "feature.txt", "feature", "feature");
+            git_command(repo_dir.path(), ["switch", "main"]);
+            let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+            repo.merge(feature, MergeMode::NoFastForward, graph_mutation_env())
+                .await
+                .unwrap();
+
+            assert_eq!(
+                git_command_output(
+                    repo_dir.path(),
+                    ["rev-list", "--parents", "-n", "1", "HEAD"]
+                )
+                .split_whitespace()
+                .count(),
+                3
+            );
+        }
+
+        {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git_init_repo(repo_dir.path());
+            graph_mutation_commit(repo_dir.path(), "base.txt", "base", "base");
+            git_command(repo_dir.path(), ["switch", "-c", "feature"]);
+            let feature =
+                graph_mutation_commit(repo_dir.path(), "feature.txt", "feature", "feature");
+            git_command(repo_dir.path(), ["switch", "main"]);
+            graph_mutation_commit(repo_dir.path(), "main.txt", "main", "main");
+            let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+            assert!(
+                repo.merge(feature, MergeMode::FastForwardOnly, graph_mutation_env(),)
+                    .await
+                    .is_err()
+            );
+        }
+
+        {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git_init_repo(repo_dir.path());
+            graph_mutation_commit(repo_dir.path(), "base.txt", "base", "base");
+            git_command(repo_dir.path(), ["switch", "-c", "feature"]);
+            let feature =
+                graph_mutation_commit(repo_dir.path(), "feature.txt", "feature", "feature");
+            git_command(repo_dir.path(), ["switch", "main"]);
+            let head_before = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+            let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+            repo.merge(feature, MergeMode::Squash, graph_mutation_env())
+                .await
+                .unwrap();
+
+            assert_eq!(
+                git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]),
+                head_before
+            );
+            assert_eq!(
+                git_command_output(repo_dir.path(), ["diff", "--cached", "--name-only"]),
+                "feature.txt"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_graph_mutation_hard_reset_updates_head_index_and_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let target = graph_mutation_commit(repo_dir.path(), "file.txt", "before", "before");
+        graph_mutation_commit(repo_dir.path(), "file.txt", "after", "after");
+        fs::write(repo_dir.path().join("file.txt"), "dirty").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        repo.reset(target.clone(), ResetMode::Hard, graph_mutation_env())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]),
+            target
+        );
+        assert_eq!(
+            fs::read_to_string(repo_dir.path().join("file.txt")).unwrap(),
+            "before"
+        );
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["diff", "--cached", "--name-only"]),
+            ""
+        );
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["diff", "--name-only"]),
+            ""
         );
     }
 
