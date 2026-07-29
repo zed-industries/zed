@@ -160,10 +160,11 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let transaction_id = vim.visual_delete(false, window, cx);
         if let (Some(original_selections), Some(transaction_id)) =
             (original_selections, transaction_id)
+            && !original_selections.is_empty()
         {
             let updated = vim.update_editor(cx, |_, editor, _| {
                 editor.modify_transaction_selection_history(transaction_id, |selections| {
-                    selections.0 = original_selections;
+                    selections.undo = original_selections;
                 })
             });
             debug_assert_ne!(updated, Some(false));
@@ -752,7 +753,17 @@ impl Vim {
                     let indent = if auto_indent_mode == AutoIndentMode::None {
                         String::new()
                     } else {
-                        snapshot.indent_and_comment_for_line(MultiBufferRow(row), cx)
+                        let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row)).len;
+                        let first_char = snapshot.chars_at(Point::new(row, indent_size)).next();
+                        let indent_row = if matches!(first_char, Some('}') | Some(')')) {
+                            snapshot
+                                .prev_non_blank_row(MultiBufferRow(row))
+                                .map(|r| r.0)
+                                .unwrap_or(row)
+                        } else {
+                            row
+                        };
+                        snapshot.indent_and_comment_for_line(MultiBufferRow(indent_row), cx)
                     };
                     let start_of_line = Point::new(row, 0);
                     let edit = (start_of_line..start_of_line, indent + "\n");
@@ -1718,6 +1729,20 @@ mod test {
                 ˇ
                 fn test() {
                     println!();
+                }"},
+            Mode::Insert,
+        );
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                    println!();
+                ˇ}"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    println!();
+                    ˇ
                 }"},
             Mode::Insert,
         );

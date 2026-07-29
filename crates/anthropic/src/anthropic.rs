@@ -1,5 +1,6 @@
 use std::io;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -18,10 +19,32 @@ pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
-const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+pub const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
+
+pub fn supports_fast_mode(model_id: &str) -> bool {
+    matches!(model_id, "claude-opus-5" | "claude-opus-4-8")
+}
+
+/// Model IDs where adaptive thinking runs by default when a request omits the
+/// `thinking` field, and where thinking must instead be turned off with an
+/// explicit `thinking: {"type": "disabled"}`.
+///
+/// On earlier Opus models omitting `thinking` means thinking is off; Claude
+/// Opus 5 flipped that default. Claude Fable 5 and Claude Mythos 5 also think
+/// by default, but they reject `{"type": "disabled"}` with a 400 error, so
+/// they are deliberately excluded here (thinking cannot be turned off for
+/// them at all).
+///
+/// <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
+pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
+    matches!(model_id, "claude-opus-5")
+}
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -95,6 +118,7 @@ pub struct Model {
     pub supports_adaptive_thinking: bool,
     pub supports_images: bool,
     pub supports_speed: bool,
+    pub supports_compaction: bool,
     pub supported_effort_levels: Vec<Effort>,
     /// A model id to substitute when invoking tools, used for models that
     /// don't support tool calling natively.
@@ -151,14 +175,27 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = matches!(
+        let supports_speed = supports_fast_mode(&entry.id);
+
+        // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
+        let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-opus-4-6" | "claude-opus-4-7" | "claude-opus-4-8"
+            "claude-fable-5"
+                | "claude-mythos-5"
+                | "claude-mythos-preview"
+                | "claude-opus-5"
+                | "claude-opus-4-8"
+                | "claude-opus-4-7"
+                | "claude-opus-4-6"
+                | "claude-sonnet-4-6"
         );
 
         let mut extra_beta_headers = Vec::new();
         if supports_speed {
             extra_beta_headers.push(FAST_MODE_BETA_HEADER.to_string());
+        }
+        if supports_compaction {
+            extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
         }
 
         Self {
@@ -172,6 +209,7 @@ impl Model {
             supports_adaptive_thinking,
             supports_images,
             supports_speed,
+            supports_compaction,
             supported_effort_levels,
             tool_override: None,
             extra_beta_headers,
@@ -522,6 +560,15 @@ pub async fn stream_completion_with_rate_limit_info(
                             .strip_prefix("data: ")
                             .or_else(|| line.strip_prefix("data:"))?;
 
+                        // Some proxies and gateways append `data: [DONE]` as a
+                        // stream-termination sentinel (an OpenAI convention).
+                        // It is not part of the Anthropic streaming spec and is
+                        // not valid JSON, so skip it to avoid a spurious
+                        // deserialization error.
+                        if line.trim() == "[DONE]" {
+                            return None;
+                        }
+
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
                             Err(error) => Some(Err(AnthropicError::DeserializeResponse(error))),
@@ -619,6 +666,16 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "compaction")]
+    Compaction {
+        content: Option<Arc<str>>,
+        /// Opaque metadata from a prior compaction that must be round-tripped
+        /// verbatim for Anthropic to recognize the block.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encrypted_content: Option<Arc<str>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -649,6 +706,12 @@ pub enum ResponseContent {
         id: String,
         name: String,
         input: serde_json::Value,
+    },
+    #[serde(rename = "compaction")]
+    Compaction {
+        content: Option<Arc<str>>,
+        #[serde(default)]
+        encrypted_content: Option<Arc<str>>,
     },
 }
 
@@ -694,6 +757,10 @@ pub enum Thinking {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
     },
+    /// Explicitly turns thinking off. Required by models where thinking runs
+    /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
+    /// at effort `high` or below.
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -728,6 +795,32 @@ pub enum StringOrContents {
     Content(Vec<RequestContent>),
 }
 
+/// Server-side context management configuration.
+///
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction>
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextManagement {
+    pub edits: Vec<ContextManagementEdit>,
+}
+
+/// A context management edit strategy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContextManagementEdit {
+    #[serde(rename = "compact_20260112")]
+    Compact {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<CompactionTrigger>,
+    },
+}
+
+/// When to trigger server-side compaction.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CompactionTrigger {
+    InputTokens { value: u64 },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
@@ -747,6 +840,8 @@ pub struct Request {
     /// we don't have to micromanage per-block breakpoints ourselves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<ContextManagement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -793,6 +888,34 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
+    /// Only populated when a new compaction is triggered during the request.
+    /// The top-level token fields exclude compaction iterations, so total
+    /// billable usage is the sum across all iterations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<UsageIteration>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UsageIteration {
+    #[serde(rename = "type")]
+    pub iteration_type: UsageIterationType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageIterationType {
+    Compaction,
+    Message,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -845,6 +968,12 @@ pub enum ContentDelta {
     SignatureDelta { signature: String },
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
+    #[serde(rename = "compaction_delta")]
+    CompactionDelta {
+        content: Option<Arc<str>>,
+        #[serde(default)]
+        encrypted_content: Option<Arc<str>>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1109,14 +1238,17 @@ mod tests {
     }
 
     #[test]
-    fn from_listed_enables_fast_mode_for_opus_4_8() {
-        let model = Model::from_listed(listed_entry(
-            "claude-opus-4-8",
-            ModelCapabilities::default(),
-        ));
+    fn from_listed_enables_fast_mode_and_compaction_for_supported_opus_models() {
+        for model_id in ["claude-opus-5", "claude-opus-4-8"] {
+            let model = Model::from_listed(listed_entry(model_id, ModelCapabilities::default()));
 
-        assert!(model.supports_speed);
-        assert_eq!(model.beta_headers().as_deref(), Some(FAST_MODE_BETA_HEADER));
+            assert!(model.supports_speed);
+            let beta_headers = model
+                .beta_headers()
+                .expect("model should have beta headers");
+            assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
+            assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        }
     }
 
     #[test]

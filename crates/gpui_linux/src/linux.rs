@@ -2,6 +2,7 @@ mod dispatcher;
 mod headless;
 mod keyboard;
 mod platform;
+mod system_notifications;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 #[cfg(feature = "wayland")]
@@ -52,6 +53,8 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
         "Headless" => Rc::new(LinuxPlatform {
             inner: HeadlessClient::new(),
         }),
-        _ => unreachable!(),
+        _ => unreachable!(
+            r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
+        ),
     }
 }

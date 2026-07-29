@@ -9,7 +9,8 @@
 //!
 //! This guide is focused on **programmatic accessibility**. This allows
 //! assistive technology, such as screen readers or Braille displays, to inspect
-//! and interact with your app.
+//! and interact with your app. Docs for contributors working on accessibility
+//! support can be found in the `a11y` module's doc comment.
 //!
 //! GPUI integrates with [AccessKit] to provide programmatic accessibility
 //! features (referred to as simply "accessibility" for the rest of this guide).
@@ -218,6 +219,57 @@
 //! Note that some common actions are automatically registered. For example,
 //! [`.on_click()`][StatefulInteractiveElement::on_click] adds an
 //! [`AccessibleAction::Click`] handler that calls the click handler.
+//!
+//! ## Synthetic children
+//!
+//! Sometimes, a custom [`Element`] may want to appear as if it is really made
+//! of multiple nodes. For example, a totally hypothetical custom text editor
+//! element may want to have [`Role::TextInput`], while presenting children
+//! consisting of [`Role::TextRun`]s.
+//!
+//! This is possible using [`Element::a11y_synthetic_children`]. For example:
+//! ```rust,ignore
+//! # use gpui::*;
+//! impl Element for MyCustomTextField {
+//!
+//!     // ...
+//!     
+//!     fn a11y_role(&self) -> Option<Role> {
+//!         Some(Role::TextInput)
+//!     }
+//!     
+//!     fn a11y_synthetic_children(
+//!         &mut self,
+//!         _prepaint: &mut Self::PrepaintState,
+//!         builder: &mut A11ySubtreeBuilder,
+//!     ) {
+//!         // Create the synthetic child node
+//!         let mut run = accesskit::Node::new(Role::TextRun);
+//!         run.set_value(self.text.clone());
+//!         run.set_character_lengths(
+//!             self.text.chars().map(|c| c.len_utf8() as u8).collect::<Vec<_>>(),
+//!         );
+//!
+//!         // Insert it as a child of `MyCustomTextField`
+//!         let run_id = builder.synthetic_node_id(0);
+//!         builder.push_child(run_id, run);
+//!
+//!         // You can also mutate the parent (i.e. the `MyCustomTextField`)
+//!         let caret = accesskit::TextPosition {
+//!             node: run_id,
+//!             character_index: self.cursor,
+//!         };
+//!         builder.parent_node().set_text_selection(accesskit::TextSelection {
+//!             anchor: caret,
+//!             focus: caret,
+//!         });
+//!     }
+//! }
+//! ```
+//!
+//! Notably, synthetic children are added *after* an element is
+//! [prepainted][Element::prepaint], so prepaint state can be used (for example,
+//! to determine what is visible on screen).
 //!
 //! ## Further reading
 //!

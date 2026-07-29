@@ -10,22 +10,22 @@ use text::{BufferSnapshot, Point};
 
 use crate::{ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct BookmarkAnchor(text::Anchor);
-
-impl BookmarkAnchor {
-    pub fn anchor(&self) -> text::Anchor {
-        self.0
-    }
+#[derive(Clone, Debug)]
+pub struct Bookmark {
+    pub anchor: text::Anchor,
+    pub label: String,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SerializedBookmark(pub u32);
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SerializedBookmark {
+    pub row: u32,
+    pub label: String,
+}
 
 #[derive(Debug)]
 pub struct BufferBookmarks {
     buffer: Entity<Buffer>,
-    bookmarks: Vec<BookmarkAnchor>,
+    bookmarks: Vec<Bookmark>,
     _subscription: Subscription,
 }
 
@@ -52,7 +52,7 @@ impl BufferBookmarks {
         &self.buffer
     }
 
-    pub fn bookmarks(&self) -> &[BookmarkAnchor] {
+    pub fn bookmarks(&self) -> &[Bookmark] {
         &self.bookmarks
     }
 }
@@ -122,38 +122,41 @@ impl BookmarkStore {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let Some(BookmarkEntry::Unloaded(rows)) = self.bookmarks.get(abs_path) else {
+        let Some(BookmarkEntry::Unloaded(bookmarks)) = self.bookmarks.get(abs_path) else {
             return;
         };
 
         let snapshot = buffer.read(cx).snapshot();
         let max_point = snapshot.max_point();
 
-        let anchors: Vec<BookmarkAnchor> = rows
+        let bookmarks: Vec<Bookmark> = bookmarks
             .iter()
-            .filter_map(|bookmark_row| {
-                let point = Point::new(bookmark_row.0, 0);
+            .filter_map(|bookmark| {
+                let point = Point::new(bookmark.row, 0);
 
                 if point > max_point {
                     log::warn!(
                         "Skipping out-of-range bookmark: {} row {} (file has {} rows)",
                         abs_path.display(),
-                        bookmark_row.0,
+                        bookmark.row,
                         max_point.row
                     );
                     return None;
                 }
 
                 let anchor = snapshot.anchor_after(point);
-                Some(BookmarkAnchor(anchor))
+                Some(Bookmark {
+                    anchor,
+                    label: bookmark.label.clone(),
+                })
             })
             .collect();
 
-        if anchors.is_empty() {
+        if bookmarks.is_empty() {
             self.bookmarks.remove(abs_path);
         } else {
             let mut buffer_bookmarks = BufferBookmarks::new(buffer.clone(), cx);
-            buffer_bookmarks.bookmarks = anchors;
+            buffer_bookmarks.bookmarks = bookmarks;
             self.bookmarks
                 .insert(abs_path.clone(), BookmarkEntry::Loaded(buffer_bookmarks));
         }
@@ -167,11 +170,12 @@ impl BookmarkStore {
 
     /// Toggle a bookmark at the given anchor in the buffer.
     /// If a bookmark already exists on the same row, it will be removed.
-    /// Otherwise, a new bookmark will be added.
+    /// Otherwise, a new bookmark will be added with the given label.
     pub fn toggle_bookmark(
         &mut self,
         buffer: Entity<Buffer>,
         anchor: text::Anchor,
+        label: String,
         cx: &mut Context<Self>,
     ) {
         let Some(abs_path) = Self::abs_path_from_buffer(&buffer, cx) else {
@@ -192,7 +196,8 @@ impl BookmarkStore {
         let snapshot = buffer.read(cx).text_snapshot();
 
         let existing_index = buffer_bookmarks.bookmarks.iter().position(|existing| {
-            existing.0.summary::<Point>(&snapshot).row == anchor.summary::<Point>(&snapshot).row
+            existing.anchor.summary::<Point>(&snapshot).row
+                == anchor.summary::<Point>(&snapshot).row
         });
 
         if let Some(index) = existing_index {
@@ -201,10 +206,70 @@ impl BookmarkStore {
                 self.bookmarks.remove(&abs_path);
             }
         } else {
-            buffer_bookmarks.bookmarks.push(BookmarkAnchor(anchor));
+            buffer_bookmarks.bookmarks.push(Bookmark { anchor, label });
         }
 
         cx.notify();
+    }
+
+    pub fn find_bookmark(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        anchor: text::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Option<&Bookmark> {
+        let Some(abs_path) = Self::abs_path_from_buffer(buffer, cx) else {
+            return None;
+        };
+
+        self.resolve_anchors_if_needed(&abs_path, buffer, cx);
+
+        let entry = self
+            .bookmarks
+            .entry(abs_path.clone())
+            .or_insert_with(|| BookmarkEntry::Loaded(BufferBookmarks::new(buffer.clone(), cx)));
+
+        let BookmarkEntry::Loaded(buffer_bookmarks) = entry else {
+            unreachable!("resolve_if_needed should have converted to Loaded");
+        };
+
+        let snapshot = buffer.read(cx).text_snapshot();
+
+        buffer_bookmarks.bookmarks.iter().find(|existing| {
+            existing.anchor.summary::<Point>(&snapshot).row
+                == anchor.summary::<Point>(&snapshot).row
+        })
+    }
+
+    pub fn edit_bookmark(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        anchor: text::Anchor,
+        label: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(abs_path) = Self::abs_path_from_buffer(buffer, cx) else {
+            return;
+        };
+
+        self.resolve_anchors_if_needed(&abs_path, buffer, cx);
+
+        let Some(BookmarkEntry::Loaded(buffer_bookmarks)) = self.bookmarks.get_mut(&abs_path)
+        else {
+            return;
+        };
+
+        let snapshot = buffer.read(cx).text_snapshot();
+        let row = anchor.summary::<Point>(&snapshot).row;
+
+        if let Some(bookmark) = buffer_bookmarks
+            .bookmarks
+            .iter_mut()
+            .find(|existing| existing.anchor.summary::<Point>(&snapshot).row == row)
+        {
+            bookmark.label = label;
+            cx.notify();
+        }
     }
 
     /// Returns the bookmarks for a given buffer within an optional range.
@@ -216,7 +281,7 @@ impl BookmarkStore {
         range: Range<text::Anchor>,
         buffer_snapshot: &BufferSnapshot,
         cx: &mut Context<Self>,
-    ) -> Vec<BookmarkAnchor> {
+    ) -> Vec<Bookmark> {
         let Some(abs_path) = Self::abs_path_from_buffer(&buffer, cx) else {
             return Vec::new();
         };
@@ -232,17 +297,17 @@ impl BookmarkStore {
             .iter()
             .filter_map({
                 move |bookmark| {
-                    if !buffer_snapshot.can_resolve(&bookmark.anchor()) {
+                    if !buffer_snapshot.can_resolve(&bookmark.anchor) {
                         return None;
                     }
 
-                    if bookmark.anchor().cmp(&range.start, buffer_snapshot).is_lt()
-                        || bookmark.anchor().cmp(&range.end, buffer_snapshot).is_gt()
+                    if bookmark.anchor.cmp(&range.start, buffer_snapshot).is_lt()
+                        || bookmark.anchor.cmp(&range.end, buffer_snapshot).is_gt()
                     {
                         return None;
                     }
 
-                    Some(*bookmark)
+                    Some(bookmark.clone())
                 }
             })
             .collect()
@@ -310,19 +375,22 @@ impl BookmarkStore {
                             .bookmarks
                             .iter()
                             .filter_map(|bookmark| {
-                                if !snapshot.can_resolve(&bookmark.anchor()) {
+                                if !snapshot.can_resolve(&bookmark.anchor) {
                                     return None;
                                 }
                                 let row =
-                                    snapshot.summary_for_anchor::<Point>(&bookmark.anchor()).row;
-                                Some(SerializedBookmark(row))
+                                    snapshot.summary_for_anchor::<Point>(&bookmark.anchor).row;
+                                Some(SerializedBookmark {
+                                    row,
+                                    label: bookmark.label.clone(),
+                                })
                             })
                             .collect()
                     }
                 };
 
-                rows.sort_unstable();
-                rows.dedup();
+                rows.sort_unstable_by_key(|a| a.row);
+                rows.dedup_by_key(|a| a.row);
 
                 if rows.is_empty() {
                     None
@@ -346,8 +414,8 @@ impl BookmarkStore {
                 let ranges: Vec<Range<Point>> = bookmarks
                     .bookmarks()
                     .iter()
-                    .map(|anchor| {
-                        let row = snapshot.summary_for_anchor::<Point>(&anchor.anchor()).row;
+                    .map(|bookmark| {
+                        let row = snapshot.summary_for_anchor::<Point>(&bookmark.anchor).row;
                         Point::row_range(row..row)
                     })
                     .collect();

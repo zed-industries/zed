@@ -49,6 +49,14 @@ pub struct SystemPromptTemplate<'a> {
     /// per-command flags the model can request to relax them. When
     /// `false`, the prompt omits the sandbox section entirely.
     pub sandboxing: bool,
+    /// Whether the host is Linux. The writable-temp story differs by
+    /// platform (Linux exposes an ephemeral `tmpfs` over `/tmp`; other
+    /// platforms provide a persistent per-thread `$TMPDIR`), so the sandbox
+    /// section describes the right one rather than advertising a `$TMPDIR`
+    /// that doesn't behave as stated.
+    pub is_linux: bool,
+    /// Whether sandboxed terminal commands run through WSL on Windows.
+    pub is_windows: bool,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -94,6 +102,8 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -112,7 +122,7 @@ mod tests {
             root_name: "my-project".to_string(),
             abs_path: std::path::Path::new("/tmp/my-project").into(),
             rules_file: Some(RulesFileContext {
-                path_in_worktree: RelPath::unix("AGENTS.md").unwrap().into(),
+                path_in_worktree: RelPath::from_unix_str("AGENTS.md").unwrap().into(),
                 text: "project-specific guidance".to_string(),
                 project_entry_id: 1,
             }),
@@ -125,6 +135,8 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
             sandboxing: false,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -152,11 +164,13 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(!rendered.contains("## Terminal sandbox"));
-        assert!(!rendered.contains("allow_network"));
+        assert!(!rendered.contains("allow_hosts"));
     }
 
     #[test]
@@ -183,6 +197,8 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -190,11 +206,77 @@ mod tests {
         assert!(rendered.contains("## Terminal sandbox"));
         assert!(rendered.contains("`/tmp/alpha`"));
         assert!(rendered.contains("`/tmp/beta`"));
-        assert!(rendered.contains("allow_network: true"));
+        assert!(rendered.contains("allow_hosts"));
+        assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("fs_write_paths"));
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
+        assert!(rendered.contains("`.git` directories remain protected"));
+        assert!(rendered.contains("Git metadata writes are never grantable inside the sandbox"));
+        assert!(rendered.contains("request `unsandboxed: true` with a reason"));
+        assert!(rendered.contains("git --no-optional-locks status"));
         assert!(rendered.contains("for the rest of the thread"));
+    }
+
+    #[test]
+    fn test_system_prompt_linux_sandbox_section_omits_tmpdir() {
+        use prompt_store::{ProjectContext, WorktreeContext};
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "alpha".to_string(),
+            abs_path: std::path::Path::new("/tmp/alpha").into(),
+            rules_file: None,
+        }];
+        let project = ProjectContext::new(worktrees);
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            sandboxing: true,
+            is_linux: true,
+            is_windows: false,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(rendered.contains("## Terminal sandbox"));
+        // On Linux we must not advertise the special persistent `$TMPDIR`.
+        assert!(!rendered.contains("$TMPDIR"));
+        assert!(rendered.contains("`/tmp` is writable"));
+        assert!(rendered.contains("`/tmp/alpha`"));
+    }
+
+    #[test]
+    fn test_system_prompt_windows_sandbox_section_rejects_host_specific_network() {
+        use prompt_store::{ProjectContext, WorktreeContext};
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "alpha".to_string(),
+            abs_path: std::path::Path::new("C:/Users/me/project").into(),
+            rules_file: None,
+        }];
+        let project = ProjectContext::new(worktrees);
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            sandboxing: true,
+            is_linux: false,
+            is_windows: true,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(rendered.contains("commands run inside WSL under Bubblewrap"));
+        assert!(rendered.contains("Protected Git metadata remains read-only"));
+        assert!(rendered.contains("do not use this on Windows"));
+        assert!(rendered.contains("such requests are rejected"));
+        assert!(rendered.contains("allow_all_hosts: true"));
+        assert!(rendered.contains("git --no-optional-locks status"));
     }
 
     #[test]
@@ -207,6 +289,8 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: true,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -225,6 +309,8 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
@@ -241,6 +327,8 @@ mod tests {
             date: "2026-01-01".to_string(),
             user_agents_md: None,
             sandboxing: false,
+            is_linux: false,
+            is_windows: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

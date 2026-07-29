@@ -47,18 +47,25 @@ where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ValueOrJsonString<T> {
-        Value(T),
-        String(String),
+    fn to_custom_error<E>(e: serde_json::Error) -> E
+    where
+        E: serde::de::Error,
+    {
+        E::custom(format!("{e}"))
     }
 
-    match ValueOrJsonString::<T>::deserialize(deserializer)? {
-        ValueOrJsonString::Value(value) => Ok(value),
-        ValueOrJsonString::String(string) => serde_json::from_str::<T>(&string).map_err(|error| {
-            D::Error::custom(format!("failed to parse stringified value: {error}"))
-        }),
+    let raw_value = serde_json::Value::deserialize(deserializer)
+        .map_err(|error| D::Error::custom(format!("invalid JSON: {error}")))?;
+
+    match T::deserialize(&raw_value) {
+        Ok(value) => Ok(value),
+        Err(original_error) => {
+            let Some(string) = raw_value.as_str() else {
+                return Err(to_custom_error(original_error));
+            };
+
+            serde_json::from_str(string).map_err(to_custom_error)
+        }
     }
 }
 
@@ -84,6 +91,7 @@ pub use rename_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
+
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use web_search_tool::*;
@@ -137,15 +145,27 @@ macro_rules! tools {
             false
         }
 
+        /// Returns whether the tool with the given name may be provided to an
+        /// agent in a restricted workspace. Unknown tools (e.g. MCP tools) are
+        /// considered allowed.
+        pub fn tool_allowed_in_restricted_mode(name: &str) -> bool {
+            $(
+                if name == <$tool>::NAME {
+                    return <$tool>::allow_in_restricted_mode();
+                }
+            )*
+            true
+        }
+
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
-                LanguageModelRequestTool {
-                    name: T::NAME.to_string(),
-                    description: T::description().to_string(),
-                    input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
-                    use_input_streaming: T::supports_input_streaming(),
-                }
+                LanguageModelRequestTool::function(
+                    T::NAME.to_string(),
+                    T::description().to_string(),
+                    T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    T::supports_input_streaming(),
+                )
             }
             [
                 $(
@@ -216,5 +236,27 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
             cx.has_flag::<CreateThreadToolFeatureFlag>()
         }
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetch_and_terminal_are_forbidden_in_restricted_mode() {
+        assert!(!tool_allowed_in_restricted_mode(FetchTool::NAME));
+        assert!(!tool_allowed_in_restricted_mode(TerminalTool::NAME));
+
+        // Every other built-in tool, and unknown (e.g. MCP) tools, are allowed.
+        for name in ALL_TOOL_NAMES {
+            let expected = *name != FetchTool::NAME && *name != TerminalTool::NAME;
+            assert_eq!(
+                tool_allowed_in_restricted_mode(name),
+                expected,
+                "unexpected restricted-mode policy for tool `{name}`"
+            );
+        }
+        assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
     }
 }
