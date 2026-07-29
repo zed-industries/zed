@@ -3382,7 +3382,7 @@ mod tests {
             details
                 .write_paths
                 .iter()
-                .any(|path| path.ends_with("build")),
+                .any(|path| path.requested.ends_with("build")),
             "re-prompt should request the same write path: {:?}",
             details.write_paths
         );

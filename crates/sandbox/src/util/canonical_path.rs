@@ -188,6 +188,7 @@ impl CanonicalPathBuf {
     }
 
     /// Consume this value, returning the canonical path.
+    #[cfg_attr(target_os = "windows", expect(dead_code))]
     pub(crate) fn into_path(self) -> PathBuf {
         self.path
     }
