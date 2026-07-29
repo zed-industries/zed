@@ -120,6 +120,12 @@ pub enum UserTabbingPreference {
     InFullScreen,
 }
 
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {
+    // AppKit constant naming the icon component of an NSDraggingImageComponent.
+    #[allow(non_upper_case_globals)]
+    static NSDraggingImageComponentIconKey: id;
+}
 #[ctor(unsafe)]
 unsafe fn build_classes() {
     unsafe {
@@ -1871,7 +1877,6 @@ impl PlatformWindow for MacWindow {
                 .cast_mut()
                 .cast();
             let dragging_items: id = msg_send![class!(NSMutableArray), array];
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             // AppKit keeps this frame's distance from the event's location as the drag image's
             // offset from the cursor, so it has to stay anchored on `event`.
             let location: NSPoint = msg_send![event, locationInWindow];
@@ -1906,9 +1911,38 @@ impl PlatformWindow for MacWindow {
                     continue;
                 }
 
-                let url_path: id = msg_send![url, path];
-                let icon: id = msg_send![workspace, iconForFile: url_path];
-                let _: () = msg_send![item, setDraggingFrame: frame contents: icon];
+                // Resolve drag images lazily via `imageComponentsProvider` (Apple's
+                // recommendation for large item counts), and by file *type* rather than
+                // `iconForFile:`, which can synchronously hit LaunchServices, network
+                // mounts, or iCloud for every selected path and beachball drag startup.
+                // `iconForFileType:` is deprecated in favor of `iconForContentType:`,
+                // but the replacement requires macOS 11 and we target 10.15.
+                let file_type = if *is_directory {
+                    "public.folder".to_string()
+                } else {
+                    path.extension()
+                        .and_then(|extension| extension.to_str())
+                        .map(|extension| extension.to_string())
+                        .unwrap_or_else(|| "public.data".to_string())
+                };
+                let provider = ConcreteBlock::new(move || -> id {
+                    let component: id = msg_send![
+                        class!(NSDraggingImageComponent),
+                        draggingImageComponentWithKey: NSDraggingImageComponentIconKey
+                    ];
+                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                    let icon: id = msg_send![workspace, iconForFileType: ns_string(&file_type)];
+                    let _: () = msg_send![component, setContents: icon];
+                    // Component frames are relative to the item's dragging frame.
+                    let _: () = msg_send![
+                        component,
+                        setFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(32., 32.))
+                    ];
+                    msg_send![class!(NSArray), arrayWithObject: component]
+                });
+                let provider = provider.copy();
+                let _: () = msg_send![item, setDraggingFrame: frame];
+                let _: () = msg_send![item, setImageComponentsProvider: provider];
                 let _: () = msg_send![dragging_items, addObject: item];
                 let _: () = msg_send![item, release];
             }
