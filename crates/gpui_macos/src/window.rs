@@ -1838,6 +1838,10 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn can_start_external_drag(&self) -> bool {
+        true
+    }
+
     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
         let ExternalDragPayload::Files(paths) = payload;
         if paths.entries().is_empty() {

@@ -365,6 +365,10 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
+    fn can_start_external_drag(&self) -> bool {
+        true
+    }
+
     fn start_external_drag(&self, payload: &crate::ExternalDragPayload) -> bool {
         let mut state = self.0.lock();
         match payload {

@@ -5019,8 +5019,9 @@ impl Window {
         if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
             return;
         }
-        // Taking the source latches the attempt to once per gesture: synthetic drag moves would
-        // otherwise replay this same out-of-bounds position every 16ms.
+        if !self.platform_window.can_start_external_drag() {
+            return;
+        }
         let Some(payload_source) = cx
             .active_drag
             .as_mut()
