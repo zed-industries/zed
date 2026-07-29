@@ -325,6 +325,19 @@ impl<'de> Deserialize<'de> for ZedCustomizationsWrapper {
     }
 }
 
+/// Wrap a lifecycle command given as a single string so it runs through the
+/// default shell. Per the devcontainer spec a string command is executed via the
+/// shell (`/bin/sh -c` on POSIX, `cmd /c` on Windows); splitting it on whitespace
+/// would corrupt quoted arguments and shell operators.
+fn shell_script_args(script: &str) -> Vec<String> {
+    let (shell, flag) = if cfg!(windows) {
+        ("cmd", "/c")
+    } else {
+        ("/bin/sh", "-c")
+    };
+    vec![shell.to_string(), flag.to_string(), script.to_string()]
+}
+
 impl LifecycleScript {
     fn from_map(args: HashMap<String, Vec<String>>) -> Self {
         Self {
@@ -335,9 +348,7 @@ impl LifecycleScript {
         }
     }
     fn from_str(args: &str) -> Self {
-        let script: Vec<String> = args.split(" ").map(|a| a.to_string()).collect();
-
-        Self::from_args(script)
+        Self::from_args(shell_script_args(args))
     }
     fn from_args(args: Vec<String>) -> Self {
         Self::from_map(HashMap::from([("default".to_string(), args)]))
@@ -434,9 +445,7 @@ impl<'de> Deserialize<'de> for LifecycleScript {
                 while let Some(key) = map.next_key::<String>()? {
                     let value: Value = map.next_value()?;
                     let script_args = match value {
-                        Value::String(s) => {
-                            s.split(" ").map(|s| s.to_string()).collect::<Vec<String>>()
-                        }
+                        Value::String(s) => shell_script_args(&s),
                         Value::Array(arr) => {
                             let strings: Vec<String> = arr
                                 .into_iter()
@@ -630,9 +639,81 @@ mod test {
             ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
             HostRequirements, LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
             PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, ZedCustomization,
-            ZedCustomizationsWrapper, deserialize_devcontainer_json,
+            ZedCustomizationsWrapper, deserialize_devcontainer_json, shell_script_args,
         },
     };
+
+    #[test]
+    fn string_lifecycle_command_runs_through_shell() {
+        // A string command must be handed to the shell verbatim (devcontainer
+        // spec), not split on whitespace — otherwise quoted arguments and shell
+        // operators break. Regression test for `initializeCommand` of the form:
+        //   bash -lc '...; ...'
+        let json = r#"
+            {
+                "image": "ubuntu",
+                "initializeCommand": "bash -lc 'a=\"x y\"; echo \"$a\"'"
+            }
+        "#;
+
+        let devcontainer = deserialize_devcontainer_json(json).expect("deserialize");
+        let commands = devcontainer
+            .initialize_command
+            .expect("initializeCommand present")
+            .script_commands();
+        let command = commands.get("default").expect("default command");
+
+        let program = command.get_program().to_string_lossy().into_owned();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        let (expected_shell, expected_flag) = if cfg!(windows) {
+            ("cmd", "/c")
+        } else {
+            ("/bin/sh", "-c")
+        };
+        assert_eq!(program, expected_shell);
+        assert_eq!(
+            args,
+            vec![
+                expected_flag.to_string(),
+                r#"bash -lc 'a="x y"; echo "$a"'"#.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn array_lifecycle_command_is_not_split() {
+        // The array form is exec'd as-is (program + argv), with no shell wrapping
+        // and no whitespace splitting of the individual elements.
+        let json = r#"
+            {
+                "image": "ubuntu",
+                "initializeCommand": ["bash", "-lc", "a=\"x y\"; echo \"$a\""]
+            }
+        "#;
+
+        let devcontainer = deserialize_devcontainer_json(json).expect("deserialize");
+        let commands = devcontainer
+            .initialize_command
+            .expect("initializeCommand present")
+            .script_commands();
+        let command = commands.get("default").expect("default command");
+
+        let program = command.get_program().to_string_lossy().into_owned();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(program, "bash");
+        assert_eq!(
+            args,
+            vec!["-lc".to_string(), r#"a="x y"; echo "$a""#.to_string()]
+        );
+    }
 
     #[test]
     fn should_deserialize_customizations_with_unknown_keys() {
@@ -880,30 +961,26 @@ mod test {
                 update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
-                        vec!["echo".to_string(), "update_content_command".to_string()]
+                        shell_script_args("echo update_content_command")
                     ),
                     (
                         "second".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecycleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
-                    "post_start_command".to_string()
+                    "post_create_command".to_string()
                 ])),
+                post_start_command: Some(LifecycleScript::from_str("echo post_start_command")),
                 post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
-                        vec!["echo".to_string(), "post_attach_command".to_string()]
+                        shell_script_args("echo post_attach_command")
                     ),
                     (
                         "something1".to_string(),
-                        vec![
-                            "echo".to_string(),
-                            "something".to_string(),
-                            "else".to_string()
-                        ]
+                        shell_script_args("echo something else")
                     )
                 ]))),
                 wait_for: Some(LifecycleCommand::PostStartCommand),
@@ -1099,30 +1176,26 @@ mod test {
                 update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
-                        vec!["echo".to_string(), "update_content_command".to_string()]
+                        shell_script_args("echo update_content_command")
                     ),
                     (
                         "second".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecycleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
-                    "post_start_command".to_string()
+                    "post_create_command".to_string()
                 ])),
+                post_start_command: Some(LifecycleScript::from_str("echo post_start_command")),
                 post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
-                        vec!["echo".to_string(), "post_attach_command".to_string()]
+                        shell_script_args("echo post_attach_command")
                     ),
                     (
                         "something1".to_string(),
-                        vec![
-                            "echo".to_string(),
-                            "something".to_string(),
-                            "else".to_string()
-                        ]
+                        shell_script_args("echo something else")
                     )
                 ]))),
                 wait_for: Some(LifecycleCommand::PostStartCommand),
@@ -1327,30 +1400,26 @@ mod test {
                 update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
-                        vec!["echo".to_string(), "update_content_command".to_string()]
+                        shell_script_args("echo update_content_command")
                     ),
                     (
                         "second".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecycleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
-                    "post_start_command".to_string()
+                    "post_create_command".to_string()
                 ])),
+                post_start_command: Some(LifecycleScript::from_str("echo post_start_command")),
                 post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
-                        vec!["echo".to_string(), "post_attach_command".to_string()]
+                        shell_script_args("echo post_attach_command")
                     ),
                     (
                         "something1".to_string(),
-                        vec![
-                            "echo".to_string(),
-                            "something".to_string(),
-                            "else".to_string()
-                        ]
+                        shell_script_args("echo something else")
                     )
                 ]))),
                 wait_for: Some(LifecycleCommand::PostStartCommand),
