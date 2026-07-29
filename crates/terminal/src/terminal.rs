@@ -2884,6 +2884,13 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    pub fn task_exit_code(&self) -> Option<i32> {
+        self.task
+            .as_ref()
+            .and(self.child_exited)
+            .and_then(|status| status.code())
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
@@ -3640,6 +3647,10 @@ mod tests {
             Some(ExitStatus::default())
         );
         assert_content_eventually(&terminal, "hello-from-subprocess", cx).await;
+        assert_eq!(
+            terminal.update(cx, |terminal, _| terminal.task_exit_code()),
+            Some(0)
+        );
     }
 
     fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {

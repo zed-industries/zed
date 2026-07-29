@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
+use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal, TaskId};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
@@ -585,6 +585,26 @@ impl Project {
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
         &self.terminals.local_handles
+    }
+
+    pub fn kill_terminal_task(&self, task_id: &TaskId, cx: &mut App) -> usize {
+        let terminals = self
+            .terminals
+            .local_handles
+            .iter()
+            .filter_map(WeakEntity::upgrade)
+            .filter(|terminal| {
+                terminal.read(cx).task().is_some_and(|task| {
+                    task.status == TaskStatus::Running && &task.spawned_task.id == task_id
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for terminal in &terminals {
+            terminal.update(cx, |terminal, _| terminal.kill_active_task());
+        }
+
+        terminals.len()
     }
 
     fn resolve_directory_environment(
