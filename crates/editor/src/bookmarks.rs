@@ -65,7 +65,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(bookmark_store) = self.bookmark_store.clone() else {
+        let Some(bookmark_store) = self.bookmark_store() else {
             return;
         };
         let Some(project) = self.project() else {
@@ -138,7 +138,7 @@ impl Editor {
             return;
         };
 
-        let Some(bookmark_store) = self.bookmark_store.clone() else {
+        let Some(bookmark_store) = self.bookmark_store() else {
             return;
         };
 
@@ -166,7 +166,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(bookmark_store) = self.bookmark_store.clone() else {
+        let Some(bookmark_store) = self.bookmark_store() else {
             return;
         };
         let Some(project) = self.project() else {
@@ -256,7 +256,7 @@ impl Editor {
         label: String,
         cx: &mut Context<Self>,
     ) {
-        if let Some(bookmark_store) = self.bookmark_store.clone() {
+        if let Some(bookmark_store) = self.bookmark_store() {
             bookmark_store.update(cx, |store, cx| {
                 for target in targets {
                     store.toggle_bookmark(target.buffer, target.buffer_anchor, label.clone(), cx);
@@ -292,7 +292,7 @@ impl Editor {
         let Some(project) = &self.project else {
             return;
         };
-        let Some(bookmark_store) = &self.bookmark_store else {
+        let Some(bookmark_store) = self.bookmark_store() else {
             return;
         };
 
@@ -305,7 +305,7 @@ impl Editor {
             MultiBufferOffset(0)..multi_buffer_snapshot.len(),
             &multi_buffer_snapshot,
             project,
-            bookmark_store,
+            &bookmark_store,
             cx,
         );
         all_bookmarks.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));

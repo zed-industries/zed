@@ -1410,7 +1410,13 @@ mod tests {
                 "blame entity should be created after blame_hover"
             );
             assert!(
-                editor.pending_blame_hover_observation.is_some(),
+                editor
+                    .mode()
+                    .full()
+                    .unwrap()
+                    .git_blame
+                    .pending_blame_hover_observation
+                    .is_some(),
                 "should have registered an observation to wait for blame data"
             );
         });
@@ -1421,7 +1427,13 @@ mod tests {
         // The observation should have fired and cleaned itself up
         editor.update(cx, |editor, cx| {
             assert!(
-                editor.pending_blame_hover_observation.is_none(),
+                editor
+                    .mode()
+                    .full()
+                    .unwrap()
+                    .git_blame
+                    .pending_blame_hover_observation
+                    .is_none(),
                 "observation should be consumed after blame data is generated"
             );
             assert!(

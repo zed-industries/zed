@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 
 use dap::{Capabilities, adapters::DebugTaskDefinition, transport::RequestHandling};
 use debugger_ui::debugger_panel::DebugPanel;
-use editor::{Editor, EditorMode, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultiBuffer};
+use editor::{Editor, EditorModeConfig, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultiBuffer};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
@@ -1429,7 +1429,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
 
     let (editor, cx_a) = cx_a.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             cx.new(|cx| MultiBuffer::singleton(buffer_before_approval.clone(), cx)),
             Some(project_a.clone()),
             window,
@@ -1687,7 +1687,7 @@ async fn test_ssh_document_links_resolve(
 
     let (editor, cx_a) = cx_a.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx)),
             Some(project_a.clone()),
             window,

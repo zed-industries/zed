@@ -108,7 +108,7 @@ impl CursorPosition {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
                             }
-                            editor::EditorMode::Full { .. } => {
+                            editor::EditorMode::Full(_) => {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.display_snapshot(cx);
                                 if snapshot.buffer_snapshot().excerpts().count() > 0 {

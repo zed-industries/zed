@@ -21,7 +21,7 @@ use client::zed_urls;
 use collections::{HashMap, HashSet, IndexMap};
 use editor::scroll::Autoscroll;
 use editor::{
-    Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
+    Editor, EditorEvent, EditorModeConfig, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use file_icons::FileIcons;
 use fs::Fs;
@@ -1606,7 +1606,7 @@ impl ConversationView {
                     });
                     active.update(cx, |active, cx| {
                         active.sync_elicitation_state_for_entry(index, window, cx);
-                        active.sync_editor_mode(cx);
+                        active.sync_editor_mode(window, cx);
                         active.sync_generating_indicator(cx);
                     });
                 }
@@ -1633,7 +1633,7 @@ impl ConversationView {
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
                     active.update(cx, |active, cx| {
-                        active.sync_editor_mode(cx);
+                        active.sync_editor_mode(window, cx);
                     });
                 }
             }

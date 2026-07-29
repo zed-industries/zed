@@ -6,7 +6,7 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, HighlightKey,
+    Bias, CompletionProvider, Editor, EditorElement, EditorModeConfig, EditorStyle, HighlightKey,
     MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
@@ -61,11 +61,15 @@ impl Console {
     ) -> Self {
         let console = cx.new(|cx| {
             let mut editor = Editor::multi_line(window, cx);
-            editor.set_mode(EditorMode::Full {
-                scale_ui_elements_with_buffer_font_size: true,
-                show_active_line_background: true,
-                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-            });
+            editor.set_mode(
+                EditorModeConfig::Full {
+                    scale_ui_elements_with_buffer_font_size: true,
+                    show_active_line_background: true,
+                    sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+                },
+                window,
+                cx,
+            );
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
             editor.disable_scrollbars_and_minimap(window, cx);

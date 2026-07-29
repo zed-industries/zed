@@ -23,7 +23,9 @@ use askpass::AskPassDelegate;
 use client::zed_urls;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
-use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, SizingBehavior};
+use editor::{
+    Editor, EditorElement, EditorModeConfig, MultiBuffer, MultiBufferOffset, SizingBehavior,
+};
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
@@ -1090,7 +1092,7 @@ pub(crate) fn commit_message_editor(
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
-        EditorMode::AutoHeight {
+        EditorModeConfig::AutoHeight {
             min_lines: max_lines,
             max_lines: Some(max_lines),
         },
@@ -5658,22 +5660,30 @@ impl GitPanel {
     fn toggle_fill_commit_editor(
         &mut self,
         _: &ToggleFillCommitEditor,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit_editor_expanded = !self.commit_editor_expanded;
-        self.commit_editor.update(cx, |editor, _cx| {
+        self.commit_editor.update(cx, |editor, cx| {
             if self.commit_editor_expanded {
-                editor.set_mode(EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-                })
+                editor.set_mode(
+                    EditorModeConfig::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+                    },
+                    window,
+                    cx,
+                )
             } else {
-                editor.set_mode(EditorMode::AutoHeight {
-                    min_lines: MAX_PANEL_EDITOR_LINES,
-                    max_lines: Some(MAX_PANEL_EDITOR_LINES),
-                })
+                editor.set_mode(
+                    EditorModeConfig::AutoHeight {
+                        min_lines: MAX_PANEL_EDITOR_LINES,
+                        max_lines: Some(MAX_PANEL_EDITOR_LINES),
+                    },
+                    window,
+                    cx,
+                )
             }
         });
 
@@ -12679,22 +12689,22 @@ mod tests {
         panel.update_in(cx, |panel, window, cx| {
             assert!(!panel.commit_editor_expanded);
             assert!(matches!(
-                panel.commit_editor.read(cx).mode().clone(),
-                EditorMode::AutoHeight { .. }
+                panel.commit_editor.read(cx).mode_config(),
+                EditorModeConfig::AutoHeight { .. }
             ));
 
             panel.toggle_fill_commit_editor(&ToggleFillCommitEditor, window, cx);
             assert!(panel.commit_editor_expanded);
             assert!(matches!(
-                panel.commit_editor.read(cx).mode().clone(),
-                EditorMode::Full { .. }
+                panel.commit_editor.read(cx).mode_config(),
+                EditorModeConfig::Full { .. }
             ));
 
             panel.toggle_fill_commit_editor(&ToggleFillCommitEditor, window, cx);
             assert!(!panel.commit_editor_expanded);
             assert!(matches!(
-                panel.commit_editor.read(cx).mode().clone(),
-                EditorMode::AutoHeight { .. }
+                panel.commit_editor.read(cx).mode_config(),
+                EditorModeConfig::AutoHeight { .. }
             ));
         });
     }

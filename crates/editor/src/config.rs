@@ -128,10 +128,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.minimap_visibility != minimap_visibility {
-            if minimap_visibility.visible() && self.minimap.is_none() {
+            if minimap_visibility.visible()
+                && self.mode.full().is_some_and(|full| full.minimap.is_none())
+            {
                 let minimap_settings = EditorSettings::get_global(cx).minimap;
-                self.minimap =
+                let minimap =
                     self.create_minimap(minimap_settings.with_show_override(), window, cx);
+                if let Some(full) = self.mode.expect_full_mut() {
+                    full.minimap = minimap;
+                }
             }
             self.minimap_visibility = minimap_visibility;
             cx.notify();
@@ -224,7 +229,10 @@ impl Editor {
     }
 
     pub fn set_show_diff_review_button(&mut self, show: bool, cx: &mut Context<Self>) {
-        self.show_diff_review_button = show;
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        diff_review.show_diff_review_button = show;
         cx.notify();
     }
 

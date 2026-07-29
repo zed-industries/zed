@@ -54,8 +54,8 @@ impl Editor {
         };
         let buffer_id = buffer.read(cx).remote_id();
         let tasks = self
-            .runnables
-            .runnables((buffer_id, buffer_row))
+            .runnable_data()
+            .and_then(|data| data.runnables((buffer_id, buffer_row)))
             .map(|t| Arc::new(t.to_owned()));
 
         let project = self.project.clone();
@@ -175,7 +175,7 @@ impl Editor {
                 Task::ready(Ok(()))
             })
         });
-        self.runnables_for_selection_toggle = cx.background_spawn(async move {
+        let runnables_for_selection_toggle = cx.background_spawn(async move {
             match toggle_task.await {
                 Ok(code_action_spawn) => match code_action_spawn.await {
                     Ok(()) => {}
@@ -183,7 +183,11 @@ impl Editor {
                 },
                 Err(e) => log::error!("failed to toggle code actions: {e:#}"),
             }
-        })
+        });
+        match self.mode.full_mut() {
+            Some(full) => full.runnables_for_selection_toggle = runnables_for_selection_toggle,
+            None => runnables_for_selection_toggle.detach(),
+        }
     }
 
     pub fn confirm_code_action(

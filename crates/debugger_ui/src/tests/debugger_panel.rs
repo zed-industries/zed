@@ -15,7 +15,7 @@ use dap::{
     },
 };
 use editor::{
-    ActiveDebugLine, Editor, EditorMode, MultiBuffer,
+    ActiveDebugLine, Editor, EditorModeConfig, MultiBuffer,
     actions::{self},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -1126,7 +1126,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -1296,7 +1296,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     let (first_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(first, cx),
             Some(project.clone()),
             window,
@@ -1306,7 +1306,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     let (second_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(second, cx),
             Some(project.clone()),
             window,
@@ -1519,7 +1519,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     let (main_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(main_buffer, cx),
             Some(project.clone()),
             window,
@@ -1529,7 +1529,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     let (second_editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::full(),
+            EditorModeConfig::full(),
             MultiBuffer::build_from_buffer(second_buffer, cx),
             Some(project.clone()),
             window,

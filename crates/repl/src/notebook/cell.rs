@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
+use editor::{Editor, EditorModeConfig, MultiBuffer, SizingBehavior};
 use futures::future::Shared;
 use gpui::{
     App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
@@ -421,7 +421,7 @@ impl MarkdownCell {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::Full {
+                EditorModeConfig::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sizing_behavior: SizingBehavior::SizeByContent,
@@ -699,7 +699,7 @@ impl CodeCell {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                EditorMode::Full {
+                EditorModeConfig::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
                     sizing_behavior: SizingBehavior::SizeByContent,

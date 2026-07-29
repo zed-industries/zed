@@ -161,6 +161,14 @@ pub struct ResolvedTasks {
 }
 
 impl Editor {
+    pub(crate) fn runnable_data(&self) -> Option<&RunnableData> {
+        self.mode.full().map(|full| &full.runnables)
+    }
+
+    pub(crate) fn runnable_data_mut(&mut self) -> Option<&mut RunnableData> {
+        self.mode.full_mut().map(|full| &mut full.runnables)
+    }
+
     pub fn refresh_runnables(
         &mut self,
         invalidate_buffer_data: Option<BufferId>,
@@ -182,19 +190,23 @@ impl Editor {
             }
             let buffer_id = buffer_read.remote_id();
             if invalidate_buffer_data != Some(buffer_id)
-                && self.runnables.has_cached(buffer_id, &buffer_read.version())
+                && self
+                    .runnable_data()
+                    .is_some_and(|data| data.has_cached(buffer_id, &buffer_read.version()))
             {
                 return;
             }
         }
-        if let Some(buffer_id) = invalidate_buffer_data {
-            self.runnables.invalidate_buffer_data.insert(buffer_id);
+        if let Some(buffer_id) = invalidate_buffer_data
+            && let Some(data) = self.runnable_data_mut()
+        {
+            data.invalidate_buffer_data.insert(buffer_id);
         }
 
         let project = self.project().map(Entity::downgrade);
         let lsp_task_sources = self.lsp_task_sources(true, true, cx);
         let multi_buffer = self.buffer.downgrade();
-        self.runnables.runnables_update_task = cx.spawn_in(window, async move |editor, cx| {
+        let runnables_update_task = cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
                 return;
@@ -307,7 +319,11 @@ impl Editor {
             .await;
             editor
                 .update(cx, |editor, cx| {
-                    for buffer_id in std::mem::take(&mut editor.runnables.invalidate_buffer_data) {
+                    let invalidated_buffers = editor
+                        .runnable_data_mut()
+                        .map(|data| std::mem::take(&mut data.invalidate_buffer_data))
+                        .unwrap_or_default();
+                    for buffer_id in invalidated_buffers {
                         editor.clear_runnables(Some(buffer_id));
                     }
 
@@ -340,6 +356,9 @@ impl Editor {
                 })
                 .ok();
         });
+        if let Some(data) = self.runnable_data_mut() {
+            data.runnables_update_task = runnables_update_task;
+        }
     }
 
     pub fn spawn_nearest_task(
@@ -413,17 +432,19 @@ impl Editor {
     }
 
     pub fn clear_runnables(&mut self, for_buffer: Option<BufferId>) {
+        let Some(data) = self.runnable_data_mut() else {
+            return;
+        };
         if let Some(buffer_id) = for_buffer {
-            self.runnables.runnables.remove(&buffer_id);
-            self.runnables
-                .task_statuses
+            data.runnables.remove(&buffer_id);
+            data.task_statuses
                 .retain(|(status_buffer_id, _), _| *status_buffer_id != buffer_id);
         } else {
-            self.runnables.runnables.clear();
-            self.runnables.task_statuses.clear();
+            data.runnables.clear();
+            data.task_statuses.clear();
         }
-        self.runnables.invalidate_buffer_data.clear();
-        self.runnables.runnables_update_task = Task::ready(());
+        data.invalidate_buffer_data.clear();
+        data.runnables_update_task = Task::ready(());
     }
 
     pub(crate) fn runnable_task_status(
@@ -431,7 +452,7 @@ impl Editor {
         buffer_id: BufferId,
         buffer_row: BufferRow,
     ) -> Option<RunnableTaskStatus> {
-        self.runnables.task_status((buffer_id, buffer_row))
+        self.runnable_data()?.task_status((buffer_id, buffer_row))
     }
 
     pub(crate) fn set_runnable_task_status(
@@ -441,9 +462,10 @@ impl Editor {
         status: RunnableTaskStatus,
         cx: &mut Context<Self>,
     ) {
-        self.runnables
-            .set_task_status((buffer_id, buffer_row), status);
-        cx.notify();
+        if let Some(data) = self.runnable_data_mut() {
+            data.set_task_status((buffer_id, buffer_row), status);
+            cx.notify();
+        }
     }
 
     pub(crate) fn clear_runnable_task_status(
@@ -452,8 +474,10 @@ impl Editor {
         buffer_row: BufferRow,
         cx: &mut Context<Self>,
     ) {
-        self.runnables.clear_task_status((buffer_id, buffer_row));
-        cx.notify();
+        if let Some(data) = self.runnable_data_mut() {
+            data.clear_task_status((buffer_id, buffer_row));
+            cx.notify();
+        }
     }
 
     pub(crate) fn runnable_task_key_for_display_row(
@@ -476,7 +500,7 @@ impl Editor {
         buffer_id: BufferId,
         offset: BufferOffset,
     ) -> Option<(BufferId, BufferRow)> {
-        self.runnables.task_key_for_offset(buffer_id, offset)
+        self.runnable_data()?.task_key_for_offset(buffer_id, offset)
     }
 
     pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
@@ -521,9 +545,8 @@ impl Editor {
             let starting_point = location.range.start.to_point(&snapshot);
             let starting_offset = starting_point.to_offset(&snapshot);
             for (_, tasks) in self
-                .runnables
-                .runnables
-                .get(&buffer_id)
+                .runnable_data()
+                .and_then(|data| data.runnables.get(&buffer_id))
                 .into_iter()
                 .flat_map(|(_, tasks)| tasks.range(0..starting_point.row + 1))
             {
@@ -585,9 +608,9 @@ impl Editor {
                 {
                     let buffer_id = buffer.read(cx).remote_id();
                     if skip_cached
-                        && self
-                            .runnables
-                            .has_cached(buffer_id, &buffer.read(cx).version())
+                        && self.runnable_data().is_some_and(|data| {
+                            data.has_cached(buffer_id, &buffer.read(cx).version())
+                        })
                     {
                         None
                     } else {
@@ -636,9 +659,8 @@ impl Editor {
             if node_range.start <= offset && node_range.end >= offset {
                 // If it contains offset, check for task
                 if let Some(tasks) = self
-                    .runnables
-                    .runnables
-                    .get(&buffer_snapshot.remote_id())
+                    .runnable_data()
+                    .and_then(|data| data.runnables.get(&buffer_snapshot.remote_id()))
                     .and_then(|(_, tasks)| tasks.get(&symbol_start_row))
                 {
                     let buffer = self.buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
@@ -709,7 +731,10 @@ impl Editor {
         row: BufferRow,
         new_tasks: RunnableTasks,
     ) {
-        let (old_version, tasks) = self.runnables.runnables.entry(buffer).or_default();
+        let Some(data) = self.runnable_data_mut() else {
+            return;
+        };
+        let (old_version, tasks) = data.runnables.entry(buffer).or_default();
         if !old_version.changed_since(&version) {
             *old_version = version;
             tasks.insert(row, new_tasks);
@@ -836,8 +861,8 @@ impl Editor {
             .head()
             .row;
 
-        let ((buffer_id, row), tasks) = self
-            .runnables
+        let data = self.runnable_data()?;
+        let ((buffer_id, row), tasks) = data
             .runnables
             .iter()
             .flat_map(|(buffer_id, (_, tasks))| {
@@ -950,7 +975,8 @@ mod tests {
         editor: &Editor,
     ) -> Vec<(text::BufferId, language::BufferRow, Vec<String>)> {
         let mut result = editor
-            .runnables
+            .runnable_data()
+            .unwrap()
             .runnables
             .iter()
             .flat_map(|(buffer_id, (_, tasks))| {
@@ -1433,7 +1459,8 @@ mod tests {
         let templates = editor
             .update(cx, |editor, _, _| {
                 editor
-                    .runnables
+                    .runnable_data()
+                    .unwrap()
                     .runnables
                     .iter()
                     .flat_map(|(_, (_, tasks))| {

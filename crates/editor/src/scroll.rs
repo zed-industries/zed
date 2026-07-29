@@ -594,16 +594,15 @@ impl Editor {
     }
 
     pub(crate) fn scroll_beyond_last_line(&self, cx: &App) -> ScrollBeyondLastLine {
-        match self.mode {
-            EditorMode::Minimap { .. }
-            | EditorMode::Full {
-                sizing_behavior: SizingBehavior::Default,
-                ..
-            } => EditorSettings::get_global(cx).scroll_beyond_last_line,
-
-            EditorMode::Full { .. } | EditorMode::SingleLine | EditorMode::AutoHeight { .. } => {
-                ScrollBeyondLastLine::Off
-            }
+        match self.mode() {
+            EditorMode::Minimap { .. } => EditorSettings::get_global(cx).scroll_beyond_last_line,
+            EditorMode::Full(full) => match full.sizing_behavior {
+                SizingBehavior::Default => EditorSettings::get_global(cx).scroll_beyond_last_line,
+                SizingBehavior::ExcludeOverscrollMargin | SizingBehavior::SizeByContent => {
+                    ScrollBeyondLastLine::Off
+                }
+            },
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => ScrollBeyondLastLine::Off,
         }
     }
 

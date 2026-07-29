@@ -1674,7 +1674,7 @@ impl Editor {
             self.refresh_outline_symbols_at_cursor(cx);
             self.update_visible_edit_prediction(window, cx);
             self.hide_blame_popover(true, cx);
-            if self.git_blame_inline_enabled {
+            if self.git_blame_inline_enabled() {
                 self.start_inline_blame_timer(window, cx);
             }
         }

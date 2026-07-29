@@ -261,7 +261,10 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.inline_value_cache.enabled = !self.inline_value_cache.enabled;
+        let Some(full) = self.mode.full_mut() else {
+            return;
+        };
+        full.inline_value_cache.enabled = !full.inline_value_cache.enabled;
 
         self.refresh_inline_values(cx);
     }
@@ -279,7 +282,15 @@ impl Editor {
     }
 
     pub fn inlay_hints_enabled(&self) -> bool {
-        self.inlay_hints.as_ref().is_some_and(|cache| cache.enabled)
+        self.inlay_hints().is_some_and(|cache| cache.enabled)
+    }
+
+    fn inlay_hints(&self) -> Option<&LspInlayHintData> {
+        self.lsp_data()?.inlay_hints.as_ref()
+    }
+
+    fn inlay_hints_mut(&mut self) -> Option<&mut LspInlayHintData> {
+        self.lsp_data_mut()?.inlay_hints.as_mut()
     }
 
     /// Updates inlay hints for the visible ranges of the singleton buffer(s).
@@ -289,7 +300,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.lsp_data_enabled() || self.inlay_hints.is_none() {
+        if !self.lsp_data_enabled() || self.inlay_hints().is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {
@@ -304,7 +315,7 @@ impl Editor {
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::BuffersRemoved(_)
             | InlayHintRefreshReason::ModifiersChanged(_) => None,
-            _may_need_lsp_call => self.inlay_hints.as_ref().and_then(|inlay_hints| {
+            _may_need_lsp_call => self.inlay_hints().and_then(|inlay_hints| {
                 if invalidate_cache.should_invalidate() {
                     inlay_hints.invalidate_debounce
                 } else {
@@ -362,26 +373,35 @@ impl Editor {
 
         let multi_buffer = self.buffer().clone();
 
-        let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+        if self.inlay_hints().is_none() {
             return;
-        };
+        }
 
         if invalidate_cache.should_invalidate()
             && !matches!(reason, InlayHintRefreshReason::RefreshRequested { .. })
         {
             if invalidate_hints_for_buffers.is_empty() {
-                inlay_hints.clear();
+                if let Some(inlay_hints) = self.inlay_hints_mut() {
+                    inlay_hints.clear();
+                }
             } else {
-                inlay_hints.clear_for_buffers(
-                    &invalidate_hints_for_buffers,
-                    Self::visible_inlay_hints(self.display_map.read(cx)),
-                    &multi_buffer.read(cx).snapshot(cx),
-                );
+                let visible_inlay_hints =
+                    Self::visible_inlay_hints(self.display_map.read(cx)).collect::<Vec<_>>();
+                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                if let Some(inlay_hints) = self.inlay_hints_mut() {
+                    inlay_hints.clear_for_buffers(
+                        &invalidate_hints_for_buffers,
+                        visible_inlay_hints,
+                        &multi_buffer_snapshot,
+                    );
+                }
             }
         }
-        inlay_hints
-            .invalidate_hints_for_buffers
-            .extend(invalidate_hints_for_buffers);
+        if let Some(inlay_hints) = self.inlay_hints_mut() {
+            inlay_hints
+                .invalidate_hints_for_buffers
+                .extend(invalidate_hints_for_buffers);
+        }
 
         let mut buffers_to_query = HashMap::default();
         for (buffer_snapshot, visible_range, _) in visible_excerpts {
@@ -411,6 +431,9 @@ impl Editor {
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
+        let Some(inlay_hints) = self.inlay_hints_mut() else {
+            return;
+        };
         for (buffer_id, visible_excerpts) in buffers_to_query {
             let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
                 continue;
@@ -469,13 +492,13 @@ impl Editor {
         reason: &InlayHintRefreshReason,
         cx: &mut Context<'_, Editor>,
     ) -> Option<InvalidationStrategy> {
-        let Some(inlay_hints) = self.inlay_hints.as_mut() else {
+        if self.inlay_hints().is_none() {
             return None;
-        };
+        }
 
         let invalidate_cache = match reason {
             InlayHintRefreshReason::ModifiersChanged(enabled) => {
-                match inlay_hints.modifiers_override(*enabled) {
+                match self.inlay_hints_mut()?.modifiers_override(*enabled) {
                     Some(enabled) => {
                         if enabled {
                             InvalidationStrategy::None
@@ -488,7 +511,7 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::Toggle(enabled) => {
-                if inlay_hints.toggle(*enabled) {
+                if self.inlay_hints_mut()?.toggle(*enabled) {
                     if *enabled {
                         InvalidationStrategy::None
                     } else {
@@ -502,7 +525,10 @@ impl Editor {
             InlayHintRefreshReason::SettingsChange(new_settings) => {
                 let visible_inlay_hints =
                     Self::visible_inlay_hints(self.display_map.read(cx)).collect::<Vec<_>>();
-                match inlay_hints.update_settings(*new_settings, visible_inlay_hints) {
+                match self
+                    .inlay_hints_mut()?
+                    .update_settings(*new_settings, visible_inlay_hints)
+                {
                     ControlFlow::Break(Some(InlaySplice {
                         to_remove,
                         to_insert,
@@ -551,15 +577,9 @@ impl Editor {
             }
         };
 
-        match &mut self.inlay_hints {
-            Some(inlay_hints) => {
-                if !inlay_hints.enabled
-                    && !matches!(reason, InlayHintRefreshReason::ModifiersChanged(_))
-                {
-                    return None;
-                }
-            }
-            None => return None,
+        let inlay_hints = self.inlay_hints()?;
+        if !inlay_hints.enabled && !matches!(reason, InlayHintRefreshReason::ModifiersChanged(_)) {
+            return None;
         }
 
         Some(invalidate_cache)
@@ -804,15 +824,15 @@ impl Editor {
             })
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
-        let Some(inlay_hints) = &mut self.inlay_hints else {
-            return;
-        };
         let Some(buffer_snapshot) = self
             .buffer
             .read(cx)
             .buffer(buffer_id)
             .map(|buffer| buffer.read(cx).snapshot())
         else {
+            return;
+        };
+        let Some(inlay_hints) = self.inlay_hints_mut() else {
             return;
         };
 
@@ -973,8 +993,7 @@ fn spawn_editor_hints_refresh(
             editor
                 .update(cx, |editor, _| {
                     if let Some((_, hint_chunk_fetching)) = editor
-                        .inlay_hints
-                        .as_mut()
+                        .inlay_hints_mut()
                         .and_then(|inlay_hints| inlay_hints.hint_chunk_fetching.get_mut(&buffer_id))
                     {
                         for applicable_chunks in &applicable_chunks {
@@ -5149,12 +5168,7 @@ let c = 3;"#
     }
 
     fn allowed_hint_kinds_for_editor(editor: &Editor) -> HashSet<Option<InlayHintKind>> {
-        editor
-            .inlay_hints
-            .as_ref()
-            .unwrap()
-            .allowed_hint_kinds
-            .clone()
+        editor.inlay_hints().unwrap().allowed_hint_kinds.clone()
     }
 
     async fn run_work_cycle(

@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
+    AnchorRangeExt, DisplayPoint, Editor, EditorModeConfig, MultiBuffer, MultiBufferOffset,
     actions::{DeleteLine, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::DisplayRow,
@@ -2550,7 +2550,13 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(
+            EditorModeConfig::full(),
+            multi_buffer.clone(),
+            None,
+            window,
+            cx,
+        );
 
         let buffer_ids = multi_buffer
             .read(cx)

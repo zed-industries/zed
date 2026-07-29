@@ -33,15 +33,19 @@ impl Editor {
         };
 
         if lsp_symbols_enabled(buffer.read(cx), cx) {
-            let refresh_task = self.refresh_document_symbols_task.clone();
+            let Some(lsp_data) = self.lsp_data() else {
+                return Task::ready(Vec::new());
+            };
+            let refresh_task = lsp_data.refresh_document_symbols_task.clone();
             cx.spawn(async move |editor, cx| {
                 refresh_task.await;
                 editor
                     .read_with(cx, |editor, _| {
                         editor
-                            .lsp_document_symbols
-                            .get(&buffer_id)
-                            .cloned()
+                            .lsp_data()
+                            .and_then(|lsp_data| {
+                                lsp_data.lsp_document_symbols.get(&buffer_id).cloned()
+                            })
                             .unwrap_or_default()
                     })
                     .ok()
@@ -81,6 +85,7 @@ impl Editor {
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
         let (cursor_text_anchor, buffer) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
         let all_items = self
+            .lsp_data()?
             .lsp_document_symbols
             .get(&cursor_text_anchor.buffer_id)?;
         if all_items.is_empty() {
@@ -138,7 +143,7 @@ impl Editor {
 
     /// Fetches document symbols from the LSP for buffers that have the setting
     /// enabled. Called from `update_lsp_data` on edits, server events, etc.
-    /// When the fetch completes, stores results in `self.lsp_document_symbols`
+    /// When the fetch completes, stores results in `LspData::lsp_document_symbols`
     /// and triggers `refresh_outline_symbols_at_cursor` so breadcrumbs pick up the new data.
     pub(super) fn refresh_document_symbols(
         &mut self,
@@ -171,7 +176,10 @@ impl Editor {
 
         let mut symbols_altered = false;
         let multi_buffer = self.buffer().clone();
-        self.lsp_document_symbols.retain(|buffer_id, _| {
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
+        lsp_data.lsp_document_symbols.retain(|buffer_id, _| {
             let Some(buffer) = multi_buffer.read(cx).buffer(*buffer_id) else {
                 symbols_altered = true;
                 return false;
@@ -188,7 +196,7 @@ impl Editor {
             return;
         }
 
-        self.refresh_document_symbols_task = cx
+        let refresh_document_symbols_task = cx
             .spawn(async move |editor, cx| {
                 cx.background_executor()
                     .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
@@ -228,12 +236,17 @@ impl Editor {
                                 }
                             }
                         }
-                        editor.lsp_document_symbols.extend(highlighted_results);
+                        if let Some(lsp_data) = editor.lsp_data_mut() {
+                            lsp_data.lsp_document_symbols.extend(highlighted_results);
+                        }
                         editor.refresh_outline_symbols_at_cursor(cx);
                     })
                     .ok();
             })
             .shared();
+        if let Some(lsp_data) = self.lsp_data_mut() {
+            lsp_data.refresh_document_symbols_task = refresh_document_symbols_task;
+        }
     }
 }
 
@@ -349,8 +362,8 @@ mod tests {
 
     fn outline_symbol_names(editor: &Editor) -> Vec<&str> {
         editor
-            .outline_symbols_at_cursor
-            .as_ref()
+            .lsp_data()
+            .and_then(|lsp_data| lsp_data.outline_symbols_at_cursor.as_ref())
             .expect("Should have outline symbols")
             .1
             .iter()
@@ -768,8 +781,8 @@ mod tests {
 
         cx.update_editor(|editor, _window, cx| {
             let (_, symbols) = editor
-                .outline_symbols_at_cursor
-                .as_ref()
+                .lsp_data()
+                .and_then(|lsp_data| lsp_data.outline_symbols_at_cursor.as_ref())
                 .expect("Should have outline symbols");
             assert_eq!(symbols.len(), 1);
 
@@ -843,7 +856,9 @@ mod tests {
             // With LSP enabled but empty response, outline_symbols_at_cursor should be None
             // (no symbols to show in breadcrumbs)
             assert!(
-                editor.outline_symbols_at_cursor.is_none(),
+                editor
+                    .lsp_data()
+                    .is_none_or(|lsp_data| lsp_data.outline_symbols_at_cursor.is_none()),
                 "Empty LSP response should result in no outline symbols"
             );
         });

@@ -279,6 +279,20 @@ pub(super) struct InlineBlamePopover {
     pub(super) keyboard_grace: bool,
 }
 
+/// Git blame state of a full mode editor.
+#[derive(Default)]
+pub struct GitBlameState {
+    pub(super) blame: Option<Entity<GitBlame>>,
+    pub(super) blame_subscription: Option<Subscription>,
+    pub(super) pending_blame_hover_observation: Option<Subscription>,
+    pub(super) show_git_blame_gutter: bool,
+    pub(super) show_git_blame_inline: bool,
+    pub(super) show_git_blame_inline_delay_task: Option<Task<()>>,
+    pub(super) git_blame_inline_enabled: bool,
+    pub(super) inline_blame_popover: Option<InlineBlamePopover>,
+    pub(super) inline_blame_popover_show_task: Option<Task<()>>,
+}
+
 /// Represents a diff review button indicator that shows up when hovering over lines in the gutter
 /// in diff view mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -365,6 +379,24 @@ impl StoredReviewComment {
             is_editing: false,
         }
     }
+}
+
+/// Diff review state of a full mode editor.
+#[derive(Default)]
+pub struct DiffReviewState {
+    pub(crate) show_diff_review_button: bool,
+    pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
+    pub(crate) diff_review_drag_state: Option<DiffReviewDragState>,
+    /// Active diff review overlays. Multiple overlays can be open simultaneously
+    /// when hunks have comments stored.
+    pub(crate) diff_review_overlays: Vec<DiffReviewOverlay>,
+    /// Stored review comments grouped by hunk.
+    /// Uses a Vec instead of HashMap because DiffHunkKey contains an Anchor
+    /// which doesn't implement Hash/Eq in a way suitable for HashMap keys.
+    pub(crate) stored_review_comments: Vec<(DiffHunkKey, Vec<StoredReviewComment>)>,
+    /// Counter for generating unique comment IDs.
+    pub(crate) next_review_comment_id: usize,
+    pub(crate) hovered_diff_hunk_row: Option<DisplayRow>,
 }
 
 impl Editor {
@@ -509,22 +541,44 @@ impl Editor {
     }
 
     pub fn git_blame_inline_enabled(&self) -> bool {
-        self.git_blame_inline_enabled
+        self.mode
+            .full()
+            .is_some_and(|full| full.git_blame.git_blame_inline_enabled)
     }
 
     pub fn blame(&self) -> Option<&Entity<GitBlame>> {
-        self.blame.as_ref()
+        self.mode
+            .full()
+            .and_then(|full| full.git_blame.blame.as_ref())
+    }
+
+    pub(crate) fn inline_blame_popover(&self) -> Option<&InlineBlamePopover> {
+        self.mode
+            .full()
+            .and_then(|full| full.git_blame.inline_blame_popover.as_ref())
+    }
+
+    pub(crate) fn inline_blame_popover_mut(&mut self) -> Option<&mut InlineBlamePopover> {
+        self.mode
+            .full_mut()
+            .and_then(|full| full.git_blame.inline_blame_popover.as_mut())
+    }
+
+    pub(super) fn show_git_blame_inline(&self) -> bool {
+        self.mode
+            .full()
+            .is_some_and(|full| full.git_blame.show_git_blame_inline)
     }
 
     pub fn active_git_blame_entry(&self, cx: &mut App) -> Option<BlameEntry> {
-        if !self.show_git_blame_inline
+        if !self.show_git_blame_inline()
             || self.newest_selection_head_on_empty_line(cx)
             || !self.has_blame_entries(cx)
         {
             return None;
         }
 
-        let blame = self.blame.as_ref()?;
+        let blame = self.blame()?;
         let snapshot = self.display_snapshot(cx);
         let cursor = self.selections.newest::<Point>(&snapshot).head();
         let (buffer, point) = snapshot.buffer_snapshot().point_to_buffer_point(cursor)?;
@@ -547,7 +601,9 @@ impl Editor {
     }
 
     pub fn show_git_blame_gutter(&self) -> bool {
-        self.show_git_blame_gutter
+        self.mode
+            .full()
+            .is_some_and(|full| full.git_blame.show_git_blame_gutter)
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
@@ -567,9 +623,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_git_blame_gutter = !self.show_git_blame_gutter;
+        let Some(full) = self.mode.full_mut() else {
+            return;
+        };
+        full.git_blame.show_git_blame_gutter = !full.git_blame.show_git_blame_gutter;
 
-        if self.show_git_blame_gutter && !self.has_blame_entries(cx) {
+        if self.show_git_blame_gutter() && !self.has_blame_entries(cx) {
             self.start_git_blame(true, window, cx);
         }
 
@@ -595,11 +654,14 @@ impl Editor {
     /// Returns `true` if the popover was visible and was hidden, `false`
     /// otherwise.
     pub fn hide_blame_popover(&mut self, ignore_timeout: bool, cx: &mut Context<Self>) -> bool {
-        self.inline_blame_popover_show_task.take();
+        let Some(full) = self.mode.full_mut() else {
+            return false;
+        };
+        full.git_blame.inline_blame_popover_show_task.take();
 
-        if let Some(state) = &mut self.inline_blame_popover {
+        if let Some(state) = &mut full.git_blame.inline_blame_popover {
             if ignore_timeout {
-                self.inline_blame_popover.take();
+                full.git_blame.inline_blame_popover.take();
                 cx.notify();
             } else {
                 state.hide_task = Some(cx.spawn(async move |editor, cx| {
@@ -609,7 +671,9 @@ impl Editor {
 
                     editor
                         .update(cx, |editor, cx| {
-                            editor.inline_blame_popover.take();
+                            if let Some(full) = editor.mode.full_mut() {
+                                full.git_blame.inline_blame_popover.take();
+                            }
                             cx.notify();
                         })
                         .ok();
@@ -699,6 +763,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.diff_review().is_none() {
+            return;
+        }
         let Range { start, end } = display_range.sorted();
 
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -733,8 +800,10 @@ impl Editor {
         };
 
         // Check if we already have an overlay for this hunk
-        if let Some(existing_overlay) = self.diff_review_overlays.iter().find(|overlay| {
-            Self::hunk_keys_match(&overlay.hunk_key, &new_hunk_key, &buffer_snapshot)
+        if let Some(existing_overlay) = self.diff_review().and_then(|diff_review| {
+            diff_review.diff_review_overlays.iter().find(|overlay| {
+                Self::hunk_keys_match(&overlay.hunk_key, &new_hunk_key, &buffer_snapshot)
+            })
         }) {
             // Just focus the existing overlay's prompt editor
             let focus_handle = existing_overlay.prompt_editor.focus_handle(cx);
@@ -812,7 +881,10 @@ impl Editor {
             return;
         };
 
-        self.diff_review_overlays.push(DiffReviewOverlay {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        diff_review.diff_review_overlays.push(DiffReviewOverlay {
             anchor_range,
             block_id,
             prompt_editor: prompt_editor.clone(),
@@ -834,15 +906,18 @@ impl Editor {
     /// Stores the diff review comment locally.
     /// Comments are stored per-hunk and can later be batch-submitted to the Agent panel.
     pub fn submit_diff_review_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(diff_review) = self.diff_review() else {
+            return;
+        };
         // Find the overlay that currently has focus
-        let overlay_index = self
+        let overlay_index = diff_review
             .diff_review_overlays
             .iter()
             .position(|overlay| overlay.prompt_editor.focus_handle(cx).is_focused(window));
         let Some(overlay_index) = overlay_index else {
             return;
         };
-        let overlay = &self.diff_review_overlays[overlay_index];
+        let overlay = &diff_review.diff_review_overlays[overlay_index];
 
         let comment_text = overlay.prompt_editor.read(cx).text(cx).trim().to_string();
         if comment_text.is_empty() {
@@ -855,7 +930,10 @@ impl Editor {
         self.add_review_comment(hunk_key.clone(), comment_text, anchor_range, cx);
 
         // Clear the prompt editor but keep the overlay open
-        if let Some(overlay) = self.diff_review_overlays.get(overlay_index) {
+        if let Some(overlay) = self
+            .diff_review()
+            .and_then(|diff_review| diff_review.diff_review_overlays.get(overlay_index))
+        {
             overlay.prompt_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
             });
@@ -870,7 +948,8 @@ impl Editor {
     /// Returns the prompt editor for the diff review overlay, if one is active.
     /// This is primarily used for testing.
     pub fn diff_review_prompt_editor(&self) -> Option<&Entity<Editor>> {
-        self.diff_review_overlays
+        self.diff_review()?
+            .diff_review_overlays
             .first()
             .map(|overlay| &overlay.prompt_editor)
     }
@@ -878,7 +957,10 @@ impl Editor {
     /// Sets whether the comments section is expanded in the diff review overlay.
     /// This is primarily used for testing.
     pub fn set_diff_review_comments_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
-        for overlay in &mut self.diff_review_overlays {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        for overlay in &mut diff_review.diff_review_overlays {
             overlay.comments_expanded = expanded;
         }
         cx.notify();
@@ -886,10 +968,13 @@ impl Editor {
 
     /// Returns the total count of stored review comments across all hunks.
     pub(super) fn total_review_comment_count(&self) -> usize {
-        self.stored_review_comments
-            .iter()
-            .map(|(_, v)| v.len())
-            .sum()
+        self.diff_review().map_or(0, |diff_review| {
+            diff_review
+                .stored_review_comments
+                .iter()
+                .map(|(_, v)| v.len())
+                .sum()
+        })
     }
 
     /// Adds a new review comment to a specific hunk.
@@ -900,22 +985,30 @@ impl Editor {
         anchor_range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> usize {
-        let id = self.next_review_comment_id;
-        self.next_review_comment_id += 1;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some(diff_review) = self.diff_review_mut() else {
+            return 0;
+        };
+        let id = diff_review.next_review_comment_id;
+        diff_review.next_review_comment_id += 1;
 
         let stored_comment = StoredReviewComment::new(id, comment, anchor_range);
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let key_point = hunk_key.hunk_start_anchor.to_point(&snapshot);
 
         // Find existing entry for this hunk or add a new one
-        if let Some((_, comments)) = self.stored_review_comments.iter_mut().find(|(k, _)| {
-            k.file_path == hunk_key.file_path
-                && k.hunk_start_anchor.to_point(&snapshot) == key_point
-        }) {
+        if let Some((_, comments)) = diff_review
+            .stored_review_comments
+            .iter_mut()
+            .find(|(k, _)| {
+                k.file_path == hunk_key.file_path
+                    && k.hunk_start_anchor.to_point(&snapshot) == key_point
+            })
+        {
             comments.push(stored_comment);
         } else {
-            self.stored_review_comments
+            diff_review
+                .stored_review_comments
                 .push((hunk_key, vec![stored_comment]));
         }
 
@@ -932,22 +1025,26 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let just_started = self.blame.is_none();
+        let just_started = self.blame().is_none();
         if just_started {
             self.start_git_blame(true, window, cx);
         }
-        let Some(blame) = self.blame.as_ref() else {
+        let Some(blame) = self.blame().cloned() else {
             return;
         };
 
         if just_started && !blame.read(cx).has_generated_entries() {
-            let subscription = cx.observe_in(blame, window, |editor, blame, window, cx| {
+            let subscription = cx.observe_in(&blame, window, |editor, blame, window, cx| {
                 if blame.read(cx).has_generated_entries() {
-                    editor.pending_blame_hover_observation.take();
+                    if let Some(full) = editor.mode.full_mut() {
+                        full.git_blame.pending_blame_hover_observation.take();
+                    }
                     editor.show_blame_hover_popover(window, cx);
                 }
             });
-            self.pending_blame_hover_observation = Some(subscription);
+            if let Some(full) = self.mode.expect_full_mut() {
+                full.git_blame.pending_blame_hover_observation = Some(subscription);
+            }
             return;
         }
 
@@ -964,7 +1061,7 @@ impl Editor {
             return;
         };
 
-        let Some(blame) = self.blame.as_ref() else {
+        let Some(blame) = self.blame() else {
             return;
         };
 
@@ -1158,7 +1255,17 @@ impl Editor {
     }
 
     pub(super) fn show_diff_review_button(&self) -> bool {
-        self.show_diff_review_button
+        self.mode
+            .full()
+            .is_some_and(|full| full.diff_review.show_diff_review_button)
+    }
+
+    pub(crate) fn diff_review(&self) -> Option<&DiffReviewState> {
+        self.mode.full().map(|full| &full.diff_review)
+    }
+
+    pub(crate) fn diff_review_mut(&mut self) -> Option<&mut DiffReviewState> {
+        self.mode.full_mut().map(|full| &mut full.diff_review)
     }
 
     pub(super) fn render_diff_review_button(
@@ -1205,7 +1312,10 @@ impl Editor {
             .display_snapshot
             .display_point_to_point(DisplayPoint::new(display_row, 0), Bias::Left);
         let anchor = snapshot.buffer_snapshot().anchor_before(point);
-        self.diff_review_drag_state = Some(DiffReviewDragState {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        diff_review.diff_review_drag_state = Some(DiffReviewDragState {
             start_anchor: anchor,
             current_anchor: anchor,
         });
@@ -1218,7 +1328,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.diff_review_drag_state.is_none() {
+        if self
+            .diff_review()
+            .is_none_or(|diff_review| diff_review.diff_review_drag_state.is_none())
+        {
             return;
         }
         let snapshot = self.snapshot(window, cx);
@@ -1226,14 +1339,20 @@ impl Editor {
             .display_snapshot
             .display_point_to_point(display_row.as_display_point(), Bias::Left);
         let anchor = snapshot.buffer_snapshot().anchor_before(point);
-        if let Some(drag_state) = &mut self.diff_review_drag_state {
+        if let Some(drag_state) = self
+            .diff_review_mut()
+            .and_then(|diff_review| diff_review.diff_review_drag_state.as_mut())
+        {
             drag_state.current_anchor = anchor;
             cx.notify();
         }
     }
 
     pub(super) fn end_diff_review_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(drag_state) = self.diff_review_drag_state.take() {
+        if let Some(drag_state) = self
+            .diff_review_mut()
+            .and_then(|diff_review| diff_review.diff_review_drag_state.take())
+        {
             let snapshot = self.snapshot(window, cx);
             let range = drag_state.row_range(&snapshot.display_snapshot);
             self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
@@ -1242,16 +1361,22 @@ impl Editor {
     }
 
     pub(super) fn cancel_diff_review_drag(&mut self, cx: &mut Context<Self>) {
-        self.diff_review_drag_state = None;
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        diff_review.diff_review_drag_state = None;
         cx.notify();
     }
 
     /// Dismisses all diff review overlays.
     pub(super) fn dismiss_all_diff_review_overlays(&mut self, cx: &mut Context<Self>) {
-        if self.diff_review_overlays.is_empty() {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        if diff_review.diff_review_overlays.is_empty() {
             return;
         }
-        let block_ids: HashSet<_> = self
+        let block_ids: HashSet<_> = diff_review
             .diff_review_overlays
             .drain(..)
             .map(|overlay| overlay.block_id)
@@ -1277,10 +1402,12 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> &'a [StoredReviewComment] {
         let key_point = key.hunk_start_anchor.to_point(snapshot);
-        self.stored_review_comments
-            .iter()
-            .find(|(k, _)| {
-                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+        self.diff_review()
+            .and_then(|diff_review| {
+                diff_review.stored_review_comments.iter().find(|(k, _)| {
+                    k.file_path == key.file_path
+                        && k.hunk_start_anchor.to_point(snapshot) == key_point
+                })
             })
             .map(|(_, comments)| comments.as_slice())
             .unwrap_or(&[])
@@ -1293,10 +1420,12 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> usize {
         let key_point = key.hunk_start_anchor.to_point(snapshot);
-        self.stored_review_comments
-            .iter()
-            .find(|(k, _)| {
-                k.file_path == key.file_path && k.hunk_start_anchor.to_point(snapshot) == key_point
+        self.diff_review()
+            .and_then(|diff_review| {
+                diff_review.stored_review_comments.iter().find(|(k, _)| {
+                    k.file_path == key.file_path
+                        && k.hunk_start_anchor.to_point(snapshot) == key_point
+                })
             })
             .map(|(_, v)| v.len())
             .unwrap_or(0)
@@ -1304,17 +1433,24 @@ impl Editor {
 
     /// Removes a review comment by ID from any hunk.
     pub(super) fn remove_review_comment(&mut self, id: usize, cx: &mut Context<Self>) -> bool {
-        for (_, comments) in self.stored_review_comments.iter_mut() {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return false;
+        };
+        let mut removed = false;
+        for (_, comments) in diff_review.stored_review_comments.iter_mut() {
             if let Some(index) = comments.iter().position(|c| c.id == id) {
                 comments.remove(index);
-                cx.emit(EditorEvent::ReviewCommentsChanged {
-                    total_count: self.total_review_comment_count(),
-                });
-                cx.notify();
-                return true;
+                removed = true;
+                break;
             }
         }
-        false
+        if removed {
+            cx.emit(EditorEvent::ReviewCommentsChanged {
+                total_count: self.total_review_comment_count(),
+            });
+            cx.notify();
+        }
+        removed
     }
 
     /// Updates a review comment's text by ID.
@@ -1324,18 +1460,25 @@ impl Editor {
         new_comment: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        for (_, comments) in self.stored_review_comments.iter_mut() {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return false;
+        };
+        let mut updated = false;
+        for (_, comments) in diff_review.stored_review_comments.iter_mut() {
             if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
                 comment.comment = new_comment;
                 comment.is_editing = false;
-                cx.emit(EditorEvent::ReviewCommentsChanged {
-                    total_count: self.total_review_comment_count(),
-                });
-                cx.notify();
-                return true;
+                updated = true;
+                break;
             }
         }
-        false
+        if updated {
+            cx.emit(EditorEvent::ReviewCommentsChanged {
+                total_count: self.total_review_comment_count(),
+            });
+            cx.notify();
+        }
+        updated
     }
 
     /// Sets a comment's editing state.
@@ -1345,7 +1488,10 @@ impl Editor {
         is_editing: bool,
         cx: &mut Context<Self>,
     ) {
-        for (_, comments) in self.stored_review_comments.iter_mut() {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+        for (_, comments) in diff_review.stored_review_comments.iter_mut() {
             if let Some(comment) = comments.iter_mut().find(|c| c.id == id) {
                 comment.is_editing = is_editing;
                 cx.notify();
@@ -1363,19 +1509,25 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let original_count = self.total_review_comment_count();
 
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+
         // Remove comments with invalid hunk anchors
-        self.stored_review_comments
+        diff_review
+            .stored_review_comments
             .retain(|(hunk_key, _)| hunk_key.hunk_start_anchor.is_valid(&snapshot));
 
         // Also clean up individual comments with invalid anchor ranges
-        for (_, comments) in &mut self.stored_review_comments {
+        for (_, comments) in &mut diff_review.stored_review_comments {
             comments.retain(|comment| {
                 comment.range.start.is_valid(&snapshot) && comment.range.end.is_valid(&snapshot)
             });
         }
 
         // Remove empty hunk entries
-        self.stored_review_comments
+        diff_review
+            .stored_review_comments
             .retain(|(_, comments)| !comments.is_empty());
 
         let new_count = self.total_review_comment_count();
@@ -1394,19 +1546,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
         // Find the overlay that currently has focus, or use the first one
-        let overlay_info = self.diff_review_overlays.iter_mut().find_map(|overlay| {
-            if overlay.prompt_editor.focus_handle(cx).is_focused(window) {
-                overlay.comments_expanded = !overlay.comments_expanded;
-                Some(overlay.hunk_key.clone())
-            } else {
-                None
-            }
-        });
+        let overlay_info = diff_review
+            .diff_review_overlays
+            .iter_mut()
+            .find_map(|overlay| {
+                if overlay.prompt_editor.focus_handle(cx).is_focused(window) {
+                    overlay.comments_expanded = !overlay.comments_expanded;
+                    Some(overlay.hunk_key.clone())
+                } else {
+                    None
+                }
+            });
 
         // If no focused overlay found, toggle the first one
         let hunk_key = overlay_info.or_else(|| {
-            self.diff_review_overlays.first_mut().map(|overlay| {
+            diff_review.diff_review_overlays.first_mut().map(|overlay| {
                 overlay.comments_expanded = !overlay.comments_expanded;
                 overlay.hunk_key.clone()
             })
@@ -1430,9 +1588,14 @@ impl Editor {
         // Set the comment to editing mode
         self.set_comment_editing(comment_id, true, cx);
 
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
+
         // Find the overlay that contains this comment and create an inline editor if needed
         // First, find which hunk this comment belongs to
-        let hunk_key = self
+        let hunk_key = diff_review
             .stored_review_comments
             .iter()
             .find_map(|(key, comments)| {
@@ -1443,9 +1606,17 @@ impl Editor {
                 }
             });
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         if let Some(hunk_key) = hunk_key {
-            if let Some(overlay) = self
+            // Find the comment text
+            let comment_text = diff_review
+                .stored_review_comments
+                .iter()
+                .flat_map(|(_, comments)| comments)
+                .find(|c| c.id == comment_id)
+                .map(|c| c.comment.clone())
+                .unwrap_or_default();
+
+            if let Some(overlay) = diff_review
                 .diff_review_overlays
                 .iter_mut()
                 .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
@@ -1453,15 +1624,6 @@ impl Editor {
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     overlay.inline_edit_editors.entry(comment_id)
                 {
-                    // Find the comment text
-                    let comment_text = self
-                        .stored_review_comments
-                        .iter()
-                        .flat_map(|(_, comments)| comments)
-                        .find(|c| c.id == comment_id)
-                        .map(|c| c.comment.clone())
-                        .unwrap_or_default();
-
                     // Create inline editor
                     let parent_editor = cx.entity().downgrade();
                     let inline_editor = cx.new(|cx| {
@@ -1513,7 +1675,10 @@ impl Editor {
         // Get the new text from the inline editor
         // Find the overlay containing this comment's inline editor
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunk_key = self
+        let Some(diff_review) = self.diff_review() else {
+            return;
+        };
+        let hunk_key = diff_review
             .stored_review_comments
             .iter()
             .find_map(|(key, comments)| {
@@ -1527,7 +1692,8 @@ impl Editor {
         let new_text = hunk_key
             .as_ref()
             .and_then(|hunk_key| {
-                self.diff_review_overlays
+                diff_review
+                    .diff_review_overlays
                     .iter()
                     .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
             })
@@ -1543,11 +1709,12 @@ impl Editor {
 
         // Remove the inline editor and its subscription
         if let Some(hunk_key) = hunk_key {
-            if let Some(overlay) = self
-                .diff_review_overlays
-                .iter_mut()
-                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
-            {
+            if let Some(overlay) = self.diff_review_mut().and_then(|diff_review| {
+                diff_review
+                    .diff_review_overlays
+                    .iter_mut()
+                    .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+            }) {
                 overlay.inline_edit_editors.remove(&comment_id);
                 overlay.inline_edit_subscriptions.remove(&comment_id);
             }
@@ -1564,28 +1731,30 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Find which hunk this comment belongs to
-        let hunk_key = self
-            .stored_review_comments
-            .iter()
-            .find_map(|(key, comments)| {
-                if comments.iter().any(|c| c.id == comment_id) {
-                    Some(key.clone())
-                } else {
-                    None
-                }
-            });
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        if let Some(diff_review) = self.diff_review_mut() {
+            // Find which hunk this comment belongs to
+            let hunk_key = diff_review
+                .stored_review_comments
+                .iter()
+                .find_map(|(key, comments)| {
+                    if comments.iter().any(|c| c.id == comment_id) {
+                        Some(key.clone())
+                    } else {
+                        None
+                    }
+                });
 
-        // Remove the inline editor and its subscription
-        if let Some(hunk_key) = hunk_key {
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            if let Some(overlay) = self
-                .diff_review_overlays
-                .iter_mut()
-                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
-            {
-                overlay.inline_edit_editors.remove(&comment_id);
-                overlay.inline_edit_subscriptions.remove(&comment_id);
+            // Remove the inline editor and its subscription
+            if let Some(hunk_key) = hunk_key {
+                if let Some(overlay) = diff_review
+                    .diff_review_overlays
+                    .iter_mut()
+                    .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, &hunk_key, &snapshot))
+                {
+                    overlay.inline_edit_editors.remove(&comment_id);
+                    overlay.inline_edit_subscriptions.remove(&comment_id);
+                }
             }
         }
 
@@ -1620,10 +1789,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(diff_review) = self.diff_review() else {
+            return;
+        };
         // Get the hunk key before removing the comment
         // Find the hunk key from the comment itself
         let comment_id = action.id;
-        let hunk_key = self
+        let hunk_key = diff_review
             .stored_review_comments
             .iter()
             .find_map(|(key, comments)| {
@@ -1635,7 +1807,7 @@ impl Editor {
             });
 
         // Also get it from the overlay for refresh purposes
-        let overlay_hunk_key = self
+        let overlay_hunk_key = diff_review
             .diff_review_overlays
             .first()
             .map(|o| o.hunk_key.clone());
@@ -1945,12 +2117,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.git_blame_inline_enabled {
-            self.git_blame_inline_enabled = false;
-            self.show_git_blame_inline = false;
-            self.show_git_blame_inline_delay_task.take();
+        let Some(full) = self.mode.full_mut() else {
+            return;
+        };
+        if full.git_blame.git_blame_inline_enabled {
+            full.git_blame.git_blame_inline_enabled = false;
+            full.git_blame.show_git_blame_inline = false;
+            full.git_blame.show_git_blame_inline_delay_task.take();
         } else {
-            self.git_blame_inline_enabled = true;
+            full.git_blame.git_blame_inline_enabled = true;
             self.start_git_blame_inline(user_triggered, window, cx);
         }
 
@@ -1971,39 +2146,49 @@ impl Editor {
             .is_some()
         {
             self.start_inline_blame_timer(window, cx);
-        } else {
-            self.show_git_blame_inline = true
+        } else if let Some(full) = self.mode.expect_full_mut() {
+            full.git_blame.show_git_blame_inline = true;
         }
     }
 
     pub(super) fn render_git_blame_gutter(&self, cx: &App) -> bool {
-        !self.mode().is_minimap() && self.show_git_blame_gutter && self.has_blame_entries(cx)
+        self.show_git_blame_gutter() && self.has_blame_entries(cx)
     }
 
     pub(super) fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
+        let Some(full) = self.mode.full() else {
+            return false;
+        };
         ProjectSettings::get_global(cx).git.inline_blame.location
             == project::project_settings::InlineBlameLocation::Inline
-            && self.show_git_blame_inline
-            && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
+            && full.git_blame.show_git_blame_inline
+            && (self.focus_handle.is_focused(window)
+                || full.git_blame.inline_blame_popover.is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
 
     pub(super) fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(delay) = ProjectSettings::get_global(cx).git.inline_blame_delay() {
-            self.show_git_blame_inline = false;
+        let Some(delay) = ProjectSettings::get_global(cx).git.inline_blame_delay() else {
+            return;
+        };
+        let Some(full) = self.mode.expect_full_mut() else {
+            return;
+        };
+        full.git_blame.show_git_blame_inline = false;
 
-            self.show_git_blame_inline_delay_task =
-                Some(cx.spawn_in(window, async move |this, cx| {
-                    cx.background_executor().timer(delay).await;
+        full.git_blame.show_git_blame_inline_delay_task =
+            Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(delay).await;
 
-                    this.update(cx, |this, cx| {
-                        this.show_git_blame_inline = true;
-                        cx.notify();
-                    })
-                    .log_err();
-                }));
-        }
+                this.update(cx, |this, cx| {
+                    if let Some(full) = this.mode.full_mut() {
+                        full.git_blame.show_git_blame_inline = true;
+                    }
+                    cx.notify();
+                })
+                .log_err();
+            }));
     }
 
     pub(super) fn show_blame_popover(
@@ -2014,7 +2199,10 @@ impl Editor {
         ignore_timeout: bool,
         cx: &mut Context<Self>,
     ) {
-        if let Some(state) = &mut self.inline_blame_popover {
+        let Some(full) = self.mode.full_mut() else {
+            return;
+        };
+        if let Some(state) = &mut full.git_blame.inline_blame_popover {
             state.hide_task.take();
         } else {
             let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
@@ -2027,8 +2215,10 @@ impl Editor {
                 }
                 editor
                     .update(cx, |editor, cx| {
-                        editor.inline_blame_popover_show_task.take();
-                        let Some(blame) = editor.blame.as_ref() else {
+                        let Some(blame) = editor.blame().cloned() else {
+                            if let Some(full) = editor.mode.full_mut() {
+                                full.git_blame.inline_blame_popover_show_task.take();
+                            }
                             return;
                         };
                         let blame = blame.read(cx);
@@ -2044,7 +2234,11 @@ impl Editor {
                                 cx,
                             )
                         });
-                        editor.inline_blame_popover = Some(InlineBlamePopover {
+                        let Some(full) = editor.mode.full_mut() else {
+                            return;
+                        };
+                        full.git_blame.inline_blame_popover_show_task.take();
+                        full.git_blame.inline_blame_popover = Some(InlineBlamePopover {
                             position,
                             hide_task: None,
                             popover_bounds: None,
@@ -2059,7 +2253,7 @@ impl Editor {
                     })
                     .ok();
             });
-            self.inline_blame_popover_show_task = Some(show_task);
+            full.git_blame.inline_blame_popover_show_task = Some(show_task);
         }
     }
 
@@ -2163,9 +2357,12 @@ impl Editor {
             let project = project.clone();
             let blame = cx
                 .new(|cx| GitBlame::new(self.buffer.clone(), project, user_triggered, focused, cx));
-            self.blame_subscription =
+            let Some(full) = self.mode.expect_full_mut() else {
+                return;
+            };
+            full.git_blame.blame_subscription =
                 Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
-            self.blame = Some(blame);
+            full.git_blame.blame = Some(blame);
         }
     }
 
@@ -2248,7 +2445,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let blame = self.blame.as_ref()?;
+        let blame = self.blame()?;
         let snapshot = self.snapshot(window, cx);
         let cursor = self
             .selections
@@ -2334,15 +2531,24 @@ impl Editor {
 
         // First, compute which overlays have comments (to avoid borrow issues with retain)
         let overlays_with_comments: Vec<bool> = self
-            .diff_review_overlays
-            .iter()
-            .map(|overlay| self.hunk_comment_count(&overlay.hunk_key, &snapshot) > 0)
-            .collect();
+            .diff_review()
+            .map(|diff_review| {
+                diff_review
+                    .diff_review_overlays
+                    .iter()
+                    .map(|overlay| self.hunk_comment_count(&overlay.hunk_key, &snapshot) > 0)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let Some(diff_review) = self.diff_review_mut() else {
+            return;
+        };
 
         // Now collect block IDs to remove and retain overlays
         let mut block_ids_to_remove = HashSet::default();
         let mut index = 0;
-        self.diff_review_overlays.retain(|overlay| {
+        diff_review.diff_review_overlays.retain(|overlay| {
             let has_comments = overlays_with_comments[index];
             index += 1;
             if !has_comments {
@@ -2368,11 +2574,12 @@ impl Editor {
         // Extract all needed data from overlay first to avoid borrow conflicts
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let (comments_expanded, block_id, prompt_editor) = {
-            let Some(overlay) = self
-                .diff_review_overlays
-                .iter()
-                .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
-            else {
+            let Some(overlay) = self.diff_review().and_then(|diff_review| {
+                diff_review
+                    .diff_review_overlays
+                    .iter()
+                    .find(|overlay| Self::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot))
+            }) else {
                 return;
             };
 
@@ -2456,10 +2663,11 @@ impl Editor {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let comments = editor.comments_for_hunk(hunk_key, &snapshot).to_vec();
                     let (expanded, editors, avatar_uri, line_ranges) = editor
-                        .diff_review_overlays
-                        .iter()
-                        .find(|overlay| {
-                            Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot)
+                        .diff_review()
+                        .and_then(|diff_review| {
+                            diff_review.diff_review_overlays.iter().find(|overlay| {
+                                Editor::hunk_keys_match(&overlay.hunk_key, hunk_key, &snapshot)
+                            })
                         })
                         .map(|o| {
                             let start_point = o.anchor_range.start.to_point(&snapshot);
@@ -2818,7 +3026,7 @@ impl Editor {
     /// Returns the line range for the first diff review overlay, if one is active.
     /// Returns (start_row, end_row) as physical line numbers in the underlying file.
     pub(super) fn diff_review_line_range(&self, cx: &App) -> Option<(u32, u32)> {
-        let overlay = self.diff_review_overlays.first()?;
+        let overlay = self.diff_review()?.diff_review_overlays.first()?;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let start_point = overlay.anchor_range.start.to_point(&snapshot);
         let end_point = overlay.anchor_range.end.to_point(&snapshot);
@@ -2841,9 +3049,12 @@ impl Editor {
     ) -> Vec<(DiffHunkKey, Vec<StoredReviewComment>)> {
         // Dismiss all overlays when taking comments (e.g., when sending to agent)
         self.dismiss_all_diff_review_overlays(cx);
-        let comments = std::mem::take(&mut self.stored_review_comments);
+        let Some(diff_review) = self.diff_review_mut() else {
+            return Vec::new();
+        };
+        let comments = std::mem::take(&mut diff_review.stored_review_comments);
         // Reset the ID counter since all comments have been taken
-        self.next_review_comment_id = 0;
+        diff_review.next_review_comment_id = 0;
         cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
         cx.notify();
         comments

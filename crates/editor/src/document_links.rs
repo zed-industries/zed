@@ -33,7 +33,11 @@ impl Editor {
         for_buffer: Option<BufferId>,
         cx: &mut Context<Self>,
     ) {
-        if !self.lsp_data_enabled() || !self.lsp_document_links.enabled {
+        if !self.lsp_data_enabled()
+            || !self
+                .lsp_data()
+                .is_some_and(|lsp_data| lsp_data.lsp_document_links.enabled)
+        {
             return;
         }
         let Some(project) = self.project.as_ref().map(|p| p.downgrade()) else {
@@ -52,12 +56,15 @@ impl Editor {
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
+        let Some(lsp_data) = self.lsp_data_mut() else {
+            return;
+        };
         if buffers_to_query.is_empty() {
-            self.lsp_document_links.refresh_task = Task::ready(());
+            lsp_data.lsp_document_links.refresh_task = Task::ready(());
             return;
         }
 
-        self.lsp_document_links.refresh_task = cx.spawn(async move |editor, cx| {
+        lsp_data.lsp_document_links.refresh_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
@@ -83,14 +90,17 @@ impl Editor {
             let new_links_for_buffers = join_all(tasks_for_buffers).await;
             editor
                 .update(cx, |editor, _| {
+                    let Some(lsp_data) = editor.lsp_data_mut() else {
+                        return;
+                    };
                     for (buffer_id, links) in new_links_for_buffers {
                         let Some(links) = links else {
                             continue;
                         };
                         if links.is_empty() {
-                            editor.lsp_document_links.per_buffer.remove(&buffer_id);
+                            lsp_data.lsp_document_links.per_buffer.remove(&buffer_id);
                         } else {
-                            editor
+                            lsp_data
                                 .lsp_document_links
                                 .per_buffer
                                 .insert(buffer_id, links);
@@ -119,6 +129,7 @@ impl Editor {
         let buffer_id = buffer.read(cx).remote_id();
         let snapshot = buffer.read(cx).snapshot();
         let matches = self
+            .lsp_data()?
             .lsp_document_links
             .per_buffer
             .get(&buffer_id)?
@@ -175,9 +186,9 @@ impl Editor {
             resolved_links.extend(pending_results.into_iter().flatten());
             editor
                 .update(cx, |editor, cx| {
-                    if let Some(by_server) =
-                        editor.lsp_document_links.per_buffer.get_mut(&buffer_id)
-                    {
+                    if let Some(by_server) = editor.lsp_data_mut().and_then(|lsp_data| {
+                        lsp_data.lsp_document_links.per_buffer.get_mut(&buffer_id)
+                    }) {
                         for (server_id, link_id, resolved) in &resolved_links {
                             if let Some(slot) = by_server
                                 .get_mut(server_id)

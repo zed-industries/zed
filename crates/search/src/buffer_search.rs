@@ -3312,7 +3312,7 @@ mod tests {
             });
             let editor_handle = cx.new(|cx| {
                 Editor::new(
-                    editor::EditorMode::full(),
+                    editor::EditorModeConfig::full(),
                     multibuffer.clone(),
                     Some(project.clone()),
                     window,

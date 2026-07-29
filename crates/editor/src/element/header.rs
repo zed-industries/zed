@@ -68,7 +68,11 @@ impl EditorElement {
         let mut end_rows = Vec::<DisplayRow>::new();
         let mut rows = Vec::<StickyHeader>::new();
 
-        for item in editor.sticky_headers.iter().flatten() {
+        for item in editor
+            .lsp_data()
+            .and_then(|lsp_data| lsp_data.sticky_headers.as_deref())
+            .unwrap_or_default()
+        {
             let selection_start = item
                 .selection_range
                 .start

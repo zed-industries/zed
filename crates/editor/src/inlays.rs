@@ -156,7 +156,10 @@ impl Editor {
         to_insert: Vec<Inlay>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(inlay_hints) = &mut self.inlay_hints {
+        if let Some(inlay_hints) = self
+            .lsp_data_mut()
+            .and_then(|lsp_data| lsp_data.inlay_hints.as_mut())
+        {
             for id_to_remove in to_remove {
                 inlay_hints.added_hints.remove(id_to_remove);
             }
@@ -180,7 +183,9 @@ impl Editor {
     }
 
     pub fn inline_values_enabled(&self) -> bool {
-        self.inline_value_cache.enabled
+        self.mode
+            .full()
+            .is_some_and(|full| full.inline_value_cache.enabled)
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -10,11 +10,11 @@ use crate::{
     BUFFER_HEADER_PADDING, BlockId, ChunkRendererContext, ChunkReplacement, CodeActionSource,
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
     ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow,
-    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
-    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
-    HandleInput, HoveredCursor, InlayHintRefreshReason, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, PageDown, PageUp, Point, RowExt, RowRangeExt, Selection,
-    SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
+    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorModeConfig, EditorSettings,
+    EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown,
+    HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason, LineDown, LineHighlight,
+    LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE, PageDown, PageUp, Point, RowExt, RowRangeExt,
+    Selection, SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -2030,7 +2030,7 @@ impl EditorElement {
         }
 
         let editor = self.editor.read(cx);
-        let blame = editor.blame.clone()?;
+        let blame = editor.blame().cloned()?;
         let padding = {
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
@@ -2106,11 +2106,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if !self.editor.read(cx).inline_blame_popover.is_some() {
+        if self.editor.read(cx).inline_blame_popover().is_none() {
             return;
         }
 
-        let Some(blame) = self.editor.read(cx).blame.clone() else {
+        let Some(blame) = self.editor.read(cx).blame().cloned() else {
             return;
         };
         let cursor_point = self
@@ -2142,8 +2142,7 @@ impl EditorElement {
 
         let Some((popover_state, target_point)) = self.editor.read_with(cx, |editor, _| {
             editor
-                .inline_blame_popover
-                .as_ref()
+                .inline_blame_popover()
                 .map(|state| (state.popover_state.clone(), state.position))
         }) else {
             return;
@@ -2188,7 +2187,7 @@ impl EditorElement {
             let popover_bounds = Bounds::new(origin, size);
 
             self.editor.update(cx, |editor, _| {
-                if let Some(state) = &mut editor.inline_blame_popover {
+                if let Some(state) = editor.inline_blame_popover_mut() {
                     state.popover_bounds = Some(popover_bounds);
                 }
             });
@@ -2216,7 +2215,7 @@ impl EditorElement {
             return None;
         }
 
-        let blame = self.editor.read(cx).blame.clone()?;
+        let blame = self.editor.read(cx).blame().cloned()?;
         let workspace = self.editor.read(cx).workspace()?;
         let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
             blame.blame_for_rows(buffer_rows, cx).collect()
@@ -2550,7 +2549,12 @@ impl EditorElement {
             return None;
         }
 
-        let indicator = self.editor.read(cx).gutter_diff_review_indicator.0?;
+        let indicator = self
+            .editor
+            .read(cx)
+            .diff_review()?
+            .gutter_diff_review_indicator
+            .0?;
         if !indicator.is_active {
             return None;
         }
@@ -4653,7 +4657,10 @@ impl EditorElement {
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
         let diff_hunk_delegate = editor.read(cx).diff_hunk_delegate();
-        let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
+        let hovered_diff_hunk_row = editor
+            .read(cx)
+            .diff_review()
+            .and_then(|diff_review| diff_review.hovered_diff_hunk_row);
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
         let mut controls = vec![];
@@ -4907,14 +4914,14 @@ impl EditorElement {
 
             if matches!(
                 layout.mode,
-                EditorMode::Full { .. } | EditorMode::Minimap { .. }
+                EditorModeConfig::Full { .. } | EditorModeConfig::Minimap { .. }
             ) {
                 let show_active_line_background = match layout.mode {
-                    EditorMode::Full {
+                    EditorModeConfig::Full {
                         show_active_line_background,
                         ..
                     } => show_active_line_background,
-                    EditorMode::Minimap { .. } => true,
+                    EditorModeConfig::Minimap { .. } => true,
                     _ => false,
                 };
                 let mut active_rows = layout.active_rows.iter().peekable();
@@ -7073,7 +7080,7 @@ impl LineWithInvisibles {
         editor_style: &EditorStyle,
         max_line_len: usize,
         max_line_count: usize,
-        editor_mode: &EditorMode,
+        editor_mode: &EditorModeConfig,
         text_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
@@ -7804,12 +7811,16 @@ impl EditorElement {
     ///
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
-        match self.editor.read(cx).mode {
-            EditorMode::Full {
-                scale_ui_elements_with_buffer_font_size: true,
-                ..
-            }
-            | EditorMode::Minimap { .. } => {
+        let scale_with_buffer_font_size = match self.editor.read(cx).mode() {
+            EditorMode::Full(full) => full.scale_ui_elements_with_buffer_font_size,
+            EditorMode::Minimap { .. } => true,
+            // We currently use single-line and auto-height editors in UI contexts,
+            // so we don't want to scale everything with the buffer font size, as it
+            // ends up looking off.
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => false,
+        };
+        match scale_with_buffer_font_size {
+            true => {
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {
@@ -7834,10 +7845,7 @@ impl EditorElement {
                     }
                 }
             }
-            // We currently use single-line and auto-height editors in UI contexts,
-            // so we don't want to scale everything with the buffer font size, as it
-            // ends up looking off.
-            _ => None,
+            false => None,
         }
     }
 
@@ -7914,7 +7922,7 @@ impl Element for EditorElement {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), window, cx);
 
-                let layout_id = match editor.mode {
+                let layout_id = match editor.mode() {
                     EditorMode::SingleLine => {
                         let rem_size = window.rem_size();
                         let height = self.style.text.line_height_in_pixels(rem_size);
@@ -7923,7 +7931,7 @@ impl Element for EditorElement {
                         style.size.width = relative(1.).into();
                         window.request_layout(style, None, cx)
                     }
-                    EditorMode::AutoHeight {
+                    &EditorMode::AutoHeight {
                         min_lines,
                         max_lines,
                     } => {
@@ -7953,9 +7961,8 @@ impl Element for EditorElement {
                         style.size.height = relative(1.).into();
                         window.request_layout(style, None, cx)
                     }
-                    EditorMode::Full {
-                        sizing_behavior, ..
-                    } => {
+                    EditorMode::Full(full) => {
+                        let sizing_behavior = full.sizing_behavior;
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         if sizing_behavior == SizingBehavior::SizeByContent {
@@ -8064,7 +8071,7 @@ impl Element for EditorElement {
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
 
                         if matches!(
-                            editor.mode,
+                            editor.mode(),
                             EditorMode::AutoHeight { .. } | EditorMode::Minimap { .. }
                         ) {
                             snapshot
@@ -8309,7 +8316,12 @@ impl Element for EditorElement {
                     }
 
                     // Add diff review drag selection highlight to text area
-                    if let Some(drag_state) = &self.editor.read(cx).diff_review_drag_state {
+                    if let Some(drag_state) = self
+                        .editor
+                        .read(cx)
+                        .diff_review()
+                        .and_then(|diff_review| diff_review.diff_review_drag_state.as_ref())
+                    {
                         let range = drag_state.row_range(&snapshot.display_snapshot);
                         let start_row = range.start().0;
                         let end_row = range.end().0;
@@ -8336,8 +8348,8 @@ impl Element for EditorElement {
                     let document_colors = self
                         .editor
                         .read(cx)
-                        .colors
-                        .as_ref()
+                        .lsp_data()
+                        .and_then(|lsp_data| lsp_data.colors.as_ref())
                         .map(|colors| colors.editor_display_highlights(&snapshot));
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
@@ -8605,7 +8617,7 @@ impl Element for EditorElement {
                     let longest_line_blame_width = self
                         .editor
                         .update(cx, |editor, cx| {
-                            if !editor.show_git_blame_inline {
+                            if !editor.show_git_blame_inline() {
                                 return None;
                             }
                             // Blame is only painted inline for the Inline location, so
@@ -8616,7 +8628,7 @@ impl Element for EditorElement {
                             {
                                 return None;
                             }
-                            let blame = editor.blame.as_ref()?;
+                            let blame = editor.blame()?;
                             let (_, blame_entry) = blame
                                 .update(cx, |blame, cx| {
                                     let row_infos =
@@ -9636,7 +9648,7 @@ pub struct EditorLayout {
     content_origin: gpui::Point<Pixels>,
     scrollbars_layout: Option<EditorScrollbars>,
     minimap: Option<MinimapLayout>,
-    mode: EditorMode,
+    mode: EditorModeConfig,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
@@ -10959,7 +10971,7 @@ mod tests {
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
             let mut editor = Editor::new(
-                EditorMode::AutoHeight {
+                EditorModeConfig::AutoHeight {
                     min_lines: 1,
                     max_lines: None,
                 },
@@ -10994,7 +11006,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
-            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            let mut editor = Editor::new(EditorModeConfig::full(), buffer, None, window, cx);
             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
@@ -11128,7 +11140,8 @@ mod tests {
         let window = cx.add_window(|window, cx| {
             // No soft wrap: a long line legitimately scrolls horizontally, so the
             // inline blame width reservation is meaningful and observable here.
-            let mut editor = Editor::new(EditorMode::full(), buffer, Some(project), window, cx);
+            let mut editor =
+                Editor::new(EditorModeConfig::full(), buffer, Some(project), window, cx);
             editor.set_soft_wrap_mode(language_settings::SoftWrap::None, cx);
             editor
         });
@@ -11147,7 +11160,7 @@ mod tests {
         // Ensure the blame entry actually loaded, so a broken setup can't let this
         // test pass vacuously with a zero-width blame reservation on both draws.
         editor.update(cx, |editor, cx| {
-            assert!(editor.show_git_blame_inline);
+            assert!(editor.show_git_blame_inline());
             let blame = editor
                 .blame()
                 .expect("inline blame should be running")
@@ -11212,7 +11225,7 @@ mod tests {
         let text = "aaa\nbbb";
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(text, cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
 
         let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -11251,7 +11264,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("overlay replacement", cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
         let editor = window.root(cx).unwrap();
 
@@ -11303,7 +11316,7 @@ mod tests {
         let text = "jump target overlay ".repeat(16);
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&text, cx);
-            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            let mut editor = Editor::new(EditorModeConfig::full(), buffer, None, window, cx);
             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
@@ -11354,7 +11367,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -11491,7 +11504,7 @@ mod tests {
             });
 
             let buffer = MultiBuffer::build_from_buffer(buffer, cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -11546,7 +11559,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
 
         update_test_language_settings(cx, &|s| {
@@ -11652,7 +11665,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
 
         update_test_language_settings(
@@ -11703,7 +11716,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -11774,7 +11787,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -11869,7 +11882,7 @@ mod tests {
 
             let actual_invisibles = collect_invisibles_from_new_editor(
                 cx,
-                EditorMode::full(),
+                EditorModeConfig::full(),
                 input_text,
                 px(500.0),
                 show_line_numbers,
@@ -11892,7 +11905,7 @@ mod tests {
         // trailing ASCII space), not an offset relative to the post-flush buffer.
         let actual_invisibles = collect_invisibles_from_new_editor(
             cx,
-            EditorMode::full(),
+            EditorModeConfig::full(),
             "a\u{00A0}b ",
             px(500.0),
             false,
@@ -11913,12 +11926,12 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
+            Editor::new(EditorModeConfig::full(), buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
         let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
-        let editor_mode = EditorMode::full();
+        let editor_mode = EditorModeConfig::full();
         let max_line_len = "\u{00a0}abcdef".len();
 
         window
@@ -11976,8 +11989,8 @@ mod tests {
         });
 
         for editor_mode_without_invisibles in [
-            EditorMode::SingleLine,
-            EditorMode::AutoHeight {
+            EditorModeConfig::SingleLine,
+            EditorModeConfig::AutoHeight {
                 min_lines: 1,
                 max_lines: Some(100),
             },
@@ -12060,7 +12073,7 @@ mod tests {
 
                 let actual_invisibles = collect_invisibles_from_new_editor(
                     cx,
-                    EditorMode::full(),
+                    EditorModeConfig::full(),
                     &input_text,
                     px(editor_width),
                     show_line_numbers,
@@ -12099,7 +12112,7 @@ mod tests {
 
     fn collect_invisibles_from_new_editor(
         cx: &mut TestAppContext,
-        editor_mode: EditorMode,
+        editor_mode: EditorModeConfig,
         input_text: &str,
         editor_width: Pixels,
         show_line_numbers: bool,

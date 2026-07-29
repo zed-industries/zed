@@ -178,7 +178,7 @@ impl ThreadFeedbackState {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
+                editor::EditorModeConfig::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(4),
                 },
@@ -816,7 +816,7 @@ impl ThreadView {
                 session_capabilities.clone(),
                 agent_id.clone(),
                 &placeholder,
-                editor::EditorMode::AutoHeight {
+                editor::EditorModeConfig::AutoHeight {
                     min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
                     max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
                 },
@@ -1053,7 +1053,7 @@ impl ThreadView {
         };
 
         this.sync_generating_indicator(cx);
-        this.sync_editor_mode(cx);
+        this.sync_editor_mode(window, cx);
         this.sync_existing_elicitation_states(window, cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
@@ -1693,8 +1693,8 @@ impl ThreadView {
                 generation
             })?;
 
-            this.update_in(cx, |this, _window, cx| {
-                this.set_editor_is_expanded(false, cx);
+            this.update_in(cx, |this, window, cx| {
+                this.set_editor_is_expanded(false, window, cx);
             })?;
 
             let _ = this.update(cx, |this, cx| {
@@ -2125,7 +2125,7 @@ impl ThreadView {
                 self.session_capabilities.clone(),
                 self.agent_id.clone(),
                 "",
-                EditorMode::AutoHeight {
+                EditorModeConfig::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(10),
                 },
@@ -2377,20 +2377,25 @@ impl ThreadView {
     pub fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.list_state.item_count() == 0 {
             return;
         }
-        self.set_editor_is_expanded(!self.editor_expanded, cx);
+        self.set_editor_is_expanded(!self.editor_expanded, window, cx);
         cx.stop_propagation();
         cx.notify();
     }
 
-    pub fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
+    pub fn set_editor_is_expanded(
+        &mut self,
+        is_expanded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.editor_expanded = is_expanded;
-        self.sync_editor_mode(cx);
+        self.sync_editor_mode(window, cx);
         cx.notify();
     }
 
@@ -7261,7 +7266,7 @@ impl ThreadView {
         open_markdown_in_workspace(thread_title, markdown, workspace, window, cx)
     }
 
-    pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_editor_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let has_messages = self.list_state.item_count() > 0;
         let v2_empty_state = !has_messages;
 
@@ -7270,25 +7275,25 @@ impl ThreadView {
         }
 
         let mode = if self.editor_expanded {
-            EditorMode::Full {
+            EditorModeConfig::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
                 sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
             }
         } else if v2_empty_state {
-            EditorMode::Full {
+            EditorModeConfig::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
                 sizing_behavior: SizingBehavior::Default,
             }
         } else {
-            EditorMode::AutoHeight {
+            EditorModeConfig::AutoHeight {
                 min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
                 max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
             }
         };
         self.message_editor.update(cx, |editor, cx| {
-            editor.set_mode(mode, cx);
+            editor.set_mode(mode, window, cx);
         });
     }
 

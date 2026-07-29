@@ -1151,7 +1151,7 @@ impl Item for Editor {
             .highlighted_rows
             .get(&TypeId::of::<ActiveDebugLine>())
             .is_some_and(|lines| !lines.is_empty())
-            && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
+            && let Some(breakpoint_store) = self.breakpoint_store()
         {
             breakpoint_store.update(cx, |store, _cx| {
                 store.set_active_debug_pane_id(new_pane_id);

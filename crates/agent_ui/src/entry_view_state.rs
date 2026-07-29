@@ -6,7 +6,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
-    Editor, EditorEvent, EditorMode, MinimapVisibility, RestoreOnlyUnstagedDiffHunkDelegate,
+    Editor, EditorEvent, EditorModeConfig, MinimapVisibility, RestoreOnlyUnstagedDiffHunkDelegate,
     SizingBehavior,
 };
 use gpui::{
@@ -258,7 +258,7 @@ impl EntryViewState {
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
                             "Edit message － @ to include context",
-                            editor::EditorMode::AutoHeight {
+                            editor::EditorModeConfig::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,
                             },
@@ -659,7 +659,7 @@ fn create_editor_diff(
 ) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::new(
-            EditorMode::Full {
+            EditorModeConfig::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
                 sizing_behavior: SizingBehavior::SizeByContent,
