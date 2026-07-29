@@ -12,7 +12,7 @@ use gpui::{
     linear_color_stop, linear_gradient, point, px, size,
 };
 use language::language_settings::ShowWhitespaceSetting;
-use multi_buffer::{Anchor, ExcerptBoundaryInfo};
+use multi_buffer::{Anchor, ExcerptBoundaryInfo, MultiBuffer};
 use project::Entry;
 use settings::{RelativeLineNumbers, Settings};
 use smallvec::SmallVec;
@@ -21,7 +21,7 @@ use text::BufferId;
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*,
-    right_click_menu, text_for_keystroke,
+    right_click_menu, text_for_keystroke, utils::WithRemSize,
 };
 use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
@@ -685,11 +685,15 @@ pub(crate) fn render_buffer_header(
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();
-    // On transparent windows `editor_subheader_background` stacks over the
-    // editor background into a darker bar (and the sticky shadow becomes a halo),
-    // so skip both unless the window is opaque.
+    // On transparent windows, only render an opaque `editor_subheader_background` so it masks
+    // the editor content beneath it without creating a darker bar. Sticky shadows still require
+    // an opaque window to avoid rendering as a halo.
     let opaque_window =
         cx.theme().window_background_appearance() == WindowBackgroundAppearance::Opaque;
+    let show_header_background = opaque_window || colors.editor_subheader_background.is_opaque();
+
+    let show_open_file_button =
+        can_open_excerpts && relative_path.is_some() && (is_selected || header_hovered);
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))
@@ -713,7 +717,6 @@ pub(crate) fn render_buffer_header(
                 .pr_2()
                 .rounded_sm()
                 .gap_1p5()
-                .when(is_sticky && opaque_window, |el| el.shadow_md())
                 .border_1()
                 .map(|border| {
                     let border_color =
@@ -724,10 +727,11 @@ pub(crate) fn render_buffer_header(
                         };
                     border.border_color(border_color)
                 })
-                .when(opaque_window, |el| {
-                    el.bg(colors.editor_subheader_background)
+                .when(is_sticky && opaque_window, |s| s.shadow_md())
+                .when(show_header_background, |s| {
+                    s.bg(colors.editor_subheader_background)
                 })
-                .hover(|style| style.bg(colors.element_hover))
+                .hover(|s| s.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
                     let buffer_id = for_excerpt.buffer_id();
@@ -820,7 +824,7 @@ pub(crate) fn render_buffer_header(
                             |path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                                    .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into());
 
                                 let full_path = match parent_path.as_deref() {
                                     Some(parent) if !parent.is_empty() => {
@@ -906,46 +910,46 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
-                        .when_some(diff_stat, |this, (added, removed)| {
-                            this.child(
-                                div().flex_shrink_0().child(
-                                    DiffStat::new(
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .when_some(diff_stat, |this, (added, removed)| {
+                                    let ui_font_size =
+                                        theme_settings::ThemeSettings::get_global(cx)
+                                            .ui_font_size(cx);
+                                    this.child(WithRemSize::new(ui_font_size).child(DiffStat::new(
                                         ("buffer-header-diff-stat", buffer_id.to_proto()),
                                         added as usize,
                                         removed as usize,
-                                    )
-                                    .label_size(LabelSize::Small),
-                                ),
-                            )
-                        })
-                        .when(
-                            can_open_excerpts
-                                && relative_path.is_some()
-                                && (is_selected || header_hovered),
-                            |this| {
-                                this.child(
-                                    Button::new("open-file-button", "Open File")
-                                        .style(ButtonStyle::OutlinedGhost)
-                                        .when(is_selected, |this| {
-                                            this.key_binding(KeyBinding::for_action_in(
-                                                &OpenExcerpts,
-                                                &focus_handle,
-                                                cx,
+                                    )))
+                                })
+                                .when(show_open_file_button, |this| {
+                                    this.child(
+                                        Button::new("open-file-button", "Open File")
+                                            .style(ButtonStyle::OutlinedCustom(
+                                                cx.theme().colors().border.opacity(0.6),
                                             ))
-                                        })
-                                        .on_click(window.listener_for(editor, {
-                                            let jump_data = jump_data.clone();
-                                            move |editor, e: &ClickEvent, window, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.modifiers().secondary(),
-                                                    window,
+                                            .layer(ui::ElevationIndex::ElevatedSurface)
+                                            .when(is_selected, |this| {
+                                                this.key_binding(KeyBinding::for_action_in(
+                                                    &OpenExcerpts,
+                                                    &focus_handle,
                                                     cx,
-                                                );
-                                            }
-                                        })),
-                                )
-                            },
+                                                ))
+                                            })
+                                            .on_click(window.listener_for(editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })),
+                                    )
+                                }),
                         )
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
@@ -975,7 +979,7 @@ pub(crate) fn render_buffer_header(
     let editor = editor.clone();
     let buffer_snapshot = buffer.clone();
 
-    right_click_menu("buffer-header-context-menu")
+    right_click_menu(("buffer-header-context-menu", buffer_id.to_proto()))
         .trigger(move |_, _, _| header)
         .menu(move |window, cx| {
             let menu_context = focus_handle.clone();
@@ -1086,7 +1090,7 @@ pub(crate) fn render_buffer_header(
         })
 }
 
-fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
+pub fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
     file_status.map_or(Color::Default, |status| {
         if status.is_conflicted() {
             Color::Conflict

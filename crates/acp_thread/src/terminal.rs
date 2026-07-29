@@ -129,6 +129,31 @@ impl LinuxWslSandboxError {
             LinuxWslSandboxError::Other(message) => message.clone(),
         }
     }
+
+    /// The slug of the sandboxing docs section that best explains how to resolve
+    /// this failure, for deep-linking from the UI. Pair with
+    /// `client::zed_urls::sandboxing_docs`.
+    pub fn docs_section(&self) -> &'static str {
+        match self {
+            // Both "no bwrap" and "only a setuid-root bwrap" are resolved by
+            // installing a non-setuid Bubblewrap.
+            LinuxWslSandboxError::BwrapNotFound | LinuxWslSandboxError::SetuidRejected => {
+                "installing-bubblewrap"
+            }
+            // A failed probe on Linux is almost always disabled unprivileged
+            // user namespaces, which the Ubuntu-specific section covers.
+            LinuxWslSandboxError::SandboxProbeFailed => "installing-bubblewrap-ubuntu",
+            // Catch-all (includes WSL/Windows messages): point at the platform
+            // overview for the current OS.
+            LinuxWslSandboxError::Other(_) => {
+                if cfg!(target_os = "windows") {
+                    "windows"
+                } else {
+                    "linux"
+                }
+            }
+        }
+    }
 }
 
 impl SandboxWrap {
@@ -151,6 +176,15 @@ impl SandboxWrap {
     /// grant as a [`sandbox::HostFilesystemLocation`] (pinning the inode / canonical
     /// path) rather than passing a re-resolvable path. A location that can't be
     /// captured (e.g. it doesn't exist) is dropped from the grant — fail-closed.
+    ///
+    /// This function has **no filesystem side effects**: it never creates paths.
+    /// It is used both by the side-effect-free [`Self::can_create_sandbox`] probe
+    /// and by real sandbox construction, and must behave identically. On Linux a
+    /// writable grant that doesn't exist yet simply can't be captured (bwrap
+    /// can't bind a missing path), so it's dropped here — the sanctioned way to
+    /// get a grant to a new directory is the `create_directory` tool, which
+    /// creates it (pinning the inode) before the grant is recorded. On macOS a
+    /// missing leaf still canonicalizes, so such grants are captured directly.
     fn to_policy(&self) -> sandbox::SandboxPolicy {
         let protected_paths = self
             .protected_paths
@@ -164,12 +198,11 @@ impl SandboxWrap {
                 .writable_paths
                 .iter()
                 .chain(self.extra_write_paths.iter())
-                .filter_map(|path| {
-                    // Create not-yet-existing writable grants (e.g. an approved
-                    // scratch dir) so they can be captured and bound; best-effort.
-                    let _ = std::fs::create_dir_all(path);
-                    sandbox::HostFilesystemLocation::new(path).ok()
-                })
+                // Capture only — never create anything here (see the doc comment):
+                // materializing an approved-but-missing grant is deferred to
+                // `Sandbox::new` so it can never happen during the `can_create`
+                // probe, before the user has approved the grant.
+                .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
                 .collect();
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,

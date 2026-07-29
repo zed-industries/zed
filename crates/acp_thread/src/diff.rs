@@ -177,7 +177,7 @@ impl Diff {
         };
         format!(
             "Diff: {}\n```\n{}\n```\n",
-            path.unwrap_or("untitled".into()),
+            path.unwrap_or(MultiBuffer::DEFAULT_TITLE.into()),
             buffer_text
         )
     }
@@ -260,7 +260,7 @@ impl PendingDiff {
         let path = new_buffer
             .file()
             .map(|file| file.path().display(file.path_style(cx)))
-            .unwrap_or("untitled".into())
+            .unwrap_or(MultiBuffer::DEFAULT_TITLE.into())
             .into();
         let replica_id = new_buffer.replica_id();
 

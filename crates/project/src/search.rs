@@ -118,7 +118,7 @@ impl SearchQuery {
                 include_ignored,
                 files_to_include,
                 files_to_exclude,
-                false,
+                match_full_paths,
                 buffers,
             );
         }
@@ -251,6 +251,7 @@ impl SearchQuery {
 
         let regex = RegexBuilder::new(&pattern)
             .case_insensitive(!case_sensitive)
+            .crlf(true)
             .build()?;
         Ok(Self::Regex {
             regex,

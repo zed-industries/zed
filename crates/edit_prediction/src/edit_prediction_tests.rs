@@ -1389,7 +1389,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_text("Hello!\nHow are you?\nBye", cx);
+        buffer.edit([(10..10, " are you?")], None, cx);
     });
 
     let mut response = model_response(&request, SIMPLE_DIFF);
@@ -1412,7 +1412,6 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         assert!(shown_predictions[0].editable_range.is_some());
     });
 
-    // prediction is reported as rejected
     let (reject_request, _) = requests.reject.next().await.unwrap();
 
     assert_eq!(
@@ -1422,6 +1421,75 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
             model_version: Some("zeta2:test-interpolated-empty".to_string()),
+            e2e_latency_ms: Some(0),
+        }]
+    );
+}
+
+#[gpui::test]
+async fn test_interpolate_failed(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            EditPredictionRequestTrigger::Other,
+            cx,
+        );
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(10..10, " is it?")], None, cx);
+    });
+
+    let mut response = model_response(&request, SIMPLE_DIFF);
+    response.model_version = Some("zeta2:test-interpolate-failed".to_string());
+    let id = response.request_id.clone();
+    respond_tx.send(response).unwrap();
+
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        assert!(
+            ep_store
+                .prediction_at(&buffer, None, &project, cx)
+                .is_none()
+        );
+        assert!(ep_store.rateable_predictions().next().is_none());
+    });
+
+    let (reject_request, _) = requests.reject.next().await.unwrap();
+
+    assert_eq!(
+        &reject_request.rejections,
+        &[EditPredictionRejection {
+            request_id: id,
+            reason: EditPredictionRejectReason::InterpolateFailed,
+            was_shown: false,
+            model_version: Some("zeta2:test-interpolate-failed".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );
@@ -4059,12 +4127,21 @@ async fn test_edit_prediction_settled_drops_future_events_when_their_oss_status_
 }
 
 #[gpui::test]
-fn test_buffer_path_with_id_fallback_for_untitled_buffers(cx: &mut TestAppContext) {
+fn test_buffer_path_with_id_fallback(cx: &mut TestAppContext) {
     let buffer_1 = cx.new(|cx| Buffer::local("one", cx));
     let buffer_2 = cx.new(|cx| Buffer::local("two", cx));
 
     let snapshot_1 = buffer_1.read_with(cx, |buffer, _| buffer.text_snapshot());
     let snapshot_2 = buffer_2.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let windows_file: Arc<dyn language::File> = Arc::new(language::TestFile {
+        path: util::rel_path::rel_path("src/main.rs").into(),
+        root_name: "workspace".into(),
+        local_root: None,
+    });
+    let windows_path =
+        cx.read(|cx| buffer_path_with_id_fallback(Some(&windows_file), &snapshot_1, cx));
+    assert_eq!(windows_path.to_string_lossy(), "workspace/src/main.rs");
 
     let path_1 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_1, cx));
     let path_2 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_2, cx));

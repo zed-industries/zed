@@ -394,43 +394,43 @@ impl LspAdapter for GoLspAdapter {
     ) -> Option<CodeLabel> {
         let name = &symbol.name;
         let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            language::SymbolKind::Method | language::SymbolKind::Function => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::STRUCT => {
+            language::SymbolKind::Struct => {
                 let text = format!("type {} struct {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::INTERFACE => {
+            language::SymbolKind::Interface => {
                 let text = format!("type {} interface {{}}", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..text.len();
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CLASS => {
+            language::SymbolKind::Class => {
                 let text = format!("type {} T", name);
                 let filter_range = 5..5 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::CONSTANT => {
+            language::SymbolKind::Constant => {
                 let text = format!("const {} = nil", name);
                 let filter_range = 6..6 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::VARIABLE => {
+            language::SymbolKind::Variable => {
                 let text = format!("var {} = nil", name);
                 let filter_range = 4..4 + name.len();
                 let display_range = 0..filter_range.end;
                 (text, filter_range, display_range)
             }
-            lsp::SymbolKind::MODULE => {
+            language::SymbolKind::Module => {
                 let text = format!("package {}", name);
                 let filter_range = 8..8 + name.len();
                 let display_range = 0..filter_range.end;
@@ -945,6 +945,7 @@ mod tests {
     use gpui::{AppContext, Hsla, TestAppContext};
     use task::TaskContext;
     use theme::SyntaxTheme;
+    use unindent::Unindent as _;
 
     fn go_language() -> Arc<Language> {
         let language = language("go", tree_sitter_go::LANGUAGE.into());
@@ -2015,6 +2016,89 @@ mod tests {
             vec!["\"test failure\"", "\"test success\""],
             "Map-based table tests should surface each row's key as `_table_test_case_name`"
         );
+    }
+
+    #[gpui::test]
+    fn test_go_outline_includes_methods_with_receiver_forms(cx: &mut TestAppContext) {
+        let language = go_language();
+
+        let source = r#"
+        package main
+
+        type v2 struct{}
+
+        func (v2) BrokenMethod() {
+            println("start")
+        }
+
+        func (_ v2) UnderscoreReceiverMethod() {
+            println("start")
+        }
+
+        func (v v2) NamedReceiverMethod() {
+            println("start")
+        }
+
+        func (v *v2) PointerReceiverMethod() {
+            println("start")
+        }
+
+        func WorkingFunction() {
+            println("start")
+        }
+        "#
+        .unindent();
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source.clone(), cx).with_language(language, cx));
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let outline = snapshot.outline(None);
+
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            &[
+                "type v2",
+                "func (v2) BrokenMethod",
+                "func (_ v2) UnderscoreReceiverMethod",
+                "func (v v2) NamedReceiverMethod",
+                "func (v *v2) PointerReceiverMethod",
+                "func WorkingFunction",
+            ]
+        );
+
+        for (method_name, expected_symbol) in [
+            ("BrokenMethod", "func (v2) BrokenMethod"),
+            (
+                "UnderscoreReceiverMethod",
+                "func (_ v2) UnderscoreReceiverMethod",
+            ),
+            ("NamedReceiverMethod", "func (v v2) NamedReceiverMethod"),
+            (
+                "PointerReceiverMethod",
+                "func (v *v2) PointerReceiverMethod",
+            ),
+            ("WorkingFunction", "func WorkingFunction"),
+        ] {
+            let method_position = source
+                .find(&format!("{method_name}()"))
+                .expect("method should exist in source");
+            let body_position = source[method_position..]
+                .find("println")
+                .map(|body_offset| method_position + body_offset)
+                .expect("method should contain a body");
+            let symbols = snapshot.symbols_containing(body_position, None);
+            assert_eq!(
+                symbols
+                    .last()
+                    .map(|item| item.text.as_str())
+                    .expect("method should have an outline symbol"),
+                expected_symbol
+            );
+        }
     }
 
     #[test]
