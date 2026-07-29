@@ -142,13 +142,13 @@ impl ObjectFit {
 #[derive(
     Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, JsonSchema, Serialize, Deserialize,
 )]
-pub enum TemplateColumnMinSize {
-    /// The column size may be 0
+pub enum GridTemplateMinSize {
+    /// The column or row size may be 0
     #[default]
     Zero,
-    /// The column size can be determined by the min content
+    /// The column or row size can be determined by the min content
     MinContent,
-    /// The column size can be determined by the max content
+    /// The column or row size can be determined by the max content
     MaxContent,
 }
 
@@ -171,7 +171,7 @@ pub struct GridTemplate {
     /// How this template directive should be repeated
     pub repeat: u16,
     /// The minimum size in the repeat(<>, minmax(_, 1fr)) equation
-    pub min_size: TemplateColumnMinSize,
+    pub min_size: GridTemplateMinSize,
 }
 
 /// The CSS styling that can be applied to an element via the `Styled` trait

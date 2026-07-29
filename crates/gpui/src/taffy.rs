@@ -460,21 +460,21 @@ impl ToTaffy<taffy::style::Style> for Style {
             unit.map(|template| {
                 match template.min_size {
                     // grid-template-*: repeat(<number>, minmax(0, 1fr));
-                    crate::TemplateColumnMinSize::Zero => {
+                    crate::GridTemplateMinSize::Zero => {
                         vec![repeat(
                             template.repeat,
                             vec![minmax(length(0.0_f32), fr(1.0_f32))],
                         )]
                     }
                     // grid-template-*: repeat(<number>, minmax(min-content, 1fr));
-                    crate::TemplateColumnMinSize::MinContent => {
+                    crate::GridTemplateMinSize::MinContent => {
                         vec![repeat(
                             template.repeat,
                             vec![minmax(min_content(), fr(1.0_f32))],
                         )]
                     }
                     // grid-template-*: repeat(<number>, minmax(0, max-content))
-                    crate::TemplateColumnMinSize::MaxContent => {
+                    crate::GridTemplateMinSize::MaxContent => {
                         vec![repeat(
                             template.repeat,
                             vec![minmax(length(0.0_f32), max_content())],

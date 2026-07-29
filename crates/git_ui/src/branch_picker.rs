@@ -1781,6 +1781,7 @@ impl PickerDelegate for BranchListDelegate {
             .child(
                 h_flex()
                     .w_full()
+                    .min_w_0()
                     .gap_2p5()
                     .flex_grow_1()
                     .child(
@@ -1796,6 +1797,7 @@ impl PickerDelegate for BranchListDelegate {
                         v_flex()
                             .id("info_container")
                             .w_full()
+                            .min_w_0()
                             .child(entry_title)
                             .child({
                                 let message = match entry {
@@ -1947,9 +1949,9 @@ impl PickerDelegate for BranchListDelegate {
                         });
                 starts_section.then(|| {
                     if branch.is_remote() {
-                        "Remote Branches"
+                        ("Remote Branches", ix != 0)
                     } else {
-                        "Local Branches"
+                        ("Local Branches", false)
                     }
                 })
             });
@@ -1957,8 +1959,13 @@ impl PickerDelegate for BranchListDelegate {
         Some(
             v_flex()
                 .w_full()
-                .when_some(section_header, |this, section_header| {
+                .when_some(section_header, |this, (section_header, show_divider)| {
                     this.pt_1p5()
+                        .when(show_divider, |this| {
+                            this.mt_1()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                        })
                         .child(ListSubHeader::new(section_header).inset(true))
                 })
                 .child(list_item)

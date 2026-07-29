@@ -428,6 +428,14 @@ impl Server {
                 broadcast_project_message_from_host::<proto::RefreshSemanticTokens>,
             )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentColors>,
+            )
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshDocumentLinks>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshFoldingRanges>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshDocumentSymbols>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
@@ -519,7 +527,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
-            .add_request_handler(forward_project_search_chunk);
+            .add_request_handler(forward_project_search_chunk)
+            .add_request_handler(forward_read_only_project_request::<proto::LoadCommitTemplate>);
 
         Arc::new(server)
     }

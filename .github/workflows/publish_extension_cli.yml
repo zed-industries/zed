@@ -42,6 +42,8 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
         permission-contents: write
     - name: steps::update_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
@@ -67,6 +69,11 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: write
+        permission-pull-requests: write
+        permission-workflows: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -121,6 +128,9 @@ jobs:
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         owner: zed-industries
         repositories: extensions
+        permission-contents: write
+        permission-pull-requests: write
+        permission-workflows: write
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
