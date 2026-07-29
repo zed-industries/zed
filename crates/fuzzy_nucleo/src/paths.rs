@@ -27,6 +27,10 @@ struct PathQuery {
     normalize_candidates: bool,
 }
 
+// Exhaustion falls back to a validated greedy alignment, so this caps pathological searches
+// without rejecting candidates that have a canonical match.
+const MAX_CANONICAL_ALIGNMENT_STATES: usize = 4_096;
+
 impl PathQuery {
     fn build(query: &str, case: Case) -> Option<Self> {
         let canonical_query = normalize_nfc(query);
@@ -80,10 +84,13 @@ impl PathQuery {
         haystack: Utf32Str<'_>,
         matcher: &mut nucleo::Matcher,
         indices: &mut Vec<u32>,
-    ) -> Option<u32> {
-        let score = self.query.pattern.indices(haystack, matcher, indices)?;
+        cancel_flag: &AtomicBool,
+    ) -> Result<Option<u32>, Cancelled> {
+        let Some(score) = self.query.pattern.indices(haystack, matcher, indices) else {
+            return Ok(None);
+        };
         if self.matches_canonical_graphemes(candidate, indices) {
-            return Some(score);
+            return Ok(Some(score));
         }
 
         let candidate_graphemes = candidate.graphemes(true).collect::<Vec<_>>();
@@ -92,15 +99,21 @@ impl PathQuery {
         for (atom, canonical_graphemes) in
             self.query.pattern.atoms.iter().zip(&self.canonical_atoms)
         {
-            score += u32::from(canonical_atom_indices(
+            let Some(atom_score) = canonical_atom_indices(
                 atom,
                 canonical_graphemes,
                 &candidate_graphemes,
                 matcher,
                 indices,
-            )?);
+                cancel_flag,
+            )?
+            else {
+                indices.clear();
+                return Ok(None);
+            };
+            score += u32::from(atom_score);
         }
-        Some(score)
+        Ok(Some(score))
     }
 }
 
@@ -171,14 +184,17 @@ fn normalize_matcher_char(mut character: char, normalize: bool) -> char {
     nucleo::chars::to_lower_case(character)
 }
 
-fn replacement_for_class(class: MatcherCharClass, needle: &[char], normalize: bool) -> char {
+fn replacement_for_class(
+    class: MatcherCharClass,
+    needle: &[char],
+    normalize: bool,
+) -> Option<char> {
     (0..=char::MAX as u32)
         .filter_map(char::from_u32)
         .find(|&candidate| {
             matcher_char_class(candidate) == class
                 && !needle.contains(&normalize_matcher_char(candidate, normalize))
         })
-        .unwrap_or('\0')
 }
 
 fn mismatched_canonical_indices(
@@ -211,10 +227,11 @@ fn mismatched_canonical_indices(
     )
 }
 
-fn has_canonical_atom_match(
+fn find_canonical_atom_match(
     atom: &Atom,
     expected_graphemes: &[Option<Vec<char>>],
     candidate_graphemes: &[&str],
+    mut output_indices: Option<&mut Vec<u32>>,
 ) -> bool {
     let needle = atom.needle_text().chars().collect::<Vec<_>>();
     if needle.len() != expected_graphemes.len() {
@@ -240,9 +257,75 @@ fn has_canonical_atom_match(
         else {
             return false;
         };
-        candidate_start += relative_index + 1;
+        let candidate_index = candidate_start + relative_index;
+        let Ok(candidate_index_u32) = u32::try_from(candidate_index) else {
+            return false;
+        };
+        if let Some(indices) = output_indices.as_mut() {
+            indices.push(candidate_index_u32);
+        }
+        candidate_start = candidate_index + 1;
     }
     true
+}
+
+fn score_canonical_alignment(
+    atom: &Atom,
+    candidate_chars: &[char],
+    desired_indices: &[u32],
+    matcher: &mut nucleo::Matcher,
+) -> Option<u16> {
+    let needle = atom.needle_text().chars().collect::<Vec<_>>();
+    let normalize = needle
+        .iter()
+        .all(|&character| nucleo::chars::normalize(character) == character);
+    let mut masked_candidate = candidate_chars.to_vec();
+    let mut replacements = HashMap::new();
+
+    for (index, character) in masked_candidate.iter_mut().enumerate() {
+        let index = u32::try_from(index).ok()?;
+        if desired_indices.binary_search(&index).is_ok()
+            || !needle.contains(&normalize_matcher_char(*character, normalize))
+        {
+            continue;
+        }
+        let class = matcher_char_class(*character);
+        let replacement = if let Some(&replacement) = replacements.get(&class) {
+            replacement
+        } else {
+            let replacement = replacement_for_class(class, &needle, normalize)?;
+            replacements.insert(class, replacement);
+            replacement
+        };
+        *character = replacement;
+    }
+
+    let mut matched_indices = Vec::new();
+    let score = atom.indices(
+        Utf32Str::Unicode(&masked_candidate),
+        matcher,
+        &mut matched_indices,
+    )?;
+    (matched_indices == desired_indices).then_some(score)
+}
+
+fn score_greedy_canonical_alignment(
+    atom: &Atom,
+    expected_graphemes: &[Option<Vec<char>>],
+    candidate_graphemes: &[&str],
+    candidate_chars: &[char],
+    matcher: &mut nucleo::Matcher,
+) -> Option<(u16, Vec<u32>)> {
+    let mut greedy_indices = Vec::with_capacity(expected_graphemes.len());
+    find_canonical_atom_match(
+        atom,
+        expected_graphemes,
+        candidate_graphemes,
+        Some(&mut greedy_indices),
+    )
+    .then_some(())?;
+    let score = score_canonical_alignment(atom, candidate_chars, &greedy_indices, matcher)?;
+    Some((score, greedy_indices))
 }
 
 fn canonical_atom_indices(
@@ -251,22 +334,52 @@ fn canonical_atom_indices(
     candidate_graphemes: &[&str],
     matcher: &mut nucleo::Matcher,
     output_indices: &mut Vec<u32>,
-) -> Option<u16> {
+    cancel_flag: &AtomicBool,
+) -> Result<Option<u16>, Cancelled> {
+    canonical_atom_indices_with_limit(
+        atom,
+        expected_graphemes,
+        candidate_graphemes,
+        matcher,
+        output_indices,
+        cancel_flag,
+        MAX_CANONICAL_ALIGNMENT_STATES,
+    )
+}
+
+fn canonical_atom_indices_with_limit(
+    atom: &Atom,
+    expected_graphemes: &[Option<Vec<char>>],
+    candidate_graphemes: &[&str],
+    matcher: &mut nucleo::Matcher,
+    output_indices: &mut Vec<u32>,
+    cancel_flag: &AtomicBool,
+    state_limit: usize,
+) -> Result<Option<u16>, Cancelled> {
+    if cancel_flag.load(atomic::Ordering::Relaxed) {
+        return Err(Cancelled);
+    }
+
     let candidate_chars = candidate_graphemes
         .iter()
         .filter_map(|grapheme| grapheme.chars().next())
         .collect::<Vec<_>>();
     let haystack = Utf32Str::Unicode(&candidate_chars);
     let mut matched_indices = Vec::new();
-    let initial_score = atom.indices(haystack, matcher, &mut matched_indices)?;
-    let initial_mismatches =
-        mismatched_canonical_indices(expected_graphemes, candidate_graphemes, &matched_indices)?;
+    let Some(initial_score) = atom.indices(haystack, matcher, &mut matched_indices) else {
+        return Ok(None);
+    };
+    let Some(initial_mismatches) =
+        mismatched_canonical_indices(expected_graphemes, candidate_graphemes, &matched_indices)
+    else {
+        return Ok(None);
+    };
     if initial_mismatches.is_empty() {
         output_indices.extend(matched_indices);
-        return Some(initial_score);
+        return Ok(Some(initial_score));
     }
-    if !has_canonical_atom_match(atom, expected_graphemes, candidate_graphemes) {
-        return None;
+    if !find_canonical_atom_match(atom, expected_graphemes, candidate_graphemes, None) {
+        return Ok(None);
     }
 
     let needle = atom.needle_text().chars().collect::<Vec<_>>();
@@ -276,18 +389,35 @@ fn canonical_atom_indices(
     let mut replacements = HashMap::new();
     let mut visited = HashSet::new();
     let mut pending = BinaryHeap::new();
+    if state_limit == 0 {
+        let Some((score, greedy_indices)) = score_greedy_canonical_alignment(
+            atom,
+            expected_graphemes,
+            candidate_graphemes,
+            &candidate_chars,
+            matcher,
+        ) else {
+            return Ok(None);
+        };
+        output_indices.extend(greedy_indices);
+        return Ok(Some(score));
+    }
     pending.push((initial_score, Vec::<u32>::new(), matched_indices));
     visited.insert(Vec::<u32>::new());
 
     while let Some((score, masked_indices, matched_indices)) = pending.pop() {
-        let mismatches = mismatched_canonical_indices(
-            expected_graphemes,
-            candidate_graphemes,
-            &matched_indices,
-        )?;
+        if cancel_flag.load(atomic::Ordering::Relaxed) {
+            return Err(Cancelled);
+        }
+
+        let Some(mismatches) =
+            mismatched_canonical_indices(expected_graphemes, candidate_graphemes, &matched_indices)
+        else {
+            return Ok(None);
+        };
         if mismatches.is_empty() {
             output_indices.extend(matched_indices);
-            return Some(score);
+            return Ok(Some(score));
         }
 
         for mismatched_index in mismatches {
@@ -299,19 +429,41 @@ fn canonical_atom_indices(
                 .binary_search(&mismatched_index)
                 .unwrap_or_else(|index| index);
             next_masked_indices.insert(insertion_index, mismatched_index);
-            if !visited.insert(next_masked_indices.clone()) {
+            if visited.contains(&next_masked_indices) {
                 continue;
             }
+            if visited.len() == state_limit {
+                let Some((score, greedy_indices)) = score_greedy_canonical_alignment(
+                    atom,
+                    expected_graphemes,
+                    candidate_graphemes,
+                    &candidate_chars,
+                    matcher,
+                ) else {
+                    return Ok(None);
+                };
+                output_indices.extend(greedy_indices);
+                return Ok(Some(score));
+            }
+            visited.insert(next_masked_indices.clone());
 
             let mut masked_candidate = candidate_chars.clone();
             for &masked_index in &next_masked_indices {
-                let character = *masked_candidate.get(masked_index as usize)?;
+                let Some(character) = masked_candidate.get(masked_index as usize).copied() else {
+                    return Ok(None);
+                };
                 let class = matcher_char_class(character);
                 // Keeping the character class unchanged preserves Nucleo's boundary bonuses for
                 // every remaining alignment while preventing this grapheme from matching again.
-                let replacement = *replacements
-                    .entry(class)
-                    .or_insert_with(|| replacement_for_class(class, &needle, normalize));
+                let replacement = if let Some(&replacement) = replacements.get(&class) {
+                    replacement
+                } else {
+                    let Some(replacement) = replacement_for_class(class, &needle, normalize) else {
+                        return Ok(None);
+                    };
+                    replacements.insert(class, replacement);
+                    replacement
+                };
                 masked_candidate[masked_index as usize] = replacement;
             }
 
@@ -325,7 +477,7 @@ fn canonical_atom_indices(
             }
         }
     }
-    None
+    Ok(None)
 }
 
 #[derive(Clone, Debug)]
@@ -426,13 +578,14 @@ fn get_filename_match_bonus(
     candidate_buf: &str,
     query: &PathQuery,
     matcher: &mut nucleo::Matcher,
-) -> f64 {
+    cancel_flag: &AtomicBool,
+) -> Result<f64, Cancelled> {
     let Some(filename) = std::path::Path::new(candidate_buf)
         .file_name()
         .and_then(|f| f.to_str())
         .filter(|f| !f.is_empty())
     else {
-        return 0.0;
+        return Ok(0.0);
     };
     let mut buf = Vec::new();
     let haystack = utf32_str(filename, &mut buf);
@@ -445,31 +598,28 @@ fn get_filename_match_bonus(
             .filter_map(|atom| atom.score(haystack, matcher))
             .map(u32::from)
             .sum();
-        return score as f64 / filename.len().max(1) as f64;
+        return Ok(score as f64 / filename.len().max(1) as f64);
     }
 
     let mut matched_indices = Vec::new();
     let candidate_graphemes = filename.graphemes(true).collect::<Vec<_>>();
-    let score: u32 = query
-        .query
-        .pattern
-        .atoms
-        .iter()
-        .zip(&query.canonical_atoms)
-        .filter_map(|(atom, canonical_graphemes)| {
-            matched_indices.clear();
-            canonical_atom_indices(
-                atom,
-                canonical_graphemes,
-                &candidate_graphemes,
-                matcher,
-                &mut matched_indices,
-            )
-        })
-        .map(|s| s as u32)
-        .sum();
+    let mut score = 0_u32;
+    for (atom, canonical_graphemes) in query.query.pattern.atoms.iter().zip(&query.canonical_atoms)
+    {
+        matched_indices.clear();
+        if let Some(atom_score) = canonical_atom_indices(
+            atom,
+            canonical_graphemes,
+            &candidate_graphemes,
+            matcher,
+            &mut matched_indices,
+            cancel_flag,
+        )? {
+            score += u32::from(atom_score);
+        }
+    }
 
-    score as f64 / filename.len().max(1) as f64
+    Ok(score as f64 / filename.len().max(1) as f64)
 }
 
 fn path_match_helper<'a>(
@@ -521,7 +671,13 @@ fn path_match_helper<'a>(
         let haystack = utf32_str(match_candidate, &mut buf);
 
         let score = if path_query.normalize_candidates {
-            path_query.indices(match_candidate, haystack, matcher, &mut matched_chars)
+            path_query.indices(
+                match_candidate,
+                haystack,
+                matcher,
+                &mut matched_chars,
+                cancel_flag,
+            )?
         } else {
             path_query
                 .query
@@ -543,7 +699,8 @@ fn path_match_helper<'a>(
         matched_chars.dedup();
 
         let length_penalty = match_candidate.len() as f64 * LENGTH_PENALTY;
-        let filename_bonus = get_filename_match_bonus(match_candidate, path_query, matcher);
+        let filename_bonus =
+            get_filename_match_bonus(match_candidate, path_query, matcher, cancel_flag)?;
         let positive = (score as f64 + filename_bonus) * case_penalty(case_mismatches);
         let adjusted_score = positive - length_penalty;
         let positions = positions_from_sorted(&candidate_buf, &matched_chars);
@@ -954,6 +1111,58 @@ mod tests {
     }
 
     #[test]
+    fn falls_back_to_a_valid_alignment_when_search_budget_is_exhausted() {
+        let query = PathQuery::build("q\u{307}", Case::Ignore).expect("valid query");
+        let candidate = "q\u{323}-q\u{307}.md";
+        let candidate_graphemes = candidate.graphemes(true).collect::<Vec<_>>();
+        let mut config = nucleo::Config::DEFAULT;
+        config.set_match_paths();
+        let mut matcher = nucleo::Matcher::new(config);
+        let mut indices = Vec::new();
+
+        let result = canonical_atom_indices_with_limit(
+            query.query.pattern.atoms.first().expect("query atom"),
+            query.canonical_atoms.first().expect("canonical atom"),
+            &candidate_graphemes,
+            &mut matcher,
+            &mut indices,
+            &AtomicBool::new(false),
+            1,
+        );
+        let score = match result {
+            Ok(score) => score,
+            Err(_) => panic!("search should not be cancelled"),
+        };
+
+        assert!(score.is_some());
+        assert_eq!(indices, vec![2]);
+    }
+
+    #[test]
+    fn cancels_during_alternative_alignment_search() {
+        let query = PathQuery::build("q\u{307}", Case::Ignore).expect("valid query");
+        let candidate = "q\u{323}-q\u{307}.md";
+        let candidate_graphemes = candidate.graphemes(true).collect::<Vec<_>>();
+        let mut config = nucleo::Config::DEFAULT;
+        config.set_match_paths();
+        let mut matcher = nucleo::Matcher::new(config);
+        let mut indices = Vec::new();
+
+        let result = canonical_atom_indices_with_limit(
+            query.query.pattern.atoms.first().expect("query atom"),
+            query.canonical_atoms.first().expect("canonical atom"),
+            &candidate_graphemes,
+            &mut matcher,
+            &mut indices,
+            &AtomicBool::new(true),
+            usize::MAX,
+        );
+
+        assert!(result.is_err());
+        assert!(indices.is_empty());
+    }
+
+    #[test]
     fn matches_single_file_worktree_root() {
         let empty_path = RelPath::empty();
         let root = Arc::<RelPath>::from(RelPath::new_test("gro\u{308}ssen.md").as_ref());
@@ -983,6 +1192,14 @@ mod tests {
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].positions, vec![0, 1, 2, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn matches_non_ascii_query_with_escaped_space() {
+        let matches = match_path("src/grö file.md", "grö\\ file");
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].positions, vec![4, 5, 6, 8, 9, 10, 11, 12]);
     }
 
     #[test]

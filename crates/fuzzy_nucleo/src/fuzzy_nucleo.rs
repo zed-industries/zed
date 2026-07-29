@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use fuzzy::CharBag;
 use nucleo::Utf32Str;
-use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization, Pattern};
 use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -75,15 +75,22 @@ impl Query {
             return None;
         }
         let normalized = query.split_whitespace().collect::<Vec<_>>().join(" ");
-        let pattern = Pattern::new(
-            &normalized,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-            AtomKind::Fuzzy,
-        );
+        let grapheme_atoms = pattern_grapheme_atoms(&normalized);
+        let mut pattern = Pattern::default();
+        // Nucleo 0.3.1 retains the escape before a space in non-ASCII atoms, so construct
+        // atoms from the already-unescaped graphemes to keep the needle and metadata aligned.
+        pattern.atoms.extend(grapheme_atoms.iter().map(|graphemes| {
+            Atom::new(
+                &graphemes.concat(),
+                CaseMatching::Ignore,
+                Normalization::Smart,
+                AtomKind::Fuzzy,
+                false,
+            )
+        }));
         let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
         let query_chars = wants_case_penalty.then(|| {
-            pattern_grapheme_atoms(&normalized)
+            grapheme_atoms
                 .into_iter()
                 .flatten()
                 .filter_map(|grapheme| grapheme.chars().next())
@@ -111,9 +118,6 @@ pub(crate) fn pattern_grapheme_atoms(pattern: &str) -> Vec<Vec<&str>> {
         .filter(|atom| !atom.is_empty())
         .map(|atom| {
             let graphemes = atom.graphemes(true).collect::<Vec<_>>();
-            if !atom.is_ascii() {
-                return graphemes;
-            }
             let mut result = Vec::with_capacity(graphemes.len());
             let mut index = 0;
             while index < graphemes.len() {
@@ -253,11 +257,11 @@ mod tests {
     }
 
     #[test]
-    fn query_graphemes_follow_nucleo_escaped_space_atomization() {
+    fn query_graphemes_unescape_spaces_in_non_ascii_atoms() {
         assert_eq!(
             pattern_grapheme_atoms("grö\\ file other"),
             vec![
-                vec!["g", "r", "ö", "\\", " ", "f", "i", "l", "e"],
+                vec!["g", "r", "ö", " ", "f", "i", "l", "e"],
                 vec!["o", "t", "h", "e", "r"]
             ]
         );

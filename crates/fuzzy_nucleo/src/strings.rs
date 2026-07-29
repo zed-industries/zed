@@ -514,6 +514,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_non_ascii_query_with_escaped_space() {
+        let matches = match_strings(
+            &candidates(&["grö file"]),
+            "grö\\ file",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+        );
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].positions, vec![0, 1, 2, 4, 5, 6, 7, 8]);
+    }
+
     #[gpui::test]
     async fn test_smart_case(executor: BackgroundExecutor) {
         let cs = candidates(&["FooBar", "foobar", "FOOBAR"]);
