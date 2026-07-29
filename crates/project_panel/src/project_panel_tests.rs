@@ -1610,6 +1610,216 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_paste_between_windows(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/source",
+        json!({
+            "copied.txt": "copied contents",
+        }),
+    )
+    .await;
+    fs.insert_tree("/destination", json!({})).await;
+
+    let source_project = Project::test(fs.clone(), ["/source".as_ref()], cx).await;
+    let destination_project = Project::test(fs.clone(), ["/destination".as_ref()], cx).await;
+    let source_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(source_project, window, cx));
+    let destination_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(destination_project, window, cx));
+    let source_workspace = source_window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("source window should contain a workspace");
+    let destination_workspace = destination_window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("destination window should contain a workspace");
+
+    let source_panel = {
+        let cx = &mut VisualTestContext::from_window(source_window.into(), cx);
+        let panel = source_workspace.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "source/copied.txt", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.copy(&Copy, window, cx);
+        });
+        panel
+    };
+
+    {
+        let cx = &mut VisualTestContext::from_window(destination_window.into(), cx);
+        let panel = destination_workspace.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "destination", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    assert!(
+        fs.is_file(Path::new("/destination/copied.txt")).await,
+        "a file copied in one window should be pasteable into another window"
+    );
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|clipboard| clipboard.text())
+        .expect("copy should write file paths to the system clipboard");
+    cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
+    {
+        let cx = &mut VisualTestContext::from_window(source_window.into(), cx);
+        select_path(&source_panel, "source", cx);
+        source_panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+    assert!(
+        !fs.is_file(Path::new("/source/copied copy.txt")).await,
+        "project panel clipboard state should be ignored after the system clipboard changes"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_paste_between_windows_for_same_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "copied.txt": "copied contents",
+        }),
+    )
+    .await;
+
+    let source_project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let destination_project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let source_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(source_project, window, cx));
+    let destination_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(destination_project, window, cx));
+    let source_workspace = source_window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("source window should contain a workspace");
+    let destination_workspace = destination_window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("destination window should contain a workspace");
+
+    {
+        let cx = &mut VisualTestContext::from_window(source_window.into(), cx);
+        let panel = source_workspace.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root/copied.txt", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.copy(&Copy, window, cx);
+        });
+    }
+
+    {
+        let cx = &mut VisualTestContext::from_window(destination_window.into(), cx);
+        let panel = destination_workspace.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    assert!(
+        fs.is_file(Path::new("/root/copied copy.txt")).await,
+        "copying between windows for the same worktree should disambiguate the pasted file"
+    );
+}
+
+#[gpui::test]
+async fn test_cut_paste_between_windows_for_same_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "cut.txt": "cut contents",
+            "a": {},
+            "b": {},
+        }),
+    )
+    .await;
+
+    let source_project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let destination_project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let source_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(source_project, window, cx));
+    let destination_window = cx.add_window({
+        let destination_project = destination_project.clone();
+        |window, cx| MultiWorkspace::test_new(destination_project, window, cx)
+    });
+    let source_workspace = source_window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("source window should contain a workspace");
+    let destination_workspace = destination_window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("destination window should contain a workspace");
+
+    {
+        let cx = &mut VisualTestContext::from_window(source_window.into(), cx);
+        let panel = source_workspace.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root/cut.txt", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.cut(&Cut, window, cx);
+        });
+    }
+
+    let destination_panel = {
+        let cx = &mut VisualTestContext::from_window(destination_window.into(), cx);
+        let panel = destination_workspace.update_in(cx, ProjectPanel::new);
+        cx.run_until_parked();
+        select_path(&panel, "root/a", cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+        panel
+    };
+
+    assert!(!fs.is_file(Path::new("/root/cut.txt")).await);
+    assert!(fs.is_file(Path::new("/root/a/cut.txt")).await);
+    cx.read_global::<ProjectPanelClipboard, _>(|clipboard, _| {
+        let clipboard_entry = clipboard
+            .entry
+            .as_ref()
+            .expect("cut clipboard should become a copy after the first paste");
+        assert!(!clipboard_entry.is_cut());
+        assert!(
+            clipboard_entry.is_from_project(&destination_project),
+            "clipboard should retain the project entries remapped for the paste"
+        );
+        assert_eq!(
+            clipboard_entry.source_paths,
+            [PathBuf::from("/root/a/cut.txt")],
+            "captured clipboard paths should follow the moved entries"
+        );
+    });
+
+    {
+        let cx = &mut VisualTestContext::from_window(destination_window.into(), cx);
+        select_path(&destination_panel, "root/b", cx);
+        destination_panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    assert!(fs.is_file(Path::new("/root/a/cut.txt")).await);
+    assert!(fs.is_file(Path::new("/root/b/cut.txt")).await);
+}
+
+#[gpui::test]
 async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
