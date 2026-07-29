@@ -355,6 +355,9 @@ impl CollabPanel {
                 window,
                 |this: &mut Self, _, event, window, cx| {
                     if let editor::EditorEvent::Blurred = event {
+                        if !window.is_window_active() {
+                            return;
+                        }
                         if let Some(state) = &this.channel_editing_state
                             && state.pending_name().is_some()
                         {
