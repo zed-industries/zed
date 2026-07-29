@@ -487,6 +487,7 @@
       "x": "vim::HelixSelectLine",
       "*": "buffer_search::UseSelectionForFind",
       "shift-x": "editor::SelectLine",
+      "_": "vim::HelixTrimSelections",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
       "alt-i": "editor::SelectSmallerSyntaxNode",
