@@ -24308,6 +24308,43 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_on_type_formatting_preserves_cursor_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("let a = bˇ;\n");
+
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, params, _| async move {
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 10)
+            );
+            Ok(Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 10)),
+                new_text: "c".to_string(),
+            }]))
+        });
+
+    cx.simulate_keystroke(".");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("let a = b.ˇc;\n");
+    assert!(request.next().await.is_some());
+}
+
+#[gpui::test]
 async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

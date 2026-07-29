@@ -218,6 +218,18 @@ impl Editor {
         // If this is not the host, append its history with new edits.
         let push_to_client_history = project.read(cx).is_via_collab();
 
+        // Cursors are right-biased, so text the server inserts exactly at a cursor would push it
+        // along. Keep a left-biased copy to restore afterwards, keyed by the anchor the editor
+        // holds now so that cursors the user moved during the request are left alone.
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursors_to_pin = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .filter(|selection| selection.start == selection.end)
+            .map(|selection| (selection.head(), snapshot.anchor_before(selection.head())))
+            .collect::<HashMap<_, _>>();
+
         let on_type_formatting = project.update(cx, |project, cx| {
             project.on_type_format(
                 buffer.clone(),
@@ -235,7 +247,34 @@ impl Editor {
                         buffer.finalize_last_transaction();
                     });
                 }
-                editor.update(cx, |editor, cx| {
+                editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let mut any_cursor_pushed = false;
+                    let pinned = editor
+                        .selections
+                        .disjoint_anchors()
+                        .iter()
+                        .map(|selection| {
+                            if selection.start != selection.end {
+                                return selection.clone();
+                            }
+                            let Some(&cursor) = cursors_to_pin.get(&selection.head()) else {
+                                return selection.clone();
+                            };
+                            any_cursor_pushed |= cursor.to_offset(&snapshot)
+                                != selection.head().to_offset(&snapshot);
+                            Selection {
+                                start: cursor,
+                                end: cursor,
+                                ..selection.clone()
+                            }
+                        })
+                        .collect();
+                    if any_cursor_pushed {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_anchors(pinned)
+                        });
+                    }
                     editor.refresh_document_highlights(cx);
                 })?;
             }
