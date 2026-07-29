@@ -8,10 +8,10 @@ use editor::{
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
 use language::{BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownElement};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use settings::Settings;
-use text::{AnchorRangeExt, Point};
-use theme::ThemeSettings;
+use text::Point;
+use theme_settings::ThemeSettings;
 use ui::{CopyButton, prelude::*};
 use util::maybe;
 
@@ -40,29 +40,7 @@ impl DiagnosticRenderer {
             let mut markdown = Self::markdown(&entry.diagnostic);
             if entry.diagnostic.is_primary {
                 let diagnostic = &primary.diagnostic;
-                if diagnostic.source.is_some() || diagnostic.code.is_some() {
-                    markdown.push_str(" (");
-                }
-                if let Some(source) = diagnostic.source.as_ref() {
-                    markdown.push_str(&Markdown::escape(source));
-                }
-                if diagnostic.source.is_some() && diagnostic.code.is_some() {
-                    markdown.push(' ');
-                }
-                if let Some(code) = diagnostic.code.as_ref() {
-                    if let Some(description) = diagnostic.code_description.as_ref() {
-                        markdown.push('[');
-                        markdown.push_str(&Markdown::escape(&code.to_string()));
-                        markdown.push_str("](");
-                        markdown.push_str(&Markdown::escape(description.as_ref()));
-                        markdown.push(')');
-                    } else {
-                        markdown.push_str(&Markdown::escape(&code.to_string()));
-                    }
-                }
-                if diagnostic.source.is_some() || diagnostic.code.is_some() {
-                    markdown.push(')');
-                }
+                append_source_and_code(&mut markdown, diagnostic);
 
                 for (ix, entry) in diagnostic_group.iter().enumerate() {
                     if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
@@ -84,6 +62,8 @@ impl DiagnosticRenderer {
                     }),
                 });
             } else {
+                append_source_and_code(&mut markdown, entry.diagnostic);
+
                 if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
                     markdown.push_str(&format!(
                         " ([back](file://#diagnostic-{buffer_id}-{group_id}-{primary_ix}))"
@@ -114,6 +94,31 @@ impl DiagnosticRenderer {
         };
         markdown
     }
+}
+
+fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
+    if diagnostic.source.is_none() && diagnostic.code.is_none() {
+        return;
+    }
+    markdown.push_str(" (");
+    if let Some(source) = diagnostic.source.as_ref() {
+        markdown.push_str(&Markdown::escape(source));
+    }
+    if diagnostic.source.is_some() && diagnostic.code.is_some() {
+        markdown.push(' ');
+    }
+    if let Some(code) = diagnostic.code.as_ref() {
+        if let Some(description) = diagnostic.code_description.as_ref() {
+            markdown.push('[');
+            markdown.push_str(&Markdown::escape(&code.to_string()));
+            markdown.push_str("](");
+            markdown.push_str(&Markdown::escape(description.as_ref()));
+            markdown.push(')');
+        } else {
+            markdown.push_str(&Markdown::escape(&code.to_string()));
+        }
+    }
+    markdown.push(')');
 }
 
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
@@ -206,7 +211,7 @@ impl DiagnosticBlock {
                 (status_colors.warning_background, status_colors.warning)
             }
             DiagnosticSeverity::INFORMATION => (status_colors.info_background, status_colors.info),
-            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
+            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.hint),
             _ => (status_colors.ignored_background, status_colors.ignored),
         };
         let settings = ThemeSettings::get_global(cx);
@@ -239,8 +244,8 @@ impl DiagnosticBlock {
                         diagnostics_markdown_style(bcx.window, cx),
                     )
                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                         border: false,
                     })
                     .on_url_click({
@@ -269,7 +274,8 @@ impl DiagnosticBlock {
         cx: &mut Context<Editor>,
     ) {
         let Some(diagnostic_link) = link.strip_prefix("file://#diagnostic-") else {
-            editor::hover_popover::open_markdown_url(link, window, cx);
+            let workspace = editor.workspace();
+            editor::hover_popover::open_markdown_url(workspace, link, window, cx);
             return;
         };
         let Some((buffer_id, group_id, ix)) = maybe!({
@@ -290,23 +296,12 @@ impl DiagnosticBlock {
                 .nth(ix)
             {
                 let multibuffer = editor.buffer().read(cx);
-                let Some(snapshot) = multibuffer
-                    .buffer(buffer_id)
-                    .map(|entity| entity.read(cx).snapshot())
-                else {
+                if let Some(anchor_range) = multibuffer
+                    .snapshot(cx)
+                    .buffer_anchor_range_to_anchor_range(diagnostic.range)
+                {
+                    Self::jump_to(editor, anchor_range, window, cx);
                     return;
-                };
-
-                for (excerpt_id, range) in multibuffer.excerpts_for_buffer(buffer_id, cx) {
-                    if range.context.overlaps(&diagnostic.range, &snapshot) {
-                        Self::jump_to(
-                            editor,
-                            Anchor::range_in_buffer(excerpt_id, diagnostic.range),
-                            window,
-                            cx,
-                        );
-                        return;
-                    }
                 }
             }
         } else if let Some(diagnostic) = editor

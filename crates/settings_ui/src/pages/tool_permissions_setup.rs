@@ -7,7 +7,7 @@ use gpui::{
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
@@ -31,6 +31,12 @@ const TOOLS: &[ToolInfo] = &[
         name: "Edit File",
         description: "File editing operations",
         regex_explanation: "Patterns are matched against the file path being edited.",
+    },
+    ToolInfo {
+        id: "write_file",
+        name: "Write File",
+        description: "File creation and overwrite operations",
+        regex_explanation: "Patterns are matched against the file path being written.",
     },
     ToolInfo {
         id: "delete_path",
@@ -57,28 +63,22 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the directory path being created.",
     },
     ToolInfo {
-        id: "save_file",
-        name: "Save File",
-        description: "File saving operations",
-        regex_explanation: "Patterns are matched against the file path being saved.",
-    },
-    ToolInfo {
         id: "fetch",
         name: "Fetch",
         description: "HTTP requests to URLs",
         regex_explanation: "Patterns are matched against the URL being fetched.",
     },
     ToolInfo {
-        id: "web_search",
+        id: "search_web",
         name: "Web Search",
         description: "Web search queries",
         regex_explanation: "Patterns are matched against the search query.",
     },
     ToolInfo {
-        id: "restore_file_from_disk",
-        name: "Restore File from Disk",
-        description: "Discards unsaved changes by reloading from disk",
-        regex_explanation: "Patterns are matched against the file path being restored.",
+        id: "skill",
+        name: "Skill",
+        description: "Loading agent skill instructions",
+        regex_explanation: "Patterns are matched against the absolute path to the skill's SKILL.md file.",
     },
 ];
 
@@ -249,10 +249,13 @@ fn render_tool_list_item(
 
     h_flex()
         .w_full()
+        .min_w_0()
         .py_3()
         .justify_between()
         .child(
             v_flex()
+                .w_full()
+                .min_w_0()
                 .child(h_flex().gap_1().child(Label::new(tool.name)).when_some(
                     rule_summary,
                     |this, summary| {
@@ -275,15 +278,17 @@ fn render_tool_list_item(
                 .tab_index(tool_index as isize)
                 .style(ButtonStyle::OutlinedGhost)
                 .size(ButtonSize::Medium)
-                .icon(IconName::ChevronRight)
-                .icon_position(IconPosition::End)
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
+                .end_icon(
+                    Icon::new(IconName::ChevronRight)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.push_dynamic_sub_page(
                         tool_name,
                         "Tool Permissions",
                         None,
+                        true,
                         render_fn,
                         window,
                         cx,
@@ -299,14 +304,14 @@ fn get_tool_render_fn(
     match tool_id {
         "terminal" => render_terminal_tool_config,
         "edit_file" => render_edit_file_tool_config,
+        "write_file" => render_write_file_tool_config,
         "delete_path" => render_delete_path_tool_config,
         "copy_path" => render_copy_path_tool_config,
         "move_path" => render_move_path_tool_config,
         "create_directory" => render_create_directory_tool_config,
-        "save_file" => render_save_file_tool_config,
         "fetch" => render_fetch_tool_config,
-        "web_search" => render_web_search_tool_config,
-        "restore_file_from_disk" => render_restore_file_from_disk_tool_config,
+        "search_web" => render_web_search_tool_config,
+        "skill" => render_skill_tool_config,
         _ => render_terminal_tool_config, // fallback
     }
 }
@@ -973,8 +978,7 @@ fn render_user_pattern_row(
     let delete_id = format!("{}-{:?}-delete-{}", tool_id, rule_type, index);
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(input_id)
+    SettingsInputField::new(input_id)
         .with_initial_text(pattern)
         .tab_index(0)
         .with_buffer_font()
@@ -1034,8 +1038,7 @@ fn render_add_pattern_input(
     let input_id = format!("{}-{:?}-new-pattern", tool_id, rule_type);
     let settings_window = cx.entity().downgrade();
 
-    SettingsInputField::new()
-        .with_id(input_id)
+    SettingsInputField::new(input_id)
         .with_placeholder("Add regex pattern…")
         .tab_index(0)
         .with_buffer_font()
@@ -1071,9 +1074,12 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
 
     h_flex()
         .my_4()
+        .min_w_0()
         .justify_between()
         .child(
             v_flex()
+                .w_full()
+                .min_w_0()
                 .child(Label::new("Default Permission"))
                 .child(
                     Label::new(
@@ -1090,9 +1096,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .icon(IconName::ChevronDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small),
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
                 )
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
@@ -1107,7 +1111,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1126,13 +1130,18 @@ fn render_default_mode_section(
     let tool_id_owned = tool_id.to_string();
 
     h_flex()
+        .min_w_0()
         .justify_between()
         .child(
-            v_flex().child(Label::new("Default Action")).child(
-                Label::new("Action to take when no patterns match.")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            ),
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .child(Label::new("Default Action"))
+                .child(
+                    Label::new("Action to take when no patterns match.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
         .child(
             PopoverMenu::new(format!("default-mode-{}", tool_id))
@@ -1141,9 +1150,7 @@ fn render_default_mode_section(
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .icon(IconName::ChevronDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small),
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
                 )
                 .menu(move |window, cx| {
                     let tool_id = tool_id_owned.clone();
@@ -1163,7 +1170,7 @@ fn render_default_mode_section(
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1375,17 +1382,14 @@ macro_rules! tool_config_page_fn {
 
 tool_config_page_fn!(render_terminal_tool_config, "terminal");
 tool_config_page_fn!(render_edit_file_tool_config, "edit_file");
+tool_config_page_fn!(render_write_file_tool_config, "write_file");
 tool_config_page_fn!(render_delete_path_tool_config, "delete_path");
 tool_config_page_fn!(render_copy_path_tool_config, "copy_path");
 tool_config_page_fn!(render_move_path_tool_config, "move_path");
 tool_config_page_fn!(render_create_directory_tool_config, "create_directory");
-tool_config_page_fn!(render_save_file_tool_config, "save_file");
 tool_config_page_fn!(render_fetch_tool_config, "fetch");
-tool_config_page_fn!(render_web_search_tool_config, "web_search");
-tool_config_page_fn!(
-    render_restore_file_from_disk_tool_config,
-    "restore_file_from_disk"
-);
+tool_config_page_fn!(render_web_search_tool_config, "search_web");
+tool_config_page_fn!(render_skill_tool_config, "skill");
 
 #[cfg(test)]
 mod tests {
@@ -1399,19 +1403,25 @@ mod tests {
         //   2. Add it to this list with a comment explaining why it's excluded.
         const EXCLUDED_TOOLS: &[&str] = &[
             // Read-only / low-risk tools that don't call decide_permission_from_settings
+            "apply_code_action",
             "diagnostics",
             "find_path",
+            "find_references",
+            "get_code_actions",
+            "go_to_definition",
             "grep",
+            "list_agents_and_models",
             "list_directory",
-            "now",
             "open",
             "read_file",
+            "rename_symbol",
             "thinking",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.
             "streaming_edit_file",
-            // Subagent permission checks happen at the level of individual
-            // tool calls within the subagent, not at the spawning level.
+            // Sibling/subagent thread creation delegates permission checks to
+            // tool calls inside the spawned thread, not the spawning itself.
+            "create_thread",
             "spawn_agent",
         ];
 

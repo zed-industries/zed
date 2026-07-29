@@ -1,0 +1,120 @@
+//! This module defines core operations and config of tabular data view (CSV table)
+//! It operates in 2 coordinate systems:
+//! - `DataCellId` - indices of src data cells
+//! - `DisplayCellId` - indices of data after applied transformations like sorting/filtering, which is used to render cell on the screen
+//!
+//! It's designed to contain core logic of operations without relying on `CsvPreviewView`, context or window handles.
+
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+
+use ui::table_row::TableRow;
+
+use crate::{
+    table_data_engine::{
+        filtering_by_column::{FilterEntry, FilterStack, calculate_available_filters, retain_rows},
+        sorting_by_column::{AppliedSorting, sort_data_rows},
+    },
+    types::{AnyColumn, DataRow, DisplayRow, TableCell, TableLikeContent},
+};
+
+pub mod filtering_by_column;
+pub mod sorting_by_column;
+
+#[derive(Default)]
+pub(crate) struct TableDataEngine {
+    pub filter_stack: FilterStack,
+    /// Pre-computed unique values per column, used to populate filter menus
+    all_filters: HashMap<AnyColumn, Vec<FilterEntry>>,
+    pub applied_sorting: Option<AppliedSorting>,
+    d2d_mapping: DisplayToDataMapping,
+    pub contents: Arc<TableLikeContent>,
+}
+
+impl TableDataEngine {
+    pub(crate) fn d2d_mapping(&self) -> &DisplayToDataMapping {
+        &self.d2d_mapping
+    }
+
+    pub(crate) fn set_d2d_mapping(&mut self, mapping: DisplayToDataMapping) {
+        self.d2d_mapping = mapping;
+    }
+
+    /// Recomputes the unique filter entries for every column from the current table data.
+    /// Must be called after content changes (e.g. after parsing).
+    pub fn calculate_available_filters(&mut self) {
+        self.all_filters =
+            calculate_available_filters(&self.contents.rows, self.contents.number_of_cols);
+    }
+}
+
+/// Relation of Display (rendered) rows to Data (src) rows with applied transformations
+/// Transformations applied:
+/// - sorting by column
+/// - filtering by column values
+#[derive(Debug, Default)]
+pub struct DisplayToDataMapping {
+    /// All rows sorted, regardless of applied filtering. Recomputed every time sorting changes
+    pub sorted_rows: Vec<DataRow>,
+    /// Rows that survive the active filters. Recomputed every time filters change
+    pub retained_rows: HashSet<DataRow>,
+    /// Merged result: sorted rows intersected with retained rows
+    pub mapping: Arc<HashMap<DisplayRow, DataRow>>,
+}
+
+impl DisplayToDataMapping {
+    /// Computes the full display-to-data mapping from owned inputs.
+    /// Intended to be called from a background thread.
+    pub(crate) fn compute(
+        contents: &Arc<TableLikeContent>,
+        filter_stack: &FilterStack,
+        sorting: Option<AppliedSorting>,
+    ) -> Self {
+        let mut mapping = Self::default();
+        mapping.apply_sorting(sorting, &contents.rows);
+        mapping.apply_filtering(filter_stack, &contents.rows);
+        mapping.merge_mappings();
+        mapping
+    }
+
+    /// Get the data row for a given display row
+    pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
+        self.mapping.get(&display_row).copied()
+    }
+
+    /// Get the number of filtered rows
+    pub fn visible_row_count(&self) -> usize {
+        self.mapping.len()
+    }
+
+    /// Computes sorting
+    fn apply_sorting(&mut self, sorting: Option<AppliedSorting>, rows: &[TableRow<TableCell>]) {
+        let data_rows: Vec<DataRow> = (0..rows.len()).map(DataRow).collect();
+
+        let sorted_rows = if let Some(sorting) = sorting {
+            sort_data_rows(&rows, data_rows, sorting)
+        } else {
+            data_rows
+        };
+
+        self.sorted_rows = sorted_rows;
+    }
+
+    fn apply_filtering(&mut self, filter_stack: &FilterStack, rows: &[TableRow<TableCell>]) {
+        self.retained_rows = retain_rows(rows, filter_stack);
+    }
+
+    /// Merges pre-computed sorting and filtering into the final display mapping
+    fn merge_mappings(&mut self) {
+        self.mapping = Arc::new(
+            self.sorted_rows
+                .iter()
+                .filter(|data_row| self.retained_rows.contains(data_row))
+                .enumerate()
+                .map(|(display, data)| (DisplayRow(display), *data))
+                .collect(),
+        );
+    }
+}

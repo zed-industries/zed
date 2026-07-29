@@ -69,7 +69,7 @@ impl Domain for CommandPaletteDB {
     )];
 }
 
-db::static_connection!(COMMAND_PALETTE_HISTORY, CommandPaletteDB, []);
+db::static_connection!(CommandPaletteDB, []);
 
 impl CommandPaletteDB {
     pub async fn write_command_invocation(

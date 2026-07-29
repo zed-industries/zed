@@ -4,10 +4,11 @@ use super::{
     fold_map::{Chunk, FoldRows},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
+
+use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
-use language::Point;
-use multi_buffer::{MultiBufferSnapshot, RowInfo};
-use smol::future::yield_now;
+use language::{LanguageAwareStyling, Point};
+use multi_buffer::RowInfo;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
@@ -63,6 +64,12 @@ struct Transform {
 struct TransformSummary {
     input: TextSummary,
     output: TextSummary,
+}
+
+impl TransformSummary {
+    fn has_wraps(&self) -> bool {
+        self.input.lines != self.output.lines
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -205,7 +212,7 @@ impl WrapMap {
             }];
 
             if total_rows < WRAP_YIELD_ROW_INTERVAL {
-                let edits = smol::block_on(new_snapshot.update(
+                let edits = gpui::block_on(new_snapshot.update(
                     tab_snapshot,
                     &tab_edits,
                     wrap_width,
@@ -299,7 +306,7 @@ impl WrapMap {
                     < WRAP_YIELD_ROW_INTERVAL
                 && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
             {
-                let wrap_edits = smol::block_on(snapshot.update(
+                let wrap_edits = gpui::block_on(snapshot.update(
                     tab_snapshot,
                     &tab_edits,
                     wrap_width,
@@ -381,15 +388,16 @@ impl WrapSnapshot {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        self.tab_snapshot.buffer_snapshot()
-    }
-
-    #[ztracing::instrument(skip_all)]
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> WrapPatch {
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
+        } else if !self.transforms.summary().has_wraps()
+            && !new_tab_snapshot.text_summary().lines.is_zero()
+        {
+            // Fast path: without existing wraps, interpolation is a passthrough over the new tab snapshot.
+            new_transforms = SumTree::default();
+            new_transforms.push(Transform::isomorphic(new_tab_snapshot.text_summary()), ());
         } else {
             let mut old_cursor = self.transforms.cursor::<TabPoint>(());
 
@@ -513,7 +521,10 @@ impl WrapSnapshot {
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
-                    false,
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
                     Highlights::default(),
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
@@ -656,7 +667,7 @@ impl WrapSnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<WrapRow>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         highlights: Highlights<'a>,
     ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
@@ -960,7 +971,10 @@ impl WrapSnapshot {
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
             wrap_row..self.max_point().row() + WrapRow(1),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         )
         .map(|h| h.text)
@@ -1020,6 +1034,11 @@ pub struct WrapPointCursor<'transforms> {
 }
 
 impl WrapPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn map(&mut self, point: TabPoint) -> WrapPoint {
         let cursor = &mut self.cursor;
@@ -1351,10 +1370,10 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         test::test_font,
     };
+    use futures::stream::StreamExt;
     use gpui::{LineFragment, px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use smol::stream::StreamExt;
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
     use theme::LoadThemes;
@@ -1664,7 +1683,7 @@ mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            theme::init(LoadThemes::JustBase, cx);
+            theme_settings::init(LoadThemes::JustBase, cx);
         });
     }
 
@@ -1719,7 +1738,10 @@ mod tests {
                 let actual_text = self
                     .chunks(
                         WrapRow(start_row)..WrapRow(end_row),
-                        true,
+                        LanguageAwareStyling {
+                            tree_sitter: true,
+                            diagnostics: true,
+                        },
                         Highlights::default(),
                     )
                     .map(|c| c.text)

@@ -1,5 +1,79 @@
 use std::fmt::{Display, Formatter};
 
+/// Generates a URL-friendly slug from heading text (e.g. "Hello World" → "hello-world").
+pub fn generate_heading_slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c.to_lowercase().next().unwrap_or(c))
+            } else if c == ' ' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Returns true if the URL starts with a URI scheme (RFC 3986 §3.1).
+fn has_uri_scheme(url: &str) -> bool {
+    let mut chars = url.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    for c in chars {
+        if c == ':' {
+            return true;
+        }
+        if !(c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+            return false;
+        }
+    }
+    false
+}
+
+/// Splits a relative URL into its path and `#fragment` parts.
+/// Absolute URLs are returned as-is with no fragment.
+pub fn split_local_url_fragment(url: &str) -> (&str, Option<&str>) {
+    if has_uri_scheme(url) {
+        return (url, None);
+    }
+    match url.find('#') {
+        Some(pos) => {
+            let path = &url[..pos];
+            let fragment = &url[pos + 1..];
+            (
+                path,
+                if fragment.is_empty() {
+                    None
+                } else {
+                    Some(fragment)
+                },
+            )
+        }
+        None => (url, None),
+    }
+}
+
+pub fn source_position_from_fragment(fragment: &str) -> Option<(u32, u32)> {
+    let fragment = fragment.strip_prefix('L').unwrap_or(fragment);
+    let fragment = fragment
+        .split_once('-')
+        .map_or(fragment, |(start, _)| start);
+    let (line, column) = match fragment.split_once([',', ':', 'C']) {
+        Some((line, column)) => (line, Some(column)),
+        None => (fragment, None),
+    };
+    let line = line.parse::<u32>().ok()?.checked_sub(1)?;
+    let column = column
+        .and_then(|column| column.parse::<u32>().ok())
+        .and_then(|column| column.checked_sub(1))
+        .unwrap_or(0);
+    Some((line, column))
+}
+
 /// Indicates that the wrapped `String` is markdown text.
 #[derive(Debug, Clone)]
 pub struct MarkdownString(pub String);
@@ -263,6 +337,71 @@ mod tests {
             count_max_consecutive_chars("```a``b`", '`'),
             3,
             "it can't be downgraded later"
+        );
+    }
+
+    #[test]
+    fn test_split_local_url_fragment() {
+        assert_eq!(split_local_url_fragment("#heading"), ("", Some("heading")));
+        assert_eq!(
+            split_local_url_fragment("./file.md#heading"),
+            ("./file.md", Some("heading"))
+        );
+        assert_eq!(split_local_url_fragment("./file.md"), ("./file.md", None));
+        assert_eq!(
+            split_local_url_fragment("https://example.com#frag"),
+            ("https://example.com#frag", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("mailto:user@example.com"),
+            ("mailto:user@example.com", None)
+        );
+        assert_eq!(split_local_url_fragment("#"), ("", None));
+        assert_eq!(
+            split_local_url_fragment("../other.md#section"),
+            ("../other.md", Some("section"))
+        );
+        assert_eq!(
+            split_local_url_fragment("123:not-a-scheme#frag"),
+            ("123:not-a-scheme", Some("frag"))
+        );
+    }
+
+    #[test]
+    fn test_source_position_from_fragment() {
+        assert_eq!(source_position_from_fragment("9,16"), Some((8, 15)));
+        assert_eq!(source_position_from_fragment("33,33"), Some((32, 32)));
+        assert_eq!(source_position_from_fragment("L42"), Some((41, 0)));
+        assert_eq!(source_position_from_fragment("L42:7"), Some((41, 6)));
+        assert_eq!(source_position_from_fragment("L3C5"), Some((2, 4)));
+        assert_eq!(source_position_from_fragment("L3C5-L8C10"), Some((2, 4)));
+        assert_eq!(source_position_from_fragment("5"), Some((4, 0)));
+        assert_eq!(source_position_from_fragment("L10-L20"), Some((9, 0)));
+        assert_eq!(source_position_from_fragment("heading"), None);
+        assert_eq!(source_position_from_fragment("0,0"), None);
+    }
+
+    #[test]
+    fn test_generate_heading_slug() {
+        assert_eq!(generate_heading_slug("Hello World"), "hello-world");
+        assert_eq!(generate_heading_slug("Hello  World"), "hello--world");
+        assert_eq!(generate_heading_slug("Hello-World"), "hello-world");
+        assert_eq!(
+            generate_heading_slug("Some **bold** text"),
+            "some-bold-text"
+        );
+        assert_eq!(generate_heading_slug("Let's try with Ü"), "lets-try-with-ü");
+        assert_eq!(
+            generate_heading_slug("heading with 123 numbers"),
+            "heading-with-123-numbers"
+        );
+        assert_eq!(
+            generate_heading_slug("What about (parens)?"),
+            "what-about-parens"
+        );
+        assert_eq!(
+            generate_heading_slug("  leading spaces  "),
+            "leading-spaces"
         );
     }
 }

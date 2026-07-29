@@ -56,7 +56,7 @@ use std::{
 use util::paths::{PathStyle, RemotePathBuf};
 
 /// Unique identifier for a mock connection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MockConnectionOptions {
     pub id: u64,
 }
@@ -290,6 +290,17 @@ impl RemoteConnection for MockRemoteConnection {
 
     fn path_style(&self) -> PathStyle {
         PathStyle::local()
+    }
+
+    fn remote_platform(&self) -> crate::RemotePlatform {
+        crate::RemotePlatform {
+            os: crate::RemoteOs::Linux,
+            arch: crate::RemoteArch::X86_64,
+        }
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        None
     }
 
     fn shell(&self) -> String {

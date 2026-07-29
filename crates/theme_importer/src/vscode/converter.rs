@@ -1,8 +1,8 @@
 use anyhow::Result;
 use collections::IndexMap;
 use strum::IntoEnumIterator;
-use theme::{
-    FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent, ThemeColor,
+use theme_settings::{
+    FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
     ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
 };
 
@@ -79,90 +79,78 @@ impl VsCodeThemeConverter {
                 .git_decoration
                 .conflicting_resource_foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             created: vscode_colors
                 .editor_gutter
                 .added_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             deleted: vscode_colors
                 .editor_gutter
                 .deleted_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             error: vscode_colors
                 .editor_error
                 .foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             error_background: vscode_colors
                 .editor_error
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
-            error_border: vscode_colors
-                .editor_error
-                .border
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            error_border: vscode_colors.editor_error.border.as_deref().map(Into::into),
             hidden: vscode_colors
                 .tab
                 .inactive_foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             hint: vscode_colors
                 .editor_inlay_hint
                 .foreground
                 .as_deref()
-                .map(ThemeColor::from)
+                .map(Into::into)
                 .or(vscode_base_status_colors.hint),
-            hint_border: vscode_colors
-                .editor_hint
-                .border
-                .as_deref()
-                .map(ThemeColor::from),
+            hint_border: vscode_colors.editor_hint.border.as_deref().map(Into::into),
             ignored: vscode_colors
                 .git_decoration
                 .ignored_resource_foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             info: vscode_colors
                 .editor_info
                 .foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             info_background: vscode_colors
                 .editor_info
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
-            info_border: vscode_colors
-                .editor_info
-                .border
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            info_border: vscode_colors.editor_info.border.as_deref().map(Into::into),
             modified: vscode_colors
                 .editor_gutter
                 .modified_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             // renamed: None,
             // success: None,
             warning: vscode_colors
                 .editor_warning
                 .foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             warning_background: vscode_colors
                 .editor_warning
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             warning_border: vscode_colors
                 .editor_warning
                 .border
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             ..Default::default()
         })
     }
@@ -184,271 +172,221 @@ impl VsCodeThemeConverter {
             .cloned();
 
         Ok(ThemeColorsContent {
-            border: vscode_panel_border.as_deref().map(ThemeColor::from),
-            border_variant: vscode_panel_border.as_deref().map(ThemeColor::from),
-            border_focused: vscode_colors.focus_border.as_deref().map(ThemeColor::from),
-            border_selected: vscode_panel_border.as_deref().map(ThemeColor::from),
-            border_transparent: vscode_panel_border.as_deref().map(ThemeColor::from),
-            border_disabled: vscode_panel_border.as_deref().map(ThemeColor::from),
+            border: vscode_panel_border.as_deref().map(Into::into),
+            border_variant: vscode_panel_border.as_deref().map(Into::into),
+            border_focused: vscode_colors.focus_border.as_deref().map(Into::into),
+            border_selected: vscode_panel_border.as_deref().map(Into::into),
+            border_transparent: vscode_panel_border.as_deref().map(Into::into),
+            border_disabled: vscode_panel_border.as_deref().map(Into::into),
             elevated_surface_background: vscode_colors
                 .dropdown
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
-            surface_background: vscode_colors
-                .panel
-                .background
-                .as_deref()
-                .map(ThemeColor::from),
-            background: vscode_editor_background.as_deref().map(ThemeColor::from),
-            element_background: vscode_colors
-                .button
-                .background
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            surface_background: vscode_colors.panel.background.as_deref().map(Into::into),
+            background: vscode_editor_background.as_deref().map(Into::into),
+            element_background: vscode_colors.button.background.as_deref().map(Into::into),
             element_hover: vscode_colors
                 .list
                 .hover_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             element_selected: vscode_colors
                 .list
                 .active_selection_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             drop_target_background: vscode_colors
                 .list
                 .drop_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             ghost_element_hover: vscode_colors
                 .list
                 .hover_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             ghost_element_selected: vscode_colors
                 .list
                 .active_selection_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             text: vscode_colors
                 .foreground
                 .clone()
                 .or(vscode_token_colors_foreground.clone())
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             text_muted: vscode_colors
                 .tab
                 .inactive_foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             status_bar_background: vscode_colors
                 .status_bar
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             title_bar_background: vscode_colors
                 .title_bar
                 .active_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             toolbar_background: vscode_colors
                 .breadcrumb
                 .background
                 .clone()
                 .or(vscode_editor_background.clone())
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             tab_bar_background: vscode_colors
                 .editor_group_header
                 .tabs_background
                 .as_deref()
-                .map(ThemeColor::from),
-            tab_inactive_background: vscode_tab_inactive_background
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            tab_inactive_background: vscode_tab_inactive_background.as_deref().map(Into::into),
             tab_active_background: vscode_colors
                 .tab
                 .active_background
                 .clone()
                 .or(vscode_tab_inactive_background)
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             search_match_background: vscode_colors
                 .editor
                 .find_match_background
                 .as_deref()
-                .map(ThemeColor::from),
-            panel_background: vscode_colors
-                .panel
-                .background
-                .as_deref()
-                .map(ThemeColor::from),
-            pane_group_border: vscode_colors
-                .editor_group
-                .border
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            panel_background: vscode_colors.panel.background.as_deref().map(Into::into),
+            pane_group_border: vscode_colors.editor_group.border.as_deref().map(Into::into),
             scrollbar_thumb_background: vscode_scrollbar_slider_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             scrollbar_thumb_hover_background: vscode_colors
                 .scrollbar_slider
                 .hover_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             scrollbar_thumb_active_background: vscode_colors
                 .scrollbar_slider
                 .active_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             scrollbar_thumb_border: vscode_scrollbar_slider_background
                 .as_deref()
-                .map(ThemeColor::from),
-            scrollbar_track_background: vscode_editor_background.as_deref().map(ThemeColor::from),
+                .map(Into::into),
+            scrollbar_track_background: vscode_editor_background.as_deref().map(Into::into),
             scrollbar_track_border: vscode_colors
                 .editor_overview_ruler
                 .border
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             minimap_thumb_background: vscode_colors
                 .minimap_slider
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             minimap_thumb_hover_background: vscode_colors
                 .minimap_slider
                 .hover_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             minimap_thumb_active_background: vscode_colors
                 .minimap_slider
                 .active_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             editor_foreground: vscode_editor_foreground
                 .or(vscode_token_colors_foreground)
                 .as_deref()
-                .map(ThemeColor::from),
-            editor_background: vscode_editor_background.as_deref().map(ThemeColor::from),
-            editor_gutter_background: vscode_editor_background.as_deref().map(ThemeColor::from),
+                .map(Into::into),
+            editor_background: vscode_editor_background.as_deref().map(Into::into),
+            editor_gutter_background: vscode_editor_background.as_deref().map(Into::into),
             editor_active_line_background: vscode_colors
                 .editor
                 .line_highlight_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             editor_line_number: vscode_colors
                 .editor_line_number
                 .foreground
                 .as_deref()
-                .map(ThemeColor::from),
-            editor_active_line_number: vscode_colors
-                .editor
-                .foreground
-                .as_deref()
-                .map(ThemeColor::from),
-            editor_wrap_guide: vscode_panel_border.as_deref().map(ThemeColor::from),
-            editor_active_wrap_guide: vscode_panel_border.as_deref().map(ThemeColor::from),
+                .map(Into::into),
+            editor_active_line_number: vscode_colors.editor.foreground.as_deref().map(Into::into),
+            editor_wrap_guide: vscode_panel_border.as_deref().map(Into::into),
+            editor_active_wrap_guide: vscode_panel_border.as_deref().map(Into::into),
             editor_document_highlight_bracket_background: vscode_colors
                 .editor_bracket_match
                 .background
                 .as_deref()
-                .map(ThemeColor::from),
-            terminal_background: vscode_colors
-                .terminal
-                .background
-                .as_deref()
-                .map(ThemeColor::from),
-            terminal_ansi_black: vscode_colors
-                .terminal
-                .ansi_black
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            terminal_background: vscode_colors.terminal.background.as_deref().map(Into::into),
+            terminal_ansi_black: vscode_colors.terminal.ansi_black.as_deref().map(Into::into),
             terminal_ansi_bright_black: vscode_colors
                 .terminal
                 .ansi_bright_black
                 .as_deref()
-                .map(ThemeColor::from),
-            terminal_ansi_red: vscode_colors
-                .terminal
-                .ansi_red
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            terminal_ansi_red: vscode_colors.terminal.ansi_red.as_deref().map(Into::into),
             terminal_ansi_bright_red: vscode_colors
                 .terminal
                 .ansi_bright_red
                 .as_deref()
-                .map(ThemeColor::from),
-            terminal_ansi_green: vscode_colors
-                .terminal
-                .ansi_green
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            terminal_ansi_green: vscode_colors.terminal.ansi_green.as_deref().map(Into::into),
             terminal_ansi_bright_green: vscode_colors
                 .terminal
                 .ansi_bright_green
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             terminal_ansi_yellow: vscode_colors
                 .terminal
                 .ansi_yellow
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             terminal_ansi_bright_yellow: vscode_colors
                 .terminal
                 .ansi_bright_yellow
                 .as_deref()
-                .map(ThemeColor::from),
-            terminal_ansi_blue: vscode_colors
-                .terminal
-                .ansi_blue
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            terminal_ansi_blue: vscode_colors.terminal.ansi_blue.as_deref().map(Into::into),
             terminal_ansi_bright_blue: vscode_colors
                 .terminal
                 .ansi_bright_blue
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             terminal_ansi_magenta: vscode_colors
                 .terminal
                 .ansi_magenta
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             terminal_ansi_bright_magenta: vscode_colors
                 .terminal
                 .ansi_bright_magenta
                 .as_deref()
-                .map(ThemeColor::from),
-            terminal_ansi_cyan: vscode_colors
-                .terminal
-                .ansi_cyan
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            terminal_ansi_cyan: vscode_colors.terminal.ansi_cyan.as_deref().map(Into::into),
             terminal_ansi_bright_cyan: vscode_colors
                 .terminal
                 .ansi_bright_cyan
                 .as_deref()
-                .map(ThemeColor::from),
-            terminal_ansi_white: vscode_colors
-                .terminal
-                .ansi_white
-                .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
+            terminal_ansi_white: vscode_colors.terminal.ansi_white.as_deref().map(Into::into),
             terminal_ansi_bright_white: vscode_colors
                 .terminal
                 .ansi_bright_white
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             link_text_hover: vscode_colors
                 .text_link
                 .active_foreground
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             vim_yank_background: vscode_colors
                 .editor
                 .range_highlight_background
                 .as_deref()
-                .map(ThemeColor::from),
+                .map(Into::into),
             ..Default::default()
         })
     }
@@ -492,16 +430,8 @@ impl VsCodeThemeConverter {
             );
 
             let highlight_style = HighlightStyleContent {
-                color: token_color
-                    .settings
-                    .foreground
-                    .as_deref()
-                    .map(ThemeColor::from),
-                background_color: token_color
-                    .settings
-                    .background
-                    .as_deref()
-                    .map(ThemeColor::from),
+                color: token_color.settings.foreground.as_deref().map(Into::into),
+                background_color: token_color.settings.background.as_deref().map(Into::into),
                 font_style: token_color
                     .settings
                     .font_style

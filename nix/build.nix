@@ -38,6 +38,9 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
+  lld,
+  libx11,
+  libxcb,
   nodejs_22,
   openssl,
   perl,
@@ -52,6 +55,7 @@
 
   withGLES ? false,
   profile ? "release",
+  commitSha ? null,
 }:
 assert withGLES -> stdenv.hostPlatform.isLinux;
 let
@@ -84,7 +88,10 @@ let
     in
     rec {
       pname = "zed-editor";
-      version = zedCargoLock.package.version + "-nightly";
+      version =
+        zedCargoLock.package.version
+        + "-nightly"
+        + lib.optionalString (commitSha != null) "+${builtins.substring 0 7 commitSha}";
       src = builtins.path {
         path = ../.;
         filter = mkIncludeFilter ../.;
@@ -131,6 +138,8 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+        # Provides `ld64.lld` for clang's `-fuse-ld=lld`.
+        lld
         (cargo-bundle.overrideAttrs (
           new: old: {
             version = "0.6.1-zed";
@@ -176,8 +185,9 @@ let
         libxkbcommon
         wayland
         gpu-lib
-        xorg.libX11
-        xorg.libxcb
+        libglvnd
+        libx11
+        libxcb
         libdrm
         libgbm
         libva
@@ -220,6 +230,7 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
+        ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
         LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
 
@@ -233,10 +244,16 @@ let
           lib.makeLibraryPath [
             gpu-lib
             wayland
+            libva
           ]
         }";
 
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
+      }
+      // lib.optionalAttrs stdenv'.hostPlatform.isDarwin {
+        # Link with lld on Darwin. nixpkgs' classic open-source ld64 fails to insert
+        # ARM64 branch thunks for this binary, producing `b(l) ARM64 branch out of range`.
+        NIX_CFLAGS_LINK = "-fuse-ld=lld";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
@@ -293,6 +310,13 @@ in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
+
+    # Expose the crane builder and shared arguments so other derivations (e.g.
+    # the docs preprocessor in the devshell) can build sibling workspace crates
+    # without duplicating all of the build inputs and environment setup.
+    passthru = {
+      inherit craneLib commonArgs cargoArtifacts;
+    };
 
     dontUseCmakeConfigure = true;
 

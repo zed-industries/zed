@@ -3,15 +3,37 @@
 /* open-sans-300 - latin_vietnamese_latin-ext_greek-ext_greek_cyrillic-ext_cyrillic */
 
 @font-face {
-  font-family: "IA Writer Quattro S";
+  font-family: "iA Writer Quattro S";
+  src: url("https://cdn.zed.dev/fonts/iAWriterQuattroV.woff2")
+    format("woff2-variations");
+  font-weight: 100 900;
   font-style: normal;
-  font-weight: 400;
-  src: url("iAWriterQuattroS-Regular.woff2") format("woff2");
+  font-display: swap;
 }
 
 @font-face {
-  font-family: "Lora";
-  src: url("Lora.var.woff2") format("woff2-variations");
+  font-family: "iA Writer Quattro S";
+  src: url("https://cdn.zed.dev/fonts/iAWriterQuattroV-Italic.woff2")
+    format("woff2-variations");
   font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Serif";
+  src: url("https://cdn.zed.dev/fonts/IBMPlexSerif-Var.woff2")
+    format("woff2-variations");
+  font-weight: 400 700;
   font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lilex";
+  src: url("https://cdn.zed.dev/fonts/Lilex-Regular.woff2")
+    format("woff2-variations");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }

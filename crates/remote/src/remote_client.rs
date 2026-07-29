@@ -22,10 +22,11 @@ use futures::{
     },
     future::{BoxFuture, Shared, WeakShared},
     select, select_biased,
+    stream::BoxStream,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, FutureExt, Global, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, Task, TaskExt, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -69,6 +70,16 @@ impl RemoteOs {
 
     pub fn is_windows(&self) -> bool {
         matches!(self, RemoteOs::Windows)
+    }
+
+    /// A human-readable OS name for telemetry. Matches `client::telemetry::os_name`
+    /// ignoring the compositor (as we run headless on remotes).
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "Linux",
+            RemoteOs::MacOs => "macOS",
+            RemoteOs::Windows => "Windows",
+        }
     }
 }
 
@@ -319,6 +330,8 @@ pub struct RemoteClient {
     unique_identifier: String,
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
+    platform: RemotePlatform,
+    os_version: Option<String>,
     state: Option<State>,
 }
 
@@ -377,6 +390,20 @@ pub async fn connect(
     .map_err(|e| e.cloned())
 }
 
+/// Returns `true` if the global [`ConnectionPool`] already has a live
+/// connection for the given options. Callers can use this to decide
+/// whether to show interactive UI (e.g., a password modal) before
+/// connecting.
+pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
+    cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+        matches!(
+            pool.connections.get(opts),
+            Some(ConnectionPoolEntry::Connected(remote))
+                if remote.upgrade().is_some_and(|r| !r.has_been_killed())
+        )
+    })
+}
+
 impl RemoteClient {
     pub fn new(
         unique_identifier: ConnectionIdentifier,
@@ -403,11 +430,17 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let platform = remote_connection.remote_platform();
+                let os_version = remote_connection.remote_os_version();
+                let connection_options = remote_connection.connection_options();
+                let connection_type = connection_options.connection_type();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options: remote_connection.connection_options(),
+                    connection_options,
                     path_style,
+                    platform,
+                    os_version: os_version.clone(),
                     state: Some(State::Connecting),
                 });
 
@@ -475,6 +508,18 @@ impl RemoteClient {
                         heartbeat_task,
                     });
                 });
+
+                // Use the same `remote_*` property schema as the forwarded
+                // remote events (see `client::telemetry::report_remote_event`)
+                // so all remote-origin telemetry can be queried uniformly.
+                telemetry::event!(
+                    "Remote Connection Established",
+                    remote = true,
+                    remote_connection_type = connection_type,
+                    remote_os_name = platform.os.display_name(),
+                    remote_os_version = os_version,
+                    remote_architecture = platform.arch.as_str(),
+                );
 
                 Ok(Some(this))
             });
@@ -915,24 +960,6 @@ impl RemoteClient {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
-    ) -> Result<CommandTemplate> {
-        self.build_command_with_options(
-            program,
-            args,
-            env,
-            working_dir,
-            port_forward,
-            Interactive::Yes,
-        )
-    }
-
-    pub fn build_command_with_options(
-        &self,
-        program: Option<String>,
-        args: &[String],
-        env: &HashMap<String, String>,
-        working_dir: Option<String>,
-        port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {
@@ -995,6 +1022,24 @@ impl RemoteClient {
 
     pub fn path_style(&self) -> PathStyle {
         self.path_style
+    }
+
+    /// The platform (OS and architecture) of the remote host, detected during
+    /// connection setup.
+    pub fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
+    /// The OS version of the remote host (e.g. `"ubuntu 24.04"`), detected
+    /// during connection setup. `None` if it could not be determined.
+    pub fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
+    }
+
+    /// A stable identifier for the kind of remote connection (e.g. `"ssh"`,
+    /// `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        self.connection_options.connection_type()
     }
 
     /// Forcibly disconnects from the remote server by killing the underlying connection.
@@ -1273,7 +1318,7 @@ impl ConnectionPool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
@@ -1285,7 +1330,10 @@ pub enum RemoteConnectionOptions {
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Ssh(opts) => opts
+                .nickname
+                .clone()
+                .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
                 if opts.use_podman {
@@ -1297,6 +1345,215 @@ impl RemoteConnectionOptions {
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
+    }
+
+    /// A stable identifier for the kind of remote connection, suitable for
+    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        match self {
+            RemoteConnectionOptions::Ssh(_) => "ssh",
+            RemoteConnectionOptions::Wsl(_) => "wsl",
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    "podman"
+                } else {
+                    "docker"
+                }
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => "mock",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[test]
+    fn test_ssh_display_name_prefers_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "My Cool Project");
+    }
+
+    #[test]
+    fn test_ssh_display_name_falls_back_to_host() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_connection_type() {
+        assert_eq!(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions::default()).connection_type(),
+            "ssh"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })
+            .connection_type(),
+            "wsl"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                ..Default::default()
+            })
+            .connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_request_stream_terminates_on_error(cx: &mut TestAppContext) {
+        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        // The client sends RemoteStarted on startup; drain the outgoing channel
+        // so it doesn't block.
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        let request_id = 0;
+
+        incoming_tx
+            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
+            .unwrap();
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(
+            proto::Test::from_envelope(first).unwrap(),
+            proto::Test { id: 1 }
+        );
+
+        // Send an Error without a trailing EndStream. The Error alone should
+        // terminate the stream.
+        incoming_tx
+            .unbounded_send(
+                ErrorCode::Internal
+                    .message("boom".to_string())
+                    .to_proto()
+                    .into_envelope(101, Some(request_id), None),
+            )
+            .unwrap();
+
+        let second = stream.next().await.unwrap();
+        let error = second.unwrap_err();
+        assert!(
+            format!("{error}").contains("boom"),
+            "expected error to surface server message, got: {error}"
+        );
+
+        assert!(stream.next().await.is_none());
+        assert_eq!(client.stream_response_channels.lock().len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_response_cleans_up_channel(
+        cx: &mut TestAppContext,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "dropping a stream before any responses arrive should remove response channel bookkeeping"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        let request_id = 0;
+
+        incoming_tx
+            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
+            .unwrap();
+        let _ = stream.next().await.unwrap().unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+
+        // Inject an orphaned non-terminal response. The read loop should detect
+        // that the consumer has been dropped and clean up its bookkeeping (no
+        // EndStream sent here on purpose, otherwise the cleanup would happen
+        // via the terminal-response path and mask the bug under test).
+        incoming_tx
+            .unbounded_send(proto::Test { id: 2 }.into_envelope(101, Some(request_id), None))
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "stream channel should be removed once the consumer has dropped the stream"
+        );
     }
 }
 
@@ -1366,6 +1623,11 @@ pub trait RemoteConnection: Send + Sync {
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
+    /// The remote platform (OS and architecture), detected during connection setup.
+    fn remote_platform(&self) -> RemotePlatform;
+    /// The remote host's OS version (e.g. `"ubuntu 24.04"` or `"15.6.1"`),
+    /// detected during connection setup. `None` if it could not be determined.
+    fn remote_os_version(&self) -> Option<String>;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
@@ -1375,8 +1637,10 @@ pub trait RemoteConnection: Send + Sync {
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
+type StreamResponseChannels =
+    Arc<Mutex<HashMap<MessageId, UnboundedSender<(Result<Envelope>, oneshot::Sender<()>)>>>>;
 
-struct Signal<T> {
+struct Signal<T: 'static> {
     tx: Mutex<Option<oneshot::Sender<T>>>,
     rx: Shared<Task<Option<T>>>,
 }
@@ -1412,6 +1676,7 @@ pub(crate) struct ChannelClient {
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
     response_channels: ResponseChannels,
+    stream_response_channels: StreamResponseChannels,
     message_handlers: Mutex<ProtoMessageHandlerSet>,
     max_received: AtomicU32,
     name: &'static str,
@@ -1434,6 +1699,7 @@ impl ChannelClient {
             next_message_id: AtomicU32::new(0),
             max_received: AtomicU32::new(0),
             response_channels: ResponseChannels::default(),
+            stream_response_channels: StreamResponseChannels::default(),
             message_handlers: Default::default(),
             buffer: Mutex::new(VecDeque::new()),
             name,
@@ -1507,13 +1773,40 @@ impl ChannelClient {
 
                 if let Some(request_id) = incoming.responding_to {
                     let request_id = MessageId(request_id);
+                    // An incoming response with no payload is malformed; drop
+                    // it. The request future and any stream consumers will
+                    // remain pending until either a real response arrives or
+                    // the connection is torn down.
+                    if incoming.payload.is_none() {
+                        continue;
+                    }
                     let sender = this.response_channels.lock().remove(&request_id);
                     if let Some(sender) = sender {
                         let (tx, rx) = oneshot::channel();
-                        if incoming.payload.is_some() {
-                            sender.send((incoming, tx)).ok();
-                        }
+                        sender.send((incoming, tx)).ok();
                         rx.await.ok();
+                    } else {
+                        let terminal_stream_response = matches!(
+                            &incoming.payload,
+                            Some(proto::envelope::Payload::Error(_))
+                                | Some(proto::envelope::Payload::EndStream(_))
+                        );
+                        let sender = if terminal_stream_response {
+                            this.stream_response_channels.lock().remove(&request_id)
+                        } else {
+                            this.stream_response_channels
+                                .lock()
+                                .get(&request_id)
+                                .cloned()
+                        };
+                        if let Some(sender) = sender {
+                            let (tx, rx) = oneshot::channel();
+                            if sender.unbounded_send((Ok(incoming), tx)).is_err() {
+                                this.stream_response_channels.lock().remove(&request_id);
+                                continue;
+                            }
+                            rx.await.ok();
+                        }
                     }
                 } else if let Some(envelope) =
                     build_typed_envelope(peer_id, Instant::now(), incoming)
@@ -1678,6 +1971,55 @@ impl ChannelClient {
         }
     }
 
+    fn request_stream_dynamic(
+        &self,
+        mut envelope: proto::Envelope,
+        type_name: &'static str,
+    ) -> impl 'static + Future<Output = Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        envelope.id = self.next_message_id.fetch_add(1, SeqCst);
+        let message_id = MessageId(envelope.id);
+        let (tx, rx) = mpsc::unbounded();
+        let stream_response_channels = self.stream_response_channels.clone();
+        stream_response_channels.lock().insert(message_id, tx);
+
+        let result = self.send_buffered(envelope);
+        async move {
+            if let Err(error) = &result {
+                log::error!("failed to send message: {error}");
+                anyhow::bail!("failed to send message: {error}");
+            }
+
+            let cleanup_stream_response_channel = util::defer({
+                let stream_response_channels = stream_response_channels.clone();
+                move || {
+                    stream_response_channels.lock().remove(&message_id);
+                }
+            });
+
+            Ok(rx
+                .filter_map(move |(response, _barrier)| {
+                    // Keep the cleanup guard alive until the returned stream is dropped.
+                    let _keep_cleanup_guard_alive = &cleanup_stream_response_channel;
+                    futures::future::ready(match response {
+                        Ok(response) => {
+                            if let Some(proto::envelope::Payload::Error(error)) = &response.payload
+                            {
+                                Some(Err(RpcError::from_proto(error, type_name)))
+                            } else if let Some(proto::envelope::Payload::EndStream(_)) =
+                                &response.payload
+                            {
+                                None
+                            } else {
+                                Some(Ok(response))
+                            }
+                        }
+                        Err(error) => Some(Err(error)),
+                    })
+                })
+                .boxed())
+        }
+    }
+
     pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         self.send_buffered(envelope)
@@ -1706,6 +2048,14 @@ impl ProtoClient for ChannelClient {
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<proto::Envelope>> {
         self.request_dynamic(envelope, request_type, true).boxed()
+    }
+
+    fn request_stream(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        self.request_stream_dynamic(envelope, request_type).boxed()
     }
 
     fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {

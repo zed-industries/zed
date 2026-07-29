@@ -31,4 +31,3 @@ gpui_util.workspace = true
 http_client_tls.workspace = true
 
 [dev-dependencies]
-gpui.workspace = true

@@ -5,8 +5,7 @@ use remote::RemoteClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::{Shell, shell_to_proto};
-use terminal::terminal_settings::TerminalSettings;
-use util::{ResultExt, command::new_command, rel_path::RelPath};
+use util::{ResultExt, command::new_command};
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -134,19 +133,7 @@ impl ProjectEnvironment {
             None if self.is_remote_project => {
                 Some(self.local_directory_environment(&Shell::System, abs_path, cx))
             }
-            None => Some({
-                let shell = TerminalSettings::get(
-                    Some(settings::SettingsLocation {
-                        worktree_id: worktree.id(),
-                        path: RelPath::empty(),
-                    }),
-                    cx,
-                )
-                .shell
-                .clone();
-
-                self.local_directory_environment(&shell, abs_path, cx)
-            }),
+            None => Some(self.local_directory_environment(&Shell::System, abs_path, cx)),
         }
         .unwrap_or_else(|| Task::ready(None).shared())
     }
@@ -175,23 +162,30 @@ impl ProjectEnvironment {
                     worktree_store.find_worktree(&abs_path, cx)
                 })
                 .ok()
-                .map(|worktree| {
-                    let shell = terminal::terminal_settings::TerminalSettings::get(
-                        worktree
-                            .as_ref()
-                            .map(|(worktree, path)| settings::SettingsLocation {
-                                worktree_id: worktree.read(cx).id(),
-                                path: &path,
-                            }),
-                        cx,
-                    )
-                    .shell
-                    .clone();
-
-                    self.local_directory_environment(&shell, abs_path, cx)
-                }),
+                .map(|_| self.local_directory_environment(&Shell::System, abs_path, cx)),
         }
         .unwrap_or_else(|| Task::ready(None).shared())
+    }
+
+    /// Returns the project environment using the default worktree path.
+    /// This ensures that project-specific environment variables (e.g. from `.envrc`)
+    /// are loaded from the project directory rather than the home directory.
+    pub fn default_environment(
+        &mut self,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        let abs_path = self
+            .worktree_store
+            .read_with(cx, |worktree_store, cx| {
+                crate::Project::default_visible_worktree_paths(worktree_store, cx)
+                    .into_iter()
+                    .next()
+            })
+            .ok()
+            .flatten()
+            .map(|path| Arc::<Path>::from(path))
+            .unwrap_or_else(|| paths::home_dir().as_path().into());
+        self.local_directory_environment(&Shell::System, abs_path, cx)
     }
 
     /// Returns the project environment, if possible.

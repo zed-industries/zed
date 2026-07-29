@@ -13,13 +13,13 @@ use release_channel::ReleaseChannel;
 use remote::{ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform};
 use semver::Version;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, CommonAnimationExt, Context, InteractiveElement, IntoElement, KeyBinding,
-    LabelCommon, ListItem, Styled, Window, prelude::*,
+    ActiveTheme, CommonAnimationExt, Context, InteractiveElement, KeyBinding, ListItem, Tooltip,
+    prelude::*,
 };
 use ui_input::{ERASED_EDITOR_FACTORY, ErasedEditor};
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub struct RemoteConnectionPrompt {
     connection_string: SharedString,
@@ -30,6 +30,8 @@ pub struct RemoteConnectionPrompt {
     prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Arc<dyn ErasedEditor>,
+    is_password_prompt: bool,
+    is_masked: bool,
 }
 
 impl Drop for RemoteConnectionPrompt {
@@ -70,6 +72,8 @@ impl RemoteConnectionPrompt {
             status_message: None,
             cancellation: None,
             prompt: None,
+            is_password_prompt: false,
+            is_masked: true,
         }
     }
 
@@ -85,7 +89,9 @@ impl RemoteConnectionPrompt {
         cx: &mut Context<Self>,
     ) {
         let is_yes_no = prompt.contains("yes/no");
-        self.editor.set_masked(!is_yes_no, window, cx);
+        self.is_password_prompt = !is_yes_no;
+        self.is_masked = !is_yes_no;
+        self.editor.set_masked(self.is_masked, window, cx);
 
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
@@ -133,39 +139,86 @@ impl Render for RemoteConnectionPrompt {
             ..Default::default()
         };
 
+        let is_password_prompt = self.is_password_prompt;
+        let is_masked = self.is_masked;
+        let (masked_password_icon, masked_password_tooltip) = if is_masked {
+            (IconName::Eye, "Toggle to Unmask Password")
+        } else {
+            (IconName::EyeOff, "Toggle to Mask Password")
+        };
+
         v_flex()
             .key_context("PasswordPrompt")
             .p_2()
             .size_full()
-            .text_buffer(cx)
-            .when_some(self.status_message.clone(), |el, status_message| {
-                el.child(
-                    h_flex()
-                        .gap_2()
+            .when_some(self.prompt.as_ref(), |this, prompt| {
+                this.child(
+                    v_flex()
+                        .text_sm()
+                        .size_full()
+                        .overflow_hidden()
                         .child(
-                            Icon::new(IconName::ArrowCircle)
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
+                                .when(is_password_prompt, |this| {
+                                    this.child(
+                                        IconButton::new("toggle_mask", masked_password_icon)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text(masked_password_tooltip))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.is_masked = !this.is_masked;
+                                                this.editor.set_masked(this.is_masked, window, cx);
+                                                window.focus(&this.editor.focus_handle(cx), cx);
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        )
+                        .child(div().flex_1().child(self.editor.render(window, cx))),
+                )
+                .when(window.capslock().on, |this| {
+                    this.child(
+                        h_flex()
+                            .py_0p5()
+                            .min_w_0()
+                            .w_full()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Warning)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Caps lock is on.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                })
+            })
+            .when_some(self.status_message.clone(), |this, status_message| {
+                this.child(
+                    h_flex()
+                        .min_w_0()
+                        .w_full()
+                        .mt_1()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::Small)
                                 .color(Color::Muted)
                                 .with_rotate_animation(2),
                         )
                         .child(
-                            div()
-                                .text_ellipsis()
-                                .overflow_x_hidden()
-                                .child(format!("{}…", status_message)),
+                            Label::new(format!("{}…", status_message))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate()
+                                .flex_1(),
                         ),
                 )
-            })
-            .when_some(self.prompt.as_ref(), |el, prompt| {
-                el.child(
-                    div()
-                        .size_full()
-                        .overflow_hidden()
-                        .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
-                        .child(self.editor.render(window, cx)),
-                )
-                .when(window.capslock().on, |el| {
-                    el.child(Label::new("⚠️ ⇪ is on"))
-                })
             })
     }
 }
@@ -480,6 +533,159 @@ impl RemoteClientDelegate {
                 })
                 .ok()
         });
+    }
+}
+
+/// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
+/// a remote connection. This is a convenience wrapper around
+/// [`RemoteConnectionModal`] and [`connect`] suitable for use as the
+/// `connect_remote` callback in [`MultiWorkspace::find_or_create_workspace`].
+///
+/// When the global connection pool already has a live connection for the
+/// given options, the modal is skipped entirely and the connection is
+/// reused silently.
+pub fn connect_with_modal(
+    workspace: &Entity<Workspace>,
+    connection_options: RemoteConnectionOptions,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    if remote::has_active_connection(&connection_options, cx) {
+        return connect_reusing_pool(connection_options, cx);
+    }
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| {
+            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+        });
+        let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Failed to open remote connection dialog"
+            )));
+        };
+        let prompt = modal.read(cx).prompt.clone();
+        connect(
+            ConnectionIdentifier::setup(),
+            connection_options,
+            prompt,
+            window,
+            cx,
+        )
+    })
+}
+
+/// Dismisses any active [`RemoteConnectionModal`] on the given workspace.
+///
+/// This should be called after a remote connection attempt completes
+/// (success or failure) when the modal was shown on a workspace that may
+/// outlive the connection flow — for example, when the modal is shown
+/// on a local workspace before switching to a newly-created remote
+/// workspace.
+pub fn dismiss_connection_modal(workspace: &Entity<Workspace>, cx: &mut gpui::AsyncWindowContext) {
+    workspace
+        .update_in(cx, |workspace, _window, cx| {
+            if let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                modal.update(cx, |modal, cx| modal.finished(cx));
+            }
+        })
+        .ok();
+}
+
+/// Creates a [`RemoteClient`] by reusing an existing connection from the
+/// global pool. No interactive UI is shown. This should only be called
+/// when [`remote::has_active_connection`] returns `true`.
+pub fn connect_reusing_pool(
+    connection_options: RemoteConnectionOptions,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    let delegate: Arc<dyn remote::RemoteClientDelegate> = Arc::new(BackgroundRemoteClientDelegate);
+
+    cx.spawn(async move |cx| {
+        let connection = remote::connect(connection_options, delegate.clone(), cx).await?;
+
+        let (_cancel_guard, cancel_rx) = oneshot::channel::<()>();
+        cx.update(|cx| {
+            RemoteClient::new(
+                ConnectionIdentifier::setup(),
+                connection,
+                cancel_rx,
+                delegate,
+                cx,
+            )
+        })
+        .await
+    })
+}
+
+/// Delegate for remote connections that reuse an existing pooled
+/// connection. Password prompts are not expected (the SSH transport
+/// is already established), but server binary downloads are supported
+/// via [`AutoUpdater`].
+struct BackgroundRemoteClientDelegate;
+
+impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        _tx: oneshot::Sender<EncryptedPassword>,
+        _cx: &mut AsyncApp,
+    ) {
+        log::warn!(
+            "Pooled remote connection unexpectedly requires a password \
+             (prompt: {prompt})"
+        );
+    }
+
+    fn set_status(&self, _status: Option<&str>, _cx: &mut AsyncApp) {}
+
+    fn download_server_binary_locally(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<anyhow::Result<PathBuf>> {
+        cx.spawn(async move |cx| {
+            AutoUpdater::download_remote_server_release(
+                release_channel,
+                version.clone(),
+                platform.os.as_str(),
+                platform.arch.as_str(),
+                |_status, _cx| {},
+                cx,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
+                    version
+                        .as_ref()
+                        .map(|v| format!("{v}"))
+                        .unwrap_or("unknown".to_string()),
+                    platform.os,
+                    platform.arch,
+                )
+            })
+        })
+    }
+
+    fn get_download_url(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Option<String>>> {
+        cx.spawn(async move |cx| {
+            AutoUpdater::get_remote_server_release_url(
+                release_channel,
+                version,
+                platform.os.as_str(),
+                platform.arch.as_str(),
+                cx,
+            )
+            .await
+        })
     }
 }
 

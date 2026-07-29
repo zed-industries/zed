@@ -19,7 +19,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use util::command::Command;
+
 use uuid::Uuid;
 
 use super::{KernelSession, RunningKernel, start_kernel_tasks};
@@ -41,7 +41,7 @@ impl Eq for LocalKernelSpecification {}
 
 impl LocalKernelSpecification {
     #[must_use]
-    fn command(&self, connection_path: &PathBuf) -> Result<Command> {
+    fn command(&self, connection_path: &PathBuf) -> Result<std::process::Command> {
         let argv = &self.kernelspec.argv;
 
         anyhow::ensure!(!argv.is_empty(), "Empty argv in kernelspec {}", self.name);
@@ -52,7 +52,7 @@ impl LocalKernelSpecification {
             self.name
         );
 
-        let mut cmd = util::command::new_command(&argv[0]);
+        let mut cmd = util::command::new_std_command(&argv[0]);
 
         for arg in &argv[1..] {
             if arg == "{connection_file}" {
@@ -91,7 +91,7 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
 }
 
 pub struct NativeRunningKernel {
-    pub process: util::command::Child,
+    pub process: util::process::Child,
     connection_path: PathBuf,
     _process_status_task: Option<Task<()>>,
     pub working_directory: PathBuf,
@@ -104,7 +104,7 @@ pub struct NativeRunningKernel {
 impl Debug for NativeRunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunningKernel")
-            .field("process", &self.process)
+            .field("process", &*self.process)
             .finish()
     }
 }
@@ -146,15 +146,14 @@ impl NativeRunningKernel {
             fs.atomic_write(connection_path.clone(), content).await?;
 
             let mut cmd = kernel_specification.command(&connection_path)?;
+            cmd.current_dir(&working_directory);
 
-            let mut process = cmd
-                .current_dir(&working_directory)
-                .stdout(util::command::Stdio::piped())
-                .stderr(util::command::Stdio::piped())
-                .stdin(util::command::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .context("failed to start the kernel process")?;
+            let mut process = util::process::Child::spawn(
+                cmd,
+                std::process::Stdio::piped(),
+                std::process::Stdio::piped(),
+                std::process::Stdio::piped(),
+            )?;
 
             let session_id = Uuid::new_v4().to_string();
 

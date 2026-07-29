@@ -560,6 +560,54 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_zed_tasks_take_precedence_over_vscode(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".vscode"),
+                }),
+                Some(&mock_tasks_from_names(["vscode_task"])),
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        task_template_names(&inventory, Some(worktree_id), cx).await,
+        vec!["vscode_task"],
+        "With only .vscode tasks, they should appear"
+    );
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(&mock_tasks_from_names(["zed_task"])),
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        task_template_names(&inventory, Some(worktree_id), cx).await,
+        vec!["zed_task"],
+        "With both .zed and .vscode tasks, only .zed tasks should appear"
+    );
+
+    register_worktree_task_used(&inventory, worktree_id, "zed_task", cx).await;
+    let resolved = resolved_task_names(&inventory, Some(worktree_id), cx).await;
+    assert!(
+        !resolved.iter().any(|name| name == "vscode_task"),
+        "Previously used .vscode tasks should not appear when .zed tasks exist, got: {resolved:?}"
+    );
+}
+
 fn init_test(_cx: &mut TestAppContext) {
     zlog::init_test();
     TaskStore::init(None);

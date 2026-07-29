@@ -1,5 +1,5 @@
 use crate::{
-    AnchorRangeExt, DisplayPoint, Editor, ExcerptId, MultiBuffer, MultiBufferSnapshot, RowExt,
+    DisplayPoint, Editor, MultiBuffer, MultiBufferSnapshot, RowExt,
     display_map::{HighlightKey, ToDisplayPoint},
 };
 use buffer_diff::DiffHunkStatusKind;
@@ -13,7 +13,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{Anchor, ExcerptRange, MultiBufferOffset, MultiBufferRow, PathKey};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, ExcerptRange, MultiBufferOffset, MultiBufferRow, PathKey,
+};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -464,7 +466,21 @@ impl EditorTestContext {
             let selections = editor.selections.disjoint_anchors_arc();
             let excerpts = multibuffer_snapshot
                 .excerpts()
-                .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))
+                .map(|info| {
+                    (
+                        multibuffer_snapshot
+                            .buffer_for_id(info.context.start.buffer_id)
+                            .cloned()
+                            .unwrap(),
+                        multibuffer_snapshot
+                            .anchor_in_excerpt(info.context.start)
+                            .unwrap()
+                            ..multibuffer_snapshot
+                                .anchor_in_excerpt(info.context.end)
+                                .unwrap(),
+                        info,
+                    )
+                })
                 .collect::<Vec<_>>();
 
             (multibuffer_snapshot, selections, excerpts)
@@ -478,14 +494,23 @@ impl EditorTestContext {
             fmt_additional_notes(),
         );
 
-        for (ix, (excerpt_id, snapshot, range)) in excerpts.into_iter().enumerate() {
+        for (ix, (snapshot, multibuffer_range, excerpt_range)) in excerpts.into_iter().enumerate() {
             let is_folded = self
                 .update_editor(|editor, _, cx| editor.is_buffer_folded(snapshot.remote_id(), cx));
             let (expected_text, expected_selections) =
                 marked_text_ranges(expected_excerpts[ix], true);
             if expected_text == "[FOLDED]\n" {
                 assert!(is_folded, "excerpt {} should be folded", ix);
-                let is_selected = selections.iter().any(|s| s.head().excerpt_id == excerpt_id);
+                let is_selected = selections.iter().any(|s| {
+                    multibuffer_range
+                        .start
+                        .cmp(&s.head(), &multibuffer_snapshot)
+                        .is_le()
+                        && multibuffer_range
+                            .end
+                            .cmp(&s.head(), &multibuffer_snapshot)
+                            .is_ge()
+                });
                 if !expected_selections.is_empty() {
                     assert!(
                         is_selected,
@@ -510,7 +535,7 @@ impl EditorTestContext {
             );
             assert_eq!(
                 multibuffer_snapshot
-                    .text_for_range(Anchor::range_in_buffer(excerpt_id, range.context.clone()))
+                    .text_for_range(multibuffer_range.clone())
                     .collect::<String>(),
                 expected_text,
                 "{}",
@@ -519,13 +544,24 @@ impl EditorTestContext {
 
             let selections = selections
                 .iter()
-                .filter(|s| s.head().excerpt_id == excerpt_id)
-                .map(|s| {
-                    let head = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
-                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
-                    let tail = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
-                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
-                    tail..head
+                .filter(|s| {
+                    multibuffer_range
+                        .start
+                        .cmp(&s.head(), &multibuffer_snapshot)
+                        .is_le()
+                        && multibuffer_range
+                            .end
+                            .cmp(&s.head(), &multibuffer_snapshot)
+                            .is_ge()
+                })
+                .filter_map(|s| {
+                    let (head_anchor, buffer_snapshot) =
+                        multibuffer_snapshot.anchor_to_buffer_anchor(s.head())?;
+                    let head = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&excerpt_range.context.start, buffer_snapshot);
+                    let tail = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&excerpt_range.context.start, buffer_snapshot);
+                    Some(tail..head)
                 })
                 .collect::<Vec<_>>();
             // todo: selections that cross excerpt boundaries..
@@ -546,9 +582,12 @@ impl EditorTestContext {
             let selections = editor.selections.disjoint_anchors_arc().to_vec();
             let excerpts = multibuffer_snapshot
                 .excerpts()
-                .map(|(e_id, snapshot, range)| {
-                    let is_folded = editor.is_buffer_folded(snapshot.remote_id(), cx);
-                    (e_id, snapshot.clone(), range, is_folded)
+                .map(|info| {
+                    let buffer_snapshot = multibuffer_snapshot
+                        .buffer_for_id(info.context.start.buffer_id)
+                        .unwrap();
+                    let is_folded = editor.is_buffer_folded(buffer_snapshot.remote_id(), cx);
+                    (buffer_snapshot.clone(), info, is_folded)
                 })
                 .collect::<Vec<_>>();
 
@@ -673,7 +712,7 @@ impl EditorTestContext {
 struct FormatMultiBufferAsMarkedText {
     multibuffer_snapshot: MultiBufferSnapshot,
     selections: Vec<Selection<Anchor>>,
-    excerpts: Vec<(ExcerptId, BufferSnapshot, ExcerptRange<text::Anchor>, bool)>,
+    excerpts: Vec<(BufferSnapshot, ExcerptRange<text::Anchor>, bool)>,
 }
 
 impl std::fmt::Display for FormatMultiBufferAsMarkedText {
@@ -684,25 +723,40 @@ impl std::fmt::Display for FormatMultiBufferAsMarkedText {
             excerpts,
         } = self;
 
-        for (excerpt_id, snapshot, range, is_folded) in excerpts.into_iter() {
+        for (_snapshot, range, is_folded) in excerpts.into_iter() {
             write!(f, "[EXCERPT]\n")?;
             if *is_folded {
                 write!(f, "[FOLDED]\n")?;
             }
 
+            let multibuffer_range = multibuffer_snapshot
+                .buffer_anchor_range_to_anchor_range(range.context.clone())
+                .unwrap();
+
             let mut text = multibuffer_snapshot
-                .text_for_range(Anchor::range_in_buffer(*excerpt_id, range.context.clone()))
+                .text_for_range(multibuffer_range.clone())
                 .collect::<String>();
 
             let selections = selections
                 .iter()
-                .filter(|&s| s.head().excerpt_id == *excerpt_id)
-                .map(|s| {
-                    let head = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
-                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
-                    let tail = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
-                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
-                    tail..head
+                .filter(|&s| {
+                    multibuffer_range
+                        .start
+                        .cmp(&s.head(), multibuffer_snapshot)
+                        .is_le()
+                        && multibuffer_range
+                            .end
+                            .cmp(&s.head(), multibuffer_snapshot)
+                            .is_ge()
+                })
+                .filter_map(|s| {
+                    let (head_anchor, buffer_snapshot) =
+                        multibuffer_snapshot.anchor_to_buffer_anchor(s.head())?;
+                    let head = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, buffer_snapshot);
+                    let tail = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, buffer_snapshot);
+                    Some(tail..head)
                 })
                 .rev()
                 .collect::<Vec<_>>();

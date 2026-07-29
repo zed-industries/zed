@@ -36,6 +36,7 @@ settings.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
 ui_input.workspace = true

@@ -7,7 +7,6 @@ use futures::{SinkExt as _, StreamExt as _};
 use proto::Message as _;
 use std::time::Instant;
 use std::{fmt::Debug, io};
-use zstd::zstd_safe::WriteBuf;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -87,7 +86,10 @@ where
             let received_at = Instant::now();
             match bytes? {
                 WebSocketMessage::Binary(bytes) => {
-                    zstd::stream::copy_decode(bytes.as_slice(), &mut self.encoding_buffer)?;
+                    zstd::stream::copy_decode(
+                        zstd::zstd_safe::WriteBuf::as_slice(&*bytes),
+                        &mut self.encoding_buffer,
+                    )?;
                     let envelope = Envelope::decode(self.encoding_buffer.as_slice())
                         .map_err(io::Error::from)?;
 

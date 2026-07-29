@@ -17,3 +17,4 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
+theme_settings.workspace = true

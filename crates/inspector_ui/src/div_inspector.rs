@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
-    MultiBuffer,
+    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, MinimapVisibility, MultiBuffer,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -467,7 +466,7 @@ impl DivInspector {
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         });
 
         let buffer = project
@@ -496,9 +495,11 @@ impl DivInspector {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
             editor.set_show_code_actions(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor
@@ -641,7 +642,6 @@ struct RustStyleCompletionProvider {
 impl CompletionProvider for RustStyleCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,
@@ -667,12 +667,14 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     match_start: None,
                     snippet_deduplication_key: None,
                     icon_path: None,
+                    icon_color: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())
                     }),
                     source: CompletionSource::Custom,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),

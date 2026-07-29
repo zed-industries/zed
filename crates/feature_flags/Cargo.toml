@@ -12,5 +12,16 @@ workspace = true
 path = "src/feature_flags.rs"
 
 [dependencies]
-futures.workspace = true
+collections.workspace = true
+feature_flags_macros.workspace = true
+fs.workspace = true
 gpui.workspace = true
+inventory.workspace = true
+release_channel.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
