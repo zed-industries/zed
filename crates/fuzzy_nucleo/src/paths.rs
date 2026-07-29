@@ -36,6 +36,8 @@ impl PathQuery {
     fn build(query: &str, case: Case) -> Option<Self> {
         let canonical_query = normalize_nfc(query);
         let query = Query::build(&canonical_query, case)?;
+        // Constraining ASCII graphemes would disable Nucleo's existing Smart accent folding.
+        // Non-ASCII graphemes need their complete contents checked for canonical equivalence.
         let canonical_atoms = pattern_grapheme_atoms(&canonical_query)
             .into_iter()
             .map(|atom| {
@@ -47,6 +49,7 @@ impl PathQuery {
                     .collect()
             })
             .collect();
+        // Keep ASCII queries on the existing allocation-free candidate path.
         let normalize_candidates = !canonical_query.is_ascii();
         let replacement_chars = normalize_candidates
             .then(|| {
@@ -107,6 +110,8 @@ impl PathQuery {
             return Ok(Some(score));
         }
 
+        // Nucleo represents a grapheme by its leading scalar, so its preferred alignment can
+        // select a non-equivalent grapheme. Search lower-scoring alignments for a canonical one.
         let candidate_graphemes = candidate.graphemes(true).collect::<Vec<_>>();
         indices.clear();
         let mut score = 0;
@@ -710,6 +715,8 @@ fn path_match_helper<'a>(
             candidate_buf.push_str(candidate.path.as_unix_str());
         }
 
+        // Normalize after joining the prefix and path because normalization forms are not closed
+        // under arbitrary concatenation.
         let canonical_candidate = path_query
             .normalize_candidates
             .then(|| normalize_nfc(&candidate_buf));

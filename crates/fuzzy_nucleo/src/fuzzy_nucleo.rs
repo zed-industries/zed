@@ -189,6 +189,8 @@ pub(crate) fn utf32_str<'a>(s: &'a str, buffer: &'a mut Vec<char>) -> Utf32Str<'
     if s.is_ascii() {
         Utf32Str::Ascii(s.as_bytes())
     } else {
+        // Nucleo 0.3.1 can classify decomposed non-ASCII text as Ascii when every grapheme starts
+        // with ASCII, so construct the Unicode representation explicitly.
         buffer.clear();
         buffer.extend(nucleo::chars::graphemes(s));
         Utf32Str::Unicode(buffer)
