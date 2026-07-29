@@ -125,6 +125,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) menus: Vec<OwnedMenu>,
     app_name: Option<String>,
     system_notifications: crate::linux::system_notifications::SystemNotificationState,
+    network_monitor: crate::linux::network_monitor::NetworkMonitorState,
     #[cfg_attr(
         not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
         allow(dead_code)
@@ -168,6 +169,7 @@ impl LinuxCommon {
             app_name: None,
             system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
             ),
+            network_monitor: crate::linux::network_monitor::NetworkMonitorState::new(),
             wake_sender,
             wake_listener_started: false,
         };
@@ -586,6 +588,26 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.with_common(|common| {
             let executor = common.foreground_executor.clone();
             common.system_notifications.on_response(&executor, callback)
+        });
+    }
+
+    fn network_availability(&self) -> gpui::NetworkAvailability {
+        self.inner.with_common(|common| {
+            let foreground_executor = common.foreground_executor.clone();
+            let background_executor = common.background_executor.clone();
+            common
+                .network_monitor
+                .availability(&foreground_executor, &background_executor)
+        })
+    }
+
+    fn on_network_availability_change(&self, callback: Box<dyn FnMut(gpui::NetworkAvailability)>) {
+        self.inner.with_common(|common| {
+            let foreground_executor = common.foreground_executor.clone();
+            let background_executor = common.background_executor.clone();
+            common
+                .network_monitor
+                .on_change(&foreground_executor, &background_executor, callback)
         });
     }
 

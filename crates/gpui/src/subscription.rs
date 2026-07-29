@@ -39,6 +39,10 @@ where
         })))
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.borrow().subscribers.is_empty()
+    }
+
     /// Inserts a new [`Subscription`] for the given `emitter_key`. By default, subscriptions
     /// are inert, meaning that they won't be listed when calling `[SubscriberSet::remove]` or `[SubscriberSet::retain]`.
     /// This method returns a tuple of a [`Subscription`] and an `impl FnOnce`, and you can use the latter

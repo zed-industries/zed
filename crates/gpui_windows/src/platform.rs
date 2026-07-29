@@ -50,6 +50,7 @@ pub struct WindowsPlatform {
     has_package_identity: bool,
     app_identity: RefCell<Option<(String, String)>>,
     system_notifications: RefCell<SystemNotificationState>,
+    network_monitor: NetworkMonitorState,
 }
 
 struct WindowsPlatformInner {
@@ -209,6 +210,7 @@ impl WindowsPlatform {
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             app_identity: RefCell::new(None),
             system_notifications: RefCell::new(SystemNotificationState::new()),
+            network_monitor: NetworkMonitorState::new(),
         })
     }
 
@@ -689,6 +691,15 @@ impl Platform for WindowsPlatform {
         self.system_notifications
             .borrow_mut()
             .on_response(&self.foreground_executor, callback);
+    }
+
+    fn network_availability(&self) -> gpui::NetworkAvailability {
+        self.network_monitor.availability(&self.foreground_executor)
+    }
+
+    fn on_network_availability_change(&self, callback: Box<dyn FnMut(gpui::NetworkAvailability)>) {
+        self.network_monitor
+            .on_change(&self.foreground_executor, callback);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
