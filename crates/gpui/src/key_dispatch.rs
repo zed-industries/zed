@@ -1229,6 +1229,7 @@ mod tests {
             cx.update(|window, _| {
                 window.blur();
                 assert!(!window.has_pending_keystrokes());
+                assert!(window.pending_input_keystrokes().is_none());
             });
             let prefers_ime = input_handler
                 .as_mut()
