@@ -4787,11 +4787,15 @@ impl ProjectPanel {
         selections: &DraggedSelection,
         cx: &App,
     ) -> Option<FileDragPaths> {
-        let selections = selections.items().map(|selection| SelectedEntry {
-            worktree_id: selection.worktree_id,
-            entry_id: self.resolve_entry(selection.entry_id),
-        });
-        Self::file_drag_paths_for_selections(&self.project, selections, cx)
+        let resolved_selections = selections
+            .items()
+            .map(|selection| SelectedEntry {
+                worktree_id: selection.worktree_id,
+                entry_id: self.resolve_entry(selection.entry_id),
+            })
+            .collect::<BTreeSet<SelectedEntry>>();
+        let entries = self.disjoint_entries(resolved_selections, cx);
+        Self::file_drag_paths_for_selections(&self.project, entries, cx)
     }
 
     fn drag_onto(
