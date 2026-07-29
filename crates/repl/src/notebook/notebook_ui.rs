@@ -18,7 +18,7 @@ use language::{Language, LanguageRegistry};
 use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use ui::{CommonAnimationExt, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -68,6 +68,8 @@ pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
+
+const NOTEBOOK_EXTENSION: &str = "ipynb";
 
 pub fn init(cx: &mut App) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
@@ -1276,6 +1278,44 @@ impl NotebookEditor {
         .size_full()
     }
 
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(Label::new("This notebook is empty.").color(Color::Muted))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("empty-state-add-code", "Add code cell")
+                            .start_icon(Icon::new(IconName::Code))
+                            .key_binding(KeyBinding::for_action_in(
+                                &AddCodeBlock,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_code_block(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("empty-state-add-markdown", "Add markdown cell")
+                            .style(ButtonStyle::Subtle)
+                            .start_icon(Icon::new(IconName::FileMarkdown))
+                            .key_binding(KeyBinding::for_action_in(
+                                &AddMarkdownBlock,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_markdown_block(window, cx)
+                            })),
+                    ),
+            )
+    }
+
     fn cell_position(&self, index: usize) -> CellPosition {
         match index {
             0 => CellPosition::First,
@@ -1475,7 +1515,16 @@ impl Render for NotebookEditor {
                     .w_full()
                     .h_full()
                     .gap_2()
-                    .child(div().flex_1().h_full().child(self.cell_list(window, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .child(if self.cell_order.is_empty() {
+                                self.render_empty_state(cx).into_any_element()
+                            } else {
+                                self.cell_list(window, cx).into_any_element()
+                            }),
+                    )
                     .child(self.render_notebook_controls(window, cx)),
             )
             .child(self.render_kernel_status_bar(window, cx))
@@ -1510,11 +1559,19 @@ impl project::ProjectItem for NotebookItem {
         let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
 
-        if path.path.extension().unwrap_or_default() == "ipynb" {
+        // For single-file worktrees the relative path is empty, so fall back
+        // to the absolute path to detect notebooks opened directly.
+        let abs_path = project.read(cx).absolute_path(&path, cx);
+        let is_notebook = path.path.extension().unwrap_or_default() == NOTEBOOK_EXTENSION
+            || abs_path
+                .as_ref()
+                .and_then(|abs_path| abs_path.extension())
+                .is_some_and(|extension| extension == NOTEBOOK_EXTENSION);
+
+        if is_notebook {
             Some(cx.spawn(async move |cx| {
-                let abs_path = project
-                    .read_with(cx, |project, cx| project.absolute_path(&path, cx))
-                    .with_context(|| format!("finding the absolute path of {path:?}"))?;
+                let abs_path =
+                    abs_path.with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
                 let buffer = project
@@ -2095,6 +2152,60 @@ mod tests {
                 }
                 other => panic!("expected a single error output, got: {other:?}"),
             }
+        });
+    }
+
+    /// Opening a notebook as a single file (its own worktree) leaves the
+    /// worktree-relative path empty, so only the absolute path carries the
+    /// `.ipynb` extension. `try_open` must still recognize it as a notebook.
+    #[gpui::test]
+    async fn test_open_single_file_notebook(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "single.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project =
+            Project::test(fs.clone(), [path!("/notebooks/single.ipynb").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            assert!(
+                worktree.is_single_file(),
+                "opening a bare .ipynb should create a single-file worktree"
+            );
+            ProjectPath {
+                worktree_id: worktree.id(),
+                path: worktree.root_entry().unwrap().path.clone(),
+            }
+        });
+
+        assert!(
+            project_path.path.extension().is_none(),
+            "single-file worktree relative path should have no extension"
+        );
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("single-file .ipynb should open as a notebook")
+            })
+            .await
+            .expect("notebook should parse");
+
+        notebook_item.read_with(cx, |item, _| {
+            assert_eq!(item.notebook.cells.len(), 1);
         });
     }
 }

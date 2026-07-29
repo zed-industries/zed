@@ -8,9 +8,9 @@ permissions:
   contents: read
 
 env:
-  PRIORITY_LABELS: '["priority:P0", "priority:P1"]'
+  SEVERITY_LABELS: '["severity:S0", "severity:S1"]'
   REPRODUCIBLE_LABEL: 'state:reproducible'
-  FREQUENCY_LABELS: '["frequency:always", "frequency:common"]'
+  REACH_LABELS: '["reach:all users", "reach:many users"]'
   MARKER_REACTION: 'eyes'
 
 jobs:
@@ -47,10 +47,10 @@ jobs:
 
           # Ignore labels outside the trifecta so unrelated later edits don't re-fire.
           TRIGGER_LABELS=$(jq -cn \
-            --argjson priority "$PRIORITY_LABELS" \
+            --argjson severity "$SEVERITY_LABELS" \
             --arg repro "$REPRODUCIBLE_LABEL" \
-            --argjson freq "$FREQUENCY_LABELS" \
-            '$priority + [$repro] + $freq')
+            --argjson reach "$REACH_LABELS" \
+            '$severity + [$repro] + $reach')
 
           if ! echo "$TRIGGER_LABELS" | jq -e --arg l "$LABEL_NAME" 'index($l) != null' > /dev/null; then
             echo "Added label '$LABEL_NAME' is not in the trigger set, skipping"
@@ -61,12 +61,12 @@ jobs:
           # The webhook's issue.labels snapshot is racy under bulk apply; read live.
           ISSUE_LABELS_JSON=$(api -f "https://api.github.com/repos/$GH_REPO/issues/$ISSUE_NUMBER/labels?per_page=100" | jq '[.[].name]')
 
-          MATCHED_PRIORITY=$(echo "$ISSUE_LABELS_JSON" | jq -r --argjson priority "$PRIORITY_LABELS" 'map(select(. as $x | $priority | index($x) != null)) | first // ""')
+          MATCHED_SEVERITY=$(echo "$ISSUE_LABELS_JSON" | jq -r --argjson severity "$SEVERITY_LABELS" 'map(select(. as $x | $severity | index($x) != null)) | first // ""')
           HAS_REPRO=$(echo "$ISSUE_LABELS_JSON" | jq --arg l "$REPRODUCIBLE_LABEL" 'index($l) != null')
-          HAS_FREQ=$(echo "$ISSUE_LABELS_JSON" | jq --argjson freq "$FREQUENCY_LABELS" 'any(.[]; . as $x | $freq | index($x) != null)')
+          HAS_REACH=$(echo "$ISSUE_LABELS_JSON" | jq --argjson reach "$REACH_LABELS" 'any(.[]; . as $x | $reach | index($x) != null)')
 
-          if [ -z "$MATCHED_PRIORITY" ] || [ "$HAS_REPRO" != "true" ] || [ "$HAS_FREQ" != "true" ]; then
-            echo "Combination not yet satisfied (priority=$MATCHED_PRIORITY, reproducible=$HAS_REPRO, frequency=$HAS_FREQ), skipping"
+          if [ -z "$MATCHED_SEVERITY" ] || [ "$HAS_REPRO" != "true" ] || [ "$HAS_REACH" != "true" ]; then
+            echo "Combination not yet satisfied (severity=$MATCHED_SEVERITY, reproducible=$HAS_REPRO, reach=$HAS_REACH), skipping"
             echo "should_notify=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -96,9 +96,9 @@ jobs:
           REACTION_ID=$(echo "$REACTION_BODY" | jq -r '.id')
           LABELS=$(echo "$ISSUE_LABELS_JSON" | jq -r 'join(", ")')
 
-          echo "Confirmed high-frequency $MATCHED_PRIORITY, notifying"
+          echo "Confirmed high-reach $MATCHED_SEVERITY, notifying"
           {
-            echo "notify_reason=confirmed $MATCHED_PRIORITY"
+            echo "notify_reason=confirmed $MATCHED_SEVERITY"
             echo "issue_labels=$LABELS"
             echo "reaction_id=$REACTION_ID"
             echo "should_notify=true"

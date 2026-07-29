@@ -69,6 +69,15 @@ pub struct EditorSettings {
     pub completion_menu_item_kind: CompletionMenuItemKind,
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
+    pub file_diff: FileDiffSettings,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FileDiffSettings {
+    /// Whether newly opened file diffs show the full file instead of changes only.
+    ///
+    /// Default: true
+    pub show_full_file: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -204,6 +213,7 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -313,6 +323,9 @@ impl Settings for EditorSettings {
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
+            file_diff: FileDiffSettings {
+                show_full_file: file_diff.show_full_file.unwrap(),
+            },
         }
     }
 }

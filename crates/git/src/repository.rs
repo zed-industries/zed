@@ -458,6 +458,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub no_verify: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -671,110 +672,6 @@ impl std::fmt::Display for FetchOptions {
         match self {
             FetchOptions::All => write!(f, "--all"),
             FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
-        }
-    }
-}
-
-/// Modifies .git/info/exclude temporarily
-pub struct GitExcludeOverride {
-    git_exclude_path: PathBuf,
-    original_excludes: Option<String>,
-    added_excludes: Option<String>,
-}
-
-impl GitExcludeOverride {
-    const START_BLOCK_MARKER: &str = "\n\n#  ====== Auto-added by Zed: =======\n";
-    const END_BLOCK_MARKER: &str = "\n#  ====== End of auto-added by Zed =======\n";
-
-    pub async fn new(git_exclude_path: PathBuf) -> Result<Self> {
-        let original_excludes =
-            smol::fs::read_to_string(&git_exclude_path)
-                .await
-                .ok()
-                .map(|content| {
-                    // Auto-generated lines are normally cleaned up in
-                    // `restore_original()` or `drop()`, but may stuck in rare cases.
-                    // Make sure to remove them.
-                    Self::remove_auto_generated_block(&content)
-                });
-
-        Ok(GitExcludeOverride {
-            git_exclude_path,
-            original_excludes,
-            added_excludes: None,
-        })
-    }
-
-    pub async fn add_excludes(&mut self, excludes: &str) -> Result<()> {
-        self.added_excludes = Some(if let Some(ref already_added) = self.added_excludes {
-            format!("{already_added}\n{excludes}")
-        } else {
-            excludes.to_string()
-        });
-
-        let mut content = self.original_excludes.clone().unwrap_or_default();
-
-        content.push_str(Self::START_BLOCK_MARKER);
-        content.push_str(self.added_excludes.as_ref().unwrap());
-        content.push_str(Self::END_BLOCK_MARKER);
-
-        smol::fs::write(&self.git_exclude_path, content).await?;
-        Ok(())
-    }
-
-    pub async fn restore_original(&mut self) -> Result<()> {
-        if let Some(ref original) = self.original_excludes {
-            smol::fs::write(&self.git_exclude_path, original).await?;
-        } else if self.git_exclude_path.exists() {
-            smol::fs::remove_file(&self.git_exclude_path).await?;
-        }
-
-        self.added_excludes = None;
-
-        Ok(())
-    }
-
-    fn remove_auto_generated_block(content: &str) -> String {
-        let start_marker = Self::START_BLOCK_MARKER;
-        let end_marker = Self::END_BLOCK_MARKER;
-        let mut content = content.to_string();
-
-        let start_index = content.find(start_marker);
-        let end_index = content.rfind(end_marker);
-
-        if let (Some(start), Some(end)) = (start_index, end_index) {
-            if end > start {
-                content.replace_range(start..end + end_marker.len(), "");
-            }
-        }
-
-        // Older versions of Zed didn't have end-of-block markers,
-        // so it's impossible to determine auto-generated lines.
-        // Conservatively remove the standard list of excludes
-        let standard_excludes = format!(
-            "{}{}",
-            Self::START_BLOCK_MARKER,
-            include_str!("./checkpoint.gitignore")
-        );
-        content = content.replace(&standard_excludes, "");
-
-        content
-    }
-}
-
-impl Drop for GitExcludeOverride {
-    fn drop(&mut self) {
-        if self.added_excludes.is_some() {
-            let git_exclude_path = self.git_exclude_path.clone();
-            let original_excludes = self.original_excludes.clone();
-            smol::spawn(async move {
-                if let Some(original) = original_excludes {
-                    smol::fs::write(&git_exclude_path, original).await
-                } else {
-                    smol::fs::remove_file(&git_exclude_path).await
-                }
-            })
-            .detach();
         }
     }
 }
@@ -1109,6 +1006,7 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
@@ -1191,6 +1089,13 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+#[derive(Clone, Copy)]
+pub enum DiffStatType {
+    HeadToIndex,
+    HeadToWorktree,
+    IndexToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -2333,6 +2238,7 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
@@ -2341,12 +2247,13 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match diff {
+                    DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
+                    DiffStatType::HeadToWorktree => args.push("HEAD".into()),
+                    DiffStatType::IndexToWorktree => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(
@@ -2549,6 +2456,10 @@ impl GitRepository for RealGitRepository {
 
             if options.allow_empty {
                 cmd.arg("--allow-empty");
+            }
+
+            if options.no_verify {
+                cmd.arg("--no-verify");
             }
 
             if let Some((name, email)) = name_and_email {
@@ -2835,9 +2746,10 @@ impl GitRepository for RealGitRepository {
                 let mut git = git?.envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
-                    let mut excludes = exclude_files(git).await?;
 
-                    git.run(&["add", "--all"]).await?;
+                    git.run(&["add", "--update"]).await?;
+                    let untracked_files = untracked_files_for_checkpoint(git).await?;
+                    add_files_to_index(git, &untracked_files).await?;
                     let tree = git.run(&["write-tree"]).await?;
                     let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
                         git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
@@ -2845,8 +2757,6 @@ impl GitRepository for RealGitRepository {
                     } else {
                         git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                     };
-
-                    excludes.restore_original().await?;
 
                     Ok(GitRepositoryCheckpoint {
                         commit_sha: checkpoint_sha.parse()?,
@@ -3517,42 +3427,109 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     args
 }
 
-/// Temporarily git-ignore commonly ignored files and files over 2MB
-async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
+/// Lists untracked files that should be included in a checkpoint, skipping
+/// commonly ignored file types and files over 2MB.
+async fn untracked_files_for_checkpoint(git: &GitBinary) -> Result<Vec<String>> {
     const MAX_SIZE: u64 = 2 * 1024 * 1024; // 2 MB
-    let mut excludes = git.with_exclude_overrides().await?;
-    excludes
-        .add_excludes(include_str!("./checkpoint.gitignore"))
-        .await?;
 
-    let working_directory = git.working_directory.clone();
-    let untracked_files = git.list_untracked_files().await?;
-    let excluded_paths = untracked_files.into_iter().map(|path| {
-        let working_directory = working_directory.clone();
-        smol::spawn(async move {
-            let full_path = working_directory.join(path.clone());
-            match smol::fs::metadata(&full_path).await {
-                Ok(metadata) if metadata.is_file() && metadata.len() >= MAX_SIZE => {
-                    Some(PathBuf::from("/").join(path.clone()))
-                }
-                _ => None,
-            }
-        })
+    // The extra checkpoint excludes are passed ad hoc via --exclude-from
+    // rather than by mutating .git/info/exclude, whose writes would trigger a
+    // rescan of the repository. The scratch file is placed directly in the
+    // .git directory with a .tmp extension so that the worktree scanner
+    // filters out the events it generates.
+    let excludes_file_path = git
+        .git_directory
+        .join(format!("checkpoint-excludes-{}.tmp", Uuid::new_v4()));
+
+    let delete_excludes_file = util::defer({
+        let excludes_file_path = excludes_file_path.clone();
+        let executor = git.executor.clone();
+        move || {
+            executor
+                .spawn(async move {
+                    smol::fs::remove_file(excludes_file_path).await.log_err();
+                })
+                .detach();
+        }
     });
 
-    let excluded_paths = futures::future::join_all(excluded_paths).await;
-    let excluded_paths = excluded_paths.into_iter().flatten().collect::<Vec<_>>();
+    smol::fs::write(&excludes_file_path, include_str!("./checkpoint.gitignore")).await?;
 
-    if !excluded_paths.is_empty() {
-        let exclude_patterns = excluded_paths
-            .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("\n");
-        excludes.add_excludes(&exclude_patterns).await?;
+    let mut exclude_from_arg = OsString::from("--exclude-from=");
+    exclude_from_arg.push(&excludes_file_path);
+    let output = git
+        .run(&[
+            OsStr::new("ls-files"),
+            OsStr::new("--others"),
+            OsStr::new("--exclude-standard"),
+            OsStr::new("-z"),
+            exclude_from_arg.as_os_str(),
+        ])
+        .await;
+
+    smol::fs::remove_file(&excludes_file_path).await.ok();
+    delete_excludes_file.abort();
+    let output = output?;
+
+    let working_directory = git.working_directory.clone();
+    let size_checks = output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            let full_path = working_directory.join(path);
+            let path = path.to_string();
+            smol::spawn(async move {
+                match smol::fs::metadata(&full_path).await {
+                    Ok(metadata) if metadata.is_file() && metadata.len() >= MAX_SIZE => None,
+                    _ => Some(path),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let untracked_files = futures::future::join_all(size_checks)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    Ok(untracked_files)
+}
+
+async fn add_files_to_index(git: &GitBinary, files: &[String]) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
     }
 
-    Ok(excludes)
+    let mut process = git
+        .build_command(&["update-index", "--add", "-z", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = BufWriter::new(
+        process
+            .stdin
+            .take()
+            .context("no stdin for git update-index subprocess")?,
+    );
+    for file in files {
+        stdin.write_all(file.as_bytes()).await?;
+        stdin.write_all(b"\0").await?;
+    }
+    stdin.flush().await?;
+    drop(stdin);
+
+    let output = process.output().await?;
+    anyhow::ensure!(
+        output.status.success(),
+        GitBinaryCommandError {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            status: output.status,
+        }
+    );
+    Ok(())
 }
 
 pub(crate) struct GitBinary {
@@ -3582,19 +3559,6 @@ impl GitBinary {
             envs: HashMap::default(),
             is_trusted,
         }
-    }
-
-    async fn list_untracked_files(&self) -> Result<Vec<PathBuf>> {
-        let status_output = self
-            .run(&["status", "--porcelain=v1", "--untracked-files=all", "-z"])
-            .await?;
-
-        let paths = status_output
-            .split('\0')
-            .filter(|entry| entry.len() >= 3 && entry.starts_with("?? "))
-            .map(|entry| PathBuf::from(&entry[3..]))
-            .collect::<Vec<_>>();
-        Ok(paths)
     }
 
     fn envs(mut self, envs: HashMap<String, String>) -> Self {
@@ -3635,12 +3599,6 @@ impl GitBinary {
         delete_temp_index.abort();
 
         Ok(result)
-    }
-
-    pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self.git_directory.join("info").join("exclude");
-
-        GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
@@ -5021,6 +4979,28 @@ mod tests {
 
         let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
         assert_eq!(message, "rewritten by commit-msg hook");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+        fs::write(repo_dir.path().join("file"), "three").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit without verification".into(),
+            None,
+            CommitOptions {
+                no_verify: true,
+                ..Default::default()
+            },
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("--no-verify should skip pre-commit and commit-msg hooks");
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "Commit without verification");
     }
 
     #[gpui::test]

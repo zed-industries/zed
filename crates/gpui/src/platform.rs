@@ -167,6 +167,16 @@ pub trait Platform: 'static {
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
 
+    /// Overrides the appearance (light/dark) applied to the app's windows, independent
+    /// of the OS-wide setting. Pass `None` to clear the override and follow the system
+    /// again. The override is reflected by [`Platform::window_appearance`].
+    ///
+    /// Currently only implemented on macOS, where it sets `NSApplication.appearance` so
+    /// the native window chrome (the window border and titlebar) of every window matches
+    /// a dark app theme even when the system is in light mode (or vice versa). A no-op on
+    /// other platforms.
+    fn set_window_appearance(&self, _appearance: Option<WindowAppearance>) {}
+
     /// Returns the window button layout configuration when supported.
     fn button_layout(&self) -> Option<WindowButtonLayout> {
         None

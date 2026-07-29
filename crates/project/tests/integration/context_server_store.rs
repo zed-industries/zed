@@ -752,6 +752,98 @@ async fn test_context_server_refreshed_when_worktree_added(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_stdio_server_restarts_when_project_root_becomes_available(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "mcp-1";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/"),
+        json!({"lonely.rs": "", "project": {"code.rs": ""}}),
+    )
+    .await;
+
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+    });
+
+    // Open a single-file worktree, whose `root_dir()` is `None`, so the server is
+    // spawned with no working directory even though it is configured.
+    let project = Project::test(fs.clone(), [path!("/lonely.rs").as_ref()], cx).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    // Configure the server globally so it starts against the file worktree.
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        set_context_server_configuration(
+            vec![(
+                server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: true,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec!["arg".to_string()],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            )],
+            cx,
+        );
+        cx.run_until_parked();
+    }
+
+    // Adding a directory worktree makes the project root resolvable. Since the
+    // server was started with working directory `None`, it must be restarted so
+    // it picks up the new root — otherwise it keeps running under Zed's own cwd.
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Stopped),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .expect("Failed to add worktree");
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "Server should be running again after restarting with the project root"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
     const ENABLED_SERVER_ID: &str = "enabled-server";
     const DISABLED_SERVER_ID: &str = "disabled-server";
@@ -1656,6 +1748,92 @@ async fn test_multi_worktree_duplicate_server_first_wins(cx: &mut TestAppContext
             .count();
         assert_eq!(count, 1, "duplicate server ID should appear exactly once");
     });
+}
+
+#[gpui::test]
+async fn test_is_server_enabled(cx: &mut TestAppContext) {
+    // We'll be setting up 4 different servers in order to test the following
+    // scenarios:
+    //
+    // 1. Explicit Settings, Enabled
+    // 2. Explicit Settings, Disabled
+    // 3. No Settings, Registry Descriptor, Enabled
+    // 4. No Settings, No Descriptor, Disabled
+    const SERVER_1_ID: &str = "mcp-1";
+    const SERVER_2_ID: &str = "mcp-2";
+    const SERVER_3_ID: &str = "mcp-3";
+    const SERVER_4_ID: &str = "mcp-4";
+
+    let (_fs, project) = setup_context_server_test(
+        cx,
+        json!({"code.rs": ""}),
+        vec![
+            (
+                SERVER_1_ID.into(),
+                ContextServerSettings::Extension {
+                    enabled: true,
+                    remote: false,
+                    settings: json!({}),
+                },
+            ),
+            (
+                SERVER_2_ID.into(),
+                ContextServerSettings::Extension {
+                    enabled: false,
+                    remote: false,
+                    settings: json!({}),
+                },
+            ),
+        ],
+    )
+    .await;
+
+    let registry = cx.new(|cx| {
+        let mut registry = ContextServerDescriptorRegistry::new();
+        let descriptor = Arc::new(FakeContextServerDescriptor::new(SERVER_3_ID));
+        registry.register_context_server_descriptor(SERVER_3_ID.into(), descriptor, cx);
+
+        registry
+    });
+
+    let store = cx.new(|cx| {
+        ContextServerStore::test(
+            registry.clone(),
+            project.read(cx).worktree_store(),
+            Some(project.downgrade()),
+            cx,
+        )
+    });
+
+    // Sanity check before proceeding, confirm server 1 and 2 have settings,
+    // server 3 is present in the registry while server 4 does not meet any of
+    // the conditions.
+    cx.update(|cx| {
+        let settings = ProjectSettings::get_global(cx);
+
+        assert!(settings.context_servers.contains_key(SERVER_1_ID));
+        assert!(settings.context_servers.contains_key(SERVER_2_ID));
+        assert!(!settings.context_servers.contains_key(SERVER_3_ID));
+        assert!(!settings.context_servers.contains_key(SERVER_4_ID));
+    });
+
+    registry.update(cx, |registry, _cx| {
+        let descriptors = registry.context_server_descriptors();
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].0.as_ref(), SERVER_3_ID);
+    });
+
+    let server_1_id = ContextServerId(SERVER_1_ID.into());
+    let server_2_id = ContextServerId(SERVER_2_ID.into());
+    let server_3_id = ContextServerId(SERVER_3_ID.into());
+    let server_4_id = ContextServerId(SERVER_4_ID.into());
+
+    store.read_with(cx, |store, cx| {
+        assert!(store.is_server_enabled(&server_1_id, cx));
+        assert!(!store.is_server_enabled(&server_2_id, cx));
+        assert!(store.is_server_enabled(&server_3_id, cx));
+        assert!(!store.is_server_enabled(&server_4_id, cx));
+    })
 }
 
 fn assert_server_events(
