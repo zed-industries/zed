@@ -12,21 +12,8 @@ workspace = true
 path = "src/cli.rs"
 doctest = false
 
-[[bin]]
-name = "cli"
-path = "src/main.rs"
-
-[features]
-# Kept for compatibility with packaging scripts that pass this feature when
-# building the workspace; the flag now only affects the `zed` crate.
-no-bundled-uninstall = []
-default = []
-
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
 ipc-channel = "0.19"
 serde.workspace = true
-
-[build-dependencies]
-windows_resources = { path = "../windows_resources" }

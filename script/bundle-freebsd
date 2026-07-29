@@ -54,7 +54,7 @@ remote_server_triple=${REMOTE_SERVER_TARGET:-"${target_triple}"}
 
 # Build binary in release mode
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
-# cargo build --release --target "${target_triple}" --package zed --package cli
+# cargo build --release --target "${target_triple}" --package zed
 
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
@@ -67,7 +67,6 @@ cargo build --release --target "${remote_server_triple}" --package remote_server
 # objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"
 # objcopy --only-keep-debug "${target_dir}/${remote_server_triple}/release/remote_server" "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
 # objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
-# objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
 # objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # gzip -f "${target_dir}/${target_triple}/release/zed.dbg"
@@ -102,7 +101,7 @@ fi
 # Binary
 # mkdir -p "${zed_dir}/bin" "${zed_dir}/libexec"
 # cp "${target_dir}/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
-# cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
+# ln -sf ../libexec/zed-editor "${zed_dir}/bin/zed"
 
 # Libs
 # find_libs() {

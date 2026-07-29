@@ -164,7 +164,7 @@ impl Job {
 }
 
 #[cfg(not(test))]
-pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
+pub(crate) static JOBS: LazyLock<[Job; 23]> = LazyLock::new(|| {
     fn p(value: &str) -> &Path {
         Path::new(value)
     }
@@ -174,7 +174,11 @@ pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
         Job::mkdir(p("old")),
         Job::move_file(p("Zed.exe"), p("old\\Zed.exe")),
         Job::mkdir(p("old\\bin")),
-        Job::move_file(p("bin\\Zed.exe"), p("old\\bin\\Zed.exe")),
+        // The bin\Zed.exe CLI shim is no longer shipped (replaced by
+        // bin\zed.cmd); it only exists on disk when updating from an old
+        // installation, and moving it to old\ removes it for good.
+        Job::move_if_exists(p("bin\\Zed.exe"), p("old\\bin\\Zed.exe")),
+        Job::move_if_exists(p("bin\\zed.cmd"), p("old\\bin\\zed.cmd")),
         Job::move_file(p("bin\\zed"), p("old\\bin\\zed")),
         //
         // TODO: remove after a few weeks once everyone is on the new version and this file never exists
@@ -190,7 +194,7 @@ pub(crate) static JOBS: LazyLock<[Job; 22]> = LazyLock::new(|| {
         Job::move_file(p("conpty.dll"), p("old\\conpty.dll")),
         // Copy new files
         Job::move_file(p("install\\Zed.exe"), p("Zed.exe")),
-        Job::move_file(p("install\\bin\\Zed.exe"), p("bin\\Zed.exe")),
+        Job::move_file(p("install\\bin\\zed.cmd"), p("bin\\zed.cmd")),
         Job::move_file(p("install\\bin\\zed"), p("bin\\zed")),
         //
         Job::mkdir_if_exists(p("x64"), p("install\\x64")),
@@ -281,6 +285,7 @@ fn release_file_handles(app_dir: &Path) -> Result<()> {
     let files_to_release = [
         app_dir.join("Zed.exe"),
         app_dir.join("bin\\Zed.exe"),
+        app_dir.join("bin\\zed.cmd"),
         app_dir.join("bin\\zed"),
         app_dir.join("conpty.dll"),
     ];

@@ -3159,7 +3159,6 @@ dependencies = [
  "collections",
  "ipc-channel",
  "serde",
- "windows_resources",
 ]
 
 [[package]]
