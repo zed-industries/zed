@@ -1189,12 +1189,7 @@ impl GitPanel {
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
                     }
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::GitDirectoryChanged,
-                        true,
-                    )
-                    | GitStoreEvent::GlobalConfigurationUpdated => {
+                    GitStoreEvent::GlobalConfigurationUpdated => {
                         this.git_access = None;
                         this.schedule_update(window, cx);
                     }
@@ -7331,7 +7326,7 @@ impl GitPanel {
                         .focus_handle(cx)
                         .contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -8176,12 +8171,8 @@ impl Render for GitPanel {
 }
 
 impl Focusable for GitPanel {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        if self.entries.is_empty() || self.commit_editor_expanded {
-            self.commit_editor.focus_handle(cx)
-        } else {
-            self.focus_handle.clone()
-        }
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -8215,6 +8206,14 @@ impl editor::Addon for GitPanelAddon {
 }
 
 impl Panel for GitPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.entries.is_empty() || self.commit_editor_expanded {
+            self.commit_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+
     fn persistent_name() -> &'static str {
         "GitPanel"
     }
