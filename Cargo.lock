@@ -16149,6 +16149,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.32",
+ "gpui",
  "http_proxy",
  "libc",
  "log",
@@ -19868,6 +19869,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui_macros",
+ "web-time",
  "windows 0.61.3",
 ]
 
@@ -23209,7 +23211,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

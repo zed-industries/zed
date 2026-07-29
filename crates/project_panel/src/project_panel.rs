@@ -778,7 +778,7 @@ impl ProjectPanel {
                     EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
-                    EditorEvent::Blurred => {
+                    EditorEvent::Blurred if window.is_window_active() => {
                         if project_panel
                             .state
                             .edit_state
@@ -4831,18 +4831,20 @@ impl ProjectPanel {
                     }
                     // update selection
                     if let Some(entry_id) = last_succeed {
-                        project_panel.update_in(cx, |project_panel, window, cx| {
-                            project_panel.selection = Some(SelectedEntry {
-                                worktree_id,
-                                entry_id,
-                            });
-                            // if only one entry was dragged and it was disambiguated, open the rename editor
-                            if item_count == 1 && disambiguation_range.is_some() {
-                                project_panel.rename_impl(disambiguation_range, window, cx);
-                            }
+                        project_panel
+                            .update_in(cx, |project_panel, window, cx| {
+                                project_panel.selection = Some(SelectedEntry {
+                                    worktree_id,
+                                    entry_id,
+                                });
+                                // if only one entry was dragged and it was disambiguated, open the rename editor
+                                if item_count == 1 && disambiguation_range.is_some() {
+                                    project_panel.rename_impl(disambiguation_range, window, cx);
+                                }
 
-                            project_panel.undo_manager.record(changes)
-                        })??;
+                                project_panel.undo_manager.record(changes)
+                            })?
+                            .log_err();
                     }
 
                     std::result::Result::Ok::<(), anyhow::Error>(())
