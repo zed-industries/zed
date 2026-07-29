@@ -6928,7 +6928,7 @@ mod tests {
                 .set_start_external_drag_result(platform_result);
 
             let update_result = cx.update_window(window, |_, window, cx| {
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
                 window.dispatch_event(
                     MouseDownEvent {
                         position: point(px(10.), px(10.)),
