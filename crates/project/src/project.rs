@@ -16,6 +16,7 @@ pub mod prettier_store;
 pub mod project_search;
 pub mod project_settings;
 pub mod search;
+pub mod symbol_index_manager;
 pub mod task_inventory;
 pub mod task_store;
 pub mod telemetry_snapshot;
@@ -54,6 +55,7 @@ pub use git_store::{
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
 pub use worktree_store::WorktreePaths;
+pub use symbol_index_manager::{SymbolIndexEvent, SymbolIndexManager};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -252,6 +254,7 @@ pub struct Project {
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     last_worktree_paths: WorktreePaths,
+    symbol_index: Option<Entity<symbol_index_manager::SymbolIndexManager>>,
 }
 
 struct DownloadingFile {
@@ -453,6 +456,14 @@ impl ProjectPath {
         Some(Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
             path: RelPath::from_unix_str(&p.path).log_err()?.into(),
+        })
+    }
+
+    /// Construct from a worktree ID (as u64) and a unix-style path string.
+    pub fn from_worktree_and_path(worktree_id: u64, path: &str) -> Option<Self> {
+        Some(Self {
+            worktree_id: WorktreeId::from_proto(worktree_id),
+            path: RelPath::from_unix_str(path).log_err()?.into(),
         })
     }
 
@@ -1385,6 +1396,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                symbol_index: None,
             }
         })
     }
@@ -1627,6 +1639,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                symbol_index: None,
             };
 
             // remote server -> local machine handlers
@@ -1915,6 +1928,7 @@ impl Project {
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
+                symbol_index: None,
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2225,6 +2239,23 @@ impl Project {
     #[inline]
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
+    }
+
+    /// Returns the lazy-initialized symbol index manager for tree-sitter based symbol search.
+    pub fn symbol_index(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Entity<symbol_index_manager::SymbolIndexManager> {
+        self.symbol_index.get_or_insert_with(|| {
+            cx.new(|cx| {
+                symbol_index_manager::SymbolIndexManager::new(
+                    self.languages.clone(),
+                    self.fs.clone(),
+                    &self.worktree_store,
+                    cx,
+                )
+            })
+        }).clone()
     }
 
     #[inline]

@@ -198,6 +198,7 @@ members = [
     "crates/streaming_diff",
     "crates/sum_tree",
     "crates/svg_preview",
+    "crates/symbol_index",
     "crates/system_specs",
     "crates/syntax_theme",
     "crates/tab_switcher",
@@ -398,6 +399,7 @@ markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 mermaid_render = { path = "crates/mermaid_render" }
 svg_preview = { path = "crates/svg_preview" }
+symbol_index = { path = "crates/symbol_index" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 mime = "0.3.17"
