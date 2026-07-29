@@ -482,14 +482,18 @@ mod tests {
     use editor::{Editor, MultiBufferOffset, SelectionEffects};
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
-    use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
+    use paths::tasks_file;
+    use project::{
+        BasicContextProvider, FakeFs, Project,
+        task_store::{TaskSettingsLocation, TaskStore},
+    };
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace};
 
-    use crate::task_contexts;
+    use crate::{Spawn, TaskSourceKind, task_contexts};
 
     #[gpui::test]
     async fn test_default_language_context(cx: &mut TestAppContext) {
@@ -698,6 +702,82 @@ mod tests {
                 project_env: HashMap::default(),
             }
         );
+    }
+
+    #[gpui::test]
+    async fn test_spawn_by_name_prefers_worktree_task_over_global_task(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/repo"),
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "run_file",
+                            "command": "echo",
+                            "args": ["worktree"]
+                        }
+                    ]"#
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/repo").as_ref()], cx).await;
+        let task_inventory = project.read_with(cx, |project, cx| {
+            project
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("task inventory should be initialized")
+        });
+
+        // Creating a global tasks file with a task that has the same name as
+        // the one defined in the project's `.zed/tasks.json` file so we can
+        // later confirm that only one of the tasks is picked up when spawning a
+        // task by name.
+        task_inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Global(tasks_file()),
+                    Some(
+                        &json!([{
+                            "label": "run_file",
+                            "command": "echo",
+                            "args": ["global"]
+                        }])
+                        .to_string(),
+                    ),
+                )
+                .expect("global task should be valid");
+        });
+
+        let (_multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.dispatch_action(Spawn::ByName {
+            task_name: "run_file".to_string(),
+            reveal_target: None,
+        });
+        cx.run_until_parked();
+
+        let scheduled_tasks = task_inventory.update(cx, |inventory, _| {
+            let mut scheduled_tasks = Vec::new();
+            while let Some((source_kind, task)) = inventory.last_scheduled_task(None) {
+                inventory.delete_previously_used(&task.id);
+                scheduled_tasks.push((source_kind, task));
+            }
+            scheduled_tasks
+        });
+
+        assert_eq!(scheduled_tasks.len(), 1);
+        assert!(matches!(
+            scheduled_tasks[0].0,
+            TaskSourceKind::Worktree { .. }
+        ));
+        assert_eq!(scheduled_tasks[0].1.resolved.args, ["worktree"]);
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
