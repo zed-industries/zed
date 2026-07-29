@@ -130,7 +130,7 @@ Non-negative `float` values
 }
 ```
 
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -500,7 +500,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
-Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+> Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Code Lens
 
@@ -4998,7 +4998,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Window Decorations
 
-- Description: Controls whether Zed or the window manager or compositor draws window decorations on Linux. This setting has no effect on other platforms.
+- Description: Controls whether Zed or the window manager or compositor draws window decorations.
 - Setting: `window_decorations`
 - Default: `"client"`
 
@@ -5020,7 +5020,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
-GNOME Wayland does not support server-side decorations. This setting requires restarting Zed.
+> Note: This setting only affects Linux. GNOME Wayland does not support server-side decorations. Changes only apply to newly created windows. Restart Zed to apply the setting to all windows.
 
 ## Vim
 

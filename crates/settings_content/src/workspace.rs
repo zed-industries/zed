@@ -133,7 +133,8 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
-    /// What draws window decorations/titlebar, the client application (Zed) or display server
+    /// Controls whether Zed or the window manager or compositor draws window decorations on Linux.
+    ///
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
     /// Whether the focused panel follows the mouse location
