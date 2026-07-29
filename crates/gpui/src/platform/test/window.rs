@@ -33,8 +33,10 @@ pub(crate) struct TestWindowState {
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
+    appearance_change_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
+    appearance: WindowAppearance,
 }
 
 #[derive(Clone)]
@@ -85,8 +87,10 @@ impl TestWindow {
             hover_status_change_callback: None,
             resize_callback: None,
             moved_callback: None,
+            appearance_change_callback: None,
             input_handler: None,
             is_fullscreen: false,
+            appearance: WindowAppearance::Light,
         })))
     }
 
@@ -111,6 +115,17 @@ impl TestWindow {
         drop(lock);
         callback(active);
         self.0.lock().active_status_change_callback = Some(callback);
+    }
+
+    pub fn simulate_appearance_change(&self, appearance: WindowAppearance) {
+        let mut lock = self.0.lock();
+        lock.appearance = appearance;
+        let Some(mut callback) = lock.appearance_change_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback();
+        self.0.lock().appearance_change_callback = Some(callback);
     }
 
     pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
@@ -152,7 +167,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        WindowAppearance::Light
+        self.0.lock().appearance
     }
 
     fn display(&self) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
@@ -290,7 +305,9 @@ impl PlatformWindow for TestWindow {
         self.0.lock().hit_test_window_control_callback = Some(callback);
     }
 
-    fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().appearance_change_callback = Some(callback);
+    }
 
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
