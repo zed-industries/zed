@@ -3030,15 +3030,13 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     point(px(window_x as f32), px(window_y as f32))
 }
 
-/// AppKit delivers a drag back to the window it started from, where accepting it would drop the
-/// files onto themselves. `draggingSource` is nil only for drags from another application.
-fn is_self_originated_drag(dragging_info: id) -> bool {
+fn is_drag_from_this_window(this: &Object, dragging_info: id) -> bool {
     let source: id = unsafe { msg_send![dragging_info, draggingSource] };
-    !source.is_null()
+    std::ptr::eq(source as *const Object, this as *const Object)
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
-    if is_self_originated_drag(dragging_info) {
+    if is_drag_from_this_window(this, dragging_info) {
         return NSDragOperationNone;
     }
     let window_state = unsafe { get_window_state(this) };
@@ -3053,7 +3051,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
-    if is_self_originated_drag(dragging_info) {
+    if is_drag_from_this_window(this, dragging_info) {
         return NSDragOperationNone;
     }
     let window_state = unsafe { get_window_state(this) };
@@ -3066,7 +3064,7 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 }
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
-    if is_self_originated_drag(dragging_info) {
+    if is_drag_from_this_window(this, dragging_info) {
         return;
     }
     let window_state = unsafe { get_window_state(this) };
@@ -3074,7 +3072,7 @@ extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
-    if is_self_originated_drag(dragging_info) {
+    if is_drag_from_this_window(this, dragging_info) {
         return NO;
     }
     let window_state = unsafe { get_window_state(this) };
@@ -3112,7 +3110,7 @@ extern "C" fn dragging_session_source_operation_mask(
 ) -> NSDragOperation {
     let operation = match context {
         NSDRAGGING_CONTEXT_OUTSIDE_APPLICATION => NSDragOperationCopy | NSDragOperationMove,
-        NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationNone,
+        NSDRAGGING_CONTEXT_WITHIN_APPLICATION => NSDragOperationCopy,
         _ => NSDragOperationNone,
     };
     log::debug!(
