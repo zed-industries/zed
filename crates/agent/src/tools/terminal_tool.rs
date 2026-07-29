@@ -143,8 +143,8 @@ pub struct SandboxedTerminalToolInput {
     #[cfg_attr(
         target_os = "macos",
         doc = "Sandboxed commands can already write to the project worktree \
-        directories and a per-command temporary directory, so only list paths \
-        outside those."
+        directories and a per-thread temporary directory (exposed via \
+        `$TMPDIR`), so only list paths outside those."
     )]
     /// Provide absolute or worktree-relative paths; each
     /// directory grants write access to its whole subtree. Prefer this over
@@ -156,6 +156,13 @@ pub struct SandboxedTerminalToolInput {
         doc = "\nOn Linux, every path here must be a directory that already exists. \
         Requesting a file, or a path that does not exist yet, is an error. To create new \
         files, request write access to the existing directory that will contain them."
+    )]
+    #[cfg_attr(
+        target_os = "windows",
+        doc = "\nEvery path here must be an existing directory, given as a Windows drive \
+        path (`C:\\...`) or a WSL absolute path (`/...`); a path that does not exist \
+        cannot be granted. To write somewhere new, request write access to the nearest \
+        existing parent directory."
     )]
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
@@ -568,12 +575,92 @@ async fn run_terminal_tool(
         }
     }
 
+    // Resolve each requested path to its canonical target now, at approval
+    // intake, and carry the pair forward. Persisting the resolved canonical is
+    // what lets enforcement rebuild the grant via a verifying reopen rather than
+    // re-resolving the requested path by string (closing a symlink TOCTOU). A
+    // path that can't be resolved is dropped — fail-closed.
+    #[cfg(not(target_os = "windows"))]
+    let write_paths: Vec<settings::GrantedWritePath> = write_paths
+        .into_iter()
+        .filter_map(|requested| match sandbox::resolve_canonical(&requested) {
+            Ok(resolved) => Some(settings::GrantedWritePath::resolved(requested, resolved)),
+            Err(error) => {
+                log::warn!(
+                    "could not resolve sandbox write path {}: {error}",
+                    requested.display()
+                );
+                None
+            }
+        })
+        .collect();
+    #[cfg(target_os = "windows")]
+    let write_paths: Vec<settings::GrantedWritePath> = {
+        let Some(release) = wsl_zed_release.clone() else {
+            return Err("Could not select a Linux Zed release for WSL sandboxing".to_string());
+        };
+        let mut resolved_paths = Vec::with_capacity(write_paths.len());
+        for requested in write_paths {
+            match sandbox::resolve_canonical_for_grant(requested.clone(), release.clone()).await {
+                Ok(resolved) => {
+                    resolved_paths.push(settings::GrantedWritePath::resolved_on_fs(
+                        requested,
+                        resolved.canonical,
+                        resolved.on_windows_fs,
+                    ));
+                }
+                Err(error) => {
+                    log::warn!(
+                        "could not resolve sandbox write path {} in WSL: {error:#}",
+                        requested.display()
+                    );
+                }
+            }
+        }
+        resolved_paths
+    };
+
     let request = crate::sandboxing::SandboxRequest {
         network,
         allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
         unsandboxed: want_unsandboxed,
         write_paths,
     };
+
+    // Before any escalation prompt: if this command's sandbox will contain a
+    // path on a Windows drive (DrvFs) — from an explicit grant, a standing
+    // grant, or the default project directory — its integrity guarantees are
+    // weaker. When the warning is enabled, confirm with the user first. This
+    // gate is transient (never persisted): on "Continue" the normal flow
+    // (including any escalation prompt) proceeds; on "Abort" the command is
+    // cancelled. It recurs until the warning is disabled in settings.
+    if sandboxing && !want_unsandboxed && persistent.warn_ntfs_grants {
+        let effective = event_stream.effective_sandbox_request(&request, &persistent);
+        let contains_windows_fs = effective
+            .write_paths
+            .iter()
+            .any(|granted| granted.on_windows_fs)
+            || cx.update(|cx| {
+                let project = project.read(cx);
+                working_dir
+                    .as_deref()
+                    .is_some_and(|path| sandbox::path_is_on_windows_drive(path))
+                    || sandbox_worktree_writable_paths(project, cx)
+                        .iter()
+                        .any(|path| sandbox::path_is_on_windows_drive(path))
+            });
+        if contains_windows_fs
+            && cx
+                .update(|cx| event_stream.authorize_windows_fs_warning(cx))
+                .await
+                .is_err()
+        {
+            return Ok(
+                "Command cancelled: the user declined to run a command whose sandbox writes to a Windows drive."
+                    .to_string(),
+            );
+        }
+    }
 
     if request.needs_escalation() {
         let reason = sandbox_input
@@ -721,12 +808,19 @@ async fn run_terminal_tool(
                 {
                     Ok(()) => Some(wrap),
                     Err(error) => {
-                        // The probe can't fail off Linux; keep failing open just
-                        // in case a future platform's probe ever does.
+                        // Off Linux the probe only fails when the policy itself
+                        // can't be built (e.g. a required write grant or `.git`
+                        // protection no longer exists or fails its verifying
+                        // reopen). Running the command anyway would silently
+                        // drop access the user approved — or a safety-critical
+                        // protection — so fail closed with the reason instead.
                         log::warn!(
                             "Failed to create a sandbox for an agent terminal command: {error:?}"
                         );
-                        None
+                        return Err(format!(
+                            "Cannot create a sandbox for this command: {}",
+                            error.user_facing_message()
+                        ));
                     }
                 }
             }
@@ -3288,7 +3382,7 @@ mod tests {
             details
                 .write_paths
                 .iter()
-                .any(|path| path.ends_with("build")),
+                .any(|path| path.requested.ends_with("build")),
             "re-prompt should request the same write path: {:?}",
             details.write_paths
         );
