@@ -267,6 +267,7 @@ impl Project {
                 this.terminals
                     .local_handles
                     .push(terminal_handle.downgrade());
+                cx.notify();
 
                 let id = terminal_handle.entity_id();
                 cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
@@ -437,6 +438,7 @@ impl Project {
                 this.terminals
                     .local_handles
                     .push(terminal_handle.downgrade());
+                cx.notify();
 
                 let id = terminal_handle.entity_id();
                 cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
@@ -484,6 +486,7 @@ impl Project {
                     .terminals
                     .local_handles
                     .push(terminal_handle.downgrade());
+                cx.notify();
 
                 let id = terminal_handle.entity_id();
                 cx.observe_release(&terminal_handle, move |project, _terminal, cx| {

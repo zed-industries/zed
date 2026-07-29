@@ -10,7 +10,7 @@ use task::{ResolvedTask, TaskTemplate};
 use util::ResultExt as _;
 use workspace::{WorkspaceDb, WorkspaceId};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunConfigurationId {
     pub worktree_root: String,
     pub source_directory: String,
