@@ -1007,6 +1007,33 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
+    /// Dispatches a runnable to run on the main thread during idle time —
+    /// capacity the platform would otherwise leave unused (the web's
+    /// `requestIdleCallback`). `timeout` bounds the deferral: a runnable
+    /// still waiting after that long runs as ordinary main-thread work.
+    /// Without one, the runnable may wait indefinitely on a busy platform.
+    ///
+    /// May be called from any thread; implementations run the runnable on
+    /// the main thread. Platforms without an idle scheduling primitive run
+    /// it as ordinary low-priority main-thread work.
+    fn dispatch_on_main_thread_when_idle(
+        &self,
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
+    ) {
+        let _ = timeout;
+        self.dispatch_on_main_thread(runnable, Priority::Low);
+    }
+
+    /// The time remaining in the current idle slice, when called from a
+    /// runnable scheduled by [`Self::dispatch_on_main_thread_when_idle`] on a
+    /// platform that meters idle time. `None` when idle time is unmetered or
+    /// the caller is not running inside an idle slice; work that must bound
+    /// itself should then fall back to a budget of its own.
+    fn idle_time_remaining(&self) -> Option<Duration> {
+        None
+    }
+
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {
