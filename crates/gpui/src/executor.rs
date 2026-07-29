@@ -332,14 +332,15 @@ impl ForegroundExecutor {
         self.inner.spawn(future)
     }
 
-    /// Enqueues the given future to run on the main thread during platform
-    /// idle time (the web's `requestIdleCallback`; platforms without an idle
-    /// scheduling primitive run it as ordinary low-priority main-thread
-    /// work). Without a `timeout`, polls may be deferred indefinitely while
-    /// the platform stays busy; with one, a poll still waiting after that
-    /// long runs as ordinary main-thread work. Each poll occupies part of
-    /// one idle slice, so long synchronous stretches should bound themselves
-    /// against [`Self::idle_time_remaining`] and yield.
+    /// On platforms with dedicated support, enqueues the given future to run
+    /// on the main thread during platform idle time. Without a `timeout`,
+    /// polls may be deferred indefinitely while the platform stays busy;
+    /// with one, a poll still waiting after that long runs as ordinary main-thread work.
+    /// Each poll occupies part of one idle slice, so long synchronous stretches
+    /// should bound themselves against [`Self::idle_time_remaining`] and yield.
+    ///
+    /// On platforms without dedicated support, schedules the given future to run
+    /// with a low priority, ignoring `timeout`.
     #[track_caller]
     pub fn spawn_when_idle<R>(
         &self,
