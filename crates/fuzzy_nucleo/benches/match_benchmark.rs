@@ -361,12 +361,21 @@ fn generate_unicode_path_strings(count: usize, mixed: bool, hangul: bool) -> &'s
     Box::leak(paths)
 }
 
+fn generate_canonical_decoy_path_strings(count: usize) -> &'static [String] {
+    let paths = (0..count)
+        .map(|index| format!("fixtures/{index}/q\u{323}-q\u{307}.md"))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    Box::leak(paths)
+}
+
 fn bench_unicode_path_matching(criterion: &mut Criterion) {
     const CANDIDATE_COUNT: usize = 10_000;
     let ascii_paths = generate_path_strings(CANDIDATE_COUNT);
     let predominantly_ascii_paths = generate_unicode_path_strings(CANDIDATE_COUNT, false, false);
     let mixed_paths = generate_unicode_path_strings(CANDIDATE_COUNT, true, false);
     let hangul_paths = generate_unicode_path_strings(CANDIDATE_COUNT, false, true);
+    let canonical_decoy_paths = generate_canonical_decoy_path_strings(CANDIDATE_COUNT);
     let mut group = criterion.benchmark_group("path/unicode");
 
     for (name, paths, query) in [
@@ -381,6 +390,11 @@ fn bench_unicode_path_matching(criterion: &mut Criterion) {
             "nfc_query_decomposed_hangul_candidates",
             hangul_paths,
             "한글",
+        ),
+        (
+            "canonical_query_non_equivalent_decoys",
+            canonical_decoy_paths,
+            "q\u{307}",
         ),
     ] {
         group.bench_function(name, |benchmark| {
