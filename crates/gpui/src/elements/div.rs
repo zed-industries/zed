@@ -601,40 +601,6 @@ impl Interactivity {
         T: 'static,
         W: 'static + Render,
     {
-        self.set_drag_listener(value, constructor, None);
-    }
-
-    /// Registers a callback resolving a payload to offer the platform if the drag leaves the
-    /// window. It is invoked at most once per drag gesture, when the pointer exits the viewport.
-    pub fn on_drag_with_external_payload<T, W>(
-        &mut self,
-        value: T,
-        external_payload: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
-    ) where
-        Self: Sized,
-        T: 'static,
-        W: 'static + Render,
-    {
-        self.set_drag_listener(
-            value,
-            constructor,
-            Some(Box::new(move |value, window, cx| {
-                external_payload(value.downcast_ref::<T>()?, window, cx)
-            })),
-        );
-    }
-
-    fn set_drag_listener<T, W>(
-        &mut self,
-        value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
-        external_payload: Option<ExternalDragPayloadResolver>,
-    ) where
-        Self: Sized,
-        T: 'static,
-        W: 'static + Render,
-    {
         debug_assert!(
             self.drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
@@ -644,8 +610,36 @@ impl Interactivity {
             render: Box::new(move |value, offset, window, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
-            external_payload,
+            external_payload: None,
         });
+    }
+
+    /// Registers a callback resolving a payload to offer the platform if a drag started by this
+    /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+    /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+    /// type `T`.
+    pub fn external_drag_payload<T>(
+        &mut self,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+    {
+        let Some(drag_listener) = self.drag_listener.as_mut() else {
+            debug_assert!(false, "external_drag_payload must be called after on_drag");
+            return;
+        };
+        debug_assert!(
+            drag_listener.value.as_ref().type_id() == TypeId::of::<T>(),
+            "external_drag_payload must use the same dragged value type as on_drag"
+        );
+        debug_assert!(
+            drag_listener.external_payload.is_none(),
+            "calling external_drag_payload more than once on the same element is not supported"
+        );
+        drag_listener.external_payload = Some(Box::new(move |value, window, cx| {
+            resolver(value.downcast_ref::<T>()?, window, cx)
+        }));
     }
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
@@ -1554,21 +1548,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// Registers a callback resolving a payload to offer the platform if the drag leaves the
-    /// window. It is invoked at most once per drag gesture, when the pointer exits the viewport.
-    fn on_drag_with_external_payload<T, W>(
+    /// Registers a callback resolving a payload to offer the platform if a drag started by this
+    /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+    /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+    /// type `T`.
+    /// The fluent API equivalent to [`Interactivity::external_drag_payload`].
+    fn external_drag_payload<T>(
         mut self,
-        value: T,
-        external_payload: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
     ) -> Self
     where
         Self: Sized,
         T: 'static,
-        W: 'static + Render,
     {
-        self.interactivity()
-            .on_drag_with_external_payload(value, external_payload, constructor);
+        self.interactivity().external_drag_payload(resolver);
         self
     }
 

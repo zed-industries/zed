@@ -5960,36 +5960,33 @@ impl ProjectPanel {
                                 }));
                         },
                     ))
-                    .on_drag_with_external_payload(
-                        dragged_selection,
-                        {
-                            let project_panel = cx.entity();
-                            move |selection, _window, cx| {
-                                project_panel
-                                    .read(cx)
-                                    .external_paths_for_dragged_selection(selection, cx)
-                                    .map(ExternalDragPayload::Files)
-                            }
-                        },
-                        {
-                            let active_component =
-                                self.state.ancestors.get(&entry_id).and_then(|ancestors| {
-                                    ancestors.active_component(&details.filename)
-                                });
-                            move |selection, click_offset, _window, cx| {
-                                let filename = active_component
-                                    .as_ref()
-                                    .unwrap_or_else(|| &details.filename);
-                                cx.new(|_| DraggedProjectEntryView {
-                                    icon: details.icon.clone(),
-                                    filename: filename.clone(),
-                                    click_offset,
-                                    selection: selection.active_selection,
-                                    selections: selection.marked_selections.clone(),
-                                })
-                            }
-                        },
-                    )
+                    .on_drag(dragged_selection, {
+                        let active_component =
+                            self.state.ancestors.get(&entry_id).and_then(|ancestors| {
+                                ancestors.active_component(&details.filename)
+                            });
+                        move |selection, click_offset, _window, cx| {
+                            let filename = active_component
+                                .as_ref()
+                                .unwrap_or_else(|| &details.filename);
+                            cx.new(|_| DraggedProjectEntryView {
+                                icon: details.icon.clone(),
+                                filename: filename.clone(),
+                                click_offset,
+                                selection: selection.active_selection,
+                                selections: selection.marked_selections.clone(),
+                            })
+                        }
+                    })
+                    .external_drag_payload({
+                        let project_panel = cx.entity();
+                        move |selection: &DraggedSelection, _window, cx| {
+                            project_panel
+                                .read(cx)
+                                .external_paths_for_dragged_selection(selection, cx)
+                                .map(ExternalDragPayload::Files)
+                        }
+                    })
                     .on_drop(cx.listener(
                         move |this, selections: &DraggedSelection, window, cx| {
                             this.clear_drag_state(cx);

@@ -6890,16 +6890,13 @@ mod tests {
             div()
                 .id("file-drag")
                 .size_full()
-                .on_drag_with_external_payload(
-                    self.path.clone(),
-                    |path, _, _| {
-                        Some(ExternalDragPayload::Files(FileDragPaths::new([(
-                            path.clone(),
-                            true,
-                        )])))
-                    },
-                    |_, _, _, cx| cx.new(|_| Empty),
-                )
+                .on_drag(self.path.clone(), |_, _, _, cx| cx.new(|_| Empty))
+                .external_drag_payload(|path: &PathBuf, _, _| {
+                    Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                        path.clone(),
+                        true,
+                    )])))
+                })
                 .on_drag_move({
                     let observed_drag_moves = self.observed_drag_moves.clone();
                     move |event: &DragMoveEvent<PathBuf>, _, _| {
