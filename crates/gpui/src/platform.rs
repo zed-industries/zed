@@ -1007,6 +1007,19 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
+    fn dispatch_on_main_thread_when_idle(
+        &self,
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
+    ) {
+        let _ = timeout;
+        self.dispatch_on_main_thread(runnable, Priority::Low);
+    }
+
+    fn idle_time_remaining(&self) -> Option<Duration> {
+        None
+    }
+
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {
