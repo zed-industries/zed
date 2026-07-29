@@ -644,10 +644,17 @@ impl RenderOnce for ExtensionCard {
                         .justify_between()
                         .child(
                             h_flex()
+                                .flex_shrink_1()
                                 .gap_2()
                                 .child(Headline::new(name).size(HeadlineSize::Small))
                                 .child(
-                                    Headline::new(format!("v{version}")).size(HeadlineSize::XSmall),
+                                    Headline::new(if is_dev {
+                                        format!("v{version} (dev)")
+                                    } else {
+                                        format!("v{version}")
+                                    })
+                                    .size(HeadlineSize::XSmall)
+                                    .color(Color::Muted),
                                 )
                                 .children(installed_version.map(|installed_version| {
                                     Headline::new(format!("(v{installed_version} installed)"))
@@ -706,9 +713,6 @@ impl RenderOnce for ExtensionCard {
                             h_flex()
                                 .gap_1()
                                 .flex_shrink_0()
-                                .when(is_dev, |this| {
-                                    this.child(Label::new("<>").size(LabelSize::Small))
-                                })
                                 .when_some(repository_url, |this, repository_url| {
                                     let repository_url_for_tooltip = repository_url.clone();
                                     this.child(
