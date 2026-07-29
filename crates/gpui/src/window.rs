@@ -6893,9 +6893,10 @@ mod tests {
                 .on_drag_with_external_payload(
                     self.path.clone(),
                     |path, _, _| {
-                        Some(ExternalDragPayload::Files(FileDragPaths(
-                            vec![(path.clone(), true)].into(),
-                        )))
+                        Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                            path.clone(),
+                            true,
+                        )])))
                     },
                     |_, _, _, cx| cx.new(|_| Empty),
                 )

@@ -18,10 +18,10 @@
 use crate::PinchEvent;
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, FocusHandle, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
-    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+    Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
+    FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow, ParentElement, Pixels, Point,
     Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
     Visibility, Window, WindowControlArea, point, px, size,
@@ -629,7 +629,7 @@ impl Interactivity {
         &mut self,
         value: T,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
-        external_payload: Option<ExternalPayloadExtractor>,
+        external_payload: Option<ExternalDragPayloadResolver>,
     ) where
         Self: Sized,
         T: 'static,
@@ -639,13 +639,13 @@ impl Interactivity {
             self.drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.drag_listener = Some((
-            Arc::new(value),
-            Box::new(move |value, offset, window, cx| {
+        self.drag_listener = Some(DragListener {
+            value: Arc::new(value),
+            render: Box::new(move |value, offset, window, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
             external_payload,
-        ));
+        });
     }
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
@@ -1639,10 +1639,13 @@ pub(crate) type PinchListener =
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
+pub(crate) struct DragListener {
+    value: Arc<dyn Any>,
+    render: Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>,
+    external_payload: Option<ExternalDragPayloadResolver>,
+}
 
-pub(crate) type ExternalPayloadExtractor =
+type ExternalDragPayloadResolver =
     Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
@@ -2050,8 +2053,7 @@ pub struct Interactivity {
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) aux_click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener:
-        Option<(Arc<dyn Any>, DragListener, Option<ExternalPayloadExtractor>)>,
+    pub(crate) drag_listener: Option<DragListener>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
@@ -2824,25 +2826,28 @@ impl Interactivity {
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
-                            && let Some((drag_value, drag_listener, external_payload_extractor)) =
-                                drag_listener.take()
+                            && let Some(listener) = drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - hitbox.origin;
-                            let drag =
-                                (drag_listener)(drag_value.as_ref(), cursor_offset, window, cx);
+                            let drag = (listener.render)(
+                                listener.value.as_ref(),
+                                cursor_offset,
+                                window,
+                                cx,
+                            );
                             let external_payload_source =
-                                external_payload_extractor.map(|extractor| {
-                                    let value = drag_value.clone();
+                                listener.external_payload.map(|external_payload| {
+                                    let value = listener.value.clone();
                                     Box::new(move |window: &mut Window, cx: &mut App| {
-                                        extractor(value.as_ref(), window, cx)
+                                        external_payload(value.as_ref(), window, cx)
                                     })
-                                        as crate::ExternalDragPayloadSource
+                                        as ExternalDragPayloadSource
                                 });
                             cx.active_drag = Some(AnyDrag {
                                 view: drag,
-                                value: drag_value,
+                                value: listener.value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
                                 external_payload_source,

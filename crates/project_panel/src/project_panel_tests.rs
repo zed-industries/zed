@@ -4655,7 +4655,11 @@ async fn test_file_drag_paths_use_worktree_snapshot(cx: &mut gpui::TestAppContex
 
     let paths = cx
         .update(|cx| {
-            ProjectPanel::external_paths_for_dragged_selection(&project, &dragged_selection, cx)
+            ProjectPanel::file_drag_paths_for_selections(
+                &project,
+                dragged_selection.items().copied(),
+                cx,
+            )
         })
         .unwrap();
 
@@ -4710,11 +4714,73 @@ async fn test_external_paths_for_dragged_selection_uses_active_selection_unless_
 
     let paths = cx
         .update(|cx| {
-            ProjectPanel::external_paths_for_dragged_selection(&project, &dragged_selection, cx)
+            ProjectPanel::file_drag_paths_for_selections(
+                &project,
+                dragged_selection.items().copied(),
+                cx,
+            )
         })
         .unwrap();
 
     assert_eq!(paths.entries(), &[(active_path, false)]);
+}
+
+#[gpui::test]
+async fn test_external_paths_for_dragged_selection_resolves_folded_directory(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "d": {}
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+    select_folded_path_with_mark(&panel, "root/a/b/c/d", "root/a/b", cx);
+
+    let dragged_selection = panel.read_with(cx, |panel, _| DraggedSelection {
+        active_selection: panel.selection.unwrap(),
+        marked_selections: Arc::from(panel.marked_entries.clone()),
+    });
+    let paths = cx
+        .update(|_, cx| {
+            panel.read_with(cx, |panel, cx| {
+                panel.external_paths_for_dragged_selection(&dragged_selection, cx)
+            })
+        })
+        .unwrap();
+
+    assert_eq!(paths.entries(), &[(PathBuf::from("/root/a/b"), true)]);
 }
 
 #[gpui::test]
@@ -4744,7 +4810,11 @@ async fn test_external_paths_for_dragged_selection_skips_remote_worktrees(
     };
 
     let paths = cx.update(|cx| {
-        ProjectPanel::external_paths_for_dragged_selection(&project, &dragged_selection, cx)
+        ProjectPanel::file_drag_paths_for_selections(
+            &project,
+            dragged_selection.items().copied(),
+            cx,
+        )
     });
 
     assert!(paths.is_none());

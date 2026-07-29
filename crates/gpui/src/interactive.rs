@@ -702,9 +702,14 @@ pub enum ExternalDragPayload {
 /// Paths handed to the platform for a native file drag. Directory metadata is
 /// provided by the caller to avoid querying it when the platform drag starts.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct FileDragPaths(pub SmallVec<[(PathBuf, bool); 2]>);
+pub struct FileDragPaths(SmallVec<[(PathBuf, bool); 2]>);
 
 impl FileDragPaths {
+    /// Creates a native file-drag payload from paths paired with whether each path is a directory.
+    pub fn new(entries: impl IntoIterator<Item = (PathBuf, bool)>) -> Self {
+        Self(entries.into_iter().collect())
+    }
+
     /// The dragged paths, each paired with whether it is a directory.
     pub fn entries(&self) -> &[(PathBuf, bool)] {
         &self.0

@@ -4761,14 +4761,14 @@ impl ProjectPanel {
             || cfg!(not(target_os = "macos")) && modifiers.control
     }
 
-    fn external_paths_for_dragged_selection(
+    fn file_drag_paths_for_selections(
         project: &Entity<Project>,
-        selections: &DraggedSelection,
+        selections: impl IntoIterator<Item = SelectedEntry>,
         cx: &App,
     ) -> Option<FileDragPaths> {
         let project = project.read(cx);
         let paths = selections
-            .items()
+            .into_iter()
             .filter_map(|selection| {
                 let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
                 if !worktree.is_local() {
@@ -4779,7 +4779,19 @@ impl ProjectPanel {
             })
             .collect::<SmallVec<[_; 2]>>();
 
-        (!paths.is_empty()).then_some(FileDragPaths(paths))
+        (!paths.is_empty()).then(|| FileDragPaths::new(paths))
+    }
+
+    fn external_paths_for_dragged_selection(
+        &self,
+        selections: &DraggedSelection,
+        cx: &App,
+    ) -> Option<FileDragPaths> {
+        let selections = selections.items().map(|selection| SelectedEntry {
+            worktree_id: selection.worktree_id,
+            entry_id: self.resolve_entry(selection.entry_id),
+        });
+        Self::file_drag_paths_for_selections(&self.project, selections, cx)
     }
 
     fn drag_onto(
@@ -5951,9 +5963,11 @@ impl ProjectPanel {
                     .on_drag_with_external_payload(
                         dragged_selection,
                         {
-                            let project = self.project.clone();
+                            let project_panel = cx.entity();
                             move |selection, _window, cx| {
-                                Self::external_paths_for_dragged_selection(&project, selection, cx)
+                                project_panel
+                                    .read(cx)
+                                    .external_paths_for_dragged_selection(selection, cx)
                                     .map(ExternalDragPayload::Files)
                             }
                         },
