@@ -87,7 +87,7 @@ script/generate-licenses
 rustup target add $target_triple
 
 echo "Compiling zed binaries"
-cargo build ${build_flag} --package zed --package cli --target $target_triple
+cargo build ${build_flag} --package zed --target $target_triple
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 cargo build ${build_flag} --package remote_server --target $target_triple
@@ -201,7 +201,6 @@ function sign_app_binaries() {
     if [[ $can_code_sign = true ]]; then
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
@@ -333,7 +332,9 @@ function upload_debug_symbols() {
 upload_debug_symbols
 
 cp target/${target_triple}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
-cp target/${target_triple}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+# Legacy `zed` symlinks in the wild point at Contents/MacOS/cli; the CLI logic
+# now lives in the zed binary itself.
+ln -sf zed "${app_path}/Contents/MacOS/cli"
 sign_app_binaries
 
 sign_binary "target/$target_triple/release/remote_server"

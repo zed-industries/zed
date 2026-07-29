@@ -37,10 +37,10 @@ And to run the tests:
 cargo test --workspace
 ```
 
-In release mode, the primary user interface is the `cli` crate. You can run it in development with:
+The CLI is part of the `zed` binary itself. You can exercise it in development with:
 
 ```sh
-cargo run -p cli
+cargo run -p zed -- --help
 ```
 
 ### WebRTC Notice

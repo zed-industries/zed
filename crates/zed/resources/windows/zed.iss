@@ -64,6 +64,11 @@ Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Other}"
 [Dirs]
 Name: "{app}"; AfterInstall: DisableAppDirInheritance
 
+[InstallDelete]
+; The CLI shim binary was replaced by zed.cmd; a stale zed.exe would shadow
+; zed.cmd in PATHEXT resolution order.
+Type: files; Name: "{app}\bin\zed.exe"
+
 [Files]
 Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
 Source: "{#ResourcesDir}\bin\*"; DestDir: "{code:GetInstallDir}\bin"; Flags: ignoreversion

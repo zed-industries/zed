@@ -10,7 +10,7 @@ use util::fs::make_file_executable;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::sync::Arc;
-use std::sync::OnceLock;
+
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -22,19 +22,10 @@ use futures::{
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 #[cfg(not(target_os = "windows"))]
 use smol::fs;
-use util::{ResultExt as _, debug_panic, maybe};
+use util::{ResultExt as _, maybe};
 
 #[cfg(not(target_os = "windows"))]
 use util::{paths::PathExt, shell::ShellKind};
-
-/// Path to the program used for askpass
-///
-/// On Unix and remote servers, this defaults to the current executable.
-/// On Windows, this must be set to the CLI variant of zed via set_askpass_program(),
-/// because SSH_ASKPASS must point to a directly executable binary. The CLI binary
-/// handles the ZED_ASKPASS_SOCKET env var to communicate with Zed over a Unix socket
-/// without needing a wrapper script.
-static ASKPASS_PROGRAM: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -248,13 +239,15 @@ impl PasswordProxy {
     ) -> Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
+        // The askpass program is the current executable itself: the zed (or
+        // remote server) binary intercepts the ZED_ASKPASS_SOCKET env var and
+        // the `--askpass` flag before doing anything else.
         let current_exec =
             std::env::current_exe().context("Failed to determine current zed executable path.")?;
-
-        let askpass_program = ASKPASS_PROGRAM.get_or_init(|| current_exec);
+        let askpass_program = &current_exec;
 
         // Unix: SSH_ASKPASS = path to generated .sh script in temp dir.
-        // Windows: SSH_ASKPASS = path to cli.exe directly. No script is written.
+        // Windows: SSH_ASKPASS = path to the zed binary directly. No script is written.
         #[cfg(not(target_os = "windows"))]
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
         #[cfg(target_os = "windows")]
@@ -438,12 +431,6 @@ fn connect_and_write_prompt(socket: &str, mut buffer: Vec<u8>) {
     if let Err(err) = io::stdout().write_all(&response) {
         eprintln!("Error writing to stdout: {}", err);
         exit(1);
-    }
-}
-
-pub fn set_askpass_program(path: std::path::PathBuf) {
-    if ASKPASS_PROGRAM.set(path).is_err() {
-        debug_panic!("askpass program has already been set");
     }
 }
 

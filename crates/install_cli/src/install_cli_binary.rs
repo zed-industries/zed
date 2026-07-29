@@ -23,8 +23,10 @@ const CANT_INSTALL_DOCS_URL: &str = "https://zed.dev/docs/macos#cant-install-cli
 /// or `None` if the user dismissed the macOS administrator authentication
 /// prompt. Returns an error if the install could not be completed, most
 /// commonly because the user is not an admin.
-async fn install_script(cx: &AsyncApp) -> Result<Option<PathBuf>> {
-    let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))?;
+async fn install_script(_cx: &AsyncApp) -> Result<Option<PathBuf>> {
+    // The zed binary contains the CLI logic itself, so the `zed` command is
+    // just a symlink to the current executable.
+    let cli_path = std::env::current_exe()?;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();
 
