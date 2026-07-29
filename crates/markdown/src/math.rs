@@ -3,9 +3,10 @@ use gpui::{AnyElement, Context, Pixels, RenderImage, Task, StyledText, div, px};
 use settings::Settings;
 use std::collections::BTreeMap;
 use std::ops::Range;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use theme_settings::ThemeSettings;
 use ui::prelude::*;
+use ratex_types::display_item::{DisplayItem, DisplayList};
 
 use crate::parser::MarkdownEvent;
 use super::{Markdown, ParsedMarkdown};
@@ -57,14 +58,47 @@ struct MathRenderResult {
 }
 
 struct CachedMathExpression {
-    result: Arc<OnceLock<anyhow::Result<MathRenderResult>>>,
-    _task: Task<()>,
+    display_tree: Arc<OnceLock<anyhow::Result<(DisplayList, f32)>>>,
+    rendered: Arc<Mutex<Option<anyhow::Result<MathRenderResult>>>>,
+    _parse_task: Task<()>,
 }
 
 /// Convert a GPUI Hsla color to a ratex Color (RGBA f32).
 fn gpui_color_to_ratex(color: gpui::Hsla) -> ratex_types::color::Color {
     let rgba = gpui::Rgba::from(color);
     ratex_types::color::Color::new(rgba.r, rgba.g, rgba.b, rgba.a)
+}
+
+/// Replace every color in a DisplayList with the given color.
+/// This avoids re-parsing and re-laying-out LaTeX when only the theme color changes.
+fn recolor_display_list(display_list: &DisplayList, color: &ratex_types::color::Color) -> DisplayList {
+    DisplayList {
+        items: display_list.items.iter().map(|item| match item {
+            DisplayItem::GlyphPath { x, y, scale, font, char_code, .. } => {
+                DisplayItem::GlyphPath {
+                    x: *x, y: *y, scale: *scale, font: font.clone(), char_code: *char_code, color: *color,
+                }
+            }
+            DisplayItem::Line { x, y, width, thickness, dashed, .. } => {
+                DisplayItem::Line {
+                    x: *x, y: *y, width: *width, thickness: *thickness, dashed: *dashed, color: *color,
+                }
+            }
+            DisplayItem::Rect { x, y, width, height, .. } => {
+                DisplayItem::Rect {
+                    x: *x, y: *y, width: *width, height: *height, color: *color,
+                }
+            }
+            DisplayItem::Path { x, y, commands, fill, .. } => {
+                DisplayItem::Path {
+                    x: *x, y: *y, commands: commands.clone(), fill: *fill, color: *color,
+                }
+            }
+        }).collect(),
+        width: display_list.width,
+        height: display_list.height,
+        depth: display_list.depth,
+    }
 }
 
 impl MathState {
@@ -76,6 +110,17 @@ impl MathState {
     pub(crate) fn invalidate(&mut self) {
         self.cache.clear();
         self.order.clear();
+    }
+
+    /// Re-color every cached expression with the current theme color,
+    /// avoiding a full parse + layout cycle.
+    pub(crate) fn retheme(&mut self, cx: &Context<Markdown>) {
+        let text_color = cx.theme().colors().text;
+        let svg_renderer = cx.svg_renderer();
+        let font_size = self.font_size;
+        for cached in self.cache.values() {
+            cached.recolor_and_render(font_size, text_color, svg_renderer.clone());
+        }
     }
 
     pub(crate) fn update(&mut self, parsed: &ParsedMarkdown, font_size: f32, cx: &mut Context<Markdown>) {
@@ -117,63 +162,83 @@ impl MathState {
 
 impl CachedMathExpression {
     fn new(latex: SharedString, font_size: f32, cx: &mut Context<Markdown>) -> Self {
-        let result = Arc::new(OnceLock::<anyhow::Result<MathRenderResult>>::new());
-        let result_clone = result.clone();
+        let display_tree = Arc::new(OnceLock::new());
+        let rendered = Arc::new(Mutex::new(None));
 
         let text_color = cx.theme().colors().text;
         let svg_renderer = cx.svg_renderer();
 
-        let task = cx.spawn(async move |this, cx| {
-            let value = cx
-                .background_spawn(async move {
-                    render_latex_to_image(latex.as_ref(), text_color, font_size, svg_renderer)
+        let dt = display_tree.clone();
+        let rd = rendered.clone();
+        let parse_task = cx.spawn(async move |this, cx| {
+            // Phase 1 — parse + layout in background, store neutral display tree
+            let parse_result = cx
+                .background_spawn({
+                    let latex = latex.clone();
+                    async move {
+                        let nodes = ratex_parser::parse(&latex)
+                            .map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
+                        let layout = ratex_layout::layout(&nodes, &Default::default());
+                        let dl = ratex_layout::to_display_list(&layout);
+                        let baseline_y = dl.height as f32 * font_size + 2.0;
+                        Ok((dl, baseline_y))
+                    }
                 })
                 .await;
-            let _ = result_clone.set(value);
-            this.update(cx, |_, cx| {
-                cx.notify();
-            })
-            .ok();
+            let _ = dt.set(parse_result);
+
+            // Phase 2 — recolor with current theme and render SVG
+            if let Some(Ok((dl, baseline_y))) = dt.get() {
+                let ratex_color = gpui_color_to_ratex(text_color);
+                let recolored = recolor_display_list(dl, &ratex_color);
+                let svg = math_svg::display_list_to_svg(&recolored, font_size);
+                let image = svg_renderer
+                    .render_single_frame(&svg.svg_bytes, 1.0)
+                    .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
+                let result = image.map(|img| MathRenderResult {
+                    image: img,
+                    baseline_y: *baseline_y,
+                });
+                *rd.lock().unwrap() = Some(result);
+            }
+
+            this.update(cx, |_, cx| cx.notify()).ok();
         });
 
         Self {
-            result,
-            _task: task,
+            display_tree,
+            rendered,
+            _parse_task: parse_task,
         }
     }
-}
 
-/// Render a LaTeX expression to a GPUI RenderImage using SVG pipeline.
-///
-/// Pipeline: LaTeX string → parse → layout → DisplayList → SVG → GPUI SvgRenderer → RenderImage
-fn render_latex_to_image(
-    latex: &str,
-    text_color: gpui::Hsla,
-    font_size: f32,
-    svg_renderer: gpui::SvgRenderer,
-) -> anyhow::Result<MathRenderResult> {
-    let ratex_color = gpui_color_to_ratex(text_color);
+    fn recolor_and_render(&self, font_size: f32, text_color: gpui::Hsla, svg_renderer: gpui::SvgRenderer) {
+        let Some(Ok((display_list, baseline_y))) = self.display_tree.get() else {
+            return;
+        };
+        let ratex_color = gpui_color_to_ratex(text_color);
+        let recolored = recolor_display_list(display_list, &ratex_color);
+        let svg = math_svg::display_list_to_svg(&recolored, font_size);
+        let image = svg_renderer
+            .render_single_frame(&svg.svg_bytes, 1.0)
+            .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
+        let result = image.map(|img| MathRenderResult {
+            image: img,
+            baseline_y: *baseline_y,
+        });
+        *self.rendered.lock().unwrap() = Some(result);
+    }
 
-    let parse_nodes = ratex_parser::parse(latex)
-        .map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
-
-    let layout_options = ratex_layout::LayoutOptions {
-        color: ratex_color,
-        ..Default::default()
-    };
-    let layout_box = ratex_layout::layout(&parse_nodes, &layout_options);
-    let display_list = ratex_layout::to_display_list(&layout_box);
-
-    let svg_output = math_svg::display_list_to_svg(&display_list, font_size);
-
-    let image = svg_renderer
-        .render_single_frame(&svg_output.svg_bytes, 1.0)
-        .map_err(|e| anyhow::anyhow!("SVG render error: {}", e))?;
-
-    Ok(MathRenderResult {
-        image,
-        baseline_y: svg_output.baseline_y,
-    })
+    fn rendered_data(&self) -> Option<anyhow::Result<(Arc<RenderImage>, f32)>> {
+        self.rendered
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|r| match r {
+                Ok(mrr) => Ok((mrr.image.clone(), mrr.baseline_y)),
+                Err(e) => Err(anyhow::anyhow!("{:#}", e)),
+            })
+    }
 }
 
 /// Renders a math expression as a GPUI element.
@@ -185,21 +250,19 @@ pub(crate) fn render_math_expression(
     math_state: &MathState,
 ) -> AnyElement {
     let key = MathCacheKey::new(parsed.latex.clone(), math_state.font_size);
-    let cached = math_state.cache.get(&key);
-    let render_result = cached.and_then(|cached| cached.result.get());
+    let render_result = math_state
+        .cache
+        .get(&key)
+        .and_then(|cached| cached.rendered_data());
 
     match render_result {
-        Some(Ok(MathRenderResult { image, baseline_y })) => {
+        Some(Ok((image, baseline_y))) => {
             if parsed.is_display {
-                div().child(gpui::img(image.clone())).into_any_element()
+                div().child(gpui::img(image)).into_any_element()
             } else {
                 let shift = math_state.text_ascent - baseline_y;
-
                 div()
-                    .child(
-                        gpui::img(image.clone())
-                            .mt(px(shift))
-                    )
+                    .child(gpui::img(image).mt(px(shift)))
                     .into_any_element()
             }
         }
@@ -209,9 +272,7 @@ pub(crate) fn render_math_expression(
             } else {
                 format!("${}$", parsed.latex)
             };
-            div().child(
-                StyledText::new(label),
-            ).into_any_element()
+            div().child(StyledText::new(label)).into_any_element()
         }
     }
 }

@@ -691,9 +691,7 @@ impl Markdown {
             return;
         }
 
-        let font_size = ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32();
-        self.math_state.invalidate();
-        self.math_state.update(&self.parsed_markdown, font_size, cx);
+        self.math_state.retheme(cx);
         cx.notify();
     }
 
