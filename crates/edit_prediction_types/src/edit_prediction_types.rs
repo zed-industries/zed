@@ -8,6 +8,24 @@ pub enum EditPredictionDiscardReason {
     Rejected,
     Ignored,
 }
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionRequestTrigger {
+    DiagnosticNavigation,
+    Explicit,
+    BufferEdit,
+    LSPCompletionAccepted,
+    PredictionAccepted,
+    PredictionPartiallyAccepted,
+    EditorCreated,
+    ProviderChanged,
+    UserInfoChanged,
+    VimModeChanged,
+    SettingsChanged,
+    #[default]
+    Other,
+}
+
 use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
@@ -185,6 +203,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     );
     fn accept(&mut self, cx: &mut Context<Self>);
@@ -221,6 +240,7 @@ pub trait EditPredictionDelegateHandle {
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     );
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
@@ -296,10 +316,11 @@ where
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(buffer, cursor_position, debounce, cx)
+            this.refresh(buffer, cursor_position, debounce, trigger, cx)
         })
     }
 
@@ -376,5 +397,5 @@ pub fn interpolate_edits(
 
     edits.extend(model_edits.cloned());
 
-    if edits.is_empty() { None } else { Some(edits) }
+    Some(edits)
 }

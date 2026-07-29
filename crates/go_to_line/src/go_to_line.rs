@@ -166,11 +166,11 @@ impl GoToLine {
         &mut self,
         _: &Entity<Editor>,
         event: &editor::EditorEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            editor::EditorEvent::Blurred => {
+            editor::EditorEvent::Blurred if window.is_window_active() => {
                 self.prev_scroll_position.take();
                 cx.emit(DismissEvent)
             }
@@ -197,7 +197,7 @@ impl GoToLine {
             let end = snapshot.anchor_after(end_point);
             editor.highlight_rows::<GoToLineRowHighlights>(
                 start..end,
-                cx.theme().colors().editor_highlighted_line_background,
+                |cx| cx.theme().colors().editor_highlighted_line_background,
                 RowHighlightOptions {
                     autoscroll: true,
                     ..Default::default()

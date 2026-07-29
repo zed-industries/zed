@@ -484,7 +484,7 @@ impl Render for SystemWindowTabs {
                             .on_click(|_event, window, cx| {
                                 window.dispatch_action(
                                     Box::new(zed_actions::OpenRecent {
-                                        create_new_window: true,
+                                        create_new_window: Some(true),
                                     }),
                                     cx,
                                 );

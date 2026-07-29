@@ -24,6 +24,7 @@ mod executor;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
+mod gestures;
 mod global;
 mod input;
 mod inspector;
@@ -33,9 +34,15 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
-/// Profiling utilities for task timing and thread performance tracking.
+/// Profiling utilities for task, frame, and thread performance tracking.
 pub mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[cfg(any(
+    test,
+    target_os = "windows",
+    target_os = "linux",
+    target_family = "wasm",
+    feature = "bench"
+))]
 #[expect(missing_docs)]
 pub mod queue;
 mod scene;
@@ -92,6 +99,7 @@ pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
+pub use gestures::*;
 pub use global::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,

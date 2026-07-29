@@ -17,7 +17,7 @@ For Zed-hosted models and Zed-managed AI features, see [AI Privacy](./privacy-an
 
 The ACP Registry is the primary way to install common External Agents in Zed.
 
-Open the registry with {#action zed::AcpRegistry}, or open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings}, click `Add Agent`, and choose `Install from Registry`.
+Open the registry with {#action zed::AcpRegistry}, or open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings}, go to the **External Agents** page, click `Add Agent`, and choose `Install from Registry`.
 
 After installation, the agent appears in the new-thread menu in the Agent Panel and Threads Sidebar.
 
@@ -58,7 +58,7 @@ Use Gemini CLI when you want Gemini running as an ACP-integrated External Agent 
 
 Install Gemini CLI from the [ACP Registry](#registry), then start a Gemini CLI thread from the Agent Panel or Threads Sidebar. Gemini CLI owns its own authentication and may prompt you to log in with Google, Vertex AI, or another Gemini-supported flow.
 
-If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI may use that key. Zed-configured Google AI provider settings are separate from Gemini CLI's native configuration.
+If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI uses that key. Otherwise, if you have configured an API key for Zed's Google AI provider, Zed passes that key to Gemini CLI as `GEMINI_API_KEY`.
 
 ## OpenCode {#opencode}
 
@@ -130,7 +130,7 @@ Zed LLM provider API keys saved in the local keychain are not automatically the 
 
 Use custom agents when you are developing an ACP-compatible agent or need to run an agent that is not in the registry.
 
-Open [Agent Settings](./agent-settings.md), click `Add Agent`, and choose `Add Custom Agent`. Zed opens your settings file with an `agent_servers` entry.
+Open [Agent Settings](./agent-settings.md), go to the **External Agents** page, click `Add Agent`, and choose `Add Custom Agent`. Zed opens your settings file with an `agent_servers` entry.
 
 ```json [settings]
 {
@@ -149,9 +149,9 @@ Registry-installed agents can also have per-agent settings under `agent_servers.
 
 ## Extension-Provided Agents {#extension-agents}
 
-Some extensions can provide agents. Registry installation is the primary path for common agents, but extension-provided agents still exist.
+Extension-provided agents are deprecated. The [ACP Registry](#registry) is now the way to install agents, and previously installed extension agents are automatically migrated to their registry equivalents.
 
-For extension authoring, see [Agent Server Extensions](../extensions/agent-servers.md).
+For details, see [Agent Server Extensions](../extensions/agent-servers.md).
 
 ## Importing Threads {#importing-threads}
 

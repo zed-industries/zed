@@ -274,7 +274,8 @@ impl DiagnosticBlock {
         cx: &mut Context<Editor>,
     ) {
         let Some(diagnostic_link) = link.strip_prefix("file://#diagnostic-") else {
-            editor::hover_popover::open_markdown_url(link, window, cx);
+            let workspace = editor.workspace();
+            editor::hover_popover::open_markdown_url(workspace, link, window, cx);
             return;
         };
         let Some((buffer_id, group_id, ix)) = maybe!({

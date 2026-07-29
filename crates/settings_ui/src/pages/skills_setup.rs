@@ -1,24 +1,21 @@
-use agent_skills::{Skill, SkillIndex, encode_skill_share_link};
+use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{Action as _, ClipboardItem, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, PromptLevel, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
+use util::paths::PathExt as _;
 
+use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
 
-pub(crate) fn render_skills_setup_page(
-    settings_window: &SettingsWindow,
-    scroll_handle: &ScrollHandle,
-    _window: &mut Window,
-    cx: &mut Context<SettingsWindow>,
-) -> AnyElement {
+/// Skills shown on the Skills page for the currently selected settings file:
+/// - User file → global skills only
+/// - Project file → project-local skills for that worktree only
+pub(crate) fn displayed_skills(settings_window: &SettingsWindow, cx: &App) -> Vec<Skill> {
     let skill_index = cx.try_global::<SkillIndex>();
 
-    // Pick skills that match the current settings file tab:
-    // - User tab → global skills only
-    // - Project tab → project-local skills for that worktree only
-    let skills: Vec<Skill> = match &settings_window.current_file {
+    match &settings_window.current_file {
         SettingsUiFile::User => skill_index
             .map(|idx| idx.global_skills.clone())
             .unwrap_or_default(),
@@ -42,7 +39,16 @@ pub(crate) fn render_skills_setup_page(
             .hidden_deleted_skill_directory_paths
             .contains(&skill.directory_path)
     })
-    .collect();
+    .collect()
+}
+
+pub(crate) fn render_skills_setup_page(
+    settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let skills: Vec<Skill> = displayed_skills(settings_window, cx);
 
     v_flex()
         .id("skills-page")
@@ -57,36 +63,26 @@ pub(crate) fn render_skills_setup_page(
                     _ => "No skills available for this context.",
                 };
 
-                let original_window = settings_window.original_window;
-
                 this.px_8().items_center().justify_center().child(
                     v_flex()
                         .items_center()
                         .gap_2()
                         .child(Label::new(message).color(Color::Muted))
                         .child(
-                            Button::new("open-skill-creator", "Create a Skill")
+                            Button::new("open-skill-creator-empty", "Create a Skill")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
-                                .end_icon(
-                                    Icon::new(IconName::ArrowUpRight)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .on_click(cx.listener(move |_this, _event, window, cx| {
-                                    let Some(original_window) = original_window else {
-                                        return;
-                                    };
-                                    original_window
-                                        .update(cx, |_workspace, original_window, cx| {
-                                            original_window.dispatch_action(
-                                                zed_actions::assistant::OpenSkillCreator
-                                                    .boxed_clone(),
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                    window.remove_window();
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.open_skill_creator_sub_page(
+                                        SkillCreatorOpenMode::Form,
+                                        window,
+                                        cx,
+                                    );
                                 })),
                         ),
                 )
@@ -120,9 +116,16 @@ fn render_skill_row(
 ) -> AnyElement {
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
+    let skill_name = skill.name.clone();
+
+    let (skill_scope, shared_scope) = match &skill.source {
+        SkillSource::ProjectLocal { .. } => ("project", "used in this project"),
+        _ => ("global", "on this machine"),
+    };
 
     let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
         == Some(skill.directory_path.as_path());
+    let warning_message = skill.load_warnings.first().map(|warning| warning.message());
 
     let (share_icon, share_icon_color) = if share_copied {
         (IconName::Check, Color::Success)
@@ -177,7 +180,19 @@ fn render_skill_row(
                 .detach();
             }))
         })
-        .child(Label::new(skill.name.clone()));
+        .child(Label::new(skill.name.clone()))
+        .when_some(warning_message, |this, warning_message| {
+            this.child(
+                h_flex()
+                    .id(SharedString::from(format!("warning-{}", skill.name)))
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::XSmall)
+                            .color(Color::Warning),
+                    )
+                    .tooltip(Tooltip::text(warning_message)),
+            )
+        });
 
     h_flex()
         .group(group)
@@ -190,7 +205,8 @@ fn render_skill_row(
             v_flex().gap_0p5().min_w_0().flex_1().child(title).child(
                 Label::new(skill.description.clone())
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    .color(Color::Muted)
+                    .line_clamp(5),
             ),
         )
         .child(
@@ -205,21 +221,55 @@ fn render_skill_row(
                     .icon_size(IconSize::Small)
                     .tooltip(Tooltip::text("Delete Skill"))
                     .on_click(cx.listener(
-                        move |settings_window, _event, _window, cx| {
+                        move |settings_window, _event, window, cx| {
                             let directory_path = directory_path.clone();
-                            if !settings_window
+                            if settings_window
                                 .hidden_deleted_skill_directory_paths
-                                .insert(directory_path.clone())
+                                .contains(&directory_path)
                             {
                                 return;
                             }
-                            cx.notify();
+
+                            let prompt_message =
+                                format!("Delete the {skill_scope} skill \"{skill_name}\"?");
+                            let prompt_detail = format!(
+                                "This will move {} to the trash. This skill is shared with other \
+                                 agent tools {shared_scope}, so it will no longer be available to \
+                                 them either.",
+                                directory_path.compact().display(),
+                            );
+                            let answer = window.prompt(
+                                PromptLevel::Info,
+                                &prompt_message,
+                                Some(&prompt_detail),
+                                &["Delete", "Cancel"],
+                                cx,
+                            );
 
                             let app_state = workspace::AppState::global(cx);
                             let fs = app_state.fs.clone();
                             cx.spawn(async move |settings_window, cx| {
-                                let remove_result = fs
-                                    .remove_dir(
+                                if answer.await != Ok(0) {
+                                    return;
+                                }
+
+                                let confirmed = settings_window
+                                    .update(cx, |settings_window, cx| {
+                                        let inserted = settings_window
+                                            .hidden_deleted_skill_directory_paths
+                                            .insert(directory_path.clone());
+                                        if inserted {
+                                            cx.notify();
+                                        }
+                                        inserted
+                                    })
+                                    .unwrap_or(false);
+                                if !confirmed {
+                                    return;
+                                }
+
+                                let trash_result = fs
+                                    .trash(
                                         &directory_path,
                                         RemoveOptions {
                                             recursive: true,
@@ -227,9 +277,9 @@ fn render_skill_row(
                                         },
                                     )
                                     .await;
-                                if let Err(error) = remove_result {
+                                if let Err(error) = trash_result {
                                     log::error!(
-                                        "failed to delete skill directory {}: {error:#}",
+                                        "failed to move skill directory {} to trash: {error:#}",
                                         directory_path.display()
                                     );
                                     settings_window

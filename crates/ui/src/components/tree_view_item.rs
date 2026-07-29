@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Role};
 
 use crate::{Disclosure, prelude::*};
 
@@ -151,6 +151,11 @@ impl RenderOnce for TreeViewItem {
                     .bg(cx.theme().colors().border.opacity(0.5)),
             );
 
+        let aria_label = self.label.clone();
+        let root_item = self.root_item;
+        let expanded = self.expanded;
+        let selected = self.selected;
+
         h_flex()
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
@@ -158,6 +163,15 @@ impl RenderOnce for TreeViewItem {
             .child(
                 h_flex()
                     .id("inner_tree_view_item")
+                    // The accessible role and state live on this element
+                    // because it also carries the click handler and focus, so
+                    // assistive technology reports a single actionable tree
+                    // item rather than an inert container.
+                    .role(Role::TreeItem)
+                    .aria_label(aria_label)
+                    .aria_selected(selected)
+                    .aria_level(if root_item { 1 } else { 2 })
+                    .when(root_item, |this| this.aria_expanded(expanded))
                     .cursor_pointer()
                     .size_full()
                     .h(item_size)

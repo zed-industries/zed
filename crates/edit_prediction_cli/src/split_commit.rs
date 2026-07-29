@@ -5,7 +5,9 @@
 //!
 //! TODO: Port Python code to generate chronologically-ordered commits
 use crate::FailedHandling;
-use crate::reorder_patch::{Patch, PatchLine, edit_locations, extract_edits, locate_edited_line};
+use crate::reorder_patch::{
+    EditLocation, Patch, PatchLine, edit_locations, extract_edits, locate_edited_line,
+};
 use crate::word_diff::tokenize;
 
 /// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
@@ -27,6 +29,7 @@ use clap::Args;
 use edit_prediction::example_spec::ExampleSpec;
 use rand::Rng;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use serde::Deserialize;
 use similar::{DiffTag, TextDiff};
 use std::collections::BTreeSet;
@@ -36,11 +39,28 @@ use std::path::Path;
 use std::path::PathBuf;
 
 const MAX_SPLIT_POINT_SAMPLING_ATTEMPTS: usize = 10;
+const SAME_FILE_NEAR_LINE_THRESHOLD: usize = 30;
+
+/// A commit has no split point matching the requested kind. This is an
+/// expected outcome when filtering by kind, so such commits are skipped
+/// rather than treated as failures.
+#[derive(Debug)]
+pub struct NoMatchingSplitPointError {
+    kind: SplitPointKind,
+}
+
+impl std::fmt::Display for NoMatchingSplitPointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no split point found matching {}", self.kind)
+    }
+}
+
+impl std::error::Error for NoMatchingSplitPointError {}
 
 /// `ep split-commit` CLI args.
 #[derive(Debug, Args, Clone)]
 pub struct SplitCommitArgs {
-    /// Split point (float 0.0-1.0 for fraction, or integer for index)
+    /// Split point (float 0.0-1.0 for fraction, integer for index, or one of: fim, same-file-near, same-file-far, cross-file; append :<index-or-fraction> to validate a specific split)
     #[arg(long, short = 's')]
     pub split_point: Option<String>,
 
@@ -98,19 +118,96 @@ pub struct SplitCommit {
 }
 
 /// Split point specification for evaluation generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPointKind {
+    Fim,
+    SameFileNear,
+    SameFileFar,
+    CrossFile,
+}
+
+impl std::fmt::Display for SplitPointKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SplitPointKind::Fim => write!(f, "fim"),
+            SplitPointKind::SameFileNear => write!(f, "same-file-near"),
+            SplitPointKind::SameFileFar => write!(f, "same-file-far"),
+            SplitPointKind::CrossFile => write!(f, "cross-file"),
+        }
+    }
+}
+
+impl std::str::FromStr for SplitPointKind {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "fim" => Ok(Self::Fim),
+            "same-file-near" => Ok(Self::SameFileNear),
+            "same-file-far" => Ok(Self::SameFileFar),
+            "cross-file" => Ok(Self::CrossFile),
+            _ => anyhow::bail!(
+                "invalid split point kind '{value}' (expected fim, same-file-near, same-file-far, or cross-file)"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SplitPoint {
     /// Fraction of total edits (0.0 to 1.0)
     Fraction(f64),
     /// Absolute index
     Index(usize),
+    /// Random split point matching the requested kind.
+    Kind(SplitPointKind),
+    /// Explicit split point that must match the requested kind.
+    KindWithSplit {
+        kind: SplitPointKind,
+        split_point: SplitPointValue,
+    },
 }
 
-fn parse_split_point(value: &str) -> Option<SplitPoint> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum SplitPointValue {
+    Fraction(f64),
+    Index(usize),
+}
+
+fn parse_split_point_value(value: &str) -> Result<SplitPointValue> {
     if value.contains('.') {
-        value.parse::<f64>().ok().map(SplitPoint::Fraction)
+        value
+            .parse::<f64>()
+            .map(SplitPointValue::Fraction)
+            .with_context(|| format!("invalid split point fraction '{value}'"))
     } else {
-        value.parse::<usize>().ok().map(SplitPoint::Index)
+        value
+            .parse::<usize>()
+            .map(SplitPointValue::Index)
+            .with_context(|| format!("invalid split point index '{value}'"))
+    }
+}
+
+fn parse_split_point(value: &str) -> Result<SplitPoint> {
+    if let Some((kind, split_point)) = value.split_once(':') {
+        let kind = kind.parse::<SplitPointKind>()?;
+        anyhow::ensure!(
+            !split_point.is_empty(),
+            "missing split point after kind '{kind}:'"
+        );
+        return Ok(SplitPoint::KindWithSplit {
+            kind,
+            split_point: parse_split_point_value(split_point)?,
+        });
+    }
+
+    if let Ok(kind) = value.parse::<SplitPointKind>() {
+        return Ok(SplitPoint::Kind(kind));
+    }
+
+    match parse_split_point_value(value)? {
+        SplitPointValue::Fraction(value) => Ok(SplitPoint::Fraction(value)),
+        SplitPointValue::Index(value) => Ok(SplitPoint::Index(value)),
     }
 }
 
@@ -217,6 +314,155 @@ fn sample_split_point(patch: &Patch, rng: &mut dyn rand::RngCore) -> usize {
     split
 }
 
+fn resolve_split_point_value(split_point: SplitPointValue, num_edits: usize) -> usize {
+    match split_point {
+        SplitPointValue::Fraction(fraction) => {
+            let split = (fraction * num_edits as f64).floor() as usize;
+            split.min(num_edits)
+        }
+        SplitPointValue::Index(index) => index.min(num_edits),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GeneratedSplitCommit {
+    split: usize,
+    split_commit: SplitCommit,
+    cursor: CursorPosition,
+    cursor_from_human_edit: bool,
+}
+
+fn generate_split_commit_at_split(
+    patch: &Patch,
+    split: usize,
+    rng: &mut dyn rand::RngCore,
+) -> Result<GeneratedSplitCommit> {
+    let (prefix, suffix) = split_ordered_patch(patch, split);
+
+    let mut split_commit = SplitCommit {
+        source_patch: prefix,
+        target_patch: suffix,
+    };
+
+    let human_edit_seed = rng.random_range(1..=10000u64);
+    let (src_patch, tgt_patch, cursor_opt) = imitate_human_edits(
+        &split_commit.source_patch,
+        &split_commit.target_patch,
+        human_edit_seed,
+    );
+    split_commit.source_patch = src_patch;
+    split_commit.target_patch = tgt_patch;
+
+    let cursor_from_human_edit = cursor_opt.is_some();
+    let cursor = match cursor_opt {
+        Some(cursor) => cursor,
+        None => sample_cursor_position(&split_commit, rng)
+            .context("failed to sample cursor position")?,
+    };
+
+    Ok(GeneratedSplitCommit {
+        split,
+        split_commit,
+        cursor,
+        cursor_from_human_edit,
+    })
+}
+
+fn classify_generated_split_commit(
+    generated_split_commit: &GeneratedSplitCommit,
+) -> Option<SplitPointKind> {
+    let target_patch = Patch::parse_unified_diff(&generated_split_commit.split_commit.target_patch);
+    let next_edit = locate_edited_line(&target_patch, 0)?;
+
+    if next_edit.filename != generated_split_commit.cursor.file {
+        return Some(SplitPointKind::CrossFile);
+    }
+
+    if generated_split_commit.cursor_from_human_edit
+        && next_edit.target_line_number == generated_split_commit.cursor.line
+    {
+        return Some(SplitPointKind::Fim);
+    }
+
+    let line_distance = next_edit
+        .target_line_number
+        .abs_diff(generated_split_commit.cursor.line);
+    if line_distance <= SAME_FILE_NEAR_LINE_THRESHOLD {
+        Some(SplitPointKind::SameFileNear)
+    } else {
+        Some(SplitPointKind::SameFileFar)
+    }
+}
+
+/// Cheap necessary condition for a split to be classifiable as `kind`,
+/// computed from the full patch without generating the split.
+///
+/// The cursor ends up either at the first target edit (or, via
+/// `imitate_human_edits`, on its line), or at the last source edit. So the
+/// edits adjacent to the split bound what classifications are reachable.
+/// Line numbers here are in full-patch coordinates, which can drift slightly
+/// from split-patch coordinates, so this is a heuristic pre-filter; the final
+/// classification is always verified on the generated split.
+fn split_can_match_kind(
+    edit_locations: &[EditLocation],
+    split: usize,
+    kind: SplitPointKind,
+) -> bool {
+    let (Some(previous_edit), Some(next_edit)) = (
+        split.checked_sub(1).and_then(|i| edit_locations.get(i)),
+        edit_locations.get(split),
+    ) else {
+        return false;
+    };
+
+    match kind {
+        SplitPointKind::Fim => matches!(next_edit.patch_line, PatchLine::Addition(_)),
+        SplitPointKind::SameFileNear => true,
+        SplitPointKind::SameFileFar => {
+            previous_edit.filename == next_edit.filename
+                && previous_edit
+                    .target_line_number
+                    .abs_diff(next_edit.target_line_number)
+                    > SAME_FILE_NEAR_LINE_THRESHOLD
+        }
+        SplitPointKind::CrossFile => previous_edit.filename != next_edit.filename,
+    }
+}
+
+fn sample_split_commit_of_kind(
+    patch: &Patch,
+    kind: SplitPointKind,
+    rng: &mut dyn rand::RngCore,
+) -> Result<GeneratedSplitCommit> {
+    let edit_locations = edit_locations(patch);
+    let num_edits = edit_locations.len();
+
+    let mut candidate_splits: Vec<usize> = (1..num_edits)
+        .filter(|&split| {
+            !edit_locations
+                .get(split)
+                .is_some_and(|next_edit| is_service_file(&next_edit.filename))
+                && split_can_match_kind(&edit_locations, split, kind)
+        })
+        .collect();
+    candidate_splits.shuffle(rng);
+
+    for split in candidate_splits {
+        for _ in 0..MAX_SPLIT_POINT_SAMPLING_ATTEMPTS {
+            let Ok(generated_split_commit) = generate_split_commit_at_split(patch, split, rng)
+            else {
+                continue;
+            };
+
+            if classify_generated_split_commit(&generated_split_commit) == Some(kind) {
+                return Ok(generated_split_commit);
+            }
+        }
+    }
+
+    Err(NoMatchingSplitPointError { kind }.into())
+}
+
 /// Entry point for the `ep split-commit` subcommand.
 ///
 /// This runs synchronously and outputs JSON Lines (one output per input line).
@@ -236,7 +482,11 @@ pub fn run_split_commit(
         inputs
     };
 
-    let split_point = args.split_point.as_deref().and_then(parse_split_point);
+    let split_point = args
+        .split_point
+        .as_deref()
+        .map(parse_split_point)
+        .transpose()?;
     let mut output_lines = Vec::new();
     let mut processed_commits = 0usize;
 
@@ -272,7 +522,7 @@ pub fn run_split_commit(
                         &annotated.reordered_commit,
                         &annotated.repo_url,
                         &annotated.commit_sha,
-                        None, // Use random split point for multi-sample mode
+                        split_point.clone(),
                         Some(sample_seed),
                         Some(sample_idx),
                     ) {
@@ -285,6 +535,10 @@ pub fn run_split_commit(
                                 sample_idx,
                                 e
                             );
+                            if e.is::<NoMatchingSplitPointError>() {
+                                eprintln!("skipping: {}", err_msg);
+                                continue;
+                            }
                             match failed {
                                 FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                     eprintln!("{}", err_msg);
@@ -326,6 +580,10 @@ pub fn run_split_commit(
                             line_num + 1,
                             e
                         );
+                        if e.is::<NoMatchingSplitPointError>() {
+                            eprintln!("skipping: {}", err_msg);
+                            continue;
+                        }
                         match failed {
                             FailedHandling::Skip | FailedHandling::SkipNoFiles => {
                                 eprintln!("{}", err_msg);
@@ -419,7 +677,6 @@ pub fn generate_evaluation_example_from_ordered_commit(
     } else {
         header_lines.join("\n") + "\n"
     };
-    let commit_normalized = patch.to_string();
 
     // Compute the split point
     let stats = patch.stats();
@@ -427,39 +684,39 @@ pub fn generate_evaluation_example_from_ordered_commit(
 
     anyhow::ensure!(num_edits != 0, "no edits found in commit");
 
-    let split = match split_point {
-        None => sample_split_point(&patch, rng.as_mut()),
-        Some(SplitPoint::Fraction(f)) => {
-            let v = (f * num_edits as f64).floor() as usize;
-            v.min(num_edits)
+    let generated_split_commit = match split_point {
+        None => {
+            let split = sample_split_point(&patch, rng.as_mut());
+            generate_split_commit_at_split(&patch, split, rng.as_mut())?
         }
-        Some(SplitPoint::Index(i)) => i.min(num_edits),
+        Some(SplitPoint::Fraction(fraction)) => {
+            let split = resolve_split_point_value(SplitPointValue::Fraction(fraction), num_edits);
+            generate_split_commit_at_split(&patch, split, rng.as_mut())?
+        }
+        Some(SplitPoint::Index(index)) => {
+            let split = resolve_split_point_value(SplitPointValue::Index(index), num_edits);
+            generate_split_commit_at_split(&patch, split, rng.as_mut())?
+        }
+        Some(SplitPoint::Kind(kind)) => sample_split_commit_of_kind(&patch, kind, rng.as_mut())?,
+        Some(SplitPoint::KindWithSplit { kind, split_point }) => {
+            let split = resolve_split_point_value(split_point, num_edits);
+            let generated_split_commit =
+                generate_split_commit_at_split(&patch, split, rng.as_mut())?;
+            let actual_kind = classify_generated_split_commit(&generated_split_commit);
+            anyhow::ensure!(
+                actual_kind == Some(kind),
+                "split point {split} classified as {}, expected {kind}",
+                actual_kind
+                    .map(|kind| kind.to_string())
+                    .unwrap_or_else(|| "empty-target".to_string())
+            );
+            generated_split_commit
+        }
     };
 
-    // Split the commit into source and target patches
-    let (prefix, suffix) = split_ordered_commit(&commit_normalized, split);
-
-    let mut split_commit = SplitCommit {
-        source_patch: prefix,
-        target_patch: suffix,
-    };
-
-    // Imitate human edits
-    let human_edit_seed = rng.random_range(1..=10000u64);
-    let (src_patch, tgt_patch, cursor_opt) = imitate_human_edits(
-        &split_commit.source_patch,
-        &split_commit.target_patch,
-        human_edit_seed,
-    );
-    split_commit.source_patch = src_patch;
-    split_commit.target_patch = tgt_patch;
-
-    // Sample cursor position
-    let cursor = match cursor_opt {
-        Some(c) => c,
-        None => sample_cursor_position(&split_commit, rng.as_mut())
-            .context("failed to sample cursor position")?,
-    };
+    let split = generated_split_commit.split;
+    let cursor = generated_split_commit.cursor;
+    let mut split_commit = generated_split_commit.split_commit;
 
     // Get cursor excerpt
     let cursor_excerpt = get_cursor_excerpt(
@@ -516,12 +773,11 @@ pub fn generate_evaluation_example_from_ordered_commit(
 ///
 /// # Returns
 /// A tuple of (source_diff, target_diff)
-pub fn split_ordered_commit(commit: &str, split_pos: usize) -> (String, String) {
-    let patch = Patch::parse_unified_diff(commit);
+pub fn split_ordered_patch(patch: &Patch, split_pos: usize) -> (String, String) {
     let source_edits: BTreeSet<usize> = (0..split_pos).collect();
-    let (source, mut target) = extract_edits(&patch, &source_edits);
+    let (source, mut target) = extract_edits(patch, &source_edits);
     if !target.hunks.is_empty() {
-        if let Some(header) = header_for_edit(&patch, split_pos) {
+        if let Some(header) = header_for_edit(patch, split_pos) {
             target.header = header;
         }
     }
@@ -1365,7 +1621,7 @@ mod tests {
         let stats = patch.stats();
         assert_eq!(stats.added, 2);
 
-        let (source, target) = split_ordered_commit(commit, 1);
+        let (source, target) = split_ordered_patch(&patch, 1);
 
         // Source should have 1 addition
         let src_patch = Patch::parse_unified_diff(&source);
@@ -1393,7 +1649,7 @@ mod tests {
         assert_eq!(stats.removed, 1);
 
         // Split at position 1 (after the deletion)
-        let (source, target) = split_ordered_commit(commit, 1);
+        let (source, target) = split_ordered_patch(&patch, 1);
 
         let src_patch = Patch::parse_unified_diff(&source);
         let tgt_patch = Patch::parse_unified_diff(&target);
@@ -1440,7 +1696,7 @@ index 1827a70..d9b3ed1 100644
 +	return fmt.Errorf("failed: %w", err)
 "#;
 
-        let (_source, target) = split_ordered_commit(commit, 3);
+        let (_source, target) = split_ordered_patch(&Patch::parse_unified_diff(commit), 3);
 
         assert!(
             target.starts_with(
@@ -1565,6 +1821,162 @@ Date: Mon Jan 1 00:00:00 2024
         assert_eq!(new_src, source);
         assert_eq!(new_tgt, target);
         assert!(cursor.is_none());
+    }
+
+    #[test]
+    fn test_parse_typed_split_points() {
+        assert_eq!(
+            parse_split_point("fim").unwrap(),
+            SplitPoint::Kind(SplitPointKind::Fim)
+        );
+        assert_eq!(
+            parse_split_point("same-file-near").unwrap(),
+            SplitPoint::Kind(SplitPointKind::SameFileNear)
+        );
+        assert_eq!(
+            parse_split_point("same-file-far:2").unwrap(),
+            SplitPoint::KindWithSplit {
+                kind: SplitPointKind::SameFileFar,
+                split_point: SplitPointValue::Index(2),
+            }
+        );
+        assert_eq!(
+            parse_split_point("cross-file:0.5").unwrap(),
+            SplitPoint::KindWithSplit {
+                kind: SplitPointKind::CrossFile,
+                split_point: SplitPointValue::Fraction(0.5),
+            }
+        );
+        assert!(parse_split_point("local").is_err());
+    }
+
+    fn assert_generated_split_kind(
+        commit: &str,
+        kind: SplitPointKind,
+        seed: u64,
+    ) -> GeneratedSplitCommit {
+        let patch = Patch::parse_unified_diff(commit);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let generated_split_commit = sample_split_commit_of_kind(&patch, kind, &mut rng).unwrap();
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(kind)
+        );
+        generated_split_commit
+    }
+
+    #[test]
+    fn test_classify_generated_split_commit() {
+        let target_patch = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -10,3 +10,3 @@
+ fn main() {
+-old();
++new();
+ }
+"#;
+        let mut generated_split_commit = GeneratedSplitCommit {
+            split: 1,
+            split_commit: SplitCommit {
+                source_patch: String::new(),
+                target_patch: target_patch.to_string(),
+            },
+            cursor: CursorPosition {
+                file: "src/main.rs".to_string(),
+                line: 11,
+                column: 5,
+                line_length: 10,
+            },
+            cursor_from_human_edit: true,
+        };
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::Fim)
+        );
+
+        generated_split_commit.cursor_from_human_edit = false;
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::SameFileNear)
+        );
+
+        generated_split_commit.cursor.line = 100;
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::SameFileFar)
+        );
+
+        generated_split_commit.cursor.file = "src/other.rs".to_string();
+        assert_eq!(
+            classify_generated_split_commit(&generated_split_commit),
+            Some(SplitPointKind::CrossFile)
+        );
+    }
+
+    #[test]
+    fn test_sample_fim_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,3 +1,5 @@
+ fn main() {
++    let first = 1;
++    let second = 2;
+ }
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::Fim, 1);
+    }
+
+    #[test]
+    fn test_sample_same_file_near_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,4 +1,5 @@
+ fn main() {
++    let inserted = 0;
+-    old();
++    new();
+ }
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::SameFileNear, 1);
+    }
+
+    #[test]
+    fn test_sample_same_file_far_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,3 @@
+ start
++source_edit();
+ context
+@@ -100,2 +101,2 @@
+-far_old();
++far_new();
+ end
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::SameFileFar, 1);
+    }
+
+    #[test]
+    fn test_sample_cross_file_split_point() {
+        let commit = r#"--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,2 +1,3 @@
+ fn main() {
++    source_edit();
+ }
+--- a/src/other.rs
++++ b/src/other.rs
+@@ -1,3 +1,3 @@
+ fn other() {
+-    old();
++    new();
+ }
+"#;
+
+        assert_generated_split_kind(commit, SplitPointKind::CrossFile, 1);
     }
 
     #[test]

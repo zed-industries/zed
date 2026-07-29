@@ -24,8 +24,8 @@ pub struct StringMatchCandidate {
 }
 
 impl StringMatchCandidate {
-    pub fn new(id: usize, string: impl ToString) -> Self {
-        Self::from_shared(id, SharedString::new(string.to_string()))
+    pub fn new(id: usize, string: impl Into<SharedString>) -> Self {
+        Self::from_shared(id, string.into())
     }
 
     pub fn from_shared(id: usize, string: SharedString) -> Self {
@@ -298,7 +298,7 @@ mod tests {
         strings
             .iter()
             .enumerate()
-            .map(|(id, s)| StringMatchCandidate::new(id, s))
+            .map(|(id, s)| StringMatchCandidate::new(id, *s))
             .collect()
     }
 

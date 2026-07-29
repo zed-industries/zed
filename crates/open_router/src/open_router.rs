@@ -147,6 +147,8 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
@@ -248,6 +250,7 @@ impl MessageContent {
             Self::Plain(text) => {
                 let text_part = MessagePart::Text {
                     text: std::mem::take(text),
+                    cache_control: None,
                 };
                 *self = Self::Multipart(vec![text_part, part]);
             }
@@ -259,7 +262,11 @@ impl MessageContent {
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
         if parts.len() == 1
-            && let MessagePart::Text { text } = &parts[0]
+            && let MessagePart::Text {
+                text,
+                cache_control,
+            } = &parts[0]
+            && cache_control.is_none()
         {
             return Self::Plain(text.clone());
         }
@@ -284,7 +291,7 @@ impl MessageContent {
         match self {
             Self::Plain(text) => Some(text),
             Self::Multipart(parts) if parts.len() == 1 => {
-                if let MessagePart::Text { text } = &parts[0] {
+                if let MessagePart::Text { text, .. } = &parts[0] {
                     Some(text)
                 } else {
                     None
@@ -300,7 +307,7 @@ impl MessageContent {
             Self::Multipart(parts) => parts
                 .iter()
                 .filter_map(|part| {
-                    if let MessagePart::Text { text } = part {
+                    if let MessagePart::Text { text, .. } = part {
                         Some(text.as_str())
                     } else {
                         None
@@ -312,16 +319,43 @@ impl MessageContent {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheControlType {
+    Ephemeral,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+pub enum CacheTtl {
+    /// Anthropic's default ephemeral TTL (currently 5 minutes). Refreshes for
+    /// free on every cache hit.
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    /// Anthropic's extended ephemeral TTL (currently 1 hour). Costs 2x base
+    /// input tokens to write, but persists across longer idle gaps.
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub cache_type: CacheControlType,
+    /// Omitting this field uses the API's default 5-minute TTL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<CacheTtl>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     #[serde(rename = "image_url")]
-    Image {
-        image_url: String,
-    },
+    Image { image_url: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -371,11 +405,21 @@ pub struct FunctionChunk {
     pub thought_signature: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
