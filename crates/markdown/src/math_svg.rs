@@ -38,7 +38,8 @@ pub fn display_list_to_svg(display_list: &DisplayList, font_size: f32) -> MathSv
 
     let fonts = match ratex_font_loader::load_fonts_for_items("", &display_list.items) {
         Ok(f) => f,
-        Err(_) => {
+        Err(e) => {
+            log::error!("Failed to load math fonts: {}", e);
             return MathSvgOutput {
                 svg_bytes: svg.into_bytes(),
                 width: svg_w,
@@ -293,6 +294,47 @@ fn path_commands_to_svg_d(commands: &[PathCommand], em: f32, x: f32, y: f32) -> 
         }
     }
     d
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratex_types::display_item::{DisplayItem, DisplayList};
+
+    #[test]
+    fn test_display_list_to_svg_rect() {
+        let items = vec![DisplayItem::Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+            color: Color::new(0.0, 0.0, 0.0, 1.0),
+        }];
+        let list = DisplayList {
+            items,
+            width: 10,
+            height: 10,
+            depth: 0,
+        };
+        let output = display_list_to_svg(&list, 12.0);
+        assert!(output.svg_bytes.len() > 50, "SVG should be non-trivial");
+        let svg_str = String::from_utf8_lossy(&output.svg_bytes);
+        assert!(svg_str.starts_with("<svg"));
+        assert!(svg_str.ends_with("</svg>"));
+        assert!(svg_str.contains("<rect"));
+    }
+
+    #[test]
+    fn test_display_list_to_svg_empty() {
+        let list = DisplayList {
+            items: vec![],
+            width: 0,
+            height: 0,
+            depth: 0,
+        };
+        let output = display_list_to_svg(&list, 12.0);
+        assert!(output.svg_bytes.len() > 0);
+    }
 }
 
 fn color_to_svg(color: &Color) -> String {

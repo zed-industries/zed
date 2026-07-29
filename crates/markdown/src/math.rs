@@ -1,5 +1,6 @@
 use collections::HashMap;
 use gpui::{AnyElement, Context, Pixels, RenderImage, Task, StyledText, div, px};
+use settings::Settings;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
@@ -220,8 +221,6 @@ pub(crate) fn render_math_expression(
 /// Walks the event list looking for `MarkdownEvent::InlineMath` and
 /// `MarkdownEvent::DisplayMath` events, collecting them into a map keyed
 /// by source offset for O(log n) lookup during rendering.
-use settings::Settings;
-
 pub(crate) fn extract_math_expressions(
     events: &[(Range<usize>, MarkdownEvent)],
 ) -> BTreeMap<usize, ParsedMarkdownMathExpression> {
