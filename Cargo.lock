@@ -19868,6 +19868,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui_macros",
+ "web-time",
  "windows 0.61.3",
 ]
 
