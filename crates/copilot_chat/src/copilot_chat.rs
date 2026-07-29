@@ -1045,7 +1045,6 @@ async fn request_models(
     let body_str = std::str::from_utf8(&body)?;
 
     let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
-    dbg!(&models);
 
     Ok(models)
 }
