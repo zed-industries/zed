@@ -4947,7 +4947,7 @@ impl Window {
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
-                            external_paths: None,
+                            external_payload: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -4991,7 +4991,7 @@ impl Window {
 
         // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
         // is the last chance for drag listeners to see the pointer leave and reset their state.
-        self.promote_file_drag_to_platform(&event, cx);
+        self.promote_external_drag_to_platform(&event, cx);
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
@@ -5009,7 +5009,7 @@ impl Window {
         }
     }
 
-    fn promote_file_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
+    fn promote_external_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
         let PlatformInput::MouseMove(mouse_move) = event else {
             return;
         };
@@ -5019,16 +5019,16 @@ impl Window {
         if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
             return;
         }
-        // Taking the paths latches the attempt to once per gesture: synthetic drag moves would
+        // Taking the payload latches the attempt to once per gesture: synthetic drag moves would
         // otherwise replay this same out-of-bounds position every 16ms.
-        let Some(paths) = cx
+        let Some(payload) = cx
             .active_drag
             .as_mut()
-            .and_then(|drag| drag.external_paths.take())
+            .and_then(|drag| drag.external_payload.take())
         else {
             return;
         };
-        if self.platform_window.start_file_drag(&paths) {
+        if self.platform_window.start_external_drag(&payload) {
             cx.stop_active_drag(self);
         }
     }
@@ -6721,10 +6721,10 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty, FileDragPaths,
-        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, MouseButton,
-        MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render,
-        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        ExternalDragPayload, FileDragPaths, FocusHandle, InputEvent as _, InteractiveElement as _,
+        IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point,
+        Render, StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
         WindowOptions, canvas, div, point, px, size,
     };
 
@@ -6886,9 +6886,13 @@ mod tests {
             div()
                 .id("file-drag")
                 .size_full()
-                .on_drag_with_external_paths(
+                .on_drag_with_external_payload(
                     self.path.clone(),
-                    |path, _, _| Some(FileDragPaths(vec![(path.clone(), true)].into())),
+                    |path, _, _| {
+                        Some(ExternalDragPayload::Files(FileDragPaths(
+                            vec![(path.clone(), true)].into(),
+                        )))
+                    },
                     |_, _, _, cx| cx.new(|_| Empty),
                 )
                 .on_drag_move({
@@ -6919,7 +6923,7 @@ mod tests {
                 })
                 .into();
             cx.test_window(window)
-                .set_start_file_drag_result(platform_result);
+                .set_start_external_drag_result(platform_result);
 
             let update_result = cx.update_window(window, |_, window, cx| {
                 window.draw(cx).clear();
@@ -6950,7 +6954,7 @@ mod tests {
                 "failed to start drag: {update_result:?}"
             );
 
-            assert!(cx.test_window(window).file_drag_paths().is_empty());
+            assert!(cx.test_window(window).external_drag_files().is_empty());
             Drag {
                 window,
                 observed_drag_moves,
@@ -6977,7 +6981,7 @@ mod tests {
             "failed to promote drag: {update_result:?}"
         );
         assert_eq!(
-            cx.test_window(successful.window).file_drag_paths(),
+            cx.test_window(successful.window).external_drag_files(),
             [(successful_path, true)]
         );
         // Views must still see the move that leaves the window, otherwise they never learn to tear
@@ -7008,7 +7012,7 @@ mod tests {
             "failed to retain drag after platform failure: {update_result:?}"
         );
         assert_eq!(
-            cx.test_window(failed.window).file_drag_paths(),
+            cx.test_window(failed.window).external_drag_files(),
             [(failed_path, true)]
         );
     }

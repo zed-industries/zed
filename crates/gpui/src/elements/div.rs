@@ -18,7 +18,7 @@
 use crate::PinchEvent;
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, FileDragPaths, FocusHandle, Global,
+    Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, FocusHandle, Global,
     GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
     KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
@@ -604,11 +604,11 @@ impl Interactivity {
         self.set_drag_listener(value, constructor, None);
     }
 
-    /// On drag initiation, resolve real on-disk paths to expose this drag to the platform.
-    pub fn on_drag_with_external_paths<T, W>(
+    /// On drag initiation, resolve a payload to offer the platform if the drag leaves the window.
+    pub fn on_drag_with_external_payload<T, W>(
         &mut self,
         value: T,
-        external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<FileDragPaths> + 'static,
+        external_payload: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) where
         Self: Sized,
@@ -619,7 +619,7 @@ impl Interactivity {
             value,
             constructor,
             Some(Box::new(move |value, window, cx| {
-                external_paths(value.downcast_ref::<T>()?, window, cx)
+                external_payload(value.downcast_ref::<T>()?, window, cx)
             })),
         );
     }
@@ -628,7 +628,7 @@ impl Interactivity {
         &mut self,
         value: T,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
-        external_paths: Option<ExternalPathsExtractor>,
+        external_payload: Option<ExternalPayloadExtractor>,
     ) where
         Self: Sized,
         T: 'static,
@@ -643,7 +643,7 @@ impl Interactivity {
             Box::new(move |value, offset, window, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
-            external_paths,
+            external_payload,
         ));
     }
 
@@ -1553,11 +1553,11 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// On drag initiation, resolve real on-disk paths to expose this drag to the platform.
-    fn on_drag_with_external_paths<T, W>(
+    /// On drag initiation, resolve a payload to offer the platform if the drag leaves the window.
+    fn on_drag_with_external_payload<T, W>(
         mut self,
         value: T,
-        external_paths: impl Fn(&T, &mut Window, &mut App) -> Option<FileDragPaths> + 'static,
+        external_payload: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) -> Self
     where
@@ -1566,7 +1566,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         W: 'static + Render,
     {
         self.interactivity()
-            .on_drag_with_external_paths(value, external_paths, constructor);
+            .on_drag_with_external_payload(value, external_payload, constructor);
         self
     }
 
@@ -1640,8 +1640,8 @@ pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 
 pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
 
-pub(crate) type ExternalPathsExtractor =
-    Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<FileDragPaths> + 'static>;
+pub(crate) type ExternalPayloadExtractor =
+    Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
 
@@ -2048,7 +2048,8 @@ pub struct Interactivity {
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) aux_click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener, Option<ExternalPathsExtractor>)>,
+    pub(crate) drag_listener:
+        Option<(Arc<dyn Any>, DragListener, Option<ExternalPayloadExtractor>)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
@@ -2821,7 +2822,7 @@ impl Interactivity {
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
-                            && let Some((drag_value, drag_listener, external_paths_extractor)) =
+                            && let Some((drag_value, drag_listener, external_payload_extractor)) =
                                 drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
@@ -2829,14 +2830,14 @@ impl Interactivity {
                             let cursor_offset = event.position - hitbox.origin;
                             let drag =
                                 (drag_listener)(drag_value.as_ref(), cursor_offset, window, cx);
-                            let external_paths = external_paths_extractor
+                            let external_payload = external_payload_extractor
                                 .and_then(|extractor| extractor(drag_value.as_ref(), window, cx));
                             cx.active_drag = Some(AnyDrag {
                                 view: drag,
                                 value: drag_value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
-                                external_paths,
+                                external_payload,
                             });
                             pending_mouse_down.take();
                             window.refresh();

@@ -36,8 +36,8 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, FileDragPaths, Font, FontId,
-    FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
     Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
@@ -886,7 +886,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
-    fn start_file_drag(&self, _paths: &FileDragPaths) -> bool {
+    fn start_external_drag(&self, _payload: &ExternalDragPayload) -> bool {
         false
     }
     fn start_window_resize(&self, _edge: ResizeEdge) {}

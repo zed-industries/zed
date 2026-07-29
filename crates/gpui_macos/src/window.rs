@@ -24,8 +24,8 @@ use cocoa::{
 };
 use dispatch2::DispatchQueue;
 use gpui::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
@@ -1838,9 +1838,10 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn start_file_drag(&self, paths: &FileDragPaths) -> bool {
+    fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
+        let ExternalDragPayload::Files(paths) = payload;
         if paths.entries().is_empty() {
-            log::warn!("start_file_drag declined: no paths");
+            log::warn!("start_external_drag declined: no paths");
             return false;
         }
 
@@ -1854,7 +1855,7 @@ impl PlatformWindow for MacWindow {
         };
 
         let Some(last_left_mouse_down_event) = last_left_mouse_down_event else {
-            log::warn!("start_file_drag declined: no retained left mouse down event");
+            log::warn!("start_external_drag declined: no retained left mouse down event");
             return false;
         };
 
@@ -1878,7 +1879,7 @@ impl PlatformWindow for MacWindow {
             for (path, is_directory) in paths.entries() {
                 // Preserve non-UTF-8 paths
                 let Ok(path_bytes) = CString::new(path.as_os_str().as_bytes()) else {
-                    log::warn!("start_file_drag skipped path containing an interior nul byte");
+                    log::warn!("start_external_drag skipped path containing an interior nul byte");
                     continue;
                 };
 
@@ -1890,14 +1891,14 @@ impl PlatformWindow for MacWindow {
                 ];
 
                 if url.is_null() {
-                    log::warn!("start_file_drag skipped path with nil NSURL");
+                    log::warn!("start_external_drag skipped path with nil NSURL");
                     continue;
                 }
 
                 let item: id = msg_send![class!(NSDraggingItem), alloc];
                 let item: id = msg_send![item, initWithPasteboardWriter: url];
                 if item.is_null() {
-                    log::warn!("start_file_drag declined: NSDraggingItem allocation failed");
+                    log::warn!("start_external_drag declined: NSDraggingItem allocation failed");
                     continue;
                 }
 
@@ -1910,7 +1911,7 @@ impl PlatformWindow for MacWindow {
 
             let count: NSUInteger = msg_send![dragging_items, count];
             if count == 0 {
-                log::warn!("start_file_drag declined: no dragging items");
+                log::warn!("start_external_drag declined: no dragging items");
                 return false;
             }
 
@@ -1926,7 +1927,7 @@ impl PlatformWindow for MacWindow {
                 self.0.lock().synthetic_drag_counter += 1;
             }
             log::debug!(
-                "start_file_drag completed: started={}, item_count={}",
+                "start_external_drag completed: started={}, item_count={}",
                 started,
                 count
             );

@@ -38,8 +38,8 @@ pub(crate) struct TestWindowState {
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
     appearance: WindowAppearance,
-    file_drag_paths: Vec<(PathBuf, bool)>,
-    start_file_drag_result: bool,
+    external_drag_files: Vec<(PathBuf, bool)>,
+    start_external_drag_result: bool,
 }
 
 #[derive(Clone)]
@@ -94,8 +94,8 @@ impl TestWindow {
             input_handler: None,
             is_fullscreen: false,
             appearance: WindowAppearance::Light,
-            file_drag_paths: Vec::new(),
-            start_file_drag_result: false,
+            external_drag_files: Vec::new(),
+            start_external_drag_result: false,
         })))
     }
 
@@ -144,12 +144,12 @@ impl TestWindow {
         !result.propagate
     }
 
-    pub fn file_drag_paths(&self) -> Vec<(PathBuf, bool)> {
-        self.0.lock().file_drag_paths.clone()
+    pub fn external_drag_files(&self) -> Vec<(PathBuf, bool)> {
+        self.0.lock().external_drag_files.clone()
     }
 
-    pub fn set_start_file_drag_result(&self, result: bool) {
-        self.0.lock().start_file_drag_result = result;
+    pub fn set_start_external_drag_result(&self, result: bool) {
+        self.0.lock().start_external_drag_result = result;
     }
 }
 
@@ -365,10 +365,14 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    fn start_file_drag(&self, paths: &crate::FileDragPaths) -> bool {
+    fn start_external_drag(&self, payload: &crate::ExternalDragPayload) -> bool {
         let mut state = self.0.lock();
-        state.file_drag_paths.extend_from_slice(paths.entries());
-        state.start_file_drag_result
+        match payload {
+            crate::ExternalDragPayload::Files(paths) => {
+                state.external_drag_files.extend_from_slice(paths.entries());
+            }
+        }
+        state.start_external_drag_result
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

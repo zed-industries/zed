@@ -2815,8 +2815,8 @@ pub struct AnyDrag {
     /// The cursor style to use while dragging
     pub cursor_style: Option<CursorStyle>,
 
-    /// Real on-disk paths that can be handed to the platform as an outbound file drag.
-    pub external_paths: Option<crate::FileDragPaths>,
+    /// Payload to offer the platform if the drag leaves the window.
+    pub external_payload: Option<crate::ExternalDragPayload>,
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing

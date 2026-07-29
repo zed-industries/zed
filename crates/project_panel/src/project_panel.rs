@@ -22,12 +22,13 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement,
-    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
-    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
-    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+    ExternalDragPayload, ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
+    PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -5947,12 +5948,13 @@ impl ProjectPanel {
                                 }));
                         },
                     ))
-                    .on_drag_with_external_paths(
+                    .on_drag_with_external_payload(
                         dragged_selection,
                         {
                             let project = self.project.clone();
                             move |selection, _window, cx| {
                                 Self::external_paths_for_dragged_selection(&project, selection, cx)
+                                    .map(ExternalDragPayload::Files)
                             }
                         },
                         {

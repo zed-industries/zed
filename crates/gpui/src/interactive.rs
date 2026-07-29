@@ -691,6 +691,14 @@ impl ExternalPaths {
     }
 }
 
+/// Data offered to the platform when an internal drag leaves the window and is
+/// promoted to a native drag session.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ExternalDragPayload {
+    /// Real on-disk paths, handed to the platform as an outbound file drag.
+    Files(FileDragPaths),
+}
+
 /// Paths handed to the platform for a native file drag. Directory metadata is
 /// provided by the caller to avoid querying it when the platform drag starts.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
