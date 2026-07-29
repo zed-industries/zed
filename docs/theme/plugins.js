@@ -49,18 +49,39 @@ if (typeof requestIdleCallback === "function") {
 
 function darkModeToggle() {
   var html = document.documentElement;
+  var themeColorMetaTag = document.querySelector('meta[name="theme-color"]');
   var themeToggleButton = document.getElementById("color-scheme-toggle");
   var themeToggleIcon = themeToggleButton
     ? themeToggleButton.querySelector(".fa")
     : null;
+
+  function getStoredTheme() {
+    try {
+      return localStorage.getItem("mdbook-theme");
+    } catch {
+      return null;
+    }
+  }
+
+  function persistTheme(theme) {
+    try {
+      localStorage.setItem("mdbook-theme", theme);
+    } catch {}
+  }
 
   function setTheme(theme, persist) {
     html.setAttribute("data-theme", theme);
     html.setAttribute("data-color-scheme", theme);
     html.className = theme;
 
+    if (themeColorMetaTag) {
+      setTimeout(function () {
+        themeColorMetaTag.content = getComputedStyle(html).backgroundColor;
+      }, 0);
+    }
+
     if (persist) {
-      localStorage.setItem("mdbook-theme", theme);
+      persistTheme(theme);
     }
 
     if (themeToggleButton) {
@@ -78,7 +99,7 @@ function darkModeToggle() {
   }
 
   // Set initial theme
-  var currentTheme = localStorage.getItem("mdbook-theme");
+  var currentTheme = getStoredTheme();
   if (currentTheme) {
     setTheme(currentTheme, false);
   } else {
@@ -93,7 +114,7 @@ function darkModeToggle() {
   // Listen for system's preference changes
   const darkModeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   darkModeMediaQuery.addEventListener("change", function (e) {
-    if (!localStorage.getItem("mdbook-theme")) {
+    if (!getStoredTheme()) {
       setTheme(e.matches ? "dark" : "light", false);
     }
   });

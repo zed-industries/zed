@@ -113,6 +113,15 @@
                     <i class="fa fa-moon-o"></i>
                 </button>
 
+                <!-- mdBook 0.4.40's bundled book.js requires these elements even though plugins.js handles theme switching. -->
+                <div hidden aria-hidden="true">
+                    <button id="theme-toggle" type="button" aria-expanded="false"></button>
+                    <ul id="theme-list">
+                        <li><button type="button" class="theme" id="light">Light</button></li>
+                        <li><button type="button" class="theme" id="dark">Dark</button></li>
+                    </ul>
+                </div>
+
                 <button id="copy-markdown-toggle" class="icon-button ib-hidden-mobile" type="button" title="Copy Page as Markdown" aria-label="Copy page as markdown">
                     <i class="fa fa-copy"></i>
                 </button>
