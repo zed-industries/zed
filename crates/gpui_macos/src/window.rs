@@ -2849,8 +2849,7 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
         }
 
         // AppKit can relayout the standard traffic light buttons as part of
-        // applying a new appearance. Reapply GPUI's custom position after
-        // notifying appearance observers.
+        // applying a new appearance, so reapply GPUI's custom position.
         state.lock().move_traffic_light();
     }
 }
