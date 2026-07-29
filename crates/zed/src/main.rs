@@ -1,6 +1,7 @@
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cli_client;
 mod reliability;
 mod zed;
 
@@ -16,7 +17,7 @@ const _: () = assert!(
 
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
-use clap::Parser;
+use clap::{CommandFactory as _, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
@@ -54,6 +55,7 @@ use smol::future::poll_once;
 use std::{
     cell::RefCell,
     env,
+    ffi::OsStr,
     io::{self, IsTerminal},
     path::{Path, PathBuf},
     process,
@@ -209,10 +211,41 @@ fn main() {
     #[cfg(unix)]
     util::prevent_root_execution();
 
+    // Exit flatpak sandbox if needed
+    #[cfg(target_os = "linux")]
+    {
+        cli_client::flatpak::try_restart_to_host();
+        cli_client::flatpak::ld_extra_libs();
+    }
+
+    // Must happen before clap — SSH invokes the askpass program directly and
+    // passes the socket path via env var to avoid argument parsing.
+    if let Ok(socket) = env::var("ZED_ASKPASS_SOCKET") {
+        askpass::main_from_args(&socket, env::args().skip(1));
+        return;
+    }
+
+    // Intercept version designators, e.g. `zed --nightly some/path`:
+    // when the first argument is a name of a release channel, spawn off the CLI
+    // of that channel's installed app, with trailing args passed along.
+    #[cfg(target_os = "macos")]
+    if let Some(channel) = env::args().nth(1).filter(|arg| arg.starts_with("--")) {
+        use std::str::FromStr as _;
+
+        if let Ok(channel) = ReleaseChannel::from_str(&channel[2..]) {
+            if let Err(error) =
+                cli_client::mac_os::spawn_channel_cli(channel, env::args().skip(2).collect())
+            {
+                eprintln!("error: {error:#}");
+                process::exit(1);
+            }
+            return;
+        }
+    }
+
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
-    #[cfg(not(target_os = "windows"))]
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
         return;
@@ -273,6 +306,86 @@ fn main() {
         paths::set_custom_data_dir(dir);
     }
 
+    if let Some(shell) = &args.completions {
+        let result = maybe!({
+            let bin_name = env::args()
+                .next()
+                .as_deref()
+                .map(Path::new)
+                .and_then(Path::file_name)
+                .and_then(OsStr::to_str)
+                .map(str::to_owned)
+                .context("--completions expects a UTF-8 name for the zed binary")?;
+            let mut cmd = Args::command();
+            cmd.set_bin_name(bin_name);
+            cmd.build();
+            cli_client::completions::generate(&cmd, shell);
+            anyhow::Ok(())
+        });
+        if let Err(error) = result {
+            eprintln!("error: {error:#}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    let build_id = option_env!("ZED_BUILD_ID");
+    let app_commit_sha =
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), build_id, app_commit_sha.clone());
+
+    if args.system_specs {
+        let system_specs = system_specs::SystemSpecs::new_stateless(
+            app_version,
+            app_commit_sha,
+            *release_channel::RELEASE_CHANNEL,
+            client::telemetry::os_name(),
+            client::telemetry::os_version(),
+        );
+        println!("Zed System Specs (from CLI):\n{}", system_specs);
+        return;
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no-bundled-uninstall")
+    ))]
+    if args.uninstall {
+        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
+
+        let result = maybe!({
+            let tmp_dir = tempfile::tempdir()?;
+            let script_path = tmp_dir.path().join("uninstall.sh");
+            std::fs::write(&script_path, UNINSTALL_SCRIPT)?;
+
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
+
+            let status = util::command::new_std_command("sh")
+                .arg(&script_path)
+                .env("ZED_CHANNEL", &*release_channel::RELEASE_CHANNEL_NAME)
+                .status()
+                .context("Failed to execute uninstall script")?;
+
+            anyhow::Ok(status.code().unwrap_or(1))
+        });
+        match result {
+            Ok(code) => process::exit(code),
+            Err(error) => {
+                eprintln!("error: {error:#}");
+                process::exit(1);
+            }
+        }
+    }
+
+    if cli_client::should_run_as_cli_client(&args) {
+        if let Err(error) = cli_client::run(args) {
+            eprintln!("error: {error:#}");
+            process::exit(1);
+        }
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     match util::get_zed_cli_path() {
         Ok(path) => askpass::set_askpass_program(path),
@@ -302,23 +415,6 @@ fn main() {
         };
     }
     ztracing::init();
-
-    let version = option_env!("ZED_BUILD_ID");
-    let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
-    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), version, app_commit_sha.clone());
-
-    if args.system_specs {
-        let system_specs = system_specs::SystemSpecs::new_stateless(
-            app_version,
-            app_commit_sha,
-            *release_channel::RELEASE_CHANNEL,
-            client::telemetry::os_name(),
-            client::telemetry::os_version(),
-        );
-        println!("Zed System Specs (from CLI):\n{}", system_specs);
-        return;
-    }
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
@@ -1684,20 +1780,87 @@ fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true, max_term_width = 100)]
+#[command(
+    name = "zed",
+    disable_version_flag = true,
+    max_term_width = 100,
+    before_help = "The Zed editor.
+
+Examples:
+    `zed`
+          Simply opens Zed
+    `zed --foreground`
+          Runs in foreground (shows all logs)
+    `zed path-to-your-project`
+          Open your project in Zed
+    `zed -n path-to-file`
+          Open file/folder in a new window",
+    after_help = "To read from stdin, append '-', e.g. 'ps axf | zed -'"
+)]
 struct Args {
     /// A sequence of space-separated paths or urls that you want to open.
     ///
-    /// Use `path:line:row` syntax to open a file at a specific location.
-    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    /// Use `path:line:column` syntax to open a file at a specific location.
+    /// Non-existing paths and directories will ignore `:line:column` suffix.
     ///
     /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
+    #[arg(value_hint = clap::ValueHint::AnyPath)]
     paths_or_urls: Vec<String>,
+
+    /// Wait for all of the given paths to be opened/closed before exiting.
+    ///
+    /// When opening a directory, waits until the created window is closed.
+    #[arg(short, long)]
+    wait: bool,
+
+    /// Add files to the currently open workspace
+    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing", "classic"])]
+    add: bool,
+
+    /// Create a new workspace
+    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing", "classic"])]
+    new: bool,
+
+    /// Reuse an existing window, replacing its workspace
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing", "classic"], hide = true)]
+    reuse: bool,
+
+    /// Open in existing Zed window
+    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse", "classic"])]
+    existing: bool,
+
+    /// Use the classic open behavior: new window for directories, reuse for files
+    #[arg(long, hide = true, overrides_with_all = ["add", "new", "reuse", "existing"])]
+    classic: bool,
+
+    /// Print Zed's version and the app path.
+    #[arg(short, long)]
+    version: bool,
+
+    /// Run zed in the foreground (useful for debugging)
+    #[arg(long)]
+    foreground: bool,
+
+    /// Custom path to Zed.app or the zed binary
+    #[arg(long)]
+    zed: Option<PathBuf>,
 
     /// Pairs of file paths to diff. Can be specified multiple times.
     /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
-    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], value_hint = clap::ValueHint::AnyPath)]
     diff: Vec<String>,
+
+    /// Generate shell completions for Zed
+    #[arg(long, value_names = ["SHELL"])]
+    completions: Option<cli_client::completions::Shell>,
+
+    /// Uninstall Zed from user system
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no-bundled-uninstall")
+    ))]
+    #[arg(long)]
+    uninstall: bool,
 
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     ///
@@ -1705,7 +1868,7 @@ struct Args {
     /// On macOS, the default is `~/Library/Application Support/Zed`.
     /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
     /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
-    #[arg(long, value_name = "DIR", verbatim_doc_comment)]
+    #[arg(long, value_name = "DIR", verbatim_doc_comment, value_hint = clap::ValueHint::DirPath)]
     user_data_dir: Option<String>,
 
     /// The username and WSL distribution to use when opening paths. If not specified,
@@ -1745,12 +1908,6 @@ struct Args {
     #[arg(long, hide = true)]
     crash_handler: Option<PathBuf>,
 
-    /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
-    #[arg(long)]
-    #[cfg(target_os = "windows")]
-    #[arg(hide = true)]
-    foreground: bool,
-
     /// The dock action to perform. This is used on Windows only.
     #[arg(long)]
     #[cfg(target_os = "windows")]
@@ -1759,9 +1916,7 @@ struct Args {
 
     /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
-    #[arg(long)]
-    #[cfg(not(target_os = "windows"))]
-    #[arg(hide = true)]
+    #[arg(long, hide = true)]
     askpass: Option<String>,
 
     #[arg(long, hide = true)]

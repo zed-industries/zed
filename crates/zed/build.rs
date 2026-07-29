@@ -2,6 +2,11 @@
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=ZED_UPDATE_EXPLANATION");
+    if std::env::var("ZED_UPDATE_EXPLANATION").is_ok() {
+        println!(r#"cargo:rustc-cfg=feature="no-bundled-uninstall""#);
+    }
+
     #[cfg(target_os = "linux")]
     {
         // Add rpaths for libraries that webrtc-sys dlopens at runtime.
