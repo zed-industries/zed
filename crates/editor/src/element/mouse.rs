@@ -1234,7 +1234,7 @@ mod tests {
         });
 
         cx.update_editor(|editor, window, cx| {
-            editor.scroll(gpui::Point { x: 0., y: 5.5 }, None, window, cx);
+            editor.scroll(gpui::Point { x: 0., y: 5.5 }, window, cx);
         });
         cx.run_until_parked();
 
