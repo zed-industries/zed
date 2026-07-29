@@ -11,17 +11,16 @@ path = "src/language_core.rs"
 anyhow.workspace = true
 collections.workspace = true
 gpui_shared_string.workspace = true
+gpui_util.workspace = true
 log.workspace = true
-lsp.workspace = true
 parking_lot.workspace = true
+path.workspace = true
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 tree-sitter.workspace = true
-util.workspace = true
-
 
 [features]
 test-support = []

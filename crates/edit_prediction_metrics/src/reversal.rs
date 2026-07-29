@@ -4,21 +4,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::tokenize::tokenize;
-use imara_diff::{
-    Algorithm, diff,
-    intern::{InternedInput, Token},
-    sources::lines_with_terminator,
-};
+use imara_diff::{Algorithm, Diff, InternedInput, Token, sources::lines};
 use zeta_prompt::udiff::apply_diff_to_string;
 
 fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)> {
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
-    let input = InternedInput::new(
-        lines_with_terminator(old_text),
-        lines_with_terminator(new_text),
-    );
+    let input = InternedInput::new(lines(old_text), lines(new_text));
 
     diff_internal(&input, &mut |old_byte_range,
                                 new_byte_range,
@@ -104,35 +97,34 @@ fn diff_internal(
     let mut old_token_ix = 0;
     let mut new_token_ix = 0;
 
-    diff(
-        Algorithm::Histogram,
-        input,
-        |old_tokens: Range<u32>, new_tokens: Range<u32>| {
-            old_offset += token_len(
-                input,
-                &input.before[old_token_ix as usize..old_tokens.start as usize],
-            );
-            new_offset += token_len(
-                input,
-                &input.after[new_token_ix as usize..new_tokens.start as usize],
-            );
-            let old_len = token_len(
-                input,
-                &input.before[old_tokens.start as usize..old_tokens.end as usize],
-            );
-            let new_len = token_len(
-                input,
-                &input.after[new_tokens.start as usize..new_tokens.end as usize],
-            );
-            let old_byte_range = old_offset..old_offset + old_len;
-            let new_byte_range = new_offset..new_offset + new_len;
-            old_token_ix = old_tokens.end;
-            new_token_ix = new_tokens.end;
-            old_offset = old_byte_range.end;
-            new_offset = new_byte_range.end;
-            on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
-        },
-    );
+    let diff = Diff::compute(Algorithm::Histogram, input);
+    for hunk in diff.hunks() {
+        let old_tokens = hunk.before;
+        let new_tokens = hunk.after;
+        old_offset += token_len(
+            input,
+            &input.before[old_token_ix as usize..old_tokens.start as usize],
+        );
+        new_offset += token_len(
+            input,
+            &input.after[new_token_ix as usize..new_tokens.start as usize],
+        );
+        let old_len = token_len(
+            input,
+            &input.before[old_tokens.start as usize..old_tokens.end as usize],
+        );
+        let new_len = token_len(
+            input,
+            &input.after[new_tokens.start as usize..new_tokens.end as usize],
+        );
+        let old_byte_range = old_offset..old_offset + old_len;
+        let new_byte_range = new_offset..new_offset + new_len;
+        old_token_ix = old_tokens.end;
+        new_token_ix = new_tokens.end;
+        old_offset = old_byte_range.end;
+        new_offset = new_byte_range.end;
+        on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
+    }
 }
 
 fn tokenize_chars(text: &str) -> impl Iterator<Item = &str> {

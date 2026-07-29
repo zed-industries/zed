@@ -296,10 +296,11 @@ impl PickerDelegate for ChannelModalDelegate {
             Mode::ManageMembers => {
                 if self.has_all_members {
                     self.match_candidates.clear();
-                    self.match_candidates
-                        .extend(self.members.iter().enumerate().map(|(id, member)| {
-                            StringMatchCandidate::new(id, &member.user.github_login)
-                        }));
+                    self.match_candidates.extend(
+                        self.members.iter().enumerate().map(|(id, member)| {
+                            StringMatchCandidate::new(id, &member.user.username)
+                        }),
+                    );
 
                     let matches = cx.foreground_executor().block_on(match_strings(
                         &self.match_candidates,
@@ -422,7 +423,7 @@ impl PickerDelegate for ChannelModalDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
-                .child(Label::new(user.github_login.clone()))
+                .child(Label::new(user.username.clone()))
                 .end_slot(h_flex().gap_2().map(|slot| {
                     match self.mode {
                         Mode::ManageMembers => slot

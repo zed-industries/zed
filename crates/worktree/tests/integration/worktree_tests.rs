@@ -1198,6 +1198,98 @@ async fn test_real_fs_scan_symlinks_expanded(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_internal_symlink_updates_preserve_entry_ids(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "project": {
+                "real-dir": {
+                    "existing.rs": "old",
+                },
+                "links": {}
+            }
+        }),
+    )
+    .await;
+
+    fs.create_symlink(
+        "/root/project/links/internal".as_ref(),
+        "../real-dir".into(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let (real_entry_id, symlink_entry_id, old_mtime) = tree.read_with(cx, |tree, _| {
+        let real_entry = tree
+            .entry_for_path(rel_path("real-dir/existing.rs"))
+            .unwrap();
+        let symlink_entry = tree
+            .entry_for_path(rel_path("links/internal/existing.rs"))
+            .unwrap();
+        assert_eq!(real_entry.inode, symlink_entry.inode);
+        assert_eq!(real_entry.mtime, symlink_entry.mtime);
+        assert_ne!(real_entry.id, symlink_entry.id);
+        (real_entry.id, symlink_entry.id, real_entry.mtime)
+    });
+
+    fs.write(Path::new("/root/project/real-dir/existing.rs"), b"new")
+        .await
+        .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            let real_entry = tree
+                .entry_for_path(rel_path("real-dir/existing.rs"))
+                .unwrap();
+            let symlink_entry = tree
+                .entry_for_path(rel_path("links/internal/existing.rs"))
+                .unwrap();
+            real_entry.mtime != old_mtime && symlink_entry.mtime != old_mtime
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        let real_entry = tree
+            .entry_for_path(rel_path("real-dir/existing.rs"))
+            .unwrap();
+        let symlink_entry = tree
+            .entry_for_path(rel_path("links/internal/existing.rs"))
+            .unwrap();
+
+        assert_eq!(real_entry.inode, symlink_entry.inode);
+        assert_eq!(real_entry.id, real_entry_id);
+        assert_eq!(
+            tree.entry_for_id(real_entry_id).unwrap().path.as_ref(),
+            rel_path("real-dir/existing.rs")
+        );
+        assert_eq!(symlink_entry.id, symlink_entry_id);
+        assert_eq!(
+            tree.entry_for_id(symlink_entry_id).unwrap().path.as_ref(),
+            rel_path("links/internal/existing.rs")
+        );
+    });
+}
+
 #[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_renaming_case_only(cx: &mut TestAppContext) {
@@ -2974,9 +3066,17 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
         let buffered_event_count = fs.as_fake().buffered_event_count();
         if buffered_event_count > 0 && rng.random_bool(0.3) {
-            let len = rng.random_range(0..=buffered_event_count);
-            log::info!("flushing {} events", len);
-            fs.as_fake().flush_events(len);
+            if rng.random_bool(0.2) {
+                log::info!(
+                    "simulating watcher overflow, losing {} events",
+                    buffered_event_count
+                );
+                fs.as_fake().simulate_watcher_overflow(root_dir);
+            } else {
+                let len = rng.random_range(0..=buffered_event_count);
+                log::info!("flushing {} events", len);
+                fs.as_fake().flush_events(len);
+            }
         } else {
             randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng).await;
             mutations_len -= 1;
@@ -3063,6 +3163,120 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     }
 }
 
+#[gpui::test(iterations = 100)]
+async fn test_random_git_updates_with_watcher_overflows(cx: &mut TestAppContext, mut rng: StdRng) {
+    // Property: every git state change is eventually signaled via
+    // `UpdatedGitRepositories`, no matter how the events reporting it are
+    // batched, delayed, or lost to watcher overflows.
+    init_test(cx);
+    let operations = env::var("OPERATIONS")
+        .map(|o| o.parse().unwrap())
+        .unwrap_or(40);
+
+    let root_dir = Path::new(path!("/test"));
+    let dot_git = root_dir.join(".git");
+    // Random fs mutations are confined to this subdirectory so that they
+    // cannot rename or delete `.git` itself.
+    let src_dir = root_dir.join("src");
+    let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
+    fs.as_fake()
+        .insert_tree(
+            root_dir,
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+
+    let worktree = Worktree::local(
+        root_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    // Set when the fake repository's state is mutated, cleared when the
+    // worktree signals a git update. A signal observed after a mutation
+    // prompts downstream consumers (the GitStore) to re-read the repository,
+    // at which point they see that mutation's state, so clearing on any
+    // subsequent signal is sound.
+    let pending_git_update: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    worktree.update(cx, {
+        let pending_git_update = pending_git_update.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedGitRepositories(_)) {
+                    pending_git_update.set(false);
+                }
+            })
+            .detach();
+        }
+    });
+
+    fs.as_fake().pause_events();
+    let mut commit_count = 0;
+    for _ in 0..operations {
+        match rng.random_range(0_u32..100) {
+            // Change the repository's git state, e.g. a commit moving HEAD.
+            0..25 => {
+                commit_count += 1;
+                log::info!("setting HEAD to commit {commit_count}");
+                fs.as_fake().set_head_for_repo(
+                    &dot_git,
+                    &[("src/main.rs", format!("fn main() {{}} // {commit_count}"))],
+                    format!("sha-{commit_count}"),
+                );
+                pending_git_update.set(true);
+            }
+            // The watch queue overflows: all undelivered events are lost and
+            // only a rescan for the root is reported.
+            25..40 => {
+                log::info!(
+                    "simulating watcher overflow, losing {} events",
+                    fs.as_fake().buffered_event_count()
+                );
+                fs.as_fake().simulate_watcher_overflow(root_dir);
+            }
+            // Deliver a prefix of the queued events.
+            40..65 => {
+                let buffered_event_count = fs.as_fake().buffered_event_count();
+                let len = rng.random_range(0..=buffered_event_count);
+                log::info!("flushing {len} of {buffered_event_count} events");
+                fs.as_fake().flush_events(len);
+            }
+            // Unrelated churn in the working tree.
+            _ => {
+                randomly_mutate_fs(&fs, &src_dir, 1.0, &mut rng).await;
+            }
+        }
+        cx.executor().run_until_parked();
+    }
+
+    log::info!("quiescing");
+    fs.as_fake().unpause_events_and_flush();
+    cx.executor().run_until_parked();
+
+    worktree.read_with(cx, |tree, _| {
+        tree.as_local().unwrap().snapshot().check_invariants(true)
+    });
+    assert!(
+        !pending_git_update.get(),
+        "a git state change was never signaled via UpdatedGitRepositories"
+    );
+}
+
 // The worktree's `UpdatedEntries` event can be used to follow along with
 // all changes to the worktree's snapshot.
 fn check_worktree_change_events(tree: &mut Worktree, cx: &mut Context<Worktree>) {
@@ -3114,9 +3328,7 @@ fn randomly_mutate_worktree(
     match rng.random_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != RelPath::empty() => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.to_usize());
-            let task = worktree
-                .delete_entry(entry.id, false, cx)
-                .unwrap_or_else(|| Task::ready(Ok(None)));
+            let task = worktree.delete_entry(entry.clone(), cx);
 
             cx.background_spawn(async move {
                 task.await?;
@@ -3132,7 +3344,7 @@ fn randomly_mutate_worktree(
                     if is_dir { "dir" } else { "file" },
                     child_path,
                 );
-                let task = worktree.create_entry(child_path, is_dir, None, cx);
+                let task = worktree.create_entry(child_path.into(), is_dir, None, cx);
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -3409,34 +3621,37 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     init_test(cx);
 
     let home = paths::home_dir();
+    let project_path = home.join("example.com").join("project");
     let fs = FakeFs::new(executor);
     fs.insert_tree(
         home,
         json!({
             ".config": {
                 "git": {
-                    "ignore": "foo\n/bar\nbaz\n"
+                    "ignore": "foo\n/bar\nbaz\n*.com\n"
                 }
             },
-            "project": {
-                ".git": {},
-                ".gitignore": "!baz",
-                "foo": "",
-                "bar": "",
-                "sub": {
-                    "bar": "",
-                },
-                "subrepo": {
+            "example.com": {
+                "project": {
                     ".git": {},
-                    "bar": ""
-                },
-                "baz": ""
+                    ".gitignore": "!baz",
+                    "foo": "",
+                    "bar": "",
+                    "sub": {
+                        "bar": "",
+                    },
+                    "subrepo": {
+                        ".git": {},
+                        "bar": ""
+                    },
+                    "baz": ""
+                }
             }
         }),
     )
     .await;
     let worktree = Worktree::local(
-        home.join("project"),
+        project_path.clone(),
         true,
         fs.clone(),
         Arc::default(),
@@ -3469,7 +3684,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     // Ignore statuses are updated when excludesFile changes
     fs.write(
         &home.join(".config").join("git").join("ignore"),
-        "/bar\nbaz\n".as_bytes(),
+        "/bar\nbaz\n*.com\n".as_bytes(),
     )
     .await
     .unwrap();
@@ -3493,7 +3708,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 
     // Statuses are updated when .git added/removed
     fs.remove_dir(
-        &home.join("project").join("subrepo").join(".git"),
+        &project_path.join("subrepo").join(".git"),
         RemoveOptions {
             recursive: true,
             ..Default::default()
@@ -3725,6 +3940,161 @@ async fn test_repo_exclude_anchored_pattern(executor: BackgroundExecutor, cx: &m
                 tracked_paths: &["vendor/keep.txt", "elsewhere/vendor/cache"],
                 ..Default::default()
             },
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repo_exclude_applies_within_nested_repos(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let project_dir = Path::new(path!("/project"));
+
+    // Mirrors the layout used by tools that keep working copies of the
+    // repository inside the repository itself: a bare clone in
+    // `.scratch/clones` and a linked worktree of that clone in
+    // `.scratch/worktrees`, both hidden via the outer repository's
+    // `.git/info/exclude` rather than a `.gitignore`.
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": "/.scratch/worktrees/\n/.scratch/clones/\n"
+                }
+            },
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            ".scratch": {
+                "clones": {
+                    "abc": {
+                        "project.git": {
+                            "HEAD": "ref: refs/heads/main",
+                            "worktrees": {
+                                "project": {
+                                    "HEAD": "ref: refs/heads/feature",
+                                    "commondir": "../..",
+                                }
+                            }
+                        }
+                    }
+                },
+                "worktrees": {
+                    "abc": {
+                        "project": {
+                            ".git": "gitdir: ../../../clones/abc/project.git/worktrees/project",
+                            "src": {
+                                "main.rs": "fn main() {}",
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // After the initial scan, both excluded directories are ignored.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &[".scratch/clones", ".scratch/worktrees"],
+                tracked_paths: &["src/main.rs"],
+                ..Default::default()
+            },
+        );
+    });
+
+    // Load a file within the excluded nested repository, as happens when a
+    // search that includes ignored files runs or when the file is opened.
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().refresh_entries_for_paths(vec![
+                rel_path(".scratch/worktrees/abc/project/src/main.rs").into(),
+            ])
+        })
+        .recv()
+        .await;
+    cx.run_until_parked();
+
+    // The nested repository's own `.git` must not cause the outer
+    // repository's `info/exclude` rules to be dropped.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &[
+                    ".scratch/worktrees/abc",
+                    ".scratch/worktrees/abc/project",
+                    ".scratch/worktrees/abc/project/src",
+                    ".scratch/worktrees/abc/project/src/main.rs",
+                ],
+                tracked_paths: &["src/main.rs"],
+                ..Default::default()
+            },
+        );
+    });
+
+    // A file written inside the loaded nested repository (e.g. by a tool
+    // working in the clone) must also be ignored.
+    fs.save(
+        path!("/project/.scratch/worktrees/abc/project/src/generated.rs").as_ref(),
+        &"fn generated() {}".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &[".scratch/worktrees/abc/project/src/generated.rs"],
+                ..Default::default()
+            },
+        );
+    });
+
+    // Nothing under the excluded directories is visible to a traversal that
+    // skips ignored entries, which is what project search uses.
+    worktree.update(cx, |worktree, _cx| {
+        let unignored_entries = worktree
+            .entries(false, 0)
+            .filter(|entry| {
+                entry.path.starts_with(rel_path(".scratch"))
+                    && entry.path.as_ref() != rel_path(".scratch")
+            })
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unignored_entries,
+            Vec::<Arc<RelPath>>::new(),
+            "entries under the excluded .scratch directories leaked into the unignored traversal",
         );
     });
 }
@@ -4108,6 +4478,86 @@ async fn test_linked_worktree_gitfile_event_preserves_repo(
 }
 
 #[gpui::test]
+async fn test_shared_common_dir_event_updates_all_repositories(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // A main checkout and one of its linked worktrees can both live inside the
+    // same project worktree, sharing a common git directory. An event in that
+    // common directory (e.g. a ref update) must refresh every repository that
+    // reads from it, not just the first match.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main_repo": {
+                ".git": {},
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/project/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/project/linked")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/project").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let mut events = cx.events(&tree);
+    fs.emit_fs_event(
+        path!("/project/main_repo/.git/refs/heads/main"),
+        Some(PathEventKind::Changed),
+    );
+    executor.run_until_parked();
+
+    let mut updated_work_dirs = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let Event::UpdatedGitRepositories(updates) = event {
+            updated_work_dirs.extend(
+                updates
+                    .iter()
+                    .filter_map(|update| update.new_work_directory_abs_path.clone()),
+            );
+        }
+    }
+    updated_work_dirs.sort();
+    assert_eq!(
+        updated_work_dirs,
+        [
+            Arc::from(Path::new(path!("/project/linked"))),
+            Arc::from(Path::new(path!("/project/main_repo"))),
+        ],
+        "a ref update in the shared common dir should refresh both repositories"
+    );
+}
+
+#[gpui::test]
 async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -4240,6 +4690,137 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
 }
 
 #[gpui::test]
+async fn test_watcher_overflow_rescan_reloads_git_state(cx: &mut TestAppContext) {
+    // When the OS watch queue overflows, pending events are dropped and the
+    // watcher reports only a `Rescan` event for the worktree root. The dropped
+    // events may have included changes inside `.git`, so the rescan must
+    // trigger a git state reload even though no `.git` event is ever seen.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let repo_update_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    tree.update(cx, {
+        let repo_update_count = repo_update_count.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedGitRepositories(_)) {
+                    repo_update_count.set(repo_update_count.get() + 1);
+                }
+            })
+            .detach();
+        }
+    });
+
+    // A git state change occurs while events are queued but undelivered, and
+    // is then lost to a watcher overflow: the only event the worktree ever
+    // receives is the root rescan.
+    fs.pause_events();
+    fs.set_head_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("file.txt", "content".into())],
+        "sha-after-overflow",
+    );
+    fs.simulate_watcher_overflow(path!("/root"));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    assert!(
+        repo_update_count.get() > 0,
+        "a watcher overflow rescan should reload git state, since the dropped \
+         events may have included .git changes"
+    );
+}
+
+#[gpui::test]
+async fn test_git_update_in_same_batch_as_rescan_is_not_lost(cx: &mut TestAppContext) {
+    // When a `.git` event and a watcher rescan arrive in the same batch,
+    // `update_git_repositories` stamps the repository's `git_dir_scan_id`, but
+    // the rescan then re-inserts the repository entry. If the re-insertion
+    // resets `git_dir_scan_id`, the stamp is lost before the snapshot diff can
+    // observe it. The git update must still be signaled via
+    // `UpdatedGitRepositories`.
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let repo_update_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    tree.update(cx, {
+        let repo_update_count = repo_update_count.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedGitRepositories(_)) {
+                    repo_update_count.set(repo_update_count.get() + 1);
+                }
+            })
+            .detach();
+        }
+    });
+
+    // Deliver the git change and the rescan in a single batch, as happens when
+    // a rescan arrives while other events are still queued.
+    fs.pause_events();
+    fs.set_head_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("file.txt", "content".into())],
+        "sha-with-rescan",
+    );
+    fs.emit_fs_event(path!("/root"), Some(PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    assert!(
+        repo_update_count.get() > 0,
+        "a git update processed in the same batch as a rescan should still be \
+         signaled via UpdatedGitRepositories"
+    );
+}
+
+#[gpui::test]
 async fn test_linked_worktree_event_in_unregistered_common_git_dir_does_not_panic(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -4357,12 +4938,11 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
     let dot_git = project_dir.join(DOT_GIT);
 
-    // Case 1: Events for .git AND .git/index.lock should NOT emit UpdatedGitRepositories
+    // Case 1: Event for .git/index.lock only should NOT emit UpdatedGitRepositories
     // (index.lock is in the skipped files list)
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
-        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
         fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
         fs.unpause_events_and_flush();
         executor.run_until_parked();
@@ -4374,7 +4954,7 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
         );
     }
 
-    // Case 2: Event for just .git (bare directory event) should NOT emit UpdatedGitRepositories
+    // Case 2: Event for just .git (bare directory event) should emit UpdatedGitRepositories
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
@@ -4384,8 +4964,8 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
         let got_git_update = drain_git_repo_updates(&mut events);
         assert!(
-            !got_git_update,
-            "should NOT emit UpdatedGitRepositories for a bare .git directory event"
+            got_git_update,
+            "should emit UpdatedGitRepositories for a bare .git directory event"
         );
     }
 
@@ -4446,6 +5026,207 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
             got_git_update,
             "should emit UpdatedGitRepositories for a .git rescan event"
         );
+    }
+}
+
+#[gpui::test]
+async fn test_dot_git_event_explained_by_filtered_sibling_does_not_emit_git_repo_update(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // On Windows, creating or deleting a file directly inside .git (such as
+    // git's transient index.lock) updates the directory's last-write time, so
+    // ReadDirectoryChangesW reports a Changed event for the .git directory
+    // itself alongside the event for the file. Bare .git events schedule a git
+    // rescan (to cope with coalesced events on macOS), but when the same batch
+    // contains a filtered-out event that explains the directory change, acting
+    // on the bare event turns every ignored lock file into a rescan. Since
+    // Zed's own rescans take .git/index.lock via `git diff`, that feeds back
+    // into an infinite loop of git scans.
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let dot_git = project_dir.join(DOT_GIT);
+
+    // The exact batch Windows delivers when git creates .git/index.lock.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "a bare .git event accompanied only by a filtered index.lock event \
+             should NOT emit UpdatedGitRepositories"
+        );
+    }
+
+    // Same batch with the events in the opposite order.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Removed));
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "event order within the batch should not matter for suppressing \
+             the bare .git event"
+        );
+    }
+
+    // A meaningful change in the same batch must still trigger a rescan.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
+        fs.emit_fs_event(dot_git.join("HEAD"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "a meaningful .git change in the same batch as a filtered event \
+             should still emit UpdatedGitRepositories"
+        );
+    }
+
+    // A standalone bare .git event (macOS event coalescing) must still
+    // trigger a rescan.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git, Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "a standalone bare .git event should still emit UpdatedGitRepositories"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_ref_updates_in_dot_git_subdirectories_are_detected(cx: &mut TestAppContext) {
+    // On Linux and FreeBSD the native file watcher is non-recursive: watching `.git`
+    // does not deliver events for files nested below it, like the loose refs that git
+    // updates on commit, fetch, and branch operations. The worktree must watch the
+    // `refs` tree explicitly, including directories created after the initial scan.
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        ".git": {},
+        "a.txt": "a-contents",
+    }));
+    std::fs::write(
+        dir.path().join(".git/refs/heads/main"),
+        "0000000000000000000000000000000000000000\n",
+    )
+    .unwrap();
+
+    let tree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    let mut events = cx.events(&tree);
+    std::fs::write(
+        dir.path().join(".git/refs/heads/main"),
+        "1111111111111111111111111111111111111111\n",
+    )
+    .unwrap();
+    expect_git_repo_update(&mut events, cx, "updating a loose ref").await;
+
+    std::fs::create_dir_all(dir.path().join(".git/refs/remotes/origin")).unwrap();
+    expect_git_repo_update(&mut events, cx, "creating a directory under refs").await;
+    tree.flush_fs_events(cx).await;
+    drain_git_repo_updates(&mut events);
+
+    std::fs::write(
+        dir.path().join(".git/refs/remotes/origin/main"),
+        "2222222222222222222222222222222222222222\n",
+    )
+    .unwrap();
+    expect_git_repo_update(
+        &mut events,
+        cx,
+        "updating a ref in a directory created after the initial scan",
+    )
+    .await;
+}
+
+async fn expect_git_repo_update(
+    events: &mut futures::channel::mpsc::UnboundedReceiver<Event>,
+    cx: &mut TestAppContext,
+    description: &str,
+) {
+    let mut elapsed = std::time::Duration::ZERO;
+    let timeout = std::time::Duration::from_secs(10);
+    let poll_interval = std::time::Duration::from_millis(50);
+    loop {
+        match events.try_recv() {
+            Ok(Event::UpdatedGitRepositories(_)) => return,
+            Ok(_) => continue,
+            Err(_) => {}
+        }
+        assert!(
+            elapsed < timeout,
+            "timed out waiting for UpdatedGitRepositories after {description}"
+        );
+        cx.background_executor.timer(poll_interval).await;
+        elapsed += poll_interval;
     }
 }
 
@@ -4932,9 +5713,10 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         )
     });
@@ -4989,6 +5771,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5027,9 +5810,10 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
-            PathStyle::Posix,
+            PathStyle::Unix,
             cx,
         )
     });
@@ -5081,6 +5865,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: Some("/home/user/project/.git".to_string()),
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5098,6 +5883,94 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
             .count(),
         1,
         "should fire exactly once, not duplicate"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+
+    // Metadata eagerly seeds the root repo info, as `AddWorktreeResponse` /
+    // `WorktreeMetadata` do before the host's scan completes.
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "feature-a".to_string(),
+                visible: true,
+                abs_path: "/home/user/monty/feature-a".to_string(),
+                root_repo_common_dir: Some("/home/user/monty/.bare".to_string()),
+                root_repo_is_linked_worktree: true,
+            },
+            client,
+            PathStyle::Unix,
+            cx,
+        )
+    });
+
+    let root_repo_metadata = |cx: &mut TestAppContext| {
+        worktree.read_with(cx, |worktree, _| {
+            let snapshot = worktree.snapshot();
+            (
+                snapshot.root_repo_common_dir().cloned(),
+                snapshot.root_repo_is_linked_worktree(),
+            )
+        })
+    };
+
+    let update = |scan_id: u64, is_last_update: bool| proto::UpdateWorktree {
+        project_id: 1,
+        worktree_id: 1,
+        abs_path: "/home/user/monty/feature-a".to_string(),
+        root_name: "feature-a".to_string(),
+        updated_entries: vec![],
+        removed_entries: vec![],
+        scan_id,
+        is_last_update,
+        updated_repositories: vec![],
+        removed_repositories: vec![],
+        root_repo_common_dir: None,
+        root_repo_is_linked_worktree: false,
+    };
+
+    // A mid-scan update without repo info must not clobber the seeded
+    // metadata: the sender's scanner may not have registered the repo yet.
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(update(2, false));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        root_repo_metadata(cx),
+        (Some(Arc::from(Path::new("/home/user/monty/.bare"))), true,),
+        "mid-scan update without repo info should not clear seeded metadata"
+    );
+
+    // A completed scan without repo info is authoritative: the repo is gone.
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(update(3, true));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        root_repo_metadata(cx),
+        (None, false),
+        "completed scan without repo info should clear root repo metadata"
     );
 }
 
@@ -5152,6 +6025,7 @@ async fn test_remote_worktree_update_entries_carry_changed_paths(cx: &mut TestAp
                 visible: true,
                 abs_path: path!("/root").to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             AnyProtoClient::new(NoopProtoClient::new()),
             PathStyle::local(),

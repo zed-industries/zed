@@ -32,7 +32,7 @@ pub use theme::*;
 pub use title_bar::*;
 pub use workspace::*;
 
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, IndexMap, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -109,6 +109,33 @@ pub enum HideMouseMode {
     /// Hide on typing and on key bindings that resolve to an action
     #[default]
     OnTypingAndAction,
+}
+
+/// Determines whether to reduce non-essential motion in the UI, such as
+/// loading spinners and pulsating labels, by rendering them in a static state.
+///
+/// Default: off
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduceMotionMode {
+    /// Always reduce motion
+    On,
+    /// Never reduce motion
+    #[default]
+    Off,
 }
 
 #[with_fallible_options]
@@ -212,13 +239,16 @@ pub struct SettingsContent {
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
-    /// Configuration for the Message Editor
-    pub message_editor: Option<MessageEditorSettings>,
-
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
     pub proxy: Option<String>,
+
+    /// Whether to reduce non-essential motion in the UI, such as loading
+    /// spinners and pulsating labels, by rendering them in a static state.
+    ///
+    /// Default: off
+    pub reduce_motion: Option<ReduceMotionMode>,
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
@@ -430,7 +460,7 @@ pub struct ExtensionsSettingsContent {
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
-/// Default: VSCode
+/// Default: Zed
 #[derive(
     Copy,
     Clone,
@@ -446,6 +476,7 @@ pub struct ExtensionsSettingsContent {
 )]
 pub enum BaseKeymapContent {
     #[default]
+    Zed,
     VSCode,
     JetBrains,
     SublimeText,
@@ -458,6 +489,7 @@ pub enum BaseKeymapContent {
 
 impl strum::VariantNames for BaseKeymapContent {
     const VARIANTS: &'static [&'static str] = &[
+        "Zed",
         "VSCode",
         "JetBrains",
         "Sublime Text",
@@ -791,6 +823,7 @@ pub enum GitPanelGroupBy {
     None,
     #[default]
     Status,
+    Staging,
 }
 
 #[derive(
@@ -838,16 +871,6 @@ pub struct PanelSettingsContent {
     /// Default: 240
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct MessageEditorSettings {
-    /// Whether to automatically replace emoji shortcodes with emoji characters.
-    /// For example: typing `:wave:` gets replaced with `👋`.
-    ///
-    /// Default: false
-    pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -1385,6 +1408,27 @@ impl<T> From<Vec<T>> for ExtendingVec<T> {
 impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     fn merge_from(&mut self, other: &Self) {
         self.0.extend_from_slice(other.0.as_slice());
+    }
+}
+
+// An ExtendingSet in the settings can only accumulate new values, and ignores
+// values that are already present, so merging the same source more than once
+// (e.g. re-importing VS Code settings) is idempotent.
+//
+// Insertion order is preserved, so it round-trips through the user's settings
+// file without reordering their entries.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ExtendingSet<T: std::hash::Hash + Eq>(pub IndexSet<T>);
+
+impl<T: std::hash::Hash + Eq> From<Vec<T>> for ExtendingSet<T> {
+    fn from(vec: Vec<T>) -> Self {
+        ExtendingSet(vec.into_iter().collect())
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> merge_from::MergeFrom for ExtendingSet<T> {
+    fn merge_from(&mut self, other: &Self) {
+        self.0.extend(other.0.iter().cloned());
     }
 }
 

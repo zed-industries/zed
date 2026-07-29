@@ -2,10 +2,6 @@ use anyhow::anyhow;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
 
-use ui::{
-    Color, Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render,
-    Styled, StyledExt, div, h_flex, rems, v_flex,
-};
 use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
@@ -23,7 +19,7 @@ use menu::{Cancel, Confirm};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
-use ui::prelude::*;
+use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
 use workspace::{
     ModalView, OpenMode, Workspace,
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -38,12 +34,15 @@ use crate::{
 };
 
 mod askpass_modal;
+pub mod branch_diff;
 pub mod branch_picker;
+mod commit_context_menu;
 mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
 pub mod created_worktrees;
+mod diff_multibuffer;
 pub mod file_diff_view;
 pub mod git_graph;
 pub mod git_panel;
@@ -56,12 +55,15 @@ pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
 pub mod solo_diff_view;
+pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
+pub mod unstaged_diff;
 pub mod worktree_names;
 pub mod worktree_picker;
 pub mod worktree_service;
 
+pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
 
 pub fn get_provider_icon(name: &str) -> IconName {
@@ -90,6 +92,9 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
+        staged_diff::StagedDiff::register(workspace, cx);
+        unstaged_diff::UnstagedDiff::register(workspace, cx);
+        branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);
@@ -765,6 +770,7 @@ fn render_remote_button(
     keybinding_target: Option<FocusHandle>,
     show_fetch_button: bool,
     in_progress_operation: Option<RemoteOperationKind>,
+    menu_handle: PopoverMenuHandle<ContextMenu>,
 ) -> Option<impl IntoElement> {
     let id = id.into();
     let upstream = branch.upstream.as_ref();
@@ -777,6 +783,7 @@ fn render_remote_button(
                 keybinding_target,
                 id,
                 in_progress_operation,
+                menu_handle,
             )),
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
@@ -784,6 +791,7 @@ fn render_remote_button(
                 id,
                 ahead,
                 in_progress_operation,
+                menu_handle,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
                 keybinding_target,
@@ -791,6 +799,7 @@ fn render_remote_button(
                 ahead,
                 behind,
                 in_progress_operation,
+                menu_handle,
             )),
         },
         Some(Upstream {
@@ -800,11 +809,13 @@ fn render_remote_button(
             keybinding_target,
             id,
             in_progress_operation,
+            menu_handle,
         )),
         None => Some(remote_button::render_publish_button(
             keybinding_target,
             id,
             in_progress_operation,
+            menu_handle,
         )),
     }
 }
@@ -812,12 +823,16 @@ fn render_remote_button(
 mod remote_button {
     use crate::git_panel::RemoteOperationKind;
     use gpui::{Action, Anchor, AnyView, ClickEvent, FocusHandle};
-    use ui::{CommonAnimationExt, ContextMenu, PopoverMenu, SplitButton, Tooltip, prelude::*};
+    use ui::{
+        ButtonLike, CommonAnimationExt, ContextMenu, ElevationIndex, PopoverMenu,
+        PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
+    };
 
     pub fn render_fetch_button(
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -827,6 +842,7 @@ mod remote_button {
             Some(IconName::ArrowCircle),
             keybinding_target.clone(),
             in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Fetch), cx);
             },
@@ -847,6 +863,7 @@ mod remote_button {
         id: SharedString,
         ahead: u32,
         in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -856,6 +873,7 @@ mod remote_button {
             None,
             keybinding_target.clone(),
             in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -877,6 +895,7 @@ mod remote_button {
         ahead: u32,
         behind: u32,
         in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -886,6 +905,7 @@ mod remote_button {
             None,
             keybinding_target.clone(),
             in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Pull), cx);
             },
@@ -905,6 +925,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -914,6 +935,7 @@ mod remote_button {
             Some(IconName::ExpandUp),
             keybinding_target.clone(),
             in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -933,6 +955,7 @@ mod remote_button {
         keybinding_target: Option<FocusHandle>,
         id: SharedString,
         in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> SplitButton {
         split_button(
             id,
@@ -942,6 +965,7 @@ mod remote_button {
             Some(IconName::ExpandUp),
             keybinding_target.clone(),
             in_progress_operation,
+            menu_handle,
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
             },
@@ -985,18 +1009,16 @@ mod remote_button {
     fn render_git_action_menu(
         id: impl Into<ElementId>,
         keybinding_target: Option<FocusHandle>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
     ) -> impl IntoElement {
+        let menu_open = menu_handle.is_deployed();
+
         PopoverMenu::new(id.into())
-            .trigger(
-                ui::ButtonLike::new_rounded_right("split-button-right")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
-                    .child(
-                        div()
-                            .px_1()
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    ),
-            )
+            .trigger(crate::render_split_button_chevron_trigger(
+                "split-button-right",
+                menu_open,
+            ))
+            .with_handle(menu_handle)
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
@@ -1014,6 +1036,10 @@ mod remote_button {
                 }))
             })
             .anchor(Anchor::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1025,6 +1051,7 @@ mod remote_button {
         left_icon: Option<IconName>,
         keybinding_target: Option<FocusHandle>,
         in_progress_operation: Option<RemoteOperationKind>,
+        menu_handle: PopoverMenuHandle<ContextMenu>,
         left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> SplitButton {
@@ -1032,7 +1059,6 @@ mod remote_button {
             h_flex()
                 .ml_neg_px()
                 .h(rems(0.875))
-                .items_center()
                 .overflow_hidden()
                 .px_0p5()
                 .child(
@@ -1045,63 +1071,81 @@ mod remote_button {
         let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
         let is_in_progress = in_progress_operation.is_some();
 
-        let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
-            format!("split-button-left-{}", id).into(),
-        ))
-        .layer(ui::ElevationIndex::ModalSurface)
-        .size(ui::ButtonSize::Compact)
-        .disabled(is_in_progress)
-        .when(should_render_counts, |this| {
-            this.child(
-                h_flex()
-                    .ml_neg_0p5()
-                    .when(behind_count > 0, |this| {
-                        this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
-                            .child(count(behind_count))
-                    })
-                    .when(ahead_count > 0, |this| {
-                        this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
-                            .child(count(ahead_count))
-                    }),
-            )
-        })
-        .when_some(left_icon, |this, left_icon| {
-            this.map(|this| {
-                if is_in_progress {
-                    this.child(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Disabled)
-                            .with_rotate_animation(2),
-                    )
-                } else {
-                    this.child(Icon::new(left_icon).size(IconSize::XSmall))
-                }
+        let left = ButtonLike::new_rounded_left(format!("split-button-left-{}", id))
+            .layer(ElevationIndex::ModalSurface)
+            .size(ButtonSize::Compact)
+            .disabled(is_in_progress)
+            .when(should_render_counts, |this| {
+                this.child(
+                    h_flex()
+                        .ml_neg_0p5()
+                        .when(behind_count > 0, |this| {
+                            this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
+                                .child(count(behind_count))
+                        })
+                        .when(ahead_count > 0, |this| {
+                            this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
+                                .child(count(ahead_count))
+                        }),
+                )
             })
-        })
-        .child(
-            Label::new(left_label)
-                .size(LabelSize::Small)
-                .when(is_in_progress, |this| this.color(Color::Disabled))
-                .mr_0p5(),
-        )
-        .on_click(left_on_click)
-        .tooltip(move |window, cx| {
-            if let Some(operation) = in_progress_operation {
-                Tooltip::simple(in_progress_tooltip(operation), cx)
-            } else {
-                tooltip(window, cx)
-            }
-        });
+            .when_some(left_icon, |this, left_icon| {
+                this.map(|this| {
+                    if is_in_progress {
+                        this.child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled)
+                                .with_rotate_animation(2),
+                        )
+                    } else {
+                        this.child(Icon::new(left_icon).size(IconSize::XSmall))
+                    }
+                })
+            })
+            .child(
+                Label::new(left_label)
+                    .size(LabelSize::Small)
+                    .when(is_in_progress, |this| this.color(Color::Disabled))
+                    .mr_0p5(),
+            )
+            .on_click(left_on_click)
+            .tooltip(move |window, cx| {
+                if let Some(operation) = in_progress_operation {
+                    Tooltip::simple(in_progress_tooltip(operation), cx)
+                } else {
+                    tooltip(window, cx)
+                }
+            });
 
         let right = render_git_action_menu(
-            ElementId::Name(format!("split-button-right-{}", id).into()),
+            format!("split-button-right-{}", id),
             keybinding_target,
+            menu_handle,
         )
         .into_any_element();
 
         SplitButton::new(left, right)
     }
+}
+
+pub(crate) fn render_split_button_chevron_trigger(
+    id: impl Into<ElementId>,
+    menu_open: bool,
+) -> ButtonLike {
+    let chevron_button_size = rems_from_px(20.);
+    let chevron_icon = if menu_open {
+        IconName::ChevronUp
+    } else {
+        IconName::ChevronDown
+    };
+
+    ButtonLike::new_rounded_right(id)
+        .layer(ElevationIndex::ModalSurface)
+        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        .width(chevron_button_size)
+        .height(chevron_button_size.into())
+        .child(Icon::new(chevron_icon).size(IconSize::XSmall))
 }
 
 /// A visual representation of a file's Git status.

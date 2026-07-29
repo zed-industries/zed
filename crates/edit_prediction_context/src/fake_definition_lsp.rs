@@ -243,6 +243,12 @@ impl DefinitionIndex {
                 .or_insert_with(Vec::new)
                 .push(location);
         }
+        for (name, location) in extract_extra_definition_locations(content) {
+            self.definitions
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(location);
+        }
 
         let type_annotations = extract_type_annotations(content)
             .into_iter()
@@ -301,6 +307,34 @@ impl DefinitionIndex {
 
         None
     }
+}
+
+fn extract_extra_definition_locations(content: &str) -> Vec<(String, lsp::Location)> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line
+                .trim()
+                .strip_prefix("// fake-definition-lsp-extra ")?
+                .split_whitespace();
+            let name = parts.next()?.to_string();
+            let path = PathBuf::from(parts.next()?);
+            let start_row = parts.next()?.parse().ok()?;
+            let start_column = parts.next()?.parse().ok()?;
+            let end_row = parts.next()?.parse().ok()?;
+            let end_column = parts.next()?.parse().ok()?;
+            Some((
+                name,
+                lsp::Location::new(
+                    Uri::from_file_path(path).ok()?,
+                    lsp::Range::new(
+                        lsp::Position::new(start_row, start_column),
+                        lsp::Position::new(end_row, end_column),
+                    ),
+                ),
+            ))
+        })
+        .collect()
 }
 
 /// Extracts `identifier_name -> type_name` mappings from field declarations

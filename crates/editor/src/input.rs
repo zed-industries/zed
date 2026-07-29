@@ -1666,10 +1666,8 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
 
             let selections = this.selections.all::<Point>(&this.display_snapshot(cx));
-            let selections_on_single_row = selections.windows(2).all(|selections| {
-                selections[0].start.row == selections[1].start.row
-                    && selections[0].end.row == selections[1].end.row
-                    && selections[0].start.row == selections[0].end.row
+            let selections_on_single_row = selections.array_windows::<2>().all(|[a, b]| {
+                a.start.row == b.start.row && a.end.row == b.end.row && a.start.row == a.end.row
             });
             let selections_selecting = selections
                 .iter()
