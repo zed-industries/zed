@@ -19,6 +19,7 @@ http.workspace = true
 gpui.workspace = true
 fs.workspace = true
 futures.workspace = true
+i18n.workspace = true
 log.workspace = true
 menu.workspace = true
 paths.workspace = true
