@@ -298,8 +298,8 @@ impl ScrollManager {
         &mut self,
         delta: &mut gpui::Point<Pixels>,
         touch_phase: TouchPhase,
-    ) -> Option<Axis> {
-        self.ongoing.filter(delta, touch_phase)
+    ) {
+        self.ongoing.filter(delta, touch_phase);
     }
 
     pub fn scroll_position(

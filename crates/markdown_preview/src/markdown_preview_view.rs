@@ -1598,10 +1598,7 @@ impl Render for MarkdownPreviewView {
                         .size_full()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll_handle)
-                        .map(|mut scroll_container| {
-                            scroll_container.style().restrict_scroll_to_axis = Some(true);
-                            scroll_container
-                        })
+                        .restrict_scroll_to_axis()
                         .p_4()
                         .child({
                             let markdown_element =
