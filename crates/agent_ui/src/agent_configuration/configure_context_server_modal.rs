@@ -35,6 +35,7 @@ enum ConfigurationTarget {
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
+        remote: bool,
     },
     ExistingHttp {
         id: ContextServerId,
@@ -47,6 +48,7 @@ enum ConfigurationTarget {
         id: ContextServerId,
         repository_url: Option<SharedString>,
         installation: Option<extension::ContextServerConfiguration>,
+        remote: bool,
     },
 }
 
@@ -59,6 +61,7 @@ enum ConfigurationSource {
     Existing {
         editor: Entity<Editor>,
         server_type: ExistingServerType,
+        remote: bool,
     },
     Extension {
         id: ContextServerId,
@@ -66,6 +69,7 @@ enum ConfigurationSource {
         repository_url: Option<SharedString>,
         installation_instructions: Option<Entity<markdown::Markdown>>,
         settings_validator: Option<jsonschema::Validator>,
+        remote: bool,
     },
 }
 
@@ -100,7 +104,11 @@ impl ConfigurationSource {
         }
 
         match target {
-            ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
+            ConfigurationTarget::Existing {
+                id,
+                command,
+                remote,
+            } => ConfigurationSource::Existing {
                 editor: create_editor(
                     context_server_input(Some((id, command))),
                     jsonc_language,
@@ -108,6 +116,7 @@ impl ConfigurationSource {
                     cx,
                 ),
                 server_type: ExistingServerType::Local,
+                remote,
             },
             ConfigurationTarget::ExistingHttp {
                 id,
@@ -122,12 +131,14 @@ impl ConfigurationSource {
                     cx,
                 ),
                 server_type: ExistingServerType::Remote,
+                remote: false,
             },
 
             ConfigurationTarget::Extension {
                 id,
                 repository_url,
                 installation,
+                remote,
             } => {
                 let settings_validator = installation.as_ref().and_then(|installation| {
                     jsonschema::validator_for(&installation.settings_schema)
@@ -152,6 +163,7 @@ impl ConfigurationSource {
                     editor: installation.map(|installation| {
                         create_editor(installation.default_settings, jsonc_language, window, cx)
                     }),
+                    remote,
                 }
             }
         }
@@ -162,6 +174,7 @@ impl ConfigurationSource {
             ConfigurationSource::Existing {
                 editor,
                 server_type,
+                remote,
             } => match *server_type {
                 ExistingServerType::Remote => {
                     parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth, oauth)| {
@@ -183,7 +196,7 @@ impl ConfigurationSource {
                             id,
                             ContextServerSettings::Stdio {
                                 enabled: true,
-                                remote: false,
+                                remote: *remote,
                                 command,
                             },
                         )
@@ -194,6 +207,7 @@ impl ConfigurationSource {
                 id,
                 editor,
                 settings_validator,
+                remote,
                 ..
             } => {
                 let text = editor
@@ -211,7 +225,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
-                        remote: false,
+                        remote: *remote,
                         settings,
                     },
                 ))
@@ -370,6 +384,7 @@ fn parse_http_input(
 fn resolve_context_server_extension(
     id: ContextServerId,
     worktree_store: Entity<WorktreeStore>,
+    remote: bool,
     cx: &mut App,
 ) -> Task<Option<ConfigurationTarget>> {
     let registry = ContextServerDescriptorRegistry::default_global(cx).read(cx);
@@ -397,6 +412,7 @@ fn resolve_context_server_extension(
             repository_url: extension
                 .and_then(|(_, manifest)| manifest.repository.clone().map(SharedString::from)),
             installation,
+            remote,
         })
     })
 }
@@ -488,10 +504,11 @@ impl ConfigureContextServerModal {
                 ContextServerSettings::Stdio {
                     enabled: _,
                     command,
-                    ..
+                    remote,
                 } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
+                    remote,
                 }),
                 ContextServerSettings::Http {
                     enabled: _,
@@ -506,12 +523,13 @@ impl ConfigureContextServerModal {
                     oauth,
                 }),
 
-                ContextServerSettings::Extension { .. } => {
+                ContextServerSettings::Extension { remote, .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
                             resolve_context_server_extension(
                                 server_id,
                                 workspace.project().read(cx).worktree_store(),
+                                remote,
                                 cx,
                             )
                         })

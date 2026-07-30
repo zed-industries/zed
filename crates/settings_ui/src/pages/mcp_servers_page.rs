@@ -733,6 +733,7 @@ pub(crate) struct McpServerForm {
     oauth_client_id: Entity<Editor>,
     env: Vec<KeyValueRow>,
     headers: Vec<KeyValueRow>,
+    run_on_remote_host: bool,
     error: Option<SharedString>,
 }
 
@@ -754,13 +755,17 @@ impl McpServerForm {
         let mut oauth_initial = None;
         let mut env = Vec::new();
         let mut headers = Vec::new();
+        let mut run_on_remote_host = false;
 
         // Pre-fill from the raw settings so invalid values (e.g. a malformed URL
         // the user typed directly into settings.json) still load into the form
         // for correction, rather than being dropped during resolution.
         if let Some(settings) = settings.as_ref() {
             match settings {
-                ContextServerSettings::Stdio { command, .. } => {
+                ContextServerSettings::Stdio {
+                    command, remote, ..
+                } => {
+                    run_on_remote_host = *remote;
                     command_initial = Some(command.path.to_string_lossy().to_string());
                     if !command.args.is_empty() {
                         args_initial = Some(command.args.join(" "));
@@ -811,6 +816,7 @@ impl McpServerForm {
             ),
             env,
             headers,
+            run_on_remote_host,
             error: None,
         }
     }
@@ -938,6 +944,11 @@ fn render_mcp_server_form_page(
                     "How long to wait for the server to respond before timing out.",
                     &form.timeout,
                     cx,
+                ))
+                .child(render_run_on_remote_host_switch(
+                    settings_window,
+                    form.run_on_remote_host,
+                    cx,
                 )),
             McpTransport::Http => this
                 .child(render_form_field(
@@ -1003,6 +1014,42 @@ fn input_box(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
         .track_focus(&focus_handle)
         .focus(|style| style.border_color(colors.border_focused))
         .child(editor.clone())
+}
+
+fn render_run_on_remote_host_switch(
+    settings_window: &SettingsWindow,
+    run_on_remote_host: bool,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let control = Switch::new(
+        "mcp-run-on-remote-host",
+        if run_on_remote_host {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+    )
+    .tab_index(0isize)
+    .on_click(cx.listener(|this, state, _window, cx| {
+        if let Some(form) = this.mcp_server_form.as_mut() {
+            form.run_on_remote_host = *state == ToggleState::Selected;
+        }
+        cx.notify();
+    }))
+    .into_any_element();
+
+    crate::render_settings_item_layout(
+        settings_window,
+        "Run on Remote Machine",
+        "Run this server on the remote machine in SSH, dev container, and WSL projects.",
+        control,
+        None,
+        None,
+        None,
+        false,
+        cx,
+    )
+    .into_any_element()
 }
 
 fn render_form_field(
@@ -1201,6 +1248,7 @@ struct McpServerFormValues {
     oauth_client_id: String,
     env: Vec<(String, String)>,
     headers: Vec<(String, String)>,
+    run_on_remote_host: bool,
 }
 
 fn build_settings_from_form(
@@ -1225,6 +1273,7 @@ fn build_settings_from_form(
         oauth_client_id: form.oauth_client_id.read(cx).text(cx),
         env: read_kv(&form.env, cx),
         headers: read_kv(&form.headers, cx),
+        run_on_remote_host: form.run_on_remote_host,
     };
     build_settings_from_values(&values)
 }
@@ -1266,7 +1315,7 @@ fn build_settings_from_values(
             let env = collect_kv(&values.env, "environment variable")?;
             ContextServerSettingsContent::Stdio {
                 enabled: true,
-                remote: false,
+                remote: values.run_on_remote_host,
                 command: ContextServerCommand {
                     path: command.into(),
                     args,
@@ -1376,6 +1425,7 @@ mod tests {
             oauth_client_id: String::new(),
             env: Vec::new(),
             headers: Vec::new(),
+            run_on_remote_host: false,
         }
     }
 
@@ -1502,6 +1552,29 @@ mod tests {
                     args: vec!["--flag".into(), "value".into()],
                     env: Some(expected_env),
                     timeout: Some(30),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn builds_local_server_that_runs_on_remote_host() {
+        let mut values = values(McpTransport::Stdio);
+        values.name = "remote-stdio".into();
+        values.command = "/usr/bin/server".into();
+        values.run_on_remote_host = true;
+
+        let (_, _, content) = build_settings_from_values(&values).unwrap();
+        assert_eq!(
+            content,
+            ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: true,
+                command: ContextServerCommand {
+                    path: "/usr/bin/server".into(),
+                    args: Vec::new(),
+                    env: None,
+                    timeout: None,
                 },
             }
         );

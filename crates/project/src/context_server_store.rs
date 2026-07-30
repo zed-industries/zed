@@ -917,11 +917,10 @@ impl ContextServerStore {
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut AsyncApp,
-    ) -> Result<(Arc<ContextServer>, Arc<ContextServerConfiguration>)> {
-        let remote = configuration.remote();
+    ) -> Result<Arc<ContextServer>> {
         let needs_remote_command = match configuration.as_ref() {
             ContextServerConfiguration::Custom { .. }
-            | ContextServerConfiguration::Extension { .. } => remote,
+            | ContextServerConfiguration::Extension { .. } => configuration.remote(),
             ContextServerConfiguration::Http { .. } => false,
         };
 
@@ -939,7 +938,7 @@ impl ContextServerStore {
         let root_path: Option<Arc<Path>> =
             this.update(cx, |this, cx| this.resolve_root_path(cx))?;
 
-        let configuration = if let Some((project_id, upstream_client)) = remote_state {
+        let remote_spawn_command = if let Some((project_id, upstream_client)) = remote_state {
             let root_dir = root_path.as_ref().map(|p| p.display().to_string());
 
             let response = upstream_client
@@ -965,16 +964,14 @@ impl ContextServerStore {
                 )
             })?;
 
-            let command = ContextServerCommand {
+            Some(ContextServerCommand {
                 path: remote_command.program.into(),
                 args: remote_command.args,
                 env: Some(remote_command.env.into_iter().collect()),
-                timeout: None,
-            };
-
-            Arc::new(ContextServerConfiguration::Custom { command, remote })
+                timeout: configuration.command().and_then(|command| command.timeout),
+            })
         } else {
-            configuration
+            None
         };
 
         if let Some(server) = this.update(cx, |this, _| {
@@ -982,7 +979,7 @@ impl ContextServerStore {
                 .as_ref()
                 .map(|factory| factory(id.clone(), configuration.clone()))
         })? {
-            return Ok((server, configuration));
+            return Ok(server);
         }
 
         let cached_token_provider: Option<Arc<dyn oauth::OAuthTokenProvider>> =
@@ -1042,10 +1039,13 @@ impl ContextServerStore {
                     )))
                 }
                 _ => {
-                    let mut command = configuration
-                        .command()
-                        .context("Missing command configuration for stdio context server")?
-                        .clone();
+                    let mut command = match remote_spawn_command {
+                        Some(command) => command,
+                        None => configuration
+                            .command()
+                            .context("Missing command configuration for stdio context server")?
+                            .clone(),
+                    };
                     command.timeout = Some(
                         command
                             .timeout
@@ -1064,7 +1064,7 @@ impl ContextServerStore {
             }
         })??;
 
-        Ok((server, configuration))
+        Ok(server)
     }
 
     async fn handle_get_context_server_command(
@@ -1837,8 +1837,8 @@ impl ContextServerStore {
         })??;
 
         for (id, config, working_directory) in servers_to_start {
-            match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
-                Ok((server, config)) => {
+            match Self::create_context_server(this.clone(), id.clone(), config.clone(), cx).await {
+                Ok(server) => {
                     this.update(cx, |this, cx| {
                         this.server_working_directories
                             .insert(id.clone(), working_directory);
