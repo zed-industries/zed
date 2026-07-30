@@ -808,6 +808,34 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_paste_auto_indent_blank_first_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                fn main() {
+                ˇ
+                    a();
+                }
+                "},
+            Mode::Normal,
+        );
+        // See https://github.com/zed-industries/zed/issues/55881
+        cx.simulate_keystrokes("shift-v j y p");
+        cx.assert_state(
+            indoc! {"
+                fn main() {
+
+                ˇ
+                    a();
+                    a();
+                }
+                "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_paste_count(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
