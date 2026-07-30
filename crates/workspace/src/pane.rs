@@ -2914,11 +2914,7 @@ impl Pane {
                 move |pane: &mut Self, event: &ClickEvent, window, cx| {
                     if event.click_count() > 1 {
                         pane.unpreview_item_if_preview(item_id);
-                        let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
-                        if let Some((_, action)) = extra_actions
-                            .into_iter()
-                            .find(|(label, _)| label.as_ref() == "Rename")
-                        {
+                        if let Some(action) = item_handle.tab_double_click_action(window, cx) {
                             // Dispatch action directly through the focus handle to avoid
                             // relay_action's intermediate focus step which can interfere
                             // with inline editors.

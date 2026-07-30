@@ -402,6 +402,19 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     ) -> Vec<(SharedString, Box<dyn Action>)> {
         Vec::new()
     }
+
+    /// The action a double-click on the tab dispatches, if the item has one.
+    ///
+    /// Declared separately from [`Item::tab_extra_context_menu_actions`] rather
+    /// than found among those entries by matching their labels, since the labels
+    /// are user-facing text that a localized build translates.
+    fn tab_double_click_action(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Box<dyn Action>> {
+        None
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -584,6 +597,11 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(SharedString, Box<dyn Action>)>;
+    fn tab_double_click_action(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Box<dyn Action>>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -1180,6 +1198,14 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.tab_extra_context_menu_actions(window, cx)
         })
+    }
+
+    fn tab_double_click_action(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Box<dyn Action>> {
+        self.update(cx, |this, cx| this.tab_double_click_action(window, cx))
     }
 }
 

@@ -1731,6 +1731,20 @@ impl Item for TerminalView {
         }
     }
 
+    fn tab_double_click_action(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn gpui::Action>> {
+        // A task's terminal takes its name from the task, so there is nothing to
+        // rename.
+        self.terminal
+            .read(cx)
+            .task()
+            .is_none()
+            .then(|| Box::new(RenameTerminal) as Box<dyn gpui::Action>)
+    }
+
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
         workspace::item::ItemBufferKind::Singleton
     }
