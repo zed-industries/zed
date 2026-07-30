@@ -2546,7 +2546,7 @@ Example:
 
 ### Diff Base
 
-- Description: Which base git features use when displaying changes.
+- Description: Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch). Also available in the editor controls menu as "Diff Against Default Branch".
 - Setting: `diff_base`
 - Default:
 
@@ -2575,7 +2575,7 @@ Example:
 ```json [settings]
 {
   "git": {
-    "diff_base": "merge_base"
+    "diff_base": "default_branch"
   }
 }
 ```

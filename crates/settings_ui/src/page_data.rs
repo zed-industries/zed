@@ -7900,7 +7900,7 @@ fn version_control_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Diff Base",
-                description: "Which base Git features use when displaying changes.",
+                description: "Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch).",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("git.diff_base"),

@@ -2748,7 +2748,7 @@ impl OutlinePanel {
                     let active_multi_buffer = active_editor.read(cx).buffer().clone();
                     let new_entries = outline_panel.new_entries_for_fs_update.clone();
                     let repo_snapshots = outline_panel.project.update(cx, |project, cx| {
-                        project.git_store().read(cx).repo_snapshots(cx)
+                        project.git_store().read(cx).display_repo_snapshots(cx)
                     });
                     let git_store = outline_panel.project.read(cx).git_store().clone();
                     new_collapsed_entries = outline_panel.collapsed_entries.clone();
@@ -2770,7 +2770,9 @@ impl OutlinePanel {
                             let is_new = new_entries.contains(&buffer_id)
                                 || !outline_panel.buffers.contains_key(&buffer_id);
                             let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
-                            let status = git_store.read(cx).git_status_for_buffer_id(buffer_id, cx);
+                            let status = git_store
+                                .read(cx)
+                                .display_status_for_buffer_id(buffer_id, cx);
                             buffer_excerpts
                                 .entry(buffer_id)
                                 .or_insert_with(|| {

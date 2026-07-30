@@ -762,7 +762,7 @@ impl Item for Editor {
                     let status = project
                         .git_store()
                         .read(cx)
-                        .git_status_for_buffer_id(buffer_id, cx)?;
+                        .display_status_for_buffer_id(buffer_id, cx)?;
 
                     Some(entry_git_aware_label_color(
                         status.summary(),

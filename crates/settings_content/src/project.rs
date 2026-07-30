@@ -551,7 +551,7 @@ pub struct GitSettings {
     ///
     /// Default: staged_hollow
     pub hunk_style: Option<GitHunkStyleSetting>,
-    /// Which base git features (gutter, panels, tab colors) diff against.
+    /// Which base git features (gutter, file colors, git::Diff) diff against.
     ///
     /// Default: head
     pub diff_base: Option<GitDiffBaseSetting>,
@@ -757,7 +757,7 @@ pub enum GitDiffBaseSetting {
     ///
     /// Repositories where no default branch can be resolved fall back
     /// to `head` behavior.
-    MergeBase,
+    DefaultBranch,
 }
 
 #[with_fallible_options]
