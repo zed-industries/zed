@@ -17155,6 +17155,7 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
+ "i18n",
  "itertools 0.14.0",
  "language",
  "language_model",
