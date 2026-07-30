@@ -1737,19 +1737,11 @@ impl Window {
             }
         }));
         platform_window.on_native_view_focus(Box::new({
-            let cx = cx.to_async();
-            let foreground_executor = cx.foreground_executor().clone();
+            let mut cx = cx.to_async();
             move || {
-                let mut cx = cx.clone();
-                // AppKit responder changes can be synchronous with a GPUI
-                // pointer dispatch, so update logical focus on the next task.
-                foreground_executor
-                    .spawn(async move {
-                        handle
-                            .update(&mut cx, |_, window, _| window.blur())
-                            .log_err();
-                    })
-                    .detach();
+                handle
+                    .update(&mut cx, |_, window, _| window.blur())
+                    .log_err();
             }
         }));
         platform_window.on_hover_status_change(Box::new({
