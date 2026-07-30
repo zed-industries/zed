@@ -19046,6 +19046,7 @@ dependencies = [
  "fs",
  "git_ui",
  "gpui",
+ "i18n",
  "icons",
  "livekit_client",
  "notifications",

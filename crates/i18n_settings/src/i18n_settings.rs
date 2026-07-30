@@ -107,6 +107,36 @@ fn load_bundled_catalogs(assets: &dyn AssetSource) {
     }
 }
 
+/// Loads the bundled catalogs, returning any parse errors per catalog path.
+///
+/// Only used by tests, which assert that the catalogs shipped in the binary parse
+/// cleanly rather than silently degrading to English at runtime.
+#[cfg(test)]
+fn load_bundled_catalogs_reporting_errors(assets: &dyn AssetSource) -> Vec<(String, Vec<String>)> {
+    let mut failures = Vec::new();
+
+    for path in assets
+        .list(CATALOG_DIR)
+        .expect("catalogs should be listable")
+    {
+        if !path.ends_with(".ftl") {
+            continue;
+        }
+        let locale = locale_from_path(&path).expect("catalog path should name a locale");
+        let bytes = assets
+            .load(&path)
+            .expect("catalog should load")
+            .expect("catalog should exist");
+        let source = String::from_utf8(bytes.into_owned()).expect("catalog should be UTF-8");
+
+        if let Err(errors) = i18n::add_ftl(&locale, source) {
+            failures.push((path.to_string(), errors));
+        }
+    }
+
+    failures
+}
+
 /// Extracts the locale from a bundled catalog path such as
 /// `i18n/zh-CN/zed.ftl`.
 fn locale_from_path(path: &str) -> Option<LanguageIdentifier> {
@@ -124,12 +154,20 @@ mod tests {
     use super::{load_bundled_catalogs, locale_from_path};
     use i18n::t;
 
+    /// Serializes the tests that touch the process-global catalog, since tests in
+    /// a crate run on multiple threads.
+    fn lock_catalog() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Covers the whole chain that a running Zed uses: enumerate the bundled
     /// catalogs out of the asset source, parse them, negotiate the locale,
     /// resolve a string through `t!`, and hand the result to a menu that takes
     /// `impl Into<SharedString>`.
     #[test]
     fn loads_the_bundled_simplified_chinese_catalog() {
+        let _guard = lock_catalog();
         i18n::reset();
         load_bundled_catalogs(&assets::Assets);
 
@@ -180,6 +218,21 @@ mod tests {
         assert_eq!(
             locale_from_path("i18n/ja/menus.ftl").map(|l| l.to_string()),
             Some("ja".to_owned())
+        );
+    }
+
+    /// A catalog with a syntax error degrades silently to English at runtime, so
+    /// the bundled ones are checked here instead.
+    #[test]
+    fn bundled_catalogs_parse_cleanly() {
+        let _guard = lock_catalog();
+        i18n::reset();
+        let failures = super::load_bundled_catalogs_reporting_errors(&assets::Assets);
+        i18n::reset();
+
+        assert!(
+            failures.is_empty(),
+            "bundled catalogs have parse errors: {failures:#?}"
         );
     }
 
