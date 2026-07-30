@@ -5,6 +5,7 @@ use crate::{
     edit_prediction_tests::FakeEditPredictionDelegate,
     element::{StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
+    mouse_context_menu::MenuPosition,
     runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -9691,6 +9692,32 @@ async fn test_clipboard(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_and_paste_non_empty_selection_followed_by_empty_selection(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        «fooˇ»
+        barˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| editor.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("foo\nbar\n".to_string())
+    );
+
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state(indoc! {"
+        fooˇ
+        bar
+        barˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_copy_trim(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -18090,6 +18117,80 @@ async fn test_auto_formatter_failure_is_silent(cx: &mut TestAppContext) {
     assert_eq!(
         last_failure, None,
         "an auto-resolved formatter failure should not be surfaced"
+    );
+}
+
+#[gpui::test]
+async fn test_external_formatter_with_no_output_leaves_buffer_unchanged(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        #[cfg(windows)]
+        let (command, arguments) = ("cmd", vec!["/C".to_string(), "more > nul".to_string()]);
+        #[cfg(not(windows))]
+        let (command, arguments) = ("sh", vec!["-c".to_string(), "cat >/dev/null".to_string()]);
+
+        // Consume stdin without printing anything, mirroring tools like `cargo fmt`
+        // that format files in place instead of writing to stdout.
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::External {
+            command: command.into(),
+            arguments: Some(arguments),
+        }));
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "fn main() {}\n".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    // Formatting via an external command spawns a real subprocess, whose I/O
+    // happens off the deterministic test scheduler.
+    cx.executor().allow_parking();
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            "fn main() {}\n",
+            "buffer should be left unchanged when the external formatter produces no output"
+        );
+    });
+
+    let last_failure = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .last_formatting_failure()
+            .map(str::to_string)
+    });
+    assert_eq!(
+        last_failure, None,
+        "producing no output is not a formatter failure"
     );
 }
 
@@ -29895,6 +29996,89 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                preview_tabs.enabled = Some(true);
+                preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Calling `set_state` here will make it such that the underlying buffer
+    // will now report edits since its `preview_version` field, which is set
+    // when the buffer is first created. That is one of the conditions that
+    // determines whether a pane's item should remain as the preview item, or
+    // not, as such, if that field is not updated accordingly, we'd end up not
+    // having a preview item at the end of the test.
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.executor().run_until_parked();
+
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+
+    // Using the `editor: find all references` action adds excerpts to the
+    // multibuffer, which emits `ItemEvent::Edit`. When the pane handles that
+    // event it decides whether to keep its preview item and, if the buffer
+    // reports any edits since its `preview_version`, the item is unpreviewed.
+    // We also need to run until the executor is parked because the
+    // `ItemEvent::Edit` is delivered later, after the item has been registered
+    // with the pane.
+    assert_eq!(
+        cx.update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("Editor::find_all_references should return a task")
+        .await
+        .expect("Should be able to find all references"),
+        Navigated::Yes
+    );
+    cx.executor().run_until_parked();
+
+    cx.update_workspace(|workspace, _window, cx| {
+        let active_pane = workspace.active_pane().read(cx);
+
+        assert_eq!(
+            active_pane.preview_item_id(),
+            Some(active_pane.active_item().unwrap().item_id()),
+            "The preview item id should be the same as the id of the multibuffer"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -31328,6 +31512,116 @@ async fn test_gutter_context_menu_hidden_for_unsaved_buffer(cx: &mut TestAppCont
         assert!(
             editor.mouse_context_menu.is_none(),
             "expected no gutter context menu for an unsaved buffer"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_gutter_context_menu_anchor_in_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let root_path = path!("/root");
+    fs.insert_tree(
+        root_path,
+        json!({
+            "first.rs": "fn one() {}\nfn two() {}\nfn three() {}\n",
+            "second.rs": "fn four() {}\nfn five() {}\nfn six() {}\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [root_path.as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("first.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("second.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a.clone(),
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
+            cx,
+        );
+
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b.clone(),
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
+            cx,
+        );
+
+        multi_buffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Open the gutter context menu on a display row inside the second excerpt,
+    // ensuring that excerpt headers will now play a part in offsetting display
+    // rows from buffer rows.
+    editor.update_in(cx, |editor, window, cx| {
+        let display_snapshot = editor.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let buffer_anchor = buffer_b.read(cx).snapshot().anchor_before(Point::new(1, 0));
+        let multibuffer_anchor = buffer_snapshot.anchor_in_buffer(buffer_anchor).unwrap();
+        let buffer_point = buffer_snapshot.summary_for_anchor::<Point>(&multibuffer_anchor);
+        let display_row = display_snapshot
+            .point_to_display_point(buffer_point, Bias::Left)
+            .row();
+
+        assert_ne!(
+            display_row.0, buffer_point.row,
+            "display row should be offset from the multibuffer row by excerpt headers"
+        );
+
+        editor.set_gutter_context_menu(display_row, None, Default::default(), window, cx);
+    });
+
+    // We'll now confirm that the `MenuPosition`'s source has been set to the
+    // correct buffer anchor (1, 0), instead of simply taking the display row.
+    editor.update(cx, |editor, cx| {
+        let menu = editor.mouse_context_menu.as_ref().unwrap();
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let MenuPosition::PinnedToEditor { source, .. } = &menu.position else {
+            panic!("expected gutter context menu to be pinned to the editor");
+        };
+
+        let (buffer_anchor, buffer_snapshot) = snapshot
+            .anchor_to_buffer_anchor(*source)
+            .expect("menu anchor should resolve to a buffer");
+
+        assert_eq!(buffer_snapshot.remote_id(), buffer_b.read(cx).remote_id());
+        assert_eq!(
+            buffer_snapshot.summary_for_anchor::<Point>(&buffer_anchor),
+            Point::new(1, 0),
         );
     });
 }
@@ -33763,6 +34057,69 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
         editor.handle_input("V", window, cx);
     });
     cx.assert_editor_state("<Animated.Vˇ></Animated.V>");
+}
+
+#[gpui::test]
+async fn test_linked_edits_on_typing_dash_in_custom_element_name(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TSX".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..LanguageMatcher::default()
+            })
+            .into(),
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            // Mirrors crates/grammars/src/{tsx,javascript}/config.toml: a dash is a valid
+            // JSXIdentifier character, so custom element names like `<custom-el>` must keep
+            // the closing tag linked past the dash. Regression test for #43060 / #58553.
+            linked_edit_characters: HashSet::from_iter(['.', '-']),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Typing the dash while renaming a tag must extend the linked pair rather than
+    // dropping it (the bug produced `<custom-el></custom>`).
+    cx.set_state("<customˇ></custom>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 7)),
+            (Point::new(0, 10), Point::new(0, 16)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state("<custom-ˇ></custom->");
+
+    // Characters typed after the dash continue to mirror into the closing tag.
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 8)),
+            (Point::new(0, 11), Point::new(0, 18)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("el", window, cx);
+    });
+    cx.assert_editor_state("<custom-elˇ></custom-el>");
 }
 
 #[gpui::test]
@@ -41811,6 +42168,87 @@ async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
         aaaaaaaaaa
         bb
         cccc«ˇcccc»cc
+    "});
+}
+
+#[gpui::test]
+async fn test_columnar_selection_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇ1. Very long line to show how a wrapped line would look
+        2. Very long line to show how a wrapped line would look
+    "});
+
+    let soft_wrap_second_line_row = |editor: &mut Editor, cx: &mut Context<Editor>| {
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        let snapshot = editor.display_snapshot(cx);
+        let second_line_row = Point::new(1, 0).to_display_point(&snapshot).row();
+        assert!(
+            second_line_row.0 > 1,
+            "expected the first line to be soft wrapped"
+        );
+        second_line_row
+    };
+
+    // Dragging a columnar selection across the soft-wrapped rows of the first
+    // line must produce one selection per buffer line, not one per display row.
+    cx.update_editor(|editor, window, cx| {
+        let second_line_row = soft_wrap_second_line_row(editor, cx);
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(second_line_row, 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «1ˇ». Very long line to show how a wrapped line would look
+        «2ˇ». Very long line to show how a wrapped line would look
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        let second_line_row = soft_wrap_second_line_row(editor, cx);
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(second_line_row, 0),
+                goal_column: 0,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        ˇ1. Very long line to show how a wrapped line would look
+        ˇ2. Very long line to show how a wrapped line would look
     "});
 }
 

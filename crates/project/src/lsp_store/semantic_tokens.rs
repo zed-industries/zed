@@ -26,6 +26,7 @@ use crate::{
         LspCommand, SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFull,
         SemanticTokensResponse,
     },
+    lsp_store::missing_servers_to_query,
     project_settings::ProjectSettings,
 };
 
@@ -87,6 +88,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
+        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
         let refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
@@ -100,6 +102,15 @@ impl LspStore {
                 .servers
                 .remove(refreshed_server);
         }
+        let missing_servers = missing_servers_to_query(
+            &mut semantic_tokens_data.raw_tokens.servers,
+            &mut semantic_tokens_data.fetched_servers,
+            &current_servers,
+        )
+        .unwrap_or_default();
+        if !missing_servers.is_empty() {
+            semantic_tokens_data.update = None;
+        }
         let query_generation = semantic_tokens_data.generation;
 
         if let Some((updating_for, task)) = &semantic_tokens_data.update
@@ -108,14 +119,22 @@ impl LspStore {
             return task.clone();
         }
 
-        let for_server = if refreshed_servers.len() == 1 {
-            refreshed_servers.iter().next().copied()
+        let mut servers_to_fetch = refreshed_servers;
+        servers_to_fetch.extend(missing_servers);
+        let for_server = if servers_to_fetch.len() == 1 {
+            servers_to_fetch.iter().next().copied()
         } else {
             // With multiple servers refreshed, query all of them instead of fanning out
             // filtered queries — the non-refreshed ones kept their tokens and answer
             // with cheap deltas.
             None
         };
+        semantic_tokens_data
+            .fetched_servers
+            .extend(match for_server {
+                Some(server_id) => HashSet::from_iter([server_id]),
+                None => current_servers,
+            });
         let new_tokens = self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
 
         let task_buffer = buffer.clone();
@@ -656,6 +675,7 @@ async fn raw_to_buffer_semantic_tokens(
 pub struct SemanticTokensData {
     pub(super) raw_tokens: RawSemanticTokens,
     pub(super) pending_refreshes: HashSet<LanguageServerId>,
+    fetched_servers: HashSet<LanguageServerId>,
     update: Option<(Global, SemanticTokensTask)>,
     /// Bumped on every eviction so that fetches started against the evicted state
     /// cannot write their stale results into the new one.
@@ -666,12 +686,14 @@ impl SemanticTokensData {
     pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
         self.raw_tokens.servers.remove(&server_id);
         self.pending_refreshes.remove(&server_id);
+        self.fetched_servers.remove(&server_id);
         self.update = None;
         self.generation += 1;
     }
 
     fn evict_all(&mut self) {
         self.raw_tokens.servers.clear();
+        self.fetched_servers.clear();
         self.update = None;
         self.generation += 1;
     }

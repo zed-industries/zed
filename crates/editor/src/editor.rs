@@ -2064,8 +2064,12 @@ impl Editor {
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
+                            editor.invalidate_semantic_tokens(Some(buffer_id));
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::LanguageServerRegistered,
+                                cx,
+                            );
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);
                             editor.refresh_document_highlights(cx);
@@ -5855,14 +5859,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let source = snapshot.anchor_before(Point::new(display_row.0, 0u32));
+        let display_snapshot = self.display_snapshot(cx);
+        let display_point = display_row.as_display_point();
+        let source = display_snapshot.display_point_to_anchor(display_point, Bias::Left);
         let anchor = position.unwrap_or(source);
 
         // Every entry in this menu either requires a worktree-file-backed buffer
         // (breakpoints, bookmarks, run to cursor) or is meaningless without one
         // (git blame), so don't open it for e.g. untitled buffers.
-        if !snapshot
+        if !display_snapshot
+            .buffer_snapshot()
             .anchor_to_buffer_anchor(anchor)
             .is_some_and(|(_, buffer_snapshot)| {
                 project::File::from_dyn(buffer_snapshot.file()).is_some()
@@ -9762,7 +9768,8 @@ impl Editor {
                     .into_iter()
                     .flatten(),
             )
-            .flat_map(|accent| accent.0.clone().map(SharedString::from))
+            .flat_map(|accent| accent.0.as_ref().map(|c| c.to_string()))
+            .map(SharedString::from)
             .collect();
 
         Some(AccentData {

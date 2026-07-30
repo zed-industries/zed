@@ -130,7 +130,7 @@ Non-negative `float` values
 }
 ```
 
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -304,11 +304,19 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 - Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 - Setting: `base_keymap`
-- Default: `VSCode`
+- Default: `Zed`
 
 **Options**
 
-1. VS Code
+1. Zed
+
+```json [settings]
+{
+  "base_keymap": "Zed"
+}
+```
+
+2. VS Code
 
 ```json [settings]
 {
@@ -316,7 +324,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-2. Atom
+3. Atom
 
 ```json [settings]
 {
@@ -324,19 +332,11 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-3. JetBrains
+4. JetBrains
 
 ```json [settings]
 {
   "base_keymap": "JetBrains"
-}
-```
-
-4. None
-
-```json [settings]
-{
-  "base_keymap": "None"
 }
 ```
 
@@ -353,6 +353,30 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 ```json [settings]
 {
   "base_keymap": "TextMate"
+}
+```
+
+7. Emacs
+
+```json [settings]
+{
+  "base_keymap": "Emacs"
+}
+```
+
+8. Cursor
+
+```json [settings]
+{
+  "base_keymap": "Cursor"
+}
+```
+
+9. None
+
+```json [settings]
+{
+  "base_keymap": "None"
 }
 ```
 
@@ -476,7 +500,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
-Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+> Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Code Lens
 
@@ -2003,6 +2027,8 @@ Similar to `modifications`, but behaves like `on` when range formatting cannot b
   }
 }
 ```
+
+Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 
@@ -4969,6 +4995,32 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
+
+## Window Decorations
+
+- Description: Controls whether Zed or the window manager or compositor draws window decorations.
+- Setting: `window_decorations`
+- Default: `"client"`
+
+**Options**
+
+1. To have Zed draw its own window decorations, use `"client"`:
+
+```json [settings]
+{
+  "window_decorations": "client"
+}
+```
+
+2. To have the window manager or compositor draw the window decorations, use `"server"`:
+
+```json [settings]
+{
+  "window_decorations": "server"
+}
+```
+
+> Note: This setting only affects Linux. GNOME Wayland does not support server-side decorations. Changes only apply to newly created windows. Restart Zed to apply the setting to all windows.
 
 ## Vim
 
