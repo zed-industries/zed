@@ -1,4 +1,5 @@
 use super::*;
+use i18n::t;
 
 impl Editor {
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
@@ -1508,9 +1509,9 @@ impl Editor {
                     .take(3)
                     .join(", ");
                 let title = if target.is_empty() {
-                    "References".to_owned()
+                    String::from(t!("References"))
                 } else {
-                    format!("References to {target}")
+                    String::from(t!("References to {$target}", target = target))
                 };
                 let allow_preview = PreviewTabsSettings::get_global(cx)
                     .enable_preview_multibuffer_from_code_navigation;
@@ -1768,10 +1769,10 @@ impl Editor {
 
             if num_locations > 1 {
                 let tab_kind = match kind {
-                    Some(GotoDefinitionKind::Implementation) => "Implementations",
-                    Some(GotoDefinitionKind::Symbol) | None => "Definitions",
-                    Some(GotoDefinitionKind::Declaration) => "Declarations",
-                    Some(GotoDefinitionKind::Type) => "Types",
+                    Some(GotoDefinitionKind::Implementation) => t!("Implementations"),
+                    Some(GotoDefinitionKind::Symbol) | None => t!("Definitions"),
+                    Some(GotoDefinitionKind::Declaration) => t!("Declarations"),
+                    Some(GotoDefinitionKind::Type) => t!("Types"),
                 };
                 let title = editor
                     .update_in(cx, |_, _, cx| {
@@ -1789,9 +1790,13 @@ impl Editor {
                             .take(3)
                             .join(", ");
                         if target.is_empty() {
-                            tab_kind.to_owned()
+                            String::from(tab_kind)
                         } else {
-                            format!("{tab_kind} for {target}")
+                            String::from(t!(
+                                "{$kind} for {$target}",
+                                kind = tab_kind.resolve(),
+                                target = target
+                            ))
                         }
                     })
                     .context("buffer title")?;

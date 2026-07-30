@@ -12,6 +12,7 @@ use gpui::{
     canvas, prelude::*,
 };
 
+use i18n::t;
 use language::{Buffer, Capability, HighlightedText};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, BufferOffset, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
@@ -517,7 +518,7 @@ impl RenderOnce for DiffStyleControls {
                 IconButton::new("diff-style-unified", IconName::DiffUnified)
                     .icon_size(IconSize::Small)
                     .toggle_state(diff_view_style == DiffViewStyle::Unified)
-                    .tooltip(Tooltip::text("Unified"))
+                    .tooltip(Tooltip::text(t!("Unified")))
                     .on_click({
                         let splittable_editor = self.splittable_editor.clone();
                         move |_, window, cx| {
@@ -536,9 +537,12 @@ impl RenderOnce for DiffStyleControls {
                     .toggle_state(is_split_set)
                     .tooltip(Tooltip::element(move |_, cx| {
                         let message = if is_split_pending {
-                            format!("Split when wider than {} columns", min_columns).into()
+                            SharedString::from(t!(
+                                "Split when wider than {$columns} columns",
+                                columns = min_columns
+                            ))
                         } else {
-                            SharedString::from("Split")
+                            SharedString::from(t!("Split"))
                         };
 
                         v_flex()
@@ -555,7 +559,7 @@ impl RenderOnce for DiffStyleControls {
                                         Some(TextSize::Small.rems(cx).into()),
                                         false,
                                     ))
-                                    .child("click to change min width"),
+                                    .child(t!("click to change min width").resolve()),
                             )
                             .into_any_element()
                     }))

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use collections::{HashMap, HashSet};
 use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
+use i18n::t;
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
@@ -20,7 +21,6 @@ use crate::{
     runnables::RunnableTaskStatus,
 };
 
-static EMPTY_LENS_FALLBACK_TITLE: SharedString = SharedString::new_static("0 references");
 const CODE_LENS_SEPARATOR: &str = " | ";
 
 #[derive(Clone, Debug)]
@@ -571,10 +571,10 @@ fn rendered_text_matches(a: &CodeLensLine, b: &CodeLensLine) -> bool {
 
 /// Text rendered for a code lens item, or `None` if it should not render
 /// (placeholder while resolve is in flight).
-fn displayed_title(item: &CodeLensItem) -> Option<&SharedString> {
+fn displayed_title(item: &CodeLensItem) -> Option<SharedString> {
     item.title
-        .as_ref()
-        .or_else(|| item.action.resolved.then_some(&EMPTY_LENS_FALLBACK_TITLE))
+        .clone()
+        .or_else(|| item.action.resolved.then(|| t!("0 references").resolve()))
 }
 
 fn group_lenses_by_row(
@@ -635,7 +635,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     .font(font.clone())
                     .text_size(font_size)
                     .text_color(cx.app.theme().colors().text_muted)
-                    .child(title.clone())
+                    .child(title)
                     .when_some(action, |code_lens_div, action| {
                         let position = line.position;
                         let editor_handle = editor.clone();

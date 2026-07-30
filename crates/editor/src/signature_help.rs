@@ -5,6 +5,7 @@ use gpui::{
     App, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
+use i18n::t;
 use language::BufferSnapshot;
 
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
@@ -463,7 +464,11 @@ impl SignatureHelpPopover {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_window, cx| {
-                    ui::Tooltip::for_action("Previous Signature", &crate::SignatureHelpPrevious, cx)
+                    ui::Tooltip::for_action(
+                        t!("Previous Signature"),
+                        &crate::SignatureHelpPrevious,
+                        cx,
+                    )
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
@@ -474,7 +479,7 @@ impl SignatureHelpPopover {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_window, cx| {
-                    ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, cx)
+                    ui::Tooltip::for_action(t!("Next Signature"), &crate::SignatureHelpNext, cx)
                 })
                 .on_click(cx.listener(|editor, _, window, cx| {
                     editor.signature_help_next(&crate::SignatureHelpNext, window, cx);

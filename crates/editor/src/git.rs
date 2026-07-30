@@ -3,6 +3,7 @@ pub(super) mod blame;
 use super::*;
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
+use i18n::t;
 
 #[derive(Clone)]
 pub struct ResolvedDiffHunk {
@@ -757,7 +758,8 @@ impl Editor {
         // Create the prompt editor for the review input
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Add a review comment...", window, cx);
+            let placeholder_text = t!("Add a review comment...").resolve();
+            editor.set_placeholder_text(&placeholder_text, window, cx);
             editor
         });
 
@@ -1177,7 +1179,9 @@ impl Editor {
                     .border_color(icon_color.opacity(0.5))
             })
             .child(Icon::new(IconName::Plus).size(IconSize::Small))
-            .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
+            .tooltip(Tooltip::text(t!(
+                "Add Review (drag to select multiple lines)"
+            )))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
@@ -1657,7 +1661,10 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to copy permalink: {err}");
+                let message = String::from(t!(
+                    "Failed to copy permalink: {$error}",
+                    error = err.to_string()
+                ));
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -1698,7 +1705,10 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to open permalink: {err}");
+                let message = String::from(t!(
+                    "Failed to open permalink: {$error}",
+                    error = err.to_string()
+                ));
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -2415,9 +2425,13 @@ impl Editor {
                     let start_line = start + 1;
                     let end_line = end + 1;
                     if start_line == end_line {
-                        format!("Line {start_line}")
+                        String::from(t!("Line {$line}", line = start_line))
                     } else {
-                        format!("Lines {start_line}-{end_line}")
+                        String::from(t!(
+                            "Lines {$start}-{$end}",
+                            start = start_line,
+                            end = end_line
+                        ))
                     }
                 })
                 .collect();
@@ -2546,7 +2560,7 @@ impl Editor {
                                 IconButton::new("diff-review-close", IconName::Close)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Close"))
+                                    .tooltip(Tooltip::text(t!("Close")))
                                     .on_click(|_, window, cx| {
                                         window
                                             .dispatch_action(Box::new(crate::actions::Cancel), cx);
@@ -2556,7 +2570,7 @@ impl Editor {
                                 IconButton::new("diff-review-add", IconName::Return)
                                     .icon_color(ui::Color::Muted)
                                     .icon_size(action_icon_size)
-                                    .tooltip(Tooltip::text("Add comment"))
+                                    .tooltip(Tooltip::text(t!("Add comment")))
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::actions::SubmitDiffReviewComment),
@@ -2623,11 +2637,11 @@ impl Editor {
                         .color(ui::Color::Muted),
                     )
                     .child(
-                        Label::new(format!(
-                            "{} Comment{}",
-                            comment_count,
-                            if comment_count == 1 { "" } else { "s" }
-                        ))
+                        Label::new(if comment_count == 1 {
+                            t!("{$count} Comment", count = comment_count)
+                        } else {
+                            t!("{$count} Comments", count = comment_count)
+                        })
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                     ),
@@ -2716,7 +2730,7 @@ impl Editor {
                         )
                         .icon_color(ui::Color::Muted)
                         .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Cancel"))
+                        .tooltip(Tooltip::text(t!("Cancel")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::actions::CancelEditReviewComment {
@@ -2733,7 +2747,7 @@ impl Editor {
                         )
                         .icon_color(ui::Color::Muted)
                         .icon_size(action_icon_size)
-                        .tooltip(Tooltip::text("Confirm"))
+                        .tooltip(Tooltip::text(t!("Confirm")))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
                                 Box::new(crate::actions::ConfirmEditReviewComment {
@@ -2961,13 +2975,13 @@ pub fn render_diff_hunk_controls(
         .shadow_md()
         .when(show_stage_restore, |el| {
             el.child(if status.has_secondary_hunk() {
-                Button::new(("stage", row as u64), "Stage")
+                Button::new(("stage", row as u64), t!("Stage"))
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |_window, cx| {
                             Tooltip::for_action_in(
-                                "Stage Hunk",
+                                t!("Stage Hunk"),
                                 &::git::ToggleStaged,
                                 &focus_handle,
                                 cx,
@@ -2988,13 +3002,13 @@ pub fn render_diff_hunk_controls(
                         }
                     })
             } else {
-                Button::new(("unstage", row as u64), "Unstage")
+                Button::new(("unstage", row as u64), t!("Unstage"))
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |_window, cx| {
                             Tooltip::for_action_in(
-                                "Unstage Hunk",
+                                t!("Unstage Hunk"),
                                 &::git::ToggleStaged,
                                 &focus_handle,
                                 cx,
@@ -3018,12 +3032,12 @@ pub fn render_diff_hunk_controls(
         })
         .when(show_stage_restore, |el| {
             el.child(
-                Button::new(("restore", row as u64), "Restore")
+                Button::new(("restore", row as u64), t!("Restore"))
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |_window, cx| {
                             Tooltip::for_action_in(
-                                "Restore Hunk",
+                                t!("Restore Hunk"),
                                 &::git::Restore,
                                 &focus_handle,
                                 cx,
@@ -3054,7 +3068,12 @@ pub fn render_diff_hunk_controls(
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
                             move |_window, cx| {
-                                Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, cx)
+                                Tooltip::for_action_in(
+                                    t!("Next Hunk"),
+                                    &GoToHunk,
+                                    &focus_handle,
+                                    cx,
+                                )
                             }
                         })
                         .on_click({
@@ -3086,7 +3105,7 @@ pub fn render_diff_hunk_controls(
                             let focus_handle = editor.focus_handle(cx);
                             move |_window, cx| {
                                 Tooltip::for_action_in(
-                                    "Previous Hunk",
+                                    t!("Previous Hunk"),
                                     &GoToPreviousHunk,
                                     &focus_handle,
                                     cx,

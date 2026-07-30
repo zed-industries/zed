@@ -14,6 +14,7 @@ use gpui::{
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
     TextStyleRefinement, Window, canvas, div, px,
 };
+use i18n::t;
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
@@ -476,7 +477,10 @@ fn show_hover(
 
             if let Some((invisible, range)) = invisible_char {
                 let blocks = vec![HoverBlock {
-                    text: format!("Unicode character U+{:02X}", invisible as u32),
+                    text: String::from(t!(
+                        "Unicode character U+{$code}",
+                        code = format!("{:02X}", invisible as u32)
+                    )),
                     kind: HoverBlockKind::PlainText,
                 }];
                 let parsed_content = parse_blocks(&blocks, language_registry.as_ref(), None, cx);
@@ -1250,7 +1254,8 @@ impl DiagnosticPopover {
                     )
                     .child(div().absolute().top_1().right_1().child({
                         let message = self.local_diagnostic.diagnostic.message.clone();
-                        CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
+                        CopyButton::new("copy-diagnostic", message)
+                            .tooltip_label(t!("Copy Diagnostic"))
                     }))
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()

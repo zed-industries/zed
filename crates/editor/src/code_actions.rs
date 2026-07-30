@@ -1,4 +1,5 @@
 use super::*;
+use i18n::t;
 
 impl Editor {
     /// Toggles an action selection menu for the latest selection.
@@ -349,7 +350,7 @@ impl Editor {
                     let focus_handle = self.focus_handle.clone();
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "Toggle Code Actions",
+                            t!("Toggle Code Actions"),
                             &ToggleCodeActions {
                                 deployed_from: None,
                                 quick_launch: false,

@@ -31211,7 +31211,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
     // modifier-click alternative.
     let meta = tooltip.meta_text(primary_intent);
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
-    assert!(meta.contains("right-click for more options"));
+    assert!(meta.contains("Right-click for more options"));
     let meta = tooltip.meta_text(secondary_intent);
     assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
 
@@ -31224,7 +31224,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         focus_handle: tooltip.focus_handle,
     };
     let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
-    assert_eq!(meta, "right-click for more options");
+    assert_eq!(meta, "Right-click for more options");
 }
 
 #[gpui::test]

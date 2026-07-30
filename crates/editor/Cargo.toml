@@ -52,6 +52,7 @@ fuzzy.workspace = true
 fs.workspace = true
 git.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 indoc.workspace = true
 edit_prediction_types.workspace = true
 itertools.workspace = true
