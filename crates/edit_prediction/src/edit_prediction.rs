@@ -21,7 +21,7 @@ use cloud_llm_client::{
     ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
-use copilot::{Copilot, Reinstall, SignIn, SignOut};
+use copilot::{Copilot, Reinstall};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
@@ -70,7 +70,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 pub mod cursor_excerpt;
 pub mod data_collection;
@@ -904,11 +904,14 @@ pub(crate) fn buffer_path_with_id_fallback(
     snapshot: &TextBufferSnapshot,
     cx: &App,
 ) -> Arc<Path> {
-    if let Some(file) = file {
-        file.full_path(cx).into()
-    } else {
-        Path::new(&format!("untitled-{}", snapshot.remote_id())).into()
-    }
+    let Some(file) = file else {
+        return Path::new(&format!("untitled-{}", snapshot.remote_id())).into();
+    };
+    let full_path = file.full_path(cx);
+    let Some(path) = RelPath::new(&full_path, file.path_style(cx)).ok() else {
+        return Path::new(&format!("untitled-{}", snapshot.remote_id())).into();
+    };
+    path.as_std_path().into()
 }
 
 fn predict_edits_request_trigger_from_editor_trigger(
@@ -3525,19 +3528,9 @@ pub fn init(cx: &mut App) {
             })
         }
 
-        workspace.register_action(|workspace, _: &SignIn, window, cx| {
-            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
-                copilot_ui::initiate_sign_in(copilot, window, cx);
-            }
-        });
         workspace.register_action(|workspace, _: &Reinstall, window, cx| {
             if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
                 copilot_ui::reinstall_and_sign_in(copilot, window, cx);
-            }
-        });
-        workspace.register_action(|workspace, _: &SignOut, window, cx| {
-            if let Some(copilot) = copilot_for_project(workspace.project(), cx) {
-                copilot_ui::initiate_sign_out(copilot, window, cx);
             }
         });
     })

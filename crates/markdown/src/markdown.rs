@@ -395,6 +395,8 @@ pub struct Markdown {
     pressed_link: Option<RenderedLink>,
     pressed_footnote_ref: Option<RenderedFootnoteRef>,
     autoscroll_request: Option<usize>,
+    pending_heading_scroll: Option<SharedString>,
+    pending_autoscroll: Option<usize>,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
@@ -588,6 +590,8 @@ impl Markdown {
             pressed_link: None,
             pressed_footnote_ref: None,
             autoscroll_request: None,
+            pending_heading_scroll: None,
+            pending_autoscroll: None,
             active_root_block: None,
             should_reparse: false,
             images_by_source_offset: Default::default(),
@@ -705,6 +709,14 @@ impl Markdown {
         self.pending_parse.is_some()
     }
 
+    pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
+        if self.pending_parse.is_some() || self.source.is_empty() {
+            self.pending_heading_scroll = Some(slug);
+        } else {
+            self.scroll_to_heading(&slug, cx);
+        }
+    }
+
     pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) -> Option<usize> {
         if let Some(source_index) = self.parsed_markdown.heading_slugs.get(slug).copied() {
             self.autoscroll_request = Some(source_index);
@@ -756,7 +768,11 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        self.autoscroll_request = Some(source_index);
+        if self.pending_parse.is_some() {
+            self.pending_autoscroll = Some(source_index);
+        } else {
+            self.autoscroll_request = Some(source_index);
+        }
         cx.refresh_windows();
     }
 
@@ -784,11 +800,24 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
+            if self.pending_parse.is_none() {
+                if let Some(slug) = self.pending_heading_scroll.take() {
+                    self.pending_autoscroll = None;
+                    self.scroll_to_heading(&slug, cx);
+                } else if let Some(source_index) = self.pending_autoscroll.take() {
+                    self.autoscroll_request = Some(source_index);
+                    cx.refresh_windows();
+                }
+            }
             return;
+        }
+        if !self.source.is_empty() {
+            self.pending_heading_scroll = None;
         }
         self.source = source;
         self.selection = Selection::default();
         self.autoscroll_request = None;
+        self.pending_autoscroll = None;
         self.pending_parse = None;
         self.should_reparse = false;
         self.search_highlights.clear();
@@ -940,6 +969,8 @@ impl Markdown {
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
+            self.pending_heading_scroll = None;
+            self.pending_autoscroll = None;
             self.parsed_markdown = ParsedMarkdown {
                 source: self.source.clone(),
                 ..Default::default()
@@ -1100,6 +1131,14 @@ impl Markdown {
                 this.pending_parse.take();
                 if this.should_reparse {
                     this.parse(cx);
+                } else if let Some(slug) = this.pending_heading_scroll.take()
+                    && let Some(source_index) =
+                        this.parsed_markdown.heading_slugs.get(&slug).copied()
+                {
+                    this.pending_autoscroll = None;
+                    this.autoscroll_request = Some(source_index);
+                } else if let Some(source_index) = this.pending_autoscroll.take() {
+                    this.autoscroll_request = Some(source_index);
                 }
                 cx.notify();
                 cx.refresh_windows();
@@ -4027,17 +4066,15 @@ impl RenderedText {
 
     fn position_for_source_index(&self, source_index: usize) -> Option<(Point<Pixels>, Pixels)> {
         for line in self.lines.iter() {
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            if source_index < line_source_start {
-                break;
-            } else if source_index > line.source_end {
+            if source_index > line.source_end {
                 continue;
-            } else {
-                let line_height = line.layout.line_height();
-                let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
-                let position = line.layout.position_for_index(rendered_index_within_line)?;
-                return Some((position, line_height));
             }
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            let source_index = source_index.max(line_source_start);
+            let line_height = line.layout.line_height();
+            let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
+            let position = line.layout.position_for_index(rendered_index_within_line)?;
+            return Some((position, line_height));
         }
         None
     }
