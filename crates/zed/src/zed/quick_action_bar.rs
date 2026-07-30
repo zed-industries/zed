@@ -2,6 +2,7 @@ mod preview;
 mod repl_menu;
 
 use agent_settings::AgentSettings;
+use agent_ui::InlineAssistant;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -13,7 +14,7 @@ use editor::{Editor, EditorSettings};
 use gpui::{
     Action, Anchor, AnchoredPositionMode, ClickEvent, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window, anchored, deferred, point,
+    UpdateGlobal, WeakEntity, Window, anchored, deferred, point,
 };
 use project::{DisableAiSettings, project_settings::DiagnosticSeverity};
 use search::{BufferSearchBar, buffer_search};
@@ -157,15 +158,30 @@ impl Render for QuickActionBar {
             )
         });
 
+        let inline_assist_focused = cx
+            .try_global::<InlineAssistant>()
+            .map(|assistant| assistant.has_focused_assist(window, cx))
+            .unwrap_or(false);
+
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
             IconName::ZedAssistant,
-            false,
+            inline_assist_focused,
             Box::new(InlineAssist::default()),
             focus_handle,
-            "Inline Assist",
+            if inline_assist_focused {
+                "Close Inline Assist"
+            } else {
+                "Inline Assist"
+            },
             move |_, window, cx| {
-                window.dispatch_action(Box::new(InlineAssist::default()), cx);
+                if inline_assist_focused {
+                    InlineAssistant::update_global(cx, |assistant, cx| {
+                        assistant.dismiss_focused_assist(window, cx);
+                    });
+                } else {
+                    window.dispatch_action(Box::new(InlineAssist::default()), cx);
+                }
             },
         );
 
