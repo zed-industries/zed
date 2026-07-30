@@ -14,6 +14,8 @@ use editor::{
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
+#[cfg(target_os = "windows")]
+use gpui::AppContext as _;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
@@ -29,6 +31,8 @@ use project::FakeFs;
 use search::BufferSearchBar;
 use search::{ProjectSearchView, project_search};
 use serde_json::json;
+#[cfg(target_os = "windows")]
+use workspace::notifications::{NotificationId, simple_message_notification::MessageNotification};
 use workspace::{DeploySearch, MultiWorkspace};
 
 use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
@@ -381,6 +385,46 @@ async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("escape");
 
     cx.assert_state("aˇbc", Mode::Normal);
+}
+
+#[cfg(target_os = "windows")]
+#[gpui::test]
+async fn test_escape_dismisses_workspace_notification_in_normal_modes(
+    cx: &mut gpui::TestAppContext,
+) {
+    struct VimEscapeNotification;
+    struct HelixEscapeNotification;
+
+    let mut cx = VimTestContext::new(cx, true).await;
+    let notification_ids =
+        |cx: &mut VimTestContext| cx.workspace(|workspace, _, _| workspace.notification_ids());
+
+    for (mode, notification_id) in [
+        (
+            Mode::Normal,
+            NotificationId::unique::<VimEscapeNotification>(),
+        ),
+        (
+            Mode::HelixNormal,
+            NotificationId::unique::<HelixEscapeNotification>(),
+        ),
+    ] {
+        if mode == Mode::HelixNormal {
+            cx.enable_helix();
+        }
+        cx.set_state("aˇbˇc", mode);
+        cx.workspace(|workspace, _, cx| {
+            workspace.show_notification(notification_id.clone(), cx, |cx| {
+                cx.new(|cx| MessageNotification::new("Test notification", cx))
+            });
+        });
+
+        assert_eq!(notification_ids(&mut cx), vec![notification_id]);
+        cx.simulate_keystrokes("escape");
+
+        assert!(notification_ids(&mut cx).is_empty());
+        cx.assert_state("aˇbˇc", mode);
+    }
 }
 
 #[perf]

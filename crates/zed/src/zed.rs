@@ -5637,6 +5637,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
+                "copilot_edit_predictions",
                 "csv",
                 "debug_panel",
                 "debugger",
@@ -5890,7 +5891,6 @@ mod tests {
             outline_panel::init(cx);
             terminal_view::init(cx);
             copilot_chat::init(
-                app_state.fs.clone(),
                 app_state.client.http_client(),
                 copilot_chat::CopilotChatConfiguration::default(),
                 cx,
