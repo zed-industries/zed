@@ -90,19 +90,6 @@ impl DisplayedImage {
 }
 
 impl ImageView {
-    fn register_release_cleanup(window: &Window, cx: &mut Context<Self>) {
-        cx.on_release_in(window, |this, window, cx| {
-            if let Some(pending_image) = this.pending_image.take() {
-                pending_image.remove_asset(cx);
-            }
-            if let Some(displayed_image) = this.displayed_image.take() {
-                displayed_image.release(window, cx);
-            }
-            this.image_item.read(cx).image.clone().remove_asset(cx);
-        })
-        .detach();
-    }
-
     fn is_dragging(&self) -> bool {
         self.last_mouse_position.is_some()
     }
@@ -161,7 +148,14 @@ impl ImageView {
         let _render_image = pending_image.clone().get_render_image(window, cx);
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
-        Self::register_release_cleanup(window, cx);
+        cx.on_release_in(window, |this, window, cx| {
+            let image_data = this.image_item.read(cx).image.clone();
+            if let Some(image) = image_data.clone().get_render_image(window, cx) {
+                cx.drop_image(image, None);
+            }
+            image_data.remove_asset(cx);
+        })
+        .detach();
 
         let image_size = image_item
             .read(cx)
@@ -636,26 +630,23 @@ impl Item for ImageView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| {
-            Self::register_release_cleanup(window, cx);
-            Self {
-                image_item: self.image_item.clone(),
-                project: self.project.clone(),
-                focus_handle: cx.focus_handle(),
-                zoom_level: self.zoom_level,
-                pan_offset: self.pan_offset,
-                last_mouse_position: None,
-                container_bounds: None,
-                image_size: self.image_size,
-                pending_image: None,
-                displayed_image: None,
-            }
+        Task::ready(Some(cx.new(|cx| Self {
+            image_item: self.image_item.clone(),
+            project: self.project.clone(),
+            focus_handle: cx.focus_handle(),
+            zoom_level: self.zoom_level,
+            pan_offset: self.pan_offset,
+            last_mouse_position: None,
+            container_bounds: None,
+            image_size: self.image_size,
+            pending_image: None,
+            displayed_image: None,
         })))
     }
 
@@ -1155,6 +1146,19 @@ mod tests {
         })
     }
 
+    fn displayed_render_image(
+        image_view: &Entity<ImageView>,
+        cx: &VisualTestContext,
+    ) -> Option<Arc<RenderImage>> {
+        cx.read(|cx| {
+            image_view
+                .read(cx)
+                .displayed_image
+                .as_ref()
+                .map(|displayed_image| displayed_image.render_image.clone())
+        })
+    }
+
     fn replace_image(
         image_item: &Entity<ImageItem>,
         image: Arc<gpui::Image>,
@@ -1279,12 +1283,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_split_clone_removes_displayed_image_from_asset_cache_on_release(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_releasing_one_split_keeps_shared_atlas_entry(cx: &mut TestAppContext) {
         init_test(cx);
         let (project, image_item) = open_test_image(cx).await;
-        let source_image = cx.read(|cx| image_item.read(cx).image.clone());
 
         let cx = cx.add_empty_window();
         let original_image_view = cx.update(|window, cx| {
@@ -1297,36 +1298,44 @@ mod tests {
             .await
             .expect("image view should support splitting");
 
+        let draw_split_views = |cx: &mut VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(2.), px(1.)), |_, _| {
+                div()
+                    .size_full()
+                    .child(original_image_view.clone())
+                    .child(split_image_view.clone())
+            });
+        };
+
+        draw_split_views(cx);
+        cx.run_until_parked();
+        draw_split_views(cx);
+
+        let original_render_image = displayed_render_image(&original_image_view, cx)
+            .expect("the original image view should finish decoding");
+        let split_render_image = displayed_render_image(&split_image_view, cx)
+            .expect("the split image view should finish decoding");
+        assert_eq!(
+            original_render_image.id, split_render_image.id,
+            "both image views should share the decoded render image"
+        );
+        assert!(
+            cx.update(|window, _| window.has_image_atlas_entry(&original_render_image)),
+            "the shared image should be present in the window atlas"
+        );
+
         drop(original_image_view);
         cx.update(|_, _| {});
         cx.run_until_parked();
 
+        assert!(
+            cx.update(|window, _| window.has_image_atlas_entry(&split_render_image)),
+            "releasing one image view removed an atlas entry still used by its split"
+        );
+
         cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
             split_image_view.clone().into_any_element()
         });
-        cx.run_until_parked();
-        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
-            split_image_view.clone().into_any_element()
-        });
-
-        assert_eq!(
-            displayed_source_id(&split_image_view, cx),
-            Some(source_image.id()),
-            "the split image view should finish decoding the image"
-        );
-        assert!(
-            image_is_cached(&source_image, cx),
-            "the split image view should cache its displayed image"
-        );
-
-        drop(split_image_view);
-        cx.update(|_, _| {});
-        cx.run_until_parked();
-
-        assert!(
-            !image_is_cached(&source_image, cx),
-            "the released split image view left its displayed image in GPUI's asset cache"
-        );
     }
 }
 
