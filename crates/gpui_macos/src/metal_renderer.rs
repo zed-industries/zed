@@ -152,6 +152,22 @@ pub struct PathRasterizationVertex {
 }
 
 impl MetalRenderer {
+    /// Creates a new MetalRenderer with a CAMetalLayer for window-based rendering.
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, transparent: bool) -> Self {
+        let device = Self::create_device();
+        // Support direct-to-display rendering if the window is not transparent
+        // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
+        let layer = Self::new_layer(&device, transparent);
+
+        Self::new_internal(
+            device,
+            Some(layer),
+            !transparent,
+            instance_buffer_pool,
+            None,
+        )
+    }
+
     fn new_layer(device: &metal::Device, transparent: bool) -> metal::MetalLayer {
         let layer = metal::MetalLayer::new();
         layer.set_device(device);
@@ -170,22 +186,6 @@ impl MetalRenderer {
             ];
         }
         layer
-    }
-
-    /// Creates a new MetalRenderer with a CAMetalLayer for window-based rendering.
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, transparent: bool) -> Self {
-        let device = Self::create_device();
-        // Support direct-to-display rendering if the window is not transparent
-        // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
-        let layer = Self::new_layer(&device, transparent);
-
-        Self::new_internal(
-            device,
-            Some(layer),
-            !transparent,
-            instance_buffer_pool,
-            None,
-        )
     }
 
     fn new_sharing_atlas(
