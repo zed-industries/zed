@@ -95,7 +95,9 @@ fn tool_strings(tool: &ToolInfo) -> (LocalizedString, LocalizedString, Localized
         "terminal" => (
             t!("Terminal"),
             t!("Commands executed in the terminal"),
-            t!("Patterns are matched against each command in the input. Commands chained with &&, ||, ;, or pipes are split and checked individually."),
+            t!(
+                "Patterns are matched against each command in the input. Commands chained with &&, ||, ;, or pipes are split and checked individually."
+            ),
         ),
         "edit_file" => (
             t!("Edit File"),
@@ -115,12 +117,16 @@ fn tool_strings(tool: &ToolInfo) -> (LocalizedString, LocalizedString, Localized
         "copy_path" => (
             t!("Copy Path"),
             t!("File and directory copying"),
-            t!("Patterns are matched independently against the source path and the destination path. Enter either path below to test."),
+            t!(
+                "Patterns are matched independently against the source path and the destination path. Enter either path below to test."
+            ),
         ),
         "move_path" => (
             t!("Move Path"),
             t!("File and directory moves/renames"),
-            t!("Patterns are matched independently against the source path and the destination path. Enter either path below to test."),
+            t!(
+                "Patterns are matched independently against the source path and the destination path. Enter either path below to test."
+            ),
         ),
         "create_directory" => (
             t!("Create Directory"),
@@ -128,7 +134,7 @@ fn tool_strings(tool: &ToolInfo) -> (LocalizedString, LocalizedString, Localized
             t!("Patterns are matched against the directory path being created."),
         ),
         "fetch" => (
-            t!("Fetch"),
+            t!(key = "fetch-tool", "Fetch"),
             t!("HTTP requests to URLs"),
             t!("Patterns are matched against the URL being fetched."),
         ),
@@ -301,10 +307,7 @@ fn render_tool_list_item(
             }
         }
         if invalid_count > 0 {
-            parts.push(String::from(t!(
-                "{$count} invalid",
-                count = invalid_count
-            )));
+            parts.push(String::from(t!("{$count} invalid", count = invalid_count)));
         }
         Some(parts.join(", "))
     } else {
@@ -323,16 +326,18 @@ fn render_tool_list_item(
             v_flex()
                 .w_full()
                 .min_w_0()
-                .child(h_flex().gap_1().child(Label::new(tool_name.clone())).when_some(
-                    rule_summary,
-                    |this, summary| {
-                        this.child(
-                            Label::new(summary)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                    },
-                ))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Label::new(tool_name.clone()))
+                        .when_some(rule_summary, |this, summary| {
+                            this.child(
+                                Label::new(summary)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
                 .child(
                     Label::new(tool_description)
                         .size(LabelSize::Small)
@@ -534,7 +539,9 @@ fn render_verification_section(
     let editor = window.use_keyed_state(input_id, cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
         editor.set_placeholder_text(
-            t!("Enter a tool input to test your rules…").resolve().as_ref(),
+            t!("Enter a tool input to test your rules…")
+                .resolve()
+                .as_ref(),
             window,
             cx,
         );

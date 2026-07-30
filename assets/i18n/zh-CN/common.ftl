@@ -22,3 +22,10 @@ no = 否
 # button that opens something already chosen names this key instead.
 open-action = 打开
 learn-more = 了解更多
+
+## Tools an agent can be granted
+
+# The tool that retrieves a URL, named by both the agent's @fetch command and the
+# tool permission settings. Distinct from `fetch` in git_ui.ftl, which is git
+# fetch: Chinese keeps 抓取 for pulling down a web page and 获取 for the git verb.
+fetch-tool = 抓取
