@@ -1655,7 +1655,8 @@ mod tests {
     use std::{cell::RefCell, num::NonZeroU32};
 
     use crate::{
-        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
+        ClosePosition, Formatter, FormatterList, ItemSettingsContent,
+        LanguageServerFormatterSpecifier, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
@@ -1937,6 +1938,27 @@ mod tests {
                 path: rel_path("root2/something")
             })),
             &AutoUpdateSetting { auto_update: false }
+        );
+    }
+
+    #[gpui::test]
+    fn test_default_yaml_formatter_is_language_server(cx: &mut App) {
+        let store = SettingsStore::new(cx, &default_settings());
+
+        let yaml = store
+            .raw_default_settings()
+            .project
+            .all_languages
+            .languages
+            .0
+            .get("YAML")
+            .expect("default settings should define YAML language settings");
+
+        assert_eq!(
+            yaml.formatter,
+            Some(FormatterList::Single(Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Current,
+            ))),
         );
     }
 
