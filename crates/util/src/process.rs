@@ -5,14 +5,49 @@ use std::process::Stdio;
 /// are killed when the process is terminated: on Unix by using process
 /// groups, and on Windows by using job objects.
 ///
-/// On Windows, dropping this struct closes the job object handle, which
-/// terminates all processes in the job. This also applies when the Zed
-/// process exits for any reason (including crashes), since the OS closes
-/// its handles, so spawned process trees can never outlive Zed.
+/// Dropping this struct terminates the whole process tree on both platforms:
+/// on Unix by signalling the child's process group, and on Windows by closing
+/// the job object handle, which terminates all processes in the job.
+///
+/// On Windows that also applies when the Zed process exits for any reason
+/// (including crashes), since the OS closes its handles, so spawned process
+/// trees can never outlive Zed. Unix has no equivalent guarantee: a Zed
+/// process that is killed outright never runs `Drop`, so its children's
+/// process groups survive.
 pub struct Child {
+    /// Held for its `Drop`, never read.
+    ///
+    /// Declared before `process` deliberately: fields drop in declaration
+    /// order, and dropping `process` synchronously reaps the child if it has
+    /// already exited, which releases its pid. Signalling the group first
+    /// means the pid we pass to `killpg` is still held by `process`.
+    #[cfg(not(windows))]
+    _process_group: ProcessGroup,
     process: smol::process::Child,
     #[cfg(windows)]
     job: Option<windows_job::JobObject>,
+}
+
+/// Kills a child's process group when dropped, so descendants the child
+/// spawned do not outlive it.
+///
+/// This mirrors what the job object does on Windows. It is a separate guard
+/// rather than a `Drop` impl on [`Child`] so that [`Child::output`] can still
+/// move `process` out of `self`, which a `Drop` impl would forbid.
+#[cfg(not(windows))]
+struct ProcessGroup(u32);
+
+#[cfg(not(windows))]
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        // SAFETY: `killpg` takes no pointers and cannot fail in a way we can
+        // act on. `Child::spawn` puts the child in its own session, and
+        // therefore its own process group, so the group id is the child's pid
+        // and this can never signal Zed's own process group.
+        unsafe {
+            libc::killpg(self.0 as i32, libc::SIGKILL);
+        }
+    }
 }
 
 impl std::ops::Deref for Child {
@@ -50,7 +85,11 @@ impl Child {
                     crate::redact::redact_command(&format!("{command:?}"))
                 )
             })?;
-        Ok(Self { process })
+        let _process_group = ProcessGroup(process.id());
+        Ok(Self {
+            process,
+            _process_group,
+        })
     }
 
     #[cfg(windows)]
@@ -105,9 +144,11 @@ impl Child {
     /// exit, then returns the collected output.
     pub async fn output(self) -> Result<std::process::Output> {
         // NOTE: Keep `self` alive across this await, do not destructure it to
-        // pull `process` out first. On Windows that drops the job object early,
-        // which triggers `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and kills the
-        // child before `output()` finishes collecting its stdout/stderr.
+        // pull `process` out first. That drops the teardown guard early and
+        // kills the child before `output()` finishes collecting its
+        // stdout/stderr: on Windows by triggering
+        // `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and on Unix by signalling the
+        // child's process group.
         Ok(self.process.output().await?)
     }
 
@@ -198,6 +239,92 @@ mod windows_job {
                 CloseHandle(self.0).log_err();
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Spawns a process tree `sh -> sleep` via `Child::spawn` and returns the
+    /// `Child` along with the pid of the grandchild (`sleep`).
+    fn spawn_process_tree(temp_dir: &std::path::Path) -> (Child, u32) {
+        let pid_file = temp_dir.join("grandchild_pid");
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg(format!(
+            "sleep 60 & echo $! > '{}'; wait",
+            pid_file.display()
+        ));
+        let child = Child::spawn(command, Stdio::null(), Stdio::null(), Stdio::null())
+            .expect("failed to spawn sh");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let grandchild_pid = loop {
+            if let Ok(contents) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = contents.trim().parse::<u32>()
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for grandchild pid file"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            process_is_alive(grandchild_pid),
+            "grandchild should be alive after spawning"
+        );
+        (child, grandchild_pid)
+    }
+
+    /// Signal 0 performs error checking without sending a signal. Only
+    /// `ESRCH` means the process is gone: `EPERM` means it is still there and
+    /// merely not ours to signal, so treating any error as "exited" would let
+    /// these tests pass without the process group being torn down.
+    fn process_is_alive(pid: u32) -> bool {
+        // SAFETY: `kill` with signal 0 takes no pointers and only probes
+        // whether the pid exists.
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        result != -1 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    fn assert_process_exits(pid: u32, message: &str) {
+        // The grandchild is reparented to init once its parent dies, so this
+        // waits on init reaping it. Matches `wait_until_gone` in
+        // `crate::command::darwin`.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while process_is_alive(pid) {
+            assert!(Instant::now() < deadline, "{message} (pid {pid})");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    #[test]
+    fn test_kill_terminates_grandchildren() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (mut child, grandchild_pid) = spawn_process_tree(temp_dir.path());
+
+        child.kill().expect("failed to kill child");
+
+        assert_process_exits(
+            grandchild_pid,
+            "grandchild should be terminated after killing the child",
+        );
+    }
+
+    #[test]
+    fn test_drop_terminates_grandchildren() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (child, grandchild_pid) = spawn_process_tree(temp_dir.path());
+
+        drop(child);
+
+        assert_process_exits(
+            grandchild_pid,
+            "grandchild should be terminated after dropping the child",
+        );
     }
 }
 
