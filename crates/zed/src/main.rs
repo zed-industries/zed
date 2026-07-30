@@ -35,6 +35,7 @@ use gpui::{
 use gpui_platform;
 
 use gpui_tokio::Tokio;
+use i18n::t;
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use project_panel::ProjectPanel;
@@ -93,25 +94,44 @@ fn build_application() -> Application {
 }
 
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
-    let message = "Zed failed to launch";
+    let message = t!("Zed failed to launch").resolve();
     let error_details = errors
         .into_iter()
         .flat_map(|(kind, paths)| {
             #[allow(unused_mut)] // for non-unix platforms
             let mut error_kind_details = match paths.len() {
                 0 => return None,
-                1 => format!(
-                    "{kind} when creating directory {:?}",
-                    paths.first().expect("match arm checks for a single entry")
-                ),
-                _many => format!("{kind} when creating directories {paths:?}"),
+                1 => String::from(t!(
+                    "{$kind} when creating directory {$path}",
+                    kind = kind.to_string(),
+                    path = format!(
+                        "{:?}",
+                        paths.first().expect("match arm checks for a single entry")
+                    )
+                )),
+                _many => String::from(t!(
+                    "{$kind} when creating directories {$paths}",
+                    kind = kind.to_string(),
+                    paths = format!("{paths:?}")
+                )),
             };
 
             #[cfg(unix)]
             {
                 if kind == io::ErrorKind::PermissionDenied {
-                    error_kind_details.push_str("\n\nConsider using chown and chmod tools for altering the directories permissions if your user has corresponding rights.\
-                        \nFor example, `sudo chown $(whoami):staff ~/.config` and `chmod +uwrx ~/.config`");
+                    error_kind_details.push_str(&format!(
+                        "\n\n{}\n{}",
+                        t!(
+                            "Consider using chown and chmod tools for altering the directories permissions if your user has corresponding rights."
+                        )
+                        .resolve(),
+                        t!(
+                            "For example, `{$chown_cmd}` and `{$chmod_cmd}`",
+                            chown_cmd = "sudo chown $(whoami):staff ~/.config",
+                            chmod_cmd = "chmod +uwrx ~/.config"
+                        )
+                        .resolve()
+                    ));
                 }
             }
 
@@ -130,9 +150,9 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
                     .update(cx, |_, window, cx| {
                         let response = window.prompt(
                             gpui::PromptLevel::Critical,
-                            message,
+                            &message,
                             Some(&error_details),
-                            &["Exit"],
+                            &[gpui::PromptButton::new(t!("Exit"))],
                             cx,
                         );
 
@@ -1456,12 +1476,12 @@ pub(crate) async fn restore_or_create_workspace(
 
         if error_count > 0 {
             let message = if error_count == 1 {
-                "Failed to restore 1 workspace. Check logs for details.".to_string()
+                String::from(t!("Failed to restore 1 workspace. Check logs for details."))
             } else {
-                format!(
-                    "Failed to restore {} workspaces. Check logs for details.",
-                    error_count
-                )
+                String::from(t!(
+                    "Failed to restore {$count} workspaces. Check logs for details.",
+                    count = error_count
+                ))
             };
 
             // Try to find an active workspace to show the toast

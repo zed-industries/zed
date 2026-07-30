@@ -41,10 +41,11 @@ use git_ui::unstaged_diff::UnstagedDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
-    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
-    actions, image_cache, img, point, px, retain_all,
+    PathPromptOptions, PromptButton, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt,
+    TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, actions, image_cache, img, point, px, retain_all,
 };
+use i18n::t;
 use image_viewer::ImageInfo;
 use language::Capability;
 use language_onboarding::BasedPyrightBanner;
@@ -664,18 +665,17 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
-            db::indoc! {r#"
-            inotify_init returned {}
-
-            This may be due to system-wide limits on inotify instances. For troubleshooting see: https://zed.dev/docs/linux
-            "#},
-            e
+            "{}\n\n{} https://zed.dev/docs/linux",
+            t!("inotify_init returned {$error}", error = e.to_string()).resolve(),
+            t!("This may be due to system-wide limits on inotify instances. For troubleshooting see:")
+                .resolve(),
         );
+        let title = t!("Could not start inotify").resolve();
         let prompt = window.prompt(
             PromptLevel::Critical,
-            "Could not start inotify",
+            &title,
             Some(&message),
-            &["Troubleshoot and Quit"],
+            &[PromptButton::new(t!("Troubleshoot and Quit"))],
             cx,
         );
         cx.spawn(async move |_, cx| {
@@ -695,18 +695,21 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
-            db::indoc! {r#"
-            ReadDirectoryChangesW initialization failed: {}
-
-            This may occur on network filesystems and WSL paths. For troubleshooting see: https://zed.dev/docs/windows
-            "#},
-            e
+            "{}\n\n{} https://zed.dev/docs/windows",
+            t!(
+                "ReadDirectoryChangesW initialization failed: {$error}",
+                error = e.to_string()
+            )
+            .resolve(),
+            t!("This may occur on network filesystems and WSL paths. For troubleshooting see:")
+                .resolve(),
         );
+        let title = t!("Could not start ReadDirectoryChangesW").resolve();
         let prompt = window.prompt(
             PromptLevel::Critical,
-            "Could not start ReadDirectoryChangesW",
+            &title,
             Some(&message),
-            &["Troubleshoot and Quit"],
+            &[PromptButton::new(t!("Troubleshoot and Quit"))],
             cx,
         );
         cx.spawn(async move |_, cx| {
@@ -741,22 +744,30 @@ fn show_software_emulation_warning_if_needed(
             )
         };
         let message = format!(
-            db::indoc! {r#"
-            Zed uses {} for rendering and requires a compatible GPU.
-
-            Currently you are using a software emulated GPU ({}) which
-            will result in awful performance.
-
-            For troubleshooting see: {}
-            Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.
-            "#},
-            graphics_api, specs.device_name, docs_url
+            "{}\n\n{}\n\n{} {}\n{}",
+            t!(
+                "Zed uses {$api} for rendering and requires a compatible GPU.",
+                api = graphics_api
+            )
+            .resolve(),
+            t!(
+                "Currently you are using a software emulated GPU ({$device}) which will result in awful performance.",
+                device = specs.device_name
+            )
+            .resolve(),
+            t!("For troubleshooting see:").resolve(),
+            docs_url,
+            t!("Set ZED_ALLOW_EMULATED_GPU=1 env var to permanently override.").resolve(),
         );
+        let title = t!("Unsupported GPU").resolve();
         let prompt = window.prompt(
             PromptLevel::Critical,
-            "Unsupported GPU",
+            &title,
             Some(&message),
-            &["Skip", "Troubleshoot and Quit"],
+            &[
+                PromptButton::new(t!("Skip")),
+                PromptButton::new(t!("Troubleshoot and Quit")),
+            ],
             cx,
         );
         cx.spawn(async move |_, cx| {
@@ -1044,8 +1055,13 @@ fn register_actions(
                 Err(e) => {
                     workspace.show_error(
                         format!(
-                            "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
-                            action.url
+                            "{}\n\n{}",
+                            t!(
+                                "Opening this URL in a browser failed because the URL is invalid: {$url}",
+                                url = action.url.clone()
+                            )
+                            .resolve(),
+                            t!("Error was: {$error}", error = e.to_string()).resolve()
                         ),
                         cx,
                     );
@@ -1242,10 +1258,10 @@ fn register_actions(
                     workspace.show_toast(
                         Toast::new(
                             NotificationId::unique::<RegisterZedScheme>(),
-                            format!(
-                                "zed:// links will now open in {}.",
-                                ReleaseChannel::global(cx).display_name()
-                            ),
+                            String::from(t!(
+                                "zed:// links will now open in {$channel}.",
+                                channel = ReleaseChannel::global(cx).display_name()
+                            )),
                         ),
                         cx,
                     )
@@ -1253,7 +1269,7 @@ fn register_actions(
                 Ok(())
             })
             .detach_and_prompt_err(
-                "Error registering zed:// scheme",
+                &t!("Error registering zed:// scheme").resolve(),
                 window,
                 cx,
                 |_, _, _| None,
@@ -1558,13 +1574,17 @@ fn open_about_window(cx: &mut App) {
 
         fn copy_details(&self, window: &mut Window, cx: &mut Context<Self>) {
             let content = match self.commit.as_ref() {
-                Some(commit) => {
-                    format!(
-                        "{}\nCommit: {}\nVersion: {}",
-                        self.message, commit, self.full_version
-                    )
-                }
-                None => format!("{}\nVersion: {}", self.message, self.full_version),
+                Some(commit) => format!(
+                    "{}\n{}\n{}",
+                    self.message,
+                    t!("Commit: {$commit}", commit = commit.clone()).resolve(),
+                    t!("Version: {$version}", version = self.full_version.clone()).resolve()
+                ),
+                None => format!(
+                    "{}\n{}",
+                    self.message,
+                    t!("Version: {$version}", version = self.full_version.clone()).resolve()
+                ),
             };
             cx.write_to_clipboard(ClipboardItem::new_string(content));
             window.remove_window();
@@ -1601,14 +1621,14 @@ fn open_about_window(cx: &mut App) {
                             .child(Headline::new(self.message.clone()))
                             .when_some(self.commit.clone(), |this, commit| {
                                 this.child(
-                                    Label::new("Commit")
+                                    Label::new(t!("Commit"))
                                         .color(Color::Muted)
                                         .size(LabelSize::XSmall),
                                 )
                                 .child(Label::new(commit).size(LabelSize::Small))
                             })
                             .child(
-                                Label::new("Version")
+                                Label::new(t!("Version"))
                                     .color(Color::Muted)
                                     .size(LabelSize::XSmall),
                             )
@@ -1626,7 +1646,7 @@ fn open_about_window(cx: &mut App) {
                                         window.remove_window();
                                     }))
                                     .child(
-                                        Button::new("ok", "OK")
+                                        Button::new("ok", t!("OK"))
                                             .full_width()
                                             .style(ButtonStyle::OutlinedGhost)
                                             .toggle_state(ok_is_focused)
@@ -1646,7 +1666,7 @@ fn open_about_window(cx: &mut App) {
                                         },
                                     ))
                                     .child(
-                                        Button::new("copy", "Copy")
+                                        Button::new("copy", t!("Copy"))
                                             .full_width()
                                             .style(ButtonStyle::Tinted(TintColor::Accent))
                                             .toggle_state(copy_is_focused)
@@ -1749,11 +1769,15 @@ fn quit(_: &Quit, cx: &mut App) {
         if should_confirm && let Some(multi_workspace) = workspace_windows.first() {
             let answer = multi_workspace
                 .update(cx, |_, window, cx| {
+                    let title = t!("Are you sure you want to quit?").resolve();
                     window.prompt(
                         PromptLevel::Info,
-                        "Are you sure you want to quit?",
+                        &title,
                         None,
-                        &["Quit", "Cancel"],
+                        &[
+                            PromptButton::new(t!("Quit")),
+                            PromptButton::cancel(t!("Cancel")),
+                        ],
                         cx,
                     )
                 })
@@ -1900,11 +1924,11 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                             |cx| {
                                 cx.new(|cx| {
                                     MessageNotification::new(
-                                        format!(
-                                            "Unable to access/open log file at path \
-                                                    {}: {e:#}",
-                                            paths::log_file().display()
-                                        ),
+                                        String::from(t!(
+                                            "Unable to access/open log file at path {$path}: {$error}",
+                                            path = paths::log_file().display().to_string(),
+                                            error = format!("{e:#}")
+                                        )),
                                         cx,
                                     )
                                 })
@@ -1936,11 +1960,11 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                 .new_window_entity(|window, cx| {
                     let mut editor = Editor::for_multibuffer(buffer, Some(project), window, cx);
                     editor.set_read_only(true);
-                    editor.set_breadcrumb_header(format!(
-                        "Last {} lines in {}",
-                        MAX_LINES,
-                        paths::log_file().display()
-                    ));
+                    editor.set_breadcrumb_header(String::from(t!(
+                        "Last {$count} lines in {$path}",
+                        count = MAX_LINES,
+                        path = paths::log_file().display().to_string()
+                    )));
                     let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(Some(last_multi_buffer_offset..last_multi_buffer_offset));
@@ -1983,16 +2007,16 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             } else {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
-                        MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
-                            .primary_message("Open Settings File")
-                            .primary_icon(IconName::Settings)
-                            .primary_on_click(|window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::OpenSettingsFile.boxed_clone(),
-                                    cx,
-                                );
-                                cx.emit(DismissEvent);
-                            })
+                        MessageNotification::new(
+                            format!("{}\n{error}", t!("Invalid user settings file").resolve()),
+                            cx,
+                        )
+                        .primary_message(t!("Open Settings File"))
+                        .primary_icon(IconName::Settings)
+                        .primary_on_click(|window, cx| {
+                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        })
                     })
                 });
                 true
@@ -2014,13 +2038,10 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
-                            format!(
-                                "Failed to migrate settings\n\
-                                {err}"
-                            ),
+                            format!("{}\n{err}", t!("Failed to migrate settings").resolve()),
                             cx,
                         )
-                        .primary_message("Open Settings File")
+                        .primary_message(t!("Open Settings File"))
                         .primary_icon(IconName::Settings)
                         .primary_on_click(|window, cx| {
                             window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
@@ -2104,7 +2125,10 @@ pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
         UserAgentsMdState::Error(message) => {
             let path = paths::agents_file().display().to_string();
             log::error!("Failed to load user AGENTS.md from {path}: {message}");
-            let body = format!("Failed to load {path}\n{message}");
+            let body = format!(
+                "{}\n{message}",
+                t!("Failed to load {$path}", path = path).resolve()
+            );
             let notification_id = notification_id.clone();
             show_app_notification(notification_id, cx, move |cx| {
                 let body = body.clone();
@@ -2258,12 +2282,15 @@ fn show_keymap_file_json_error(
     error: &anyhow::Error,
     cx: &mut App,
 ) {
-    let message: SharedString =
-        format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
+    let message: SharedString = format!(
+        "{}\n\n{error}",
+        t!("JSON parse error in keymap file. Bindings not reloaded.").resolve()
+    )
+    .into();
     show_app_notification(notification_id, cx, move |cx| {
         cx.new(|cx| {
             MessageNotification::new(message.clone(), cx)
-                .primary_message("Open Keymap File")
+                .primary_message(t!("Open Keymap File"))
                 .primary_icon(IconName::Settings)
                 .primary_on_click(|window, cx| {
                     window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
@@ -2281,7 +2308,7 @@ fn show_keymap_file_load_error(
     show_markdown_app_notification(
         notification_id,
         error_message,
-        "Open Keymap File".into(),
+        t!("Open Keymap File").into(),
         |window, cx| {
             window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
             cx.emit(DismissEvent);
@@ -2337,7 +2364,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
-        "New Window",
+        t!("New Window"),
         workspace::NewWindow,
     )]);
     // todo: nicer api here?
@@ -2615,7 +2642,7 @@ fn open_local_file(
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
+            cx.new(|cx| MessageNotification::new(t!("This project has no folders open."), cx))
         });
         None
     }

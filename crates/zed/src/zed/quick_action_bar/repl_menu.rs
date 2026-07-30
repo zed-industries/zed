@@ -1,6 +1,7 @@
 use gpui::ElementId;
 use gpui::TaskExt;
 use gpui::{AnyElement, Entity};
+use i18n::t;
 use picker::Picker;
 use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
@@ -100,9 +101,10 @@ impl QuickActionBar {
                             menu.custom_row(move |_window, _cx| {
                                 h_flex()
                                     .child(
-                                        Label::new(format!(
-                                            "kernel: {} ({})",
-                                            menu_state.kernel_name, menu_state.kernel_language
+                                        Label::new(t!(
+                                            "kernel: {$name} ({$language})",
+                                            name = menu_state.kernel_name.clone(),
+                                            language = menu_state.kernel_language.clone()
                                         ))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
@@ -135,9 +137,9 @@ impl QuickActionBar {
                     .custom_entry(
                         move |_window, _cx| {
                             Label::new(if has_nonempty_selection {
-                                "Run Selection"
+                                t!("Run Selection")
                             } else {
-                                "Run Line"
+                                t!("Run Line")
                             })
                             .into_any_element()
                         },
@@ -150,7 +152,7 @@ impl QuickActionBar {
                     )
                     .custom_entry(
                         move |_window, _cx| {
-                            Label::new("Interrupt")
+                            Label::new(t!("Interrupt"))
                                 .size(LabelSize::Small)
                                 .color(Color::Error)
                                 .into_any_element()
@@ -164,7 +166,7 @@ impl QuickActionBar {
                     )
                     .custom_entry(
                         move |_window, _cx| {
-                            Label::new("Clear Outputs")
+                            Label::new(t!("Clear Outputs"))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                                 .into_any_element()
@@ -179,7 +181,7 @@ impl QuickActionBar {
                     .separator()
                     .custom_entry(
                         move |_window, _cx| {
-                            Label::new("Shut Down Kernel")
+                            Label::new(t!("Shut Down Kernel"))
                                 .size(LabelSize::Small)
                                 .color(Color::Error)
                                 .into_any_element()
@@ -193,7 +195,7 @@ impl QuickActionBar {
                     )
                     .custom_entry(
                         move |_window, _cx| {
-                            Label::new("Restart Kernel")
+                            Label::new(t!("Restart Kernel"))
                                 .size(LabelSize::Small)
                                 .color(Color::Error)
                                 .into_any_element()
@@ -205,7 +207,7 @@ impl QuickActionBar {
                         },
                     )
                     .separator()
-                    .action("View Sessions", Box::new(repl::Sessions))
+                    .action(t!("View Sessions"), Box::new(repl::Sessions))
                     // TODO: Add shut down all kernels action
                     // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
@@ -220,7 +222,7 @@ impl QuickActionBar {
                     )
                     .width(rems(1.))
                     .disabled(menu_state.popover_disabled),
-                Tooltip::text("REPL Menu"),
+                Tooltip::text(t!("REPL Menu")),
             );
 
         let button = ButtonLike::new_rounded_left("toggle_repl_icon")
@@ -256,8 +258,11 @@ impl QuickActionBar {
         kernel_specification: KernelSpecification,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let tooltip: SharedString =
-            SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
+        let tooltip: SharedString = t!(
+            "Start REPL for {$kernel}",
+            kernel = kernel_specification.name()
+        )
+        .into();
 
         Some(
             h_flex()
@@ -350,7 +355,7 @@ impl QuickActionBar {
                                     Label::new(if let Some(name) = current_kernel_name {
                                         name
                                     } else {
-                                        SharedString::from("Select Kernel")
+                                        t!("Select Kernel").into()
                                     })
                                     .size(LabelSize::Small)
                                     .color(if current_kernelspec.is_some() {
@@ -367,14 +372,18 @@ impl QuickActionBar {
                                 .size(IconSize::XSmall),
                         ),
                 ),
-            Tooltip::text("Select Kernel"),
+            Tooltip::text(t!("Select Kernel")),
         )
         .with_handle(menu_handle)
         .into_any_element()
     }
 
     pub fn render_repl_setup(&self, language: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
+        let tooltip: SharedString = t!(
+            "Setup Zed REPL for {$language}",
+            language = language.to_string()
+        )
+        .into();
         Some(
             h_flex()
                 .gap(DynamicSpacing::Base06.rems(cx))
@@ -403,7 +412,7 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
 
     let fill_fields = || {
         ReplMenuState {
-            tooltip: "Nothing running".into(),
+            tooltip: t!("Nothing running").into(),
             icon: IconName::ReplNeutral,
             icon_color: Color::Default,
             icon_is_animating: false,
@@ -428,33 +437,56 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
             ..fill_fields()
         };
 
-    let starting = || transitional(format!("{} is starting", kernel_name).into(), true, true);
-    let restarting = || transitional(format!("Restarting {}", kernel_name).into(), true, true);
+    let starting = || {
+        transitional(
+            t!("{$kernel} is starting", kernel = kernel_name.clone()).into(),
+            true,
+            true,
+        )
+    };
+    let restarting = || {
+        transitional(
+            t!("Restarting {$kernel}", kernel = kernel_name.clone()).into(),
+            true,
+            true,
+        )
+    };
     let shutting_down = || {
         transitional(
-            format!("{} is shutting down", kernel_name).into(),
+            t!("{$kernel} is shutting down", kernel = kernel_name.clone()).into(),
             false,
             true,
         )
     };
     let auto_restarting = || {
         transitional(
-            format!("Auto-restarting {}", kernel_name).into(),
+            t!("Auto-restarting {$kernel}", kernel = kernel_name.clone()).into(),
             true,
             true,
         )
     };
-    let unknown = || transitional(format!("{} state unknown", kernel_name).into(), false, true);
+    let unknown = || {
+        transitional(
+            t!("{$kernel} state unknown", kernel = kernel_name.clone()).into(),
+            false,
+            true,
+        )
+    };
     let other = |state: &str| {
         transitional(
-            format!("{} state: {}", kernel_name, state).into(),
+            t!(
+                "{$kernel} state: {$state}",
+                kernel = kernel_name.clone(),
+                state = state.to_string()
+            )
+            .into(),
             false,
             true,
         )
     };
 
     let shutdown = || ReplMenuState {
-        tooltip: "Nothing running".into(),
+        tooltip: t!("Nothing running").into(),
         icon: IconName::ReplNeutral,
         icon_color: Color::Default,
         icon_is_animating: false,
@@ -468,13 +500,23 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
         Kernel::Restarting => restarting(),
         Kernel::RunningKernel(kernel) => match &kernel.execution_state() {
             ExecutionState::Idle => ReplMenuState {
-                tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
+                tooltip: t!(
+                    "Run code on {$kernel} ({$language})",
+                    kernel = kernel_name.clone(),
+                    language = kernel_language.clone()
+                )
+                .into(),
                 indicator: Some(Indicator::dot().color(Color::Success)),
                 status: session.kernel.status(),
                 ..fill_fields()
             },
             ExecutionState::Busy => ReplMenuState {
-                tooltip: format!("Interrupt {} ({})", kernel_name, kernel_language).into(),
+                tooltip: t!(
+                    "Interrupt {$kernel} ({$language})",
+                    kernel = kernel_name.clone(),
+                    language = kernel_language.clone()
+                )
+                .into(),
                 icon_is_animating: true,
                 popover_disabled: false,
                 indicator: None,
@@ -491,7 +533,12 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
         },
         Kernel::StartingKernel(_) => starting(),
         Kernel::ErroredLaunch(e) => ReplMenuState {
-            tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
+            tooltip: t!(
+                "Error with kernel {$kernel}: {$error}",
+                kernel = kernel_name.clone(),
+                error = e.to_string()
+            )
+            .into(),
             popover_disabled: false,
             indicator: Some(Indicator::dot().color(Color::Error)),
             status: session.kernel.status(),

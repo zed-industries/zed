@@ -11,6 +11,7 @@ use gpui::{
     App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
     StyleRefinement, Task, TextStyleRefinement, Window, list, prelude::*,
 };
+use i18n::t;
 use language::LanguageRegistry;
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle,
@@ -269,16 +270,28 @@ impl TelemetryLogView {
         struct TelemetryLogReadError;
         cx.emit(TelemetryLogEvent::ShowToast(Toast::new(
             NotificationId::unique::<TelemetryLogReadError>(),
-            format!("Failed to read telemetry log: {}", error),
+            t!(
+                "Failed to read telemetry log: {$error}",
+                error = error.to_string()
+            )
+            .resolve()
+            .to_string(),
         )));
     }
 
     fn show_parse_error_toast(&self, count: usize, cx: &mut Context<Self>) {
         struct TelemetryLogParseError;
         let message = if count == 1 {
-            "1 telemetry log entry failed to parse".to_string()
+            t!("1 telemetry log entry failed to parse")
+                .resolve()
+                .to_string()
         } else {
-            format!("{} telemetry log entries failed to parse", count)
+            t!(
+                "{$count} telemetry log entries failed to parse",
+                count = count
+            )
+            .resolve()
+            .to_string()
         };
         cx.emit(TelemetryLogEvent::ShowToast(Toast::new(
             NotificationId::unique::<TelemetryLogParseError>(),
@@ -400,7 +413,7 @@ impl TelemetryLogView {
                     .when(signed_in, |this| {
                         this.child(
                             div()
-                                .child(ui::Chip::new("signed in"))
+                                .child(ui::Chip::new(t!(key = "signed-in-chip", "signed in")))
                                 .visible_on_hover("telemetry-entry"),
                         )
                     }),
@@ -484,7 +497,7 @@ impl Item for TelemetryLogView {
     type Event = TelemetryLogEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Telemetry Log".into()
+        t!("Telemetry Log").into()
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -510,9 +523,9 @@ impl Render for TelemetryLogView {
                     .justify_center()
                     .items_center()
                     .child(if self.events.is_empty() {
-                        "No telemetry events recorded yet"
+                        t!("No telemetry events recorded yet").resolve()
                     } else {
-                        "No events match the current filter"
+                        t!("No events match the current filter").resolve()
                     })
                     .into_any()
             } else {
@@ -539,7 +552,8 @@ impl TelemetryLogToolbarItemView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search_editor = cx.new(|cx| {
             let mut editor = editor::Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter events...", window, cx);
+            let placeholder_text = t!("Filter events...").resolve();
+            editor.set_placeholder_text(&placeholder_text, window, cx);
             editor
         });
 
@@ -580,7 +594,7 @@ impl Render for TelemetryLogToolbarItemView {
             .child(
                 IconButton::new("clear_events", IconName::Trash)
                     .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Clear Events"))
+                    .tooltip(Tooltip::text(t!("Clear Events")))
                     .disabled(!has_events)
                     .on_click(cx.listener(move |_this, _, _window, cx| {
                         telemetry_log_clone.update(cx, |log, cx| {
@@ -591,7 +605,7 @@ impl Render for TelemetryLogToolbarItemView {
             .child(
                 IconButton::new("open_log_file", IconName::File)
                     .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Open Raw Log File"))
+                    .tooltip(Tooltip::text(t!("Open Raw Log File")))
                     .on_click(|_, _window, cx| {
                         let path = Telemetry::log_file_path();
                         cx.open_url(&format!("file://{}", path.display()));

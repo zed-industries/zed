@@ -10,6 +10,7 @@ use workspace::notifications::NotifyTaskExt;
 use std::sync::Arc;
 
 use gpui::{Entity, EventEmitter, Global, Task, TextStyle, TextStyleRefinement};
+use i18n::t;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use theme_settings::ThemeSettings;
 use ui::prelude::*;
@@ -96,7 +97,7 @@ impl MigrationBanner {
     fn show(&mut self, cx: &mut Context<Self>) {
         let (file_type, backup_file_name) = match self.migration_type {
             Some(MigrationType::Keymap) => (
-                "keymap",
+                t!(key = "keymap-file-kind", "keymap"),
                 paths::keymap_backup_file()
                     .file_name()
                     .unwrap_or_default()
@@ -104,7 +105,7 @@ impl MigrationBanner {
                     .into_owned(),
             ),
             Some(MigrationType::Settings) => (
-                "settings",
+                t!(key = "settings-file-kind", "settings"),
                 paths::settings_backup_file()
                     .file_name()
                     .unwrap_or_default()
@@ -114,11 +115,12 @@ impl MigrationBanner {
             None => return,
         };
 
-        let migration_text = format!(
-            "Your {} file uses deprecated settings which can be \
-            automatically updated. A backup will be saved to `{}`",
-            file_type, backup_file_name
-        );
+        let migration_text = String::from(t!(
+            "Your {$file_type} file uses deprecated settings which can be \
+            automatically updated. A backup will be saved to `{$backup_file_name}`",
+            file_type = file_type.resolve(),
+            backup_file_name = backup_file_name
+        ));
 
         self.markdown = Some(cx.new(|cx| Markdown::new(migration_text.into(), None, None, cx)));
 
@@ -238,7 +240,7 @@ impl Render for MigrationBanner {
                     ),
             )
             .child(
-                Button::new("backup-and-migrate", "Backup and Update").on_click({
+                Button::new("backup-and-migrate", t!("Backup and Update")).on_click({
                     let workspace = self.workspace.clone();
                     move |_, window, cx| {
                         let fs = <dyn Fs>::global(cx);

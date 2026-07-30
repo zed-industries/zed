@@ -2,6 +2,7 @@ use csv_preview::{CsvPreviewView, TabularDataPreviewFeatureFlag};
 use editor::{Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Entity, Modifiers};
+use i18n::t;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use svg_preview::svg_preview_view::SvgPreviewView;
 use ui::{Tooltip, prelude::*, text_for_keystroke};
@@ -42,17 +43,17 @@ impl QuickActionBar {
         let (button_id, tooltip_text, open_action_for_tooltip) = match &preview_target {
             PreviewTarget::Markdown(_) => (
                 "toggle-markdown-preview",
-                "Preview Markdown",
+                t!("Preview Markdown"),
                 &markdown_preview::OpenPreview as &dyn gpui::Action,
             ),
             PreviewTarget::Svg(_) => (
                 "toggle-svg-preview",
-                "Preview SVG",
+                t!("Preview SVG"),
                 &svg_preview::OpenPreview as &dyn gpui::Action,
             ),
             PreviewTarget::Csv(_) => (
                 "toggle-csv-preview",
-                "Preview CSV",
+                t!("Preview CSV"),
                 &csv_preview::OpenPreview as &dyn gpui::Action,
             ),
         };
@@ -68,11 +69,11 @@ impl QuickActionBar {
             .style(ButtonStyle::Subtle)
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta(
-                    tooltip_text,
+                    tooltip_text.clone(),
                     Some(open_action_for_tooltip),
-                    format!(
-                        "{} to open in a split",
-                        text_for_keystroke(&alt_click.modifiers, &alt_click.key, cx)
+                    t!(
+                        "{$keystroke} to open in a split",
+                        keystroke = text_for_keystroke(&alt_click.modifiers, &alt_click.key, cx)
                     ),
                     cx,
                 )

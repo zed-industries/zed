@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{AppContext as _, DismissEvent, Entity, EventEmitter, Focusable, ReadGlobal, Styled};
+use i18n::t;
 use ui::{
     ActiveTheme, App, Color, Context, FluentBuilder, InteractiveElement, IntoElement, Label,
     LabelCommon, LabelSize, ParentElement, Render, SharedString, StyledExt, Window, div, h_flex,
@@ -69,7 +70,8 @@ impl OpenUrlModal {
                 cx.emit(DismissEvent);
             }
             Err(e) => {
-                self.last_error = Some(format!("Invalid URL: {}", e).into());
+                self.last_error =
+                    Some(t!("Invalid URL: {$error}", error = e.to_string()).resolve());
                 cx.notify();
             }
         }
@@ -106,7 +108,7 @@ impl Render for OpenUrlModal {
                     })
                     .when(self.last_error.is_none(), |this| {
                         this.child(
-                            Label::new("Paste a URL to open.")
+                            Label::new(t!("Paste a URL to open."))
                                 .color(Color::Muted)
                                 .size(LabelSize::Small),
                         )
