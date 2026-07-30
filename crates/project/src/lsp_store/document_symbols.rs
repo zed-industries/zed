@@ -46,9 +46,9 @@ impl DocumentSymbolsData {
             None => {
                 self.symbols.clear();
                 self.fetched_servers.clear();
+                self.symbols_update = None;
             }
         }
-        self.symbols_update = None;
     }
 }
 

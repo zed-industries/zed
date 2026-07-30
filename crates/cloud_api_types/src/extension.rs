@@ -52,6 +52,17 @@ pub enum ExtensionProvides {
     Snippets,
 }
 
+impl ExtensionProvides {
+    pub fn is_deprecated(&self) -> bool {
+        matches!(
+            self,
+            ExtensionProvides::AgentServers
+                | ExtensionProvides::SlashCommands
+                | ExtensionProvides::IndexedDocsProviders
+        )
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ExtensionMetadata {
     pub id: Arc<str>,

@@ -1,7 +1,7 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use editor::{
@@ -13,8 +13,9 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
-    Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
+    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
+    Style, Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point,
+    px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
@@ -22,7 +23,7 @@ use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
-use util::paths::PathExt;
+use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
@@ -68,11 +69,71 @@ pub struct ImageView {
     last_mouse_position: Option<Point<Pixels>>,
     container_bounds: Option<Bounds<Pixels>>,
     image_size: Option<(u32, u32)>,
+    pending_image: Option<Arc<gpui::Image>>,
+    displayed_image: Option<DisplayedImage>,
+}
+
+struct DisplayedImage {
+    source_image: Arc<gpui::Image>,
+    render_image: Arc<RenderImage>,
+}
+
+impl DisplayedImage {
+    fn drop_atlas_entry(&self, window: &mut Window) {
+        window.drop_image(self.render_image.clone()).log_err();
+    }
+
+    fn release(self, window: &mut Window, cx: &mut App) {
+        self.drop_atlas_entry(window);
+        self.source_image.remove_asset(cx);
+    }
 }
 
 impl ImageView {
     fn is_dragging(&self) -> bool {
         self.last_mouse_position.is_some()
+    }
+
+    fn update_displayed_image(
+        &mut self,
+        image: &Arc<gpui::Image>,
+        render_image: Option<Arc<RenderImage>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(pending_image) = self.pending_image.take() {
+            if pending_image.id() != image.id() {
+                pending_image.remove_asset(cx);
+            } else if render_image.is_none() {
+                self.pending_image = Some(pending_image);
+            }
+        }
+
+        let Some(render_image) = render_image else {
+            self.pending_image.get_or_insert_with(|| image.clone());
+            return;
+        };
+
+        if self
+            .displayed_image
+            .as_ref()
+            .is_some_and(|displayed_image| displayed_image.render_image.id == render_image.id)
+        {
+            return;
+        }
+
+        if let Some(previous) = self.displayed_image.take() {
+            if previous.source_image.id() == image.id() {
+                previous.drop_atlas_entry(window);
+            } else {
+                previous.release(window, cx);
+            }
+        }
+
+        self.displayed_image = Some(DisplayedImage {
+            source_image: image.clone(),
+            render_image,
+        });
     }
 
     pub fn new(
@@ -83,9 +144,8 @@ impl ImageView {
     ) -> Self {
         // Start loading the image to render in the background to prevent the view
         // from flickering in most cases.
-        let _ = image_item.update(cx, |image, cx| {
-            image.image.clone().get_render_image(window, cx)
-        });
+        let pending_image = image_item.read(cx).image.clone();
+        let _render_image = pending_image.clone().get_render_image(window, cx);
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
         cx.on_release_in(window, |this, window, cx| {
@@ -111,6 +171,8 @@ impl ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size,
+            pending_image: Some(pending_image),
+            displayed_image: None,
         }
     }
 
@@ -384,7 +446,9 @@ impl Element for ImageContentElement {
             top = center_y - (scaled_height / 2.0) + pan_offset.y;
         }
 
-        self.image_view.update(cx, |this, _| {
+        self.image_view.update(cx, |this, cx| {
+            let render_image = image.clone().use_render_image(window, cx);
+            this.update_displayed_image(&image, render_image, window, cx);
             this.container_bounds = Some(bounds);
             if let Some(initial_zoom_level) = initial_zoom_level {
                 this.zoom_level = initial_zoom_level;
@@ -566,7 +630,7 @@ impl Item for ImageView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>>
     where
@@ -581,6 +645,8 @@ impl Item for ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size: self.image_size,
+            pending_image: None,
+            displayed_image: None,
         })))
     }
 
@@ -1006,6 +1072,271 @@ impl ToolbarItemView for ImageViewToolbarControls {
 pub fn init(cx: &mut App) {
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::{TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
+    use util::rel_path::rel_path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    fn test_image(red: u8) -> Arc<gpui::Image> {
+        let bytes = format!("P3\n1 1\n255\n{red} 0 0\n").into_bytes();
+        Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Pnm, bytes))
+    }
+
+    async fn open_test_image(cx: &mut TestAppContext) -> (Entity<Project>, Entity<ImageItem>) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/root"))
+            .await
+            .expect("test root should be created");
+        fs.insert_file("/root/image.ppm", test_image(0).bytes.clone())
+            .await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+        let image_item = project
+            .update(cx, |project, cx| {
+                project.open_image(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("image.ppm").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("test image should open");
+
+        (project, image_item)
+    }
+
+    fn draw_window(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    fn displayed_source_id(image_view: &Entity<ImageView>, cx: &VisualTestContext) -> Option<u64> {
+        cx.read(|cx| {
+            image_view
+                .read(cx)
+                .displayed_image
+                .as_ref()
+                .map(|displayed_image| displayed_image.source_image.id())
+        })
+    }
+
+    fn displayed_render_image(
+        image_view: &Entity<ImageView>,
+        cx: &VisualTestContext,
+    ) -> Option<Arc<RenderImage>> {
+        cx.read(|cx| {
+            image_view
+                .read(cx)
+                .displayed_image
+                .as_ref()
+                .map(|displayed_image| displayed_image.render_image.clone())
+        })
+    }
+
+    fn replace_image(
+        image_item: &Entity<ImageItem>,
+        image: Arc<gpui::Image>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|_window, cx| {
+            image_item.update(cx, |image_item, cx| {
+                image_item.image = image;
+                cx.emit(ImageItemEvent::Reloaded);
+            });
+        });
+    }
+
+    fn replace_image_and_draw(
+        image_item: &Entity<ImageItem>,
+        image: Arc<gpui::Image>,
+        cx: &mut VisualTestContext,
+    ) {
+        replace_image(image_item, image, cx);
+        draw_window(cx);
+    }
+
+    fn image_is_cached(image: &Arc<gpui::Image>, cx: &VisualTestContext) -> bool {
+        cx.read(|cx| image.is_asset_cached(cx))
+    }
+
+    #[gpui::test]
+    async fn test_reloading_removes_replaced_image_from_asset_cache(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let original_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+
+        cx.run_until_parked();
+        draw_window(cx);
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(original_image.id()),
+            "the original image should finish decoding and be displayed"
+        );
+
+        let reloaded_image = test_image(1);
+        replace_image_and_draw(&image_item, reloaded_image.clone(), cx);
+        cx.run_until_parked();
+        draw_window(cx);
+
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(reloaded_image.id()),
+            "the reloaded image should replace the original"
+        );
+        assert!(
+            !image_is_cached(&original_image, cx),
+            "the replaced image remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_superseded_in_flight_image_is_removed_from_asset_cache(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+
+        let superseded_image = test_image(1);
+        replace_image_and_draw(&image_item, superseded_image.clone(), cx);
+        assert_ne!(
+            displayed_source_id(&image_view, cx),
+            Some(superseded_image.id()),
+            "the superseded image should still be decoding"
+        );
+
+        let current_image = test_image(2);
+        replace_image_and_draw(&image_item, current_image.clone(), cx);
+        assert_ne!(
+            displayed_source_id(&image_view, cx),
+            Some(current_image.id()),
+            "the current image should start decoding before the superseded decode completes"
+        );
+
+        cx.run_until_parked();
+        draw_window(cx);
+
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(current_image.id()),
+            "the current image should finish decoding"
+        );
+        assert!(
+            !image_is_cached(&superseded_image, cx),
+            "the superseded image remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_superseded_constructor_prefetch_is_removed_from_asset_cache(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let prefetched_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let cx = cx.add_empty_window();
+        let image_view = cx.update(|window, cx| {
+            cx.new(|cx| ImageView::new(image_item.clone(), project, window, cx))
+        });
+
+        let current_image = test_image(1);
+        replace_image(&image_item, current_image, cx);
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            image_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !image_is_cached(&prefetched_image, cx),
+            "the superseded constructor prefetch remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_releasing_one_split_keeps_shared_atlas_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+
+        let cx = cx.add_empty_window();
+        let original_image_view = cx.update(|window, cx| {
+            cx.new(|cx| ImageView::new(image_item.clone(), project, window, cx))
+        });
+        let split_image_view = original_image_view
+            .update_in(cx, |image_view, window, cx| {
+                image_view.clone_on_split(None, window, cx)
+            })
+            .await
+            .expect("image view should support splitting");
+
+        let draw_split_views = |cx: &mut VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(2.), px(1.)), |_, _| {
+                div()
+                    .size_full()
+                    .child(original_image_view.clone())
+                    .child(split_image_view.clone())
+            });
+        };
+
+        draw_split_views(cx);
+        cx.run_until_parked();
+        draw_split_views(cx);
+
+        let original_render_image = displayed_render_image(&original_image_view, cx)
+            .expect("the original image view should finish decoding");
+        let split_render_image = displayed_render_image(&split_image_view, cx)
+            .expect("the split image view should finish decoding");
+        assert_eq!(
+            original_render_image.id, split_render_image.id,
+            "both image views should share the decoded render image"
+        );
+        assert!(
+            cx.update(|window, _| window.has_image_atlas_entry(&original_render_image)),
+            "the shared image should be present in the window atlas"
+        );
+
+        drop(original_image_view);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        assert!(
+            cx.update(|window, _| window.has_image_atlas_entry(&split_render_image)),
+            "releasing one image view removed an atlas entry still used by its split"
+        );
+
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            split_image_view.clone().into_any_element()
+        });
+    }
 }
 
 mod persistence {

@@ -42,6 +42,7 @@ jobs:
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
           repositories: zed
+          permission-discussions: read
           permission-issues: write
 
       - name: Set up Python

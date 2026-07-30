@@ -20,6 +20,7 @@ use path::rel_path::RelPathBuf;
 pub use path::PathStyle;
 
 /// Returns the path to the user's home directory.
+#[cfg(not(target_family = "wasm"))]
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {

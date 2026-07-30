@@ -692,6 +692,7 @@ pub fn render_table_row(
             .id(("table-row-scrollable", row_index as u64))
             .flex_grow_1()
             .overflow_x_scroll()
+            .restrict_scroll_to_axis()
             .flex()
             .child(
                 div().flex().flex_row().children(
@@ -704,7 +705,6 @@ pub fn render_table_row(
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
         }
-        scrollable_section.style().restrict_scroll_to_axis = Some(true);
 
         row = row.child(pinned_section).child(scrollable_section);
     } else {
@@ -817,13 +817,13 @@ pub fn render_table_header(
             .id("table-header-scrollable")
             .flex_grow_1()
             .overflow_x_scroll()
+            .restrict_scroll_to_axis()
             .flex()
             .child(inner);
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
         }
-        scrollable_section.style().restrict_scroll_to_axis = Some(true);
 
         outer
             .child(pinned_section)
@@ -1062,12 +1062,12 @@ fn render_resize_handles_resizable(
         .left(pinned_width)
         .right_0()
         .overflow_x_scroll()
+        .restrict_scroll_to_axis()
         .child(inner);
 
     if let Some(handle) = h_scroll_handle {
         overlay = overlay.track_scroll(handle);
     }
-    overlay.style().restrict_scroll_to_axis = Some(true);
 
     div()
         .id("resize-handles-wrapper")
@@ -1299,14 +1299,14 @@ impl RenderOnce for Table {
 
         if let Some(state) = interaction_state.as_ref() {
             let content = if is_resizable && !uses_pinned_layout {
-                let mut h_scroll_container = div()
+                let h_scroll_container = div()
                     .id("table-h-scroll")
                     .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
                     .flex_grow_1()
                     .h_full()
                     .track_scroll(&state.read(cx).horizontal_scroll_handle)
                     .child(table);
-                h_scroll_container.style().restrict_scroll_to_axis = Some(true);
                 div().size_full().child(h_scroll_container)
             } else {
                 table
@@ -1355,9 +1355,9 @@ impl RenderOnce for Table {
                     );
                 }
             }
-            content.style().restrict_scroll_to_axis = Some(true);
 
             content
+                .restrict_scroll_to_axis()
                 .track_focus(&state.read(cx).focus_handle)
                 .id(("table", state.entity_id()))
                 .into_any_element()

@@ -5291,6 +5291,47 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_recent_workspace_identity_for_submodule(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Superproject `/Foo` with a submodule `Bar`. A submodule's `.git` is a
+        // file pointing into the superproject's `.git/modules/<name>` directory,
+        // structurally like a linked worktree's `.git` file.
+        fs.insert_tree(
+            "/Foo",
+            json!({
+                ".git": {
+                    "modules": {
+                        "Bar": {
+                            "HEAD": "ref: refs/heads/main"
+                        }
+                    }
+                },
+                "Bar": {
+                    ".git": "gitdir: ../.git/modules/Bar\n",
+                    "src": { "main.rs": "" }
+                },
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now();
+
+        let result = local_recent_workspace(
+            WorkspaceId(1),
+            PathList::new(&["/Foo/Bar"]),
+            t0,
+            fs.as_ref(),
+        )
+        .await;
+
+        // Submodules are independent projects: their identity is their own
+        // working directory, not the superproject's `.git/modules/<name>`.
+        assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/Foo/Bar")]);
+    }
+
+    #[gpui::test]
     async fn test_recent_workspace_identity_deduplicates_main_and_linked_worktree(
         cx: &mut gpui::TestAppContext,
     ) {

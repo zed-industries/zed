@@ -19,6 +19,7 @@ on:
       - "Guild Stale Assignments"
       - "Guild Weekly Shipped"
       - "Guild New PR Notification"
+      - "Issue Triage Queue Board"
     types: [completed]
 
 permissions:

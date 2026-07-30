@@ -9569,6 +9569,12 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
     let content = fs.load(&dot_git).await.ok()?;
     let gitdir_rel = content.strip_prefix("gitdir:")?.trim();
     let gitdir_abs = fs.canonicalize(&path.join(gitdir_rel)).await.ok()?;
+    // Submodules also use a `.git` file, but they are independent projects whose
+    // identity is their own working directory (`path`), not the superproject's
+    // `.git/modules/<name>` git dir. Leave them unresolved.
+    if is_submodule_git_dir(&gitdir_abs) {
+        return None;
+    }
     // Read commondir to find the main .git directory
     let commondir_content = fs.load(&gitdir_abs.join("commondir")).await.ok()?;
     let common_dir = fs
@@ -9704,6 +9710,28 @@ pub fn repo_identity_path(common_dir: &Path) -> &Path {
     } else {
         common_dir
     }
+}
+
+/// Returns true if `git_dir` is a Git submodule's git directory.
+///
+/// Submodules store their git directory inside the superproject at
+/// `<superproject>/.git/modules/<name>`. Unlike a linked worktree, a submodule
+/// is an independent project whose identity is its own working directory, so its
+/// path must not be resolved to the superproject's `.git/modules/...` directory
+/// (from which the working directory cannot be derived).
+pub fn is_submodule_git_dir(git_dir: &Path) -> bool {
+    let mut previous_was_git_dir = false;
+    for component in git_dir.components() {
+        if let std::path::Component::Normal(name) = component {
+            if previous_was_git_dir && name == std::ffi::OsStr::new("modules") {
+                return true;
+            }
+            previous_was_git_dir = name.to_string_lossy().ends_with(".git");
+        } else {
+            previous_was_git_dir = false;
+        }
+    }
+    false
 }
 
 /// Returns a short name for a linked worktree suitable for UI display
@@ -10167,6 +10195,53 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn test_is_submodule_git_dir() {
+        assert!(is_submodule_git_dir(Path::new("/Foo/.git/modules/Bar")));
+        assert!(is_submodule_git_dir(Path::new(
+            "/Foo/.git/modules/nested/modules/Baz"
+        )));
+        // Bare superprojects keep their git dir in a `*.git` directory.
+        assert!(is_submodule_git_dir(Path::new("/Foo/foo.git/modules/Bar")));
+
+        // Not submodules: a normal repo, a linked worktree, and a bare repo.
+        assert!(!is_submodule_git_dir(Path::new("/Foo/Bar/.git")));
+        assert!(!is_submodule_git_dir(Path::new(
+            "/repo/.git/worktrees/feature"
+        )));
+        assert!(!is_submodule_git_dir(Path::new("/foo/.bare")));
+        // A directory literally named `modules` that isn't under a git dir.
+        assert!(!is_submodule_git_dir(Path::new("/Foo/modules/Bar")));
+    }
+
+    #[gpui::test]
+    async fn test_resolve_git_worktree_to_main_repo_ignores_submodule(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/Foo"),
+            json!({
+                ".git": {
+                    "modules": {
+                        "Bar": {
+                            "HEAD": "ref: refs/heads/main"
+                        }
+                    }
+                },
+                "Bar": {
+                    ".git": "gitdir: ../.git/modules/Bar\n",
+                    "src": { "main.rs": "" }
+                }
+            }),
+        )
+        .await;
+
+        // A submodule must not resolve to the superproject's `.git/modules/<name>`;
+        // it stays at its own working directory (handled by the caller falling back
+        // to the raw path).
+        let resolved = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/Foo/Bar")).await;
+        assert_eq!(resolved, None);
     }
 
     #[gpui::test]

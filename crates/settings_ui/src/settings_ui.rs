@@ -4409,6 +4409,12 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    pub(crate) fn active_project(&self, cx: &App) -> Option<Entity<Project>> {
+        let original_window = self.original_window.as_ref()?;
+        let multi_workspace = original_window.read(cx).ok()?;
+        Some(multi_workspace.workspace().read(cx).project().clone())
+    }
+
     fn focus_file_at_index(&mut self, index: usize, window: &mut Window, cx: &mut App) {
         if let Some((_, handle)) = self.files.get(index) {
             handle.focus(window, cx);

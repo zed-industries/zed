@@ -91,7 +91,8 @@ impl LspStore {
         let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
-        let refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
+        let mut refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
+        refreshed_servers.retain(|server_id| current_servers.contains(server_id));
         if !refreshed_servers.is_empty() {
             semantic_tokens_data.update = None;
             semantic_tokens_data.generation += 1;
@@ -190,17 +191,39 @@ impl LspStore {
                         .await,
                     )
                 } else {
-                    lsp_store.update(cx, |lsp_store, cx| {
+                    let remaining_tokens = lsp_store.update(cx, |lsp_store, cx| {
+                        let mut remaining_tokens = None;
                         if let Some(current_lsp_data) =
                             lsp_store.current_lsp_data(buffer.read(cx).remote_id())
                             && current_lsp_data.buffer_version == version_queried_for
                             && let Some(semantic_tokens) = current_lsp_data.semantic_tokens.as_mut()
                             && semantic_tokens.generation == query_generation
                         {
-                            semantic_tokens.evict_all();
+                            if for_server.is_none() || semantic_tokens.raw_tokens.servers.is_empty()
+                            {
+                                semantic_tokens.evict_all();
+                            } else {
+                                // A targeted fetch that sent no requests (e.g. the server
+                                // lost the capability or does not serve this buffer) must
+                                // not drop the other servers' cached tokens.
+                                let buffer_snapshot =
+                                    buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                                remaining_tokens =
+                                    Some((semantic_tokens.raw_tokens.clone(), buffer_snapshot));
+                            }
                         }
+                        remaining_tokens
                     })?;
-                    None
+                    match remaining_tokens {
+                        Some((raw_tokens, buffer_snapshot)) => Some(
+                            cx.background_spawn(raw_to_buffer_semantic_tokens(
+                                raw_tokens,
+                                buffer_snapshot.text.clone(),
+                            ))
+                            .await,
+                        ),
+                        None => None,
+                    }
                 };
                 Ok(BufferSemanticTokens { tokens: res })
             })

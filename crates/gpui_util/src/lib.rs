@@ -578,3 +578,25 @@ fn type_id_hasher() {
     verify_hashing_with(TypeId::of::<&str>());
     verify_hashing_with(TypeId::of::<Vec<u8>>());
 }
+
+pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
+where
+    F: Fn(&T, &T) -> std::cmp::Ordering,
+{
+    if limit == 0 {
+        items.truncate(0);
+    }
+    if items.len() <= limit {
+        items.sort_by(compare);
+        return;
+    }
+    // When limit is near to items.len() it may be more efficient to sort the whole list and
+    // truncate, rather than always doing selection first as is done below. It's hard to analyze
+    // where the threshold for this should be since the quickselect style algorithm used by
+    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
+    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
+    // unsorted input.
+    items.select_nth_unstable_by(limit, compare);
+    items.truncate(limit);
+    items.sort_by(compare);
+}

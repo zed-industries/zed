@@ -2406,13 +2406,12 @@ impl Element for MarkdownElement {
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
-                                        .map(|mut code_block| {
+                                        .map(|code_block| {
                                             if let Some(scroll_handle) = scroll_handle.as_ref() {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
                                                 code_block
                                                     .flex()
                                                     .overflow_x_scroll()
+                                                    .restrict_scroll_to_axis()
                                                     .track_scroll(scroll_handle)
                                             } else {
                                                 code_block.w_full()

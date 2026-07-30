@@ -1646,6 +1646,8 @@
     "context": "NotebookEditor && notebook_mode == command",
     "bindings": {
       "enter": "notebook::EnterEditMode",
+      "d d": "notebook::DeleteCell",
+      "backspace": "notebook::DeleteCell",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
     },

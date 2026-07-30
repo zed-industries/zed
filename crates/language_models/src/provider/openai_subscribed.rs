@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::future::Shared;
 use gpui::{App, Context, Entity, SharedString, Task, Window};
@@ -89,17 +89,11 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
                 if is_auth {
                     Ok(())
                 } else {
-                    Err(anyhow!(
-                        "Sign in with your ChatGPT Plus or Pro subscription to use this provider."
-                    )
-                    .into())
+                    Err(AuthenticateError::CredentialsNotFound)
                 }
             })
         } else {
-            Task::ready(Err(anyhow!(
-                "Sign in with your ChatGPT Plus or Pro subscription to use this provider."
-            )
-            .into()))
+            Task::ready(Err(AuthenticateError::CredentialsNotFound))
         }
     }
 

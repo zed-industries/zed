@@ -745,6 +745,8 @@ pub enum FileDropEvent {
     },
     /// The user has stopped dragging the files over the window.
     Exited,
+    /// The platform-owned drag session has ended.
+    Ended,
 }
 
 impl Sealed for FileDropEvent {}

@@ -3887,9 +3887,8 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
- "collections",
+ "credentials_provider",
  "dirs",
- "fs",
  "futures 0.3.32",
  "gpui",
  "http_client",
@@ -3898,8 +3897,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sqlez",
- "tempfile",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -3908,6 +3906,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "copilot",
+ "copilot_chat",
  "gpui",
  "language",
  "log",
@@ -6433,6 +6432,7 @@ dependencies = [
  "cloud_api_types",
  "collections",
  "command_palette_hooks",
+ "component",
  "db",
  "editor",
  "extension",
@@ -6450,7 +6450,6 @@ dependencies = [
  "semver",
  "serde",
  "settings",
- "smallvec",
  "strum 0.27.2",
  "telemetry",
  "theme_settings",
@@ -7157,8 +7156,9 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "gpui_util",
  "log",
- "util",
+ "path",
 ]
 
 [[package]]
@@ -7168,8 +7168,9 @@ dependencies = [
  "criterion",
  "fuzzy",
  "gpui",
+ "gpui_util",
  "nucleo",
- "util",
+ "path",
 ]
 
 [[package]]
@@ -8999,6 +9000,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fs",
  "gpui",
  "language",
  "log",
@@ -9006,6 +9008,7 @@ dependencies = [
  "project",
  "serde",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "util",
@@ -9866,7 +9869,6 @@ dependencies = [
  "collections",
  "component",
  "convert_case 0.11.0",
- "copilot",
  "copilot_chat",
  "copilot_ui",
  "credentials_provider",

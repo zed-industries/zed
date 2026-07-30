@@ -1837,7 +1837,7 @@ mod tests {
                         syntax: IndexMap::from_iter([(
                             "function".to_string(),
                             HighlightStyleContent {
-                                color: Some("#ff0000".to_string()),
+                                color: Some("#ff0000".into()),
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
@@ -1879,7 +1879,7 @@ mod tests {
                         syntax: IndexMap::from_iter([(
                             "function".to_string(),
                             HighlightStyleContent {
-                                color: Some("#0000ff".to_string()),
+                                color: Some("#0000ff".into()),
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
@@ -2006,7 +2006,7 @@ mod tests {
                             syntax: IndexMap::from_iter([(
                                 "function".to_string(),
                                 HighlightStyleContent {
-                                    color: Some("#00ff00".to_string()),
+                                    color: Some("#00ff00".into()),
                                     background_color: None,
                                     font_style: None,
                                     font_weight: None,

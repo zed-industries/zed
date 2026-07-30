@@ -342,6 +342,7 @@ The `prompt_format` setting controls how code context is formatted for the model
 - `code_gemma` - CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
 - `codestral` - Codestral format: `[SUFFIX]suffix[PREFIX]prefix`
 - `glm` - GLM-4 format with code markers
+- `sweep` - [Sweep rewrite-window](https://blog.sweep.dev/posts/oss-next-edit) format using `<|file_sep|>` file blocks for related files, `original/...`, `current/...`, and `updated/...`.
 - `infer` - Auto-detect from model name (default)
 
 With `"prompt_format": "infer"`, Zed automatically uses Zeta 2 format for models named `zeta2` and Zeta 2.1 format for models named `zeta2.1`.

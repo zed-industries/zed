@@ -56,9 +56,9 @@ impl DocumentColorData {
             None => {
                 self.colors.clear();
                 self.fetched_servers.clear();
+                self.colors_update = None;
             }
         }
-        self.colors_update = None;
     }
 }
 

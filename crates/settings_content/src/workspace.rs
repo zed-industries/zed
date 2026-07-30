@@ -133,7 +133,8 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
-    /// What draws window decorations/titlebar, the client application (Zed) or display server
+    /// Controls whether Zed or the window manager or compositor draws window decorations on Linux.
+    ///
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
     /// Whether the focused panel follows the mouse location
@@ -337,6 +338,8 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
+/// Configures what draws Zed's window decorations on Linux.
+/// This setting has no effect on other platforms.
 #[derive(
     Copy,
     Clone,
@@ -352,10 +355,11 @@ pub enum BottomDockLayout {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WindowDecorations {
-    /// Zed draws its own window decorations/titlebar (client-side decoration)
+    /// Zed draws its own window decorations/titlebar (client-side decoration).
     #[default]
     Client,
-    /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
+    /// The window manager or compositor draws the server-side window
+    /// decorations (not supported by GNOME Wayland).
     Server,
 }
 
