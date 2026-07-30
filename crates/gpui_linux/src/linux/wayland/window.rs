@@ -37,7 +37,7 @@ use gpui::{
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
     WindowDecorations, WindowKind, WindowParams,
-    layer_shell::{Anchor, LayerShellNotSupportedError},
+    layer_shell::{Anchor, KeyboardInteractivity, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
 };
@@ -1804,6 +1804,19 @@ impl PlatformWindow for WaylandWindow {
             // on the next frame.
             state.surface.commit();
         }
+    }
+
+    fn set_keyboard_interactivity(&self, keyboard_interactivity: KeyboardInteractivity) {
+        let state = self.borrow();
+        let Some(layer_surface) = state.surface_state.layer_surface() else {
+            return;
+        };
+        layer_surface.set_keyboard_interactivity(
+            super::layer_shell::wayland_keyboard_interactivity(keyboard_interactivity),
+        );
+        // Commit to apply it immediately, otherwise it only takes effect
+        // on the next frame.
+        state.surface.commit();
     }
 
     fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
