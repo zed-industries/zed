@@ -64,12 +64,25 @@ use std::io::Cursor;
 use std::ops;
 use std::time::Duration;
 use std::{
+    any::Any,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
+
+/// A platform-native surface inserted between GPUI's base and overlay scene
+/// planes.
+pub trait PlatformNativeSurface {
+    /// Updates the native surface geometry in device pixels.
+    fn set_bounds(&self, bounds: Bounds<DevicePixels>) -> Result<()>;
+    /// Updates whether the native surface participates in composition.
+    fn set_visible(&self, visible: bool) -> Result<()>;
+    /// Returns the platform attachment object, such as an
+    /// `IDCompositionVisual` on Windows.
+    fn platform_handle(&self) -> Box<dyn Any>;
+}
 use strum::EnumIter;
 use uuid::Uuid;
 
@@ -860,6 +873,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// surfaces between GPUI's base and deferred-overlay paint planes.
     fn enable_scene_overlay(&self) -> anyhow::Result<()> {
         anyhow::bail!("layered GPUI scenes are not supported on this platform")
+    }
+    /// Creates a native surface slot between GPUI's base and overlay planes.
+    fn create_native_surface(&self) -> Result<Rc<dyn PlatformNativeSurface>> {
+        anyhow::bail!("native surface portals are not supported on this platform")
     }
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;

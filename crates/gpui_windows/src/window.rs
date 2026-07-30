@@ -996,6 +996,22 @@ impl PlatformWindow for WindowsWindow {
             .log_err();
     }
 
+    fn draw_layered(&self, scene: &Scene, overlay_start: usize) {
+        self.state
+            .renderer
+            .borrow_mut()
+            .draw_layered(scene, overlay_start, self.state.background_appearance.get())
+            .log_err();
+    }
+
+    fn enable_scene_overlay(&self) -> anyhow::Result<()> {
+        self.state.renderer.borrow_mut().enable_scene_overlay()
+    }
+
+    fn create_native_surface(&self) -> anyhow::Result<Rc<dyn PlatformNativeSurface>> {
+        self.state.renderer.borrow_mut().create_native_surface()
+    }
+
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.state.renderer.borrow().sprite_atlas()
     }

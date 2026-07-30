@@ -2025,6 +2025,12 @@ impl Window {
         self.platform_window.enable_scene_overlay()
     }
 
+    /// Creates a native surface slot between the root scene and GPUI's
+    /// deferred/window-level overlay scene.
+    pub fn create_native_surface(&self) -> anyhow::Result<Rc<dyn crate::PlatformNativeSurface>> {
+        self.platform_window.create_native_surface()
+    }
+
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
         if self.invalidator.not_drawing() {
