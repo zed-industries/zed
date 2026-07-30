@@ -7156,8 +7156,9 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "gpui_util",
  "log",
- "util",
+ "path",
 ]
 
 [[package]]
@@ -7167,8 +7168,9 @@ dependencies = [
  "criterion",
  "fuzzy",
  "gpui",
+ "gpui_util",
  "nucleo",
- "util",
+ "path",
 ]
 
 [[package]]
@@ -8998,6 +9000,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fs",
  "gpui",
  "language",
  "log",
@@ -9005,6 +9008,7 @@ dependencies = [
  "project",
  "serde",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "util",
