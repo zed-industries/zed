@@ -5,6 +5,7 @@ use gpui::{
     KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Rems, Render, Styled,
     Subscription, WeakEntity, Window, actions, rems,
 };
+use i18n::t;
 use project::git_store::Repository;
 use ui::{
     FluentBuilder, ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
@@ -29,8 +30,8 @@ pub enum GitPickerTab {
 impl Display for GitPickerTab {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
-            GitPickerTab::Branches => "Branches",
-            GitPickerTab::Stashes => "Stashes",
+            GitPickerTab::Branches => t!("Branches"),
+            GitPickerTab::Stashes => t!("Stashes"),
         };
         write!(f, "{}", label)
     }
@@ -209,7 +210,7 @@ impl GitPicker {
                     )
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
-                            "Toggle Branch Picker",
+                            t!("Toggle Branch Picker"),
                             &ActivateBranchesTab,
                             &branches_focus_handle,
                             cx,
@@ -226,7 +227,7 @@ impl GitPicker {
                     )
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
-                            "Toggle Stash Picker",
+                            t!("Toggle Stash Picker"),
                             &ActivateStashTab,
                             &stash_focus_handle,
                             cx,

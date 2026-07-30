@@ -11,6 +11,7 @@ use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
     Task, TaskExt, WeakEntity,
 };
+use i18n::t;
 use project::Project;
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
@@ -88,7 +89,7 @@ impl WorktreeCreateTarget {
             WorktreeCreateTarget::DefaultBranch(default_branch) => default_branch.display_name(),
             WorktreeCreateTarget::CurrentBranch => {
                 if has_multiple_repositories {
-                    "current branches".to_string()
+                    String::from(t!("current branches"))
                 } else {
                     current_branch_name.unwrap_or("HEAD").to_string()
                 }
@@ -252,14 +253,17 @@ impl Render for WorktreeFetchFailedToast {
                     .size(IconSize::Small)
                     .color(Color::Error),
             )
-            .child(Label::new(format!(
-                "git fetch failed for {}",
-                self.remote_branch_name
+            .child(Label::new(t!(
+                "git fetch failed for {$branch}",
+                branch = self.remote_branch_name.clone()
             )))
             .child(
                 Button::new(
                     "use-local-worktree-base",
-                    format!("Use local {}", self.remote_branch_name),
+                    t!(
+                        "Use local {$branch}",
+                        branch = self.remote_branch_name.clone()
+                    ),
                 )
                 .color(Color::Muted)
                 .on_click(cx.listener(move |_, _event, window, cx| {
@@ -285,7 +289,7 @@ impl Render for WorktreeFetchFailedToast {
                 })),
             )
             .child(
-                Button::new("view-worktree-fetch-log", "Show Error Logs")
+                Button::new("view-worktree-fetch-log", t!("Show Error Logs"))
                     .color(Color::Muted)
                     .on_click(cx.listener(move |_, _event, window, cx| {
                         cx.emit(DismissEvent);
@@ -1261,8 +1265,8 @@ async fn open_worktree_workspace(
                     workspace.show_toast(
                         workspace::Toast::new(
                             toast_id,
-                            "Some project folders are not git repositories. \
-                             They were included as-is without creating a worktree.",
+                            String::from(t!("Some project folders are not git repositories. \
+                                 They were included as-is without creating a worktree.")),
                         ),
                         cx,
                     );

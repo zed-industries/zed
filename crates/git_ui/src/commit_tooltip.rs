@@ -8,6 +8,7 @@ use gpui::{
     AbsoluteLength, App, Asset, Element, Entity, MouseButton, ParentElement, Pixels, Render,
     ScrollHandle, StatefulInteractiveElement, WeakEntity, prelude::*,
 };
+use i18n::t;
 use markdown::{Markdown, MarkdownElement};
 use project::git_store::Repository;
 use settings::Settings;
@@ -237,8 +238,7 @@ impl CommitTooltip {
                 author_name: blame
                     .author
                     .clone()
-                    .unwrap_or("<no name>".to_string())
-                    .into(),
+                    .map_or_else(|| t!("<no name>").resolve(), SharedString::from),
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
                 tag_names,
@@ -313,7 +313,9 @@ impl Render for CommitTooltip {
                     .scroll_handle(self.scroll_handle.clone())
                     .into_any()
             })
-            .unwrap_or("<no commit message>".into_any());
+            .unwrap_or_else(|| {
+                SharedString::from(format!("<{}>", t!("no commit message"))).into_any_element()
+            });
 
         let pull_request = self
             .commit
@@ -445,7 +447,7 @@ impl Render for CommitTooltip {
                                         .child(Divider::vertical())
                                         .child(
                                             CopyButton::new("copy-commit-sha", full_sha)
-                                                .tooltip_label("Copy SHA"),
+                                                .tooltip_label(t!("Copy SHA")),
                                         ),
                                 ),
                         ),
@@ -465,7 +467,7 @@ fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::Timestam
                 format,
             )
         }
-        Err(_) => "Error parsing date".to_string(),
+        Err(_) => String::from(t!("Error parsing date")),
     }
 }
 

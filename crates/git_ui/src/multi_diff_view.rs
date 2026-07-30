@@ -9,6 +9,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, SharedString, Task, Window,
 };
+use i18n::t;
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
@@ -209,12 +210,11 @@ impl MultiDiffView {
     }
 
     fn title(&self) -> SharedString {
-        let suffix = if self.file_count == 1 {
-            "1 file".to_string()
+        if self.file_count == 1 {
+            t!("Diff (1 file)").resolve()
         } else {
-            format!("{} files", self.file_count)
-        };
-        format!("Diff ({suffix})").into()
+            t!("Diff ({$count} files)", count = self.file_count).resolve()
+        }
     }
 }
 

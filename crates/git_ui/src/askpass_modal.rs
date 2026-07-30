@@ -2,6 +2,7 @@ use askpass::EncryptedPassword;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
+use i18n::t;
 use ui::{
     ActiveTheme, AnyElement, App, Button, Clickable, Color, Context, DynamicSpacing, Headline,
     HeadlineSize, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
@@ -90,10 +91,10 @@ impl AskPassModal {
                             Icon::new(IconName::Github).size(IconSize::Small)
                         )
                         .child(
-                            Label::new("You may need to configure git for Github.")
+                            Label::new(t!("You may need to configure git for Github."))
                                 .size(LabelSize::Small),
                         )
-                        .child(Button::new("learn-more", "Learn more").color(Color::Accent).label_size(LabelSize::Small).on_click(|_, _, cx| {
+                        .child(Button::new("learn-more", t!("Learn More")).color(Color::Accent).label_size(LabelSize::Small).on_click(|_, _, cx| {
                             cx.open_url("https://docs.github.com/en/get-started/git-basics/set-up-git#authenticating-with-github-from-git")
                         })),
                 )

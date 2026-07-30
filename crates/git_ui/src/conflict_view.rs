@@ -9,6 +9,7 @@ use gpui::{
     App, ClickEvent, Context, Empty, Entity, InteractiveElement as _, ParentElement as _,
     Subscription, Task, WeakEntity,
 };
+use i18n::t;
 use language::{Anchor, Buffer, BufferId};
 use project::{
     ConflictRegion, ConflictSet, ConflictSetUpdate, Project,
@@ -336,45 +337,54 @@ fn render_conflict_buttons(
         .gap_1()
         .bg(cx.theme().colors().editor_background)
         .child(
-            Button::new("head", format!("Use {}", conflict.ours_branch_name))
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let ours = conflict.ours.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![ours.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
+            Button::new(
+                "head",
+                t!("Use {$branch}", branch = conflict.ours_branch_name.clone()),
+            )
+            .label_size(LabelSize::Small)
+            .on_click({
+                let editor = editor.clone();
+                let conflict = conflict.clone();
+                let ours = conflict.ours.clone();
+                move |_, window, cx| {
+                    resolve_conflict(
+                        editor.clone(),
+                        conflict.clone(),
+                        vec![ours.clone()],
+                        window,
+                        cx,
+                    )
+                    .detach()
+                }
+            }),
         )
         .child(
-            Button::new("origin", format!("Use {}", conflict.theirs_branch_name))
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    let conflict = conflict.clone();
-                    let theirs = conflict.theirs.clone();
-                    move |_, window, cx| {
-                        resolve_conflict(
-                            editor.clone(),
-                            conflict.clone(),
-                            vec![theirs.clone()],
-                            window,
-                            cx,
-                        )
-                        .detach()
-                    }
-                }),
+            Button::new(
+                "origin",
+                t!(
+                    "Use {$branch}",
+                    branch = conflict.theirs_branch_name.clone()
+                ),
+            )
+            .label_size(LabelSize::Small)
+            .on_click({
+                let editor = editor.clone();
+                let conflict = conflict.clone();
+                let theirs = conflict.theirs.clone();
+                move |_, window, cx| {
+                    resolve_conflict(
+                        editor.clone(),
+                        conflict.clone(),
+                        vec![theirs.clone()],
+                        window,
+                        cx,
+                    )
+                    .detach()
+                }
+            }),
         )
         .child(
-            Button::new("both", "Use Both")
+            Button::new("both", t!("Use Both"))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -395,7 +405,7 @@ fn render_conflict_buttons(
         )
         .when(is_ai_enabled, |this| {
             this.child(Divider::vertical()).child(
-                Button::new("resolve-with-agent", "Resolve with Agent")
+                Button::new("resolve-with-agent", t!("Resolve with Agent"))
                     .label_size(LabelSize::Small)
                     .start_icon(
                         Icon::new(IconName::ZedAssistant)
@@ -616,22 +626,21 @@ impl Render for MergeConflictIndicator {
 
         let file_count = self.conflicted_paths.len();
 
-        let message: SharedString = format!(
-            "Resolve Merge Conflict{} with Agent",
-            if file_count == 1 { "" } else { "s" }
-        )
-        .into();
+        let message: SharedString = if file_count == 1 {
+            t!("Resolve Merge Conflict with Agent").resolve()
+        } else {
+            t!("Resolve Merge Conflicts with Agent").resolve()
+        };
 
-        let tooltip_label: SharedString = format!(
-            "Found {} {} across the codebase",
-            file_count,
-            if file_count == 1 {
-                "conflict"
-            } else {
-                "conflicts"
-            }
-        )
-        .into();
+        let tooltip_label: SharedString = if file_count == 1 {
+            t!("Found 1 conflict across the codebase").resolve()
+        } else {
+            t!(
+                "Found {$count} conflicts across the codebase",
+                count = file_count
+            )
+            .resolve()
+        };
 
         let border_color = cx.theme().colors().text_accent.opacity(0.2);
 
@@ -659,7 +668,7 @@ impl Render for MergeConflictIndicator {
                         Tooltip::with_meta(
                             tooltip_label.clone(),
                             None,
-                            "Click to Resolve with Agent",
+                            t!("Click to Resolve with Agent"),
                             cx,
                         )
                     })

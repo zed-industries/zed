@@ -8,6 +8,7 @@ use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, Pixels, Rems, ScrollHandle, Subscription, TextStyle,
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
+use i18n::t;
 use markdown::{Markdown, MarkdownElement};
 use project::{
     git_store::Repository,
@@ -158,7 +159,8 @@ impl BlameRenderer for GitBlameRenderer {
     ) -> Option<AnyElement> {
         let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
         let short_commit_id = blame_entry.sha.display_short();
-        let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
+        let no_name = t!("<no name>").resolve();
+        let author_name = blame_entry.author.as_deref().unwrap_or(&no_name);
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
@@ -301,8 +303,7 @@ impl BlameRenderer for GitBlameRenderer {
         let author: SharedString = blame
             .author
             .clone()
-            .unwrap_or("<no name>".to_string())
-            .into();
+            .map_or_else(|| t!("<no name>").resolve(), SharedString::from);
         let author_email = blame.author_mail.as_deref().unwrap_or_default();
         let author_email_for_avatar = blame.author_mail.as_ref().map(|email| {
             SharedString::from(
@@ -352,7 +353,9 @@ impl BlameRenderer for GitBlameRenderer {
                     .scroll_handle(scroll_handle.clone())
                     .into_any()
             })
-            .unwrap_or("<no commit message>".into_any());
+            .unwrap_or_else(|| {
+                SharedString::from(format!("<{}>", t!("no commit message"))).into_any_element()
+            });
 
         let pull_request = details
             .as_ref()
@@ -478,7 +481,7 @@ impl BlameRenderer for GitBlameRenderer {
                                             .child(Divider::vertical())
                                             .child(
                                                 CopyButton::new("copy-blame-sha", sha.to_string())
-                                                    .tooltip_label("Copy SHA"),
+                                                    .tooltip_label(t!("Copy SHA")),
                                             ),
                                     ),
                             ),
@@ -519,13 +522,13 @@ fn deploy_blame_entry_context_menu(
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy Commit SHA", None, move |_, cx| {
+            .entry(t!("Copy Commit SHA"), None, move |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open Permalink", None, move |_, cx| {
+                    this.entry(t!("Open Permalink"), None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })
                 },
@@ -551,6 +554,6 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
                 time_format::TimestampFormat::Relative,
             )
         }
-        Err(_) => "Error parsing date".to_string(),
+        Err(_) => String::from(t!("Error parsing date")),
     }
 }
