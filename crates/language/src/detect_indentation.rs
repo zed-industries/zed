@@ -17,7 +17,6 @@ pub fn detect_indentation<'a>(lines: impl Iterator<Item = &'a str>) -> Option<De
     let mut delta_histogram = HashMap::<usize, usize>::new();
 
     let mut previous_indent = None;
-    let mut indentation_samples = 0;
 
     for line in lines.take(TEST_LINES) {
         if line.trim().is_empty() {
@@ -45,15 +44,14 @@ pub fn detect_indentation<'a>(lines: impl Iterator<Item = &'a str>) -> Option<De
 
                 if delta > 0 {
                     *delta_histogram.entry(delta).or_default() += 1;
-                    indentation_samples += 1;
+
+                    if *delta_histogram.get(&delta).unwrap() >= MAX_DELTA_SAMPLES {
+                        break;
+                    }
                 }
             }
 
             previous_indent = Some(spaces);
-
-            if indentation_samples > MAX_DELTA_SAMPLES {
-                break;
-            }
         }
     }
 

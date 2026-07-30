@@ -46,6 +46,8 @@ pub use language_core::{
     highlight_map::{HighlightId, HighlightMap},
 };
 
+pub use detect_indentation::*;
+
 use futures::future::FutureExt as _;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,

@@ -1531,6 +1531,8 @@
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,
+  // Whether to automatically detect indentation per buffer.
+  "detect_indentation": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
   // Number of lines to search for modelines at the beginning and end of files.

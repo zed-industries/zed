@@ -63,6 +63,8 @@ pub struct LanguageSettings {
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     pub hard_tabs: bool,
+    /// Whether to automatically detect indentation per buffer.
+    pub detect_indentation: bool,
     /// How to soft-wrap long lines of text.
     pub soft_wrap: settings::SoftWrap,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -729,6 +731,7 @@ impl settings::Settings for AllLanguageSettings {
             LanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
+                detect_indentation: settings.detect_indentation.unwrap(),
                 soft_wrap: settings.soft_wrap.unwrap(),
                 preferred_line_length: settings.preferred_line_length.unwrap(),
                 show_wrap_guides: settings.show_wrap_guides.unwrap(),

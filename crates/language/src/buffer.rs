@@ -1,8 +1,8 @@
 pub mod row_chunk;
 
 use crate::{
-    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
-    PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    ByteContent, DebuggerTextObject, DetectedIndentation, LanguageScope, ModelineSettings, Outline,
+    OutlineConfig, PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -134,6 +134,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     modeline: Option<Arc<ModelineSettings>>,
+    detected_indent: Option<Arc<DetectedIndentation>>,
     _subscriptions: Vec<gpui::Subscription>,
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
@@ -191,6 +192,7 @@ pub struct BufferSnapshot {
     non_text_state_update_count: usize,
     pub capability: Capability,
     modeline: Option<Arc<ModelineSettings>>,
+    detected_indent: Option<Arc<DetectedIndentation>>,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -1197,6 +1199,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             modeline: None,
+            detected_indent: None,
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
@@ -1210,6 +1213,7 @@ impl Buffer {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         modeline: Option<Arc<ModelineSettings>>,
+        detected_indent: Option<Arc<DetectedIndentation>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
@@ -1235,6 +1239,7 @@ impl Buffer {
                 non_text_state_update_count: 0,
                 capability: Capability::ReadOnly,
                 modeline,
+                detected_indent,
             }
         }
     }
@@ -1262,6 +1267,7 @@ impl Buffer {
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
+            detected_indent: None,
         }
     }
 
@@ -1293,6 +1299,7 @@ impl Buffer {
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
             modeline: None,
+            detected_indent: None,
         }
     }
 
@@ -1324,6 +1331,7 @@ impl Buffer {
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
+            detected_indent: self.detected_indent.clone(),
         }
     }
 
@@ -1589,6 +1597,21 @@ impl Buffer {
     /// Returns the [`ModelineSettings`].
     pub fn modeline(&self) -> Option<&Arc<ModelineSettings>> {
         self.modeline.as_ref()
+    }
+
+    /// Assign the buffer [`DetectedIndentation`].
+    pub fn set_detected_indent(&mut self, detected_indent: Option<DetectedIndentation>) -> bool {
+        if detected_indent.as_ref() != self.detected_indent.as_deref() {
+            self.detected_indent = detected_indent.map(Arc::new);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the [`DetectedIndentation`]
+    pub fn detected_indent(&self) -> Option<&Arc<DetectedIndentation>> {
+        self.detected_indent.as_ref()
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -5690,6 +5713,7 @@ impl Clone for BufferSnapshot {
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
             modeline: self.modeline.clone(),
+            detected_indent: self.detected_indent.clone(),
         }
     }
 }
