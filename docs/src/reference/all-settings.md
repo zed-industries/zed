@@ -130,7 +130,7 @@ Non-negative `float` values
 }
 ```
 
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -500,7 +500,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
-Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+> Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Code Lens
 
@@ -4995,6 +4995,32 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
+
+## Window Decorations
+
+- Description: Controls whether Zed or the window manager or compositor draws window decorations.
+- Setting: `window_decorations`
+- Default: `"client"`
+
+**Options**
+
+1. To have Zed draw its own window decorations, use `"client"`:
+
+```json [settings]
+{
+  "window_decorations": "client"
+}
+```
+
+2. To have the window manager or compositor draw the window decorations, use `"server"`:
+
+```json [settings]
+{
+  "window_decorations": "server"
+}
+```
+
+> Note: This setting only affects Linux. GNOME Wayland does not support server-side decorations. Changes only apply to newly created windows. Restart Zed to apply the setting to all windows.
 
 ## Vim
 
