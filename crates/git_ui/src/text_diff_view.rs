@@ -218,7 +218,7 @@ impl TextDiffView {
                     .file()
                     .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
-            .unwrap_or("untitled".into());
+            .unwrap_or(MultiBuffer::DEFAULT_TITLE.into());
 
         let selection_location_path = selection_location_text
             .map(|text| format!("{} @ {}", path, text))

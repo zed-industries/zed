@@ -47,6 +47,10 @@ actions!(
         /// Opens project-specific settings.
         #[action(deprecated_aliases = ["zed_actions::OpenProjectSettings"])]
         OpenProjectSettings,
+        /// Opens the project tasks configuration.
+        OpenProjectTasks,
+        /// Opens the project tasks configuration with worktree setup guidance.
+        OpenWorktreeSetupTasks,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens the user keymap file.
@@ -932,6 +936,8 @@ pub mod notebook {
             AddMarkdownBlock,
             /// Adds a new code cell.
             AddCodeBlock,
+            /// Deletes the current cell.
+            DeleteCell,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.
@@ -944,6 +950,18 @@ pub mod notebook {
             EnterEditMode,
             /// Exits the cell editor and returns to cell command mode.
             EnterCommandMode,
+        ]
+    );
+}
+
+pub mod git_panel {
+    use gpui::actions;
+
+    actions!(
+        git_panel,
+        [
+            /// Toggles focus on the git panel.
+            ToggleFocus,
         ]
     );
 }

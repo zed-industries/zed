@@ -3,7 +3,7 @@ use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
-use editor::Editor;
+use editor::{EditPredictionRequestTrigger, Editor};
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::{
     ZetaVersion,
@@ -50,6 +50,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             assign_edit_prediction_provider(
                 editor,
                 provider_config,
+                EditPredictionRequestTrigger::EditorCreated,
                 &client,
                 user_store.clone(),
                 window,
@@ -72,6 +73,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 assign_edit_prediction_providers(
                     &editors,
                     provider_config,
+                    EditPredictionRequestTrigger::UserInfoChanged,
                     &client,
                     user_store,
                     cx,
@@ -98,6 +100,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 assign_edit_prediction_providers(
                     &editors,
                     new_provider_config,
+                    EditPredictionRequestTrigger::ProviderChanged,
                     &client,
                     user_store.clone(),
                     cx,
@@ -199,6 +202,7 @@ fn clear_edit_prediction_store_edit_history(_: &edit_prediction::ClearHistory, c
 fn assign_edit_prediction_providers(
     editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
     provider_config: Option<EditPredictionProviderConfig>,
+    trigger: EditPredictionRequestTrigger,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     cx: &mut App,
@@ -212,6 +216,7 @@ fn assign_edit_prediction_providers(
                 assign_edit_prediction_provider(
                     editor,
                     provider_config,
+                    trigger,
                     client,
                     user_store.clone(),
                     window,
@@ -225,6 +230,7 @@ fn assign_edit_prediction_providers(
 fn assign_edit_prediction_provider(
     editor: &mut Editor,
     provider_config: Option<EditPredictionProviderConfig>,
+    trigger: EditPredictionRequestTrigger,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     window: &mut Window,
@@ -235,7 +241,9 @@ fn assign_edit_prediction_provider(
 
     match provider_config {
         None => {
-            editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(None, window, cx);
+            editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(
+                None, trigger, window, cx,
+            );
         }
         Some(EditPredictionProviderConfig::Copilot) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -252,13 +260,13 @@ fn assign_edit_prediction_provider(
                     });
                 }
                 let provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                editor.set_edit_prediction_provider(Some(provider), trigger, window, cx);
             }
         }
         Some(EditPredictionProviderConfig::Codestral) => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
-            editor.set_edit_prediction_provider(Some(provider), window, cx);
+            editor.set_edit_prediction_provider(Some(provider), trigger, window, cx);
         }
         Some(EditPredictionProviderConfig::Zed(model)) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -268,7 +276,7 @@ fn assign_edit_prediction_provider(
             {
                 if !organization_configuration.edit_prediction.is_enabled {
                     editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(
-                        None, window, cx,
+                        None, trigger, window, cx,
                     );
 
                     return;
@@ -292,7 +300,7 @@ fn assign_edit_prediction_provider(
                         cx,
                     )
                 });
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                editor.set_edit_prediction_provider(Some(provider), trigger, window, cx);
             }
         }
     }

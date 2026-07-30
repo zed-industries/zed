@@ -799,6 +799,8 @@ impl Render for ProjectDiffToolbar {
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
         let is_multibuffer_empty = project_diff.read(cx).multibuffer(cx).read(cx).is_empty();
 
+        let stage_all_button_width = rems(5.);
+
         h_flex()
             .my_neg_1()
             .py_1()
@@ -894,7 +896,7 @@ impl Render for ProjectDiffToolbar {
                 |this| {
                     this.child(
                         Button::new("unstage-all", "Unstage All")
-                            .width(rems_from_px(80.))
+                            .width(stage_all_button_width)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Unstage All Changes",
                                 &UnstageAll,
@@ -911,7 +913,7 @@ impl Render for ProjectDiffToolbar {
                 |this| {
                     this.child(
                         Button::new("stage-all", "Stage All")
-                            .width(rems_from_px(80.))
+                            .width(stage_all_button_width)
                             .disabled(!button_states.stage_all)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Stage All Changes",

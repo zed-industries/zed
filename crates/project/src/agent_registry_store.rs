@@ -412,7 +412,7 @@ async fn build_registry_agents(
                         archive: target.archive.clone(),
                         cmd: target.cmd.clone(),
                         args: target.args.clone(),
-                        sha256: None,
+                        sha256: target.sha256.clone(),
                         env: target.env.clone(),
                     },
                 );
@@ -661,6 +661,8 @@ struct RegistryBinaryTarget {
     cmd: String,
     #[serde(default)]
     args: Vec<String>,
+    #[serde(default)]
+    sha256: Option<String>,
     #[serde(default)]
     env: HashMap<String, String>,
 }

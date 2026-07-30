@@ -2,7 +2,6 @@ mod fake_git_repo_tests;
 
 use std::{
     collections::BTreeSet,
-    ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
     pin::Pin,
@@ -648,15 +647,11 @@ async fn test_fake_fs_trash(executor: BackgroundExecutor) {
     .await;
 
     // Trashing a file.
-    let root_path = PathBuf::from(path!("/root"));
     let path = path!("/root/file_a.txt").as_ref();
-    let trashed_entry = fs
-        .trash(path, Default::default())
+    fs.trash(path, Default::default())
         .await
         .expect("should be able to trash {path:?}");
 
-    assert_eq!(trashed_entry.name, "file_a.txt");
-    assert_eq!(trashed_entry.original_parent, root_path);
     assert_eq!(
         fs.files(),
         vec![
@@ -666,32 +661,19 @@ async fn test_fake_fs_trash(executor: BackgroundExecutor) {
         ]
     );
 
-    let trash_entries = fs.trash_entries();
-    assert_eq!(trash_entries.len(), 1);
-    assert_eq!(trash_entries[0].name, "file_a.txt");
-    assert_eq!(trash_entries[0].original_parent, root_path);
-
     // Trashing a directory.
     let path = path!("/root/src").as_ref();
-    let trashed_entry = fs
-        .trash(
-            path,
-            RemoveOptions {
-                recursive: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("should be able to trash {path:?}");
+    fs.trash(
+        path,
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("should be able to trash {path:?}");
 
-    assert_eq!(trashed_entry.name, "src");
-    assert_eq!(trashed_entry.original_parent, root_path);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_b.txt"))]);
-
-    let trash_entries = fs.trash_entries();
-    assert_eq!(trash_entries.len(), 2);
-    assert_eq!(trash_entries[1].name, "src");
-    assert_eq!(trash_entries[1].original_parent, root_path);
 }
 
 #[gpui::test]
@@ -709,36 +691,20 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     )
     .await;
 
-    // Providing a non-existent `TrashedEntry` should result in an error.
-    let id = OsString::from("/trash/file_c.txt");
-    let name = OsString::from("file_c.txt");
-    let original_parent = PathBuf::from(path!("/root"));
-    let trashed_entry = TrashedEntry {
-        id,
-        name,
-        original_parent,
-    };
-    let result = fs.restore(trashed_entry).await;
-    assert!(matches!(result, Err(TrashRestoreError::NotFound { .. })));
-
     // Attempt deleting a file, asserting that the filesystem no longer reports
     // it as part of its list of files, restore it and verify that the list of
     // files and trash has been updated accordingly.
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
-        fs.files(),
-        vec![
-            PathBuf::from(path!("/root/file_c.txt")),
-            PathBuf::from(path!("/root/src/file_b.txt"))
-        ]
+        fs.original_path_for_trash_id(trashed_entry),
+        Some(path.to_path_buf())
     );
 
     fs.restore(trashed_entry).await.unwrap();
+    assert_eq!(fs.original_path_for_trash_id(trashed_entry), None);
 
-    assert_eq!(fs.trash_entries().len(), 0);
     assert_eq!(
         fs.files(),
         vec![
@@ -758,7 +724,6 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/").as_ref();
     let trashed_entry = fs.trash(path, options).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
 
     fs.restore(trashed_entry).await.unwrap();
@@ -771,14 +736,12 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
             PathBuf::from(path!("/root/src/file_b.txt"))
         ]
     );
-    assert_eq!(fs.trash_entries().len(), 0);
 
     // A collision error should be returned in case a file is being restored to
     // a path where a file already exists.
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
         fs.files(),
         vec![
@@ -789,7 +752,6 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
 
     fs.write(path, "New File A".as_bytes()).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
         fs.files(),
         vec![
@@ -815,19 +777,16 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/").as_ref();
     let trashed_entry = fs.trash(path, options).await.unwrap();
 
-    assert_eq!(fs.trash_entries().len(), 2);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
 
     fs.create_dir(path).await.unwrap();
 
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
-    assert_eq!(fs.trash_entries().len(), 2);
 
     let result = fs.restore(trashed_entry).await;
     assert!(result.is_err());
 
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
-    assert_eq!(fs.trash_entries().len(), 2);
 }
 
 /// Create a directory symlink (`link` -> `target`) in a cross-platform way.
@@ -1166,4 +1125,31 @@ async fn test_realfs_watch_stress_reports_missed_paths(
         "missed {} paths without rescan being reported",
         missed_paths.len()
     );
+}
+
+#[gpui::test]
+async fn restore_can_be_retried_after_collision(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let path = path!("/root/a.txt");
+    let remove_options = RemoveOptions::default();
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "original"}))
+        .await;
+
+    // We'll first trash the `a.txt` file so we can hold onto its `TrashId`,
+    // allowing us to later attempt restoring it again, ensuring that it didn't
+    // get removed from the trash state, even if restoring failed.
+    let trash_id = fs.trash(path.as_ref(), remove_options).await.unwrap();
+
+    fs.insert_file(path, "conflicting".into()).await;
+    let err = fs.restore(trash_id).await.unwrap_err();
+    assert!(matches!(err, TrashRestoreError::Collision { .. }));
+
+    fs.remove_file(path.as_ref(), remove_options).await.unwrap();
+    let restored_path = fs.restore(trash_id).await.unwrap();
+    assert_eq!(fs.load(restored_path.as_path()).await.unwrap(), "original");
+
+    assert!(matches!(
+        fs.restore(trash_id).await.unwrap_err(),
+        TrashRestoreError::AlreadyRestored
+    ));
 }

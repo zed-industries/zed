@@ -107,7 +107,8 @@ pub async fn prediction_edits_for_single_file_diff(
                             if marker_len == INLINE_CURSOR_MARKER.len() {
                                 cursor_position.get_or_insert_with(|| {
                                     PredictedCursorPosition::new(
-                                        pending_range.start,
+                                        snapshot
+                                            .anchor_before(pending_range.start.to_offset(snapshot)),
                                         pending_offset,
                                     )
                                 });
@@ -130,7 +131,10 @@ pub async fn prediction_edits_for_single_file_diff(
                     while let Some(marker_offset) = remaining.find(INLINE_CURSOR_MARKER) {
                         output.push_str(&remaining[..marker_offset]);
                         cursor_position.get_or_insert_with(|| {
-                            PredictedCursorPosition::new(range.start, output.len())
+                            PredictedCursorPosition::new(
+                                snapshot.anchor_before(range.start.to_offset(snapshot)),
+                                output.len(),
+                            )
                         });
                         remaining = &remaining[marker_offset + INLINE_CURSOR_MARKER.len()..];
                     }
@@ -209,7 +213,7 @@ pub async fn apply_diff(
                 if status == FileStatus::Deleted {
                     let delete_task = project.update(cx, |project, cx| {
                         if let Some(path) = project.find_project_path(path.as_ref(), cx) {
-                            project.delete_file(path, false, cx)
+                            project.delete_file(path, cx)
                         } else {
                             None
                         }
@@ -309,12 +313,12 @@ pub async fn refresh_worktree_entries(
 ) -> Result<()> {
     let mut rel_paths = Vec::new();
     for path in paths {
-        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
 
         let path_without_root: PathBuf = path.components().skip(1).collect();
-        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
     }
@@ -600,6 +604,57 @@ mod tests {
         buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
         buffer.read_with(cx, |buffer, _cx| {
             assert_eq!(buffer.text(), "Hello!\nHow are you?\nBye\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_places_cursor_after_inline_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "        }\n\n        let api_key = data.\n    }\n    drop(sender);\n    Ok(())\n}\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+                     }
+
+            -        let api_key = data.
+            +        let api_key = data.config.<|user_cursor|>open_ai_api_key.clone();
+                 }
+                 drop(sender);
+                 Ok(())
+             }
+        "#};
+
+        let (buffer, _, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+        let cursor_position = cursor_position.unwrap();
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            let snapshot = buffer.snapshot();
+            let cursor_offset = (cursor_position.anchor.to_offset(&snapshot)
+                + cursor_position.offset)
+                .min(snapshot.len());
+            let mut text = buffer.text();
+            text.insert(cursor_offset, 'ˇ');
+
+            assert_eq!(
+                text,
+                "        }\n\n        let api_key = data.config.ˇopen_ai_api_key.clone();\n    }\n    drop(sender);\n    Ok(())\n}\n"
+            );
         });
     }
 

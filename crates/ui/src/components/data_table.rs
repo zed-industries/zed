@@ -750,13 +750,11 @@ pub fn render_table_header(
     let shared_element_id: SharedString = format!("table-{}", element_id).into();
     let pinned_cols = table_context.pinned_cols;
 
-    let outer = div()
-        .flex()
-        .flex_row()
-        .items_center()
+    let outer = h_flex()
+        .py_1()
         .w_full()
         .border_b_1()
-        .border_color(cx.theme().colors().border);
+        .border_color(cx.theme().colors().border_variant);
 
     let use_ui_font = table_context.use_ui_font;
     let resize_info_ref = resize_info.as_ref();

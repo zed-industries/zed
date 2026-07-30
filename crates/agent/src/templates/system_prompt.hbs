@@ -154,6 +154,7 @@ The current project contains the following root directories:
 {{/each}}
 
 {{#if sandboxing}}
+{{#if (contains available_tools 'terminal')}}
 ## Terminal sandbox
 
 The `terminal` tool runs commands inside a sandbox with these permissions:
@@ -198,7 +199,7 @@ You can request elevated permissions on individual `terminal` calls:
 - `allow_hosts: ["github.com", "*.npmjs.org"]` — allow outbound HTTP/HTTPS to specific hosts (exact hostnames or leading-`*.` subdomain wildcards; no IP literals). Prefer this whenever you know which hosts the command needs.
 - `allow_all_hosts: true` — lift the network restriction entirely: outbound access to any host over any protocol, so SSH, FTP, and raw sockets work too (unlike `allow_hosts`, which is HTTP/HTTPS-only). Use only when the specific hosts can't be enumerated up front.
 {{/if}}
-- `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write. Git metadata paths cannot be requested and will never be made writable while sandboxed.
+- `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write.{{#if is_windows}} Each path must be an existing directory; to write somewhere that doesn't exist yet, request write access to the nearest existing parent directory.{{else}}{{#if is_linux}} Each path must be an existing directory.{{/if}} To write into a directory that doesn't exist yet, first create it with the `create_directory` tool (which creates it and grants write access to exactly that directory) rather than requesting write access to a broad existing parent.{{/if}} Git metadata paths cannot be requested and will never be made writable while sandboxed.
 - `allow_fs_write_all: true` — allow unrestricted filesystem writes except protected Git metadata. Only use this when the specific paths can't be enumerated up front.
 - `unsandboxed: true` — run the command with no sandbox at all. Use only when none of the above suffice, including when a command must write Git metadata.
 
@@ -208,6 +209,7 @@ The user will be prompted to approve before the command runs, and can grant a sa
 
 These sandbox settings are guaranteed to remain in effect for the entire duration of this thread. If they ever change, you will be told.
 
+{{/if}}
 {{/if}}
 {{#if model_name}}
 ## Model Information
