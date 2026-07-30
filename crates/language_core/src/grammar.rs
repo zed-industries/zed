@@ -126,6 +126,7 @@ pub struct InjectionConfig {
     pub query: Query,
     pub content_capture_ix: u32,
     pub language_capture_ix: Option<u32>,
+    pub host_capture_ix: Option<u32>,
     pub patterns: Vec<InjectionPatternConfig>,
 }
 
@@ -605,6 +606,7 @@ impl Grammar {
         let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
         let mut injection_content_capture_ix = None;
+        let mut host_capture_ix = None;
         if populate_capture_indices(
             &query,
             language_name,
@@ -615,6 +617,7 @@ impl Grammar {
                 Capture::Optional("injection.language", &mut injection_language_capture_ix),
                 Capture::Optional("content", &mut content_capture_ix),
                 Capture::Optional("injection.content", &mut injection_content_capture_ix),
+                Capture::Optional("injection.host", &mut host_capture_ix),
             ],
         ) {
             language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
@@ -653,6 +656,7 @@ impl Grammar {
                     query,
                     language_capture_ix,
                     content_capture_ix,
+                    host_capture_ix,
                     patterns,
                 });
             } else {
