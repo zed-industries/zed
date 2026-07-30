@@ -2562,6 +2562,13 @@ impl Image {
         ImageSource::Image(self).remove_asset(cx);
     }
 
+    /// Check whether this image is present in GPUI's asset cache (loading or
+    /// loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(self: &Arc<Self>, cx: &App) -> bool {
+        ImageSource::Image(self.clone()).is_asset_cached(cx)
+    }
+
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
         let frames = match self.format {

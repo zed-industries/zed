@@ -1177,9 +1177,8 @@ mod tests {
         draw_window(cx);
     }
 
-    fn image_is_cached(image: &Arc<gpui::Image>, cx: &mut VisualTestContext) -> bool {
-        // A cache miss starts a new decode, so callers must capture the result before pumping tasks.
-        cx.update(|window, cx| image.clone().get_render_image(window, cx).is_some())
+    fn image_is_cached(image: &Arc<gpui::Image>, cx: &VisualTestContext) -> bool {
+        cx.read(|cx| image.is_asset_cached(cx))
     }
 
     #[gpui::test]
@@ -1209,11 +1208,8 @@ mod tests {
             Some(reloaded_image.id()),
             "the reloaded image should replace the original"
         );
-        let original_image_is_cached = image_is_cached(&original_image, cx);
-        cx.run_until_parked();
-
         assert!(
-            !original_image_is_cached,
+            !image_is_cached(&original_image, cx),
             "the replaced image remained in GPUI's asset cache"
         );
     }
@@ -1250,11 +1246,8 @@ mod tests {
             Some(current_image.id()),
             "the current image should finish decoding"
         );
-        let superseded_image_is_cached = image_is_cached(&superseded_image, cx);
-        cx.run_until_parked();
-
         assert!(
-            !superseded_image_is_cached,
+            !image_is_cached(&superseded_image, cx),
             "the superseded image remained in GPUI's asset cache"
         );
     }
@@ -1279,11 +1272,8 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let prefetched_image_is_cached = image_is_cached(&prefetched_image, cx);
-        cx.run_until_parked();
-
         assert!(
-            !prefetched_image_is_cached,
+            !image_is_cached(&prefetched_image, cx),
             "the superseded constructor prefetch remained in GPUI's asset cache"
         );
     }
@@ -1333,11 +1323,8 @@ mod tests {
         cx.update(|_, _| {});
         cx.run_until_parked();
 
-        let source_image_is_cached = image_is_cached(&source_image, cx);
-        cx.run_until_parked();
-
         assert!(
-            !source_image_is_cached,
+            !image_is_cached(&source_image, cx),
             "the released split image view left its displayed image in GPUI's asset cache"
         );
     }
