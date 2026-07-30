@@ -15,7 +15,7 @@ mod macos {
     use gpui::{
         App, Bounds, Context, Div, Element, ElementId, GlobalElementId, IntoElement, LayoutId,
         MouseButton, Pixels, Stateful, Style, Window, WindowBounds, WindowOptions, deferred, div,
-        prelude::*, px, rgb, size,
+        prelude::*, px, relative, rgb, size,
     };
     use gpui_platform::application;
     use objc::{class, msg_send, sel, sel_impl};
@@ -24,132 +24,7 @@ mod macos {
     #[link(name = "WebKit", kind = "framework")]
     unsafe extern "C" {}
 
-    const WEBVIEW_WIDTH: Pixels = px(660.);
-    const WEBVIEW_HEIGHT: Pixels = px(410.);
-
-    const PAGE: &str = r#"
-        <!doctype html>
-        <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <style>
-            :root {
-              color-scheme: dark;
-              font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-              background: #11151b;
-            }
-            * { box-sizing: border-box; }
-            body {
-              margin: 0;
-              min-height: 100vh;
-              background: #11151b;
-              color: #eef2f7;
-            }
-            header {
-              height: 48px;
-              display: flex;
-              align-items: center;
-              gap: 14px;
-              padding: 0 18px;
-              border-bottom: 1px solid #2a313b;
-              background: #181d25;
-            }
-            .lights { display: flex; gap: 7px; }
-            .lights i {
-              width: 9px;
-              height: 9px;
-              border-radius: 50%;
-              background: #46505d;
-            }
-            .lights i:first-child { background: #ff7147; }
-            .address {
-              flex: 1;
-              padding: 7px 12px;
-              border: 1px solid #303844;
-              border-radius: 6px;
-              background: #0d1117;
-              color: #98a5b6;
-              font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
-            }
-            main {
-              display: grid;
-              grid-template-columns: 1.2fr .8fr;
-              gap: 28px;
-              padding: 34px;
-            }
-            .eyebrow {
-              color: #ff7147;
-              font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace;
-              letter-spacing: .16em;
-              text-transform: uppercase;
-            }
-            h1 {
-              max-width: 360px;
-              margin: 14px 0;
-              font-size: 34px;
-              font-weight: 590;
-              letter-spacing: -.035em;
-              line-height: 1.06;
-            }
-            p {
-              max-width: 390px;
-              margin: 0;
-              color: #95a1b1;
-              font-size: 14px;
-              line-height: 1.6;
-            }
-            .details { display: grid; gap: 10px; align-content: start; }
-            .datum {
-              display: flex;
-              justify-content: space-between;
-              padding: 12px 0;
-              border-bottom: 1px solid #2a313b;
-              color: #818d9d;
-              font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
-            }
-            .datum strong { color: #dce3ec; font-weight: 500; }
-            input {
-              grid-column: 1 / -1;
-              width: 100%;
-              margin-top: 8px;
-              padding: 13px 14px;
-              border: 1px solid #394451;
-              border-radius: 7px;
-              outline: none;
-              background: #0b0f14;
-              color: #eef2f7;
-              font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
-            }
-            input:focus {
-              border-color: #ff7147;
-              box-shadow: 0 0 0 3px rgba(255, 113, 71, .13);
-            }
-          </style>
-        </head>
-        <body>
-          <header>
-            <div class="lights"><i></i><i></i><i></i></div>
-            <div class="address">native://webkit/composition-surface</div>
-          </header>
-          <main>
-            <section>
-              <div class="eyebrow">Native surface / live</div>
-              <h1>A real browser inside GPUI’s scene.</h1>
-              <p>
-                This page is rendered by WKWebView. GPUI owns the surfaces
-                below and above it, while AppKit composes all three.
-              </p>
-            </section>
-            <aside class="details">
-              <div class="datum"><span>ENGINE</span><strong>WEBKIT</strong></div>
-              <div class="datum"><span>HOST</span><strong>NSVIEW</strong></div>
-              <div class="datum"><span>STATE</span><strong>INTERACTIVE</strong></div>
-            </aside>
-            <input autofocus value="Focus and type inside the native layer">
-          </main>
-        </body>
-        </html>
-    "#;
+    const PAGE: &str = include_str!("native_webview.html");
 
     struct NativeWebView {
         parent: id,
@@ -173,14 +48,14 @@ mod macos {
                     view,
                     initWithFrame: NSRect::new(
                         NSPoint::new(0., 0.),
-                        NSSize::new(
-                            f64::from(WEBVIEW_WIDTH),
-                            f64::from(WEBVIEW_HEIGHT),
-                        ),
+                        NSSize::new(0., 0.),
                     )
                     configuration: configuration
                 ];
-                anyhow::ensure!(!view.is_null(), "failed to create WKWebView");
+                if view.is_null() {
+                    let _: () = msg_send![configuration, release];
+                    anyhow::bail!("failed to create WKWebView");
+                }
 
                 let html = NSString::alloc(nil).init_str(PAGE);
                 let _: id = msg_send![view, loadHTMLString: html baseURL: nil];
@@ -260,8 +135,8 @@ mod macos {
             cx: &mut App,
         ) -> (LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
-            style.size.width = WEBVIEW_WIDTH.into();
-            style.size.height = WEBVIEW_HEIGHT.into();
+            style.size.width = relative(1.).into();
+            style.size.height = relative(1.).into();
             (window.request_layout(style, [], cx), ())
         }
 
@@ -303,12 +178,12 @@ mod macos {
             .py_2()
             .rounded_md()
             .border_1()
-            .border_color(rgb(0x35404d))
-            .bg(rgb(0x171c23))
-            .text_color(rgb(0xdce3ec))
+            .border_color(rgb(0xcfd1d2))
+            .bg(rgb(0xececed))
+            .text_color(rgb(0x5c6166))
             .text_sm()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0x202731)).border_color(rgb(0x566273)))
+            .hover(|style| style.bg(rgb(0xdfe0e1)).border_color(rgb(0xcfd0d2)))
             .child(label)
     }
 
@@ -319,10 +194,10 @@ mod macos {
             .gap_2()
             .py_2()
             .border_b_1()
-            .border_color(rgb(0x242c35))
+            .border_color(rgb(0xcfd1d2))
             .child(div().w_1().h_5().rounded_sm().bg(color))
-            .child(div().text_color(rgb(0x687586)).w(px(18.)).child(index))
-            .child(div().text_color(rgb(0xaeb8c5)).child(label))
+            .child(div().text_color(rgb(0xa9acae)).w(px(18.)).child(index))
+            .child(div().text_color(rgb(0x5c6166)).child(label))
     }
 
     impl Render for NativeWebViewExample {
@@ -334,8 +209,11 @@ mod macos {
                 .gap_6()
                 .size_full()
                 .p_7()
-                .bg(rgb(0x090c10))
-                .text_color(rgb(0xe7edf6))
+                .bg(rgb(0xdcddde))
+                .text_color(rgb(0x5c6166))
+                // While a deferred overlay is visible, the transparent GPUI
+                // NSView captures the whole window. This handler therefore
+                // also dismisses clicks geometrically over the WKWebView.
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
@@ -357,7 +235,7 @@ mod macos {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0xff7147))
+                                        .text_color(rgb(0xf1ad49))
                                         .child("GPUI / LAB 04"),
                                 )
                                 .child(
@@ -371,7 +249,7 @@ mod macos {
                                     div()
                                         .mt_3()
                                         .text_sm()
-                                        .text_color(rgb(0x788597))
+                                        .text_color(rgb(0x8b8e92))
                                         .child("Three surfaces.\nOne visual stack."),
                                 ),
                         )
@@ -381,15 +259,18 @@ mod macos {
                                 .flex_col()
                                 .gap_1()
                                 .text_xs()
-                                .child(layer_row("03", "GPUI overlay", rgb(0xff7147)))
-                                .child(layer_row("02", "WKWebView", rgb(0x5ea7ff)))
-                                .child(layer_row("01", "GPUI base", rgb(0x667080))),
+                                .child(layer_row("03", "GPUI overlay", rgb(0xf1ad49)))
+                                .child(layer_row("02", "WKWebView", rgb(0x3b9ee5)))
+                                .child(layer_row("01", "GPUI base", rgb(0x8b8e92))),
                         ),
                 )
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
                         .gap_4()
                         .child(
                             div()
@@ -401,7 +282,7 @@ mod macos {
                                         .child(
                                             div()
                                                 .text_xs()
-                                                .text_color(rgb(0x788597))
+                                                .text_color(rgb(0x8b8e92))
                                                 .child("COMPOSITION TARGET"),
                                         )
                                         .child(
@@ -412,15 +293,19 @@ mod macos {
                                     div()
                                         .flex()
                                         .gap_2()
-                                        .child(button("toggle-popover", "Show popover").on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.webview.focus_parent();
-                                                this.popover_open = !this.popover_open;
-                                                cx.notify();
-                                            }),
-                                        ))
-                                        .child(button("open-dialog", "Open dialog").on_click(
+                                        .child(
+                                            button("toggle-popover", "Show popover").on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.webview.focus_parent();
+                                                    this.popover_open = !this.popover_open;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                        .child(button("open-dialog", "Open dialog").on_mouse_down(
+                                            MouseButton::Left,
                                             cx.listener(|this, _, _, cx| {
                                                 cx.stop_propagation();
                                                 this.webview.focus_parent();
@@ -432,11 +317,13 @@ mod macos {
                         )
                         .child(
                             div()
+                                .flex_1()
+                                .min_h_0()
                                 .p(px(6.))
                                 .rounded_xl()
                                 .border_1()
-                                .border_color(rgb(0x2b3440))
-                                .bg(rgb(0x12171d))
+                                .border_color(rgb(0xcfd1d2))
+                                .bg(rgb(0xececed))
                                 .shadow_xl()
                                 .overflow_hidden()
                                 .child(NativeWebViewElement {
@@ -456,13 +343,13 @@ mod macos {
                                 .rounded_lg()
                                 .shadow_xl()
                                 .border_1()
-                                .border_color(rgb(0x384452))
-                                .bg(rgb(0x171d24))
-                                .text_color(rgb(0xe7edf6))
+                                .border_color(rgb(0xcfd1d2))
+                                .bg(rgb(0xececed))
+                                .text_color(rgb(0x5c6166))
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0xff7147))
+                                        .text_color(rgb(0xf1ad49))
                                         .child("SURFACE 03"),
                                 )
                                 .child(
@@ -471,7 +358,7 @@ mod macos {
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
                                         .child("Deferred GPUI popover"),
                                 )
-                                .child(div().mt_2().text_sm().text_color(rgb(0x94a0b0)).child(
+                                .child(div().mt_2().text_sm().text_color(rgb(0x8b8e92)).child(
                                     "Painted after the native WebView without changing its \
                                          AppKit z-order.",
                                 )),
@@ -488,7 +375,7 @@ mod macos {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(gpui::black().opacity(0.62))
+                                .bg(rgb(0x5c6166).opacity(0.38))
                                 .child(
                                     div()
                                         .w(px(500.))
@@ -496,9 +383,9 @@ mod macos {
                                         .rounded_xl()
                                         .shadow_xl()
                                         .border_1()
-                                        .border_color(rgb(0x3b4654))
-                                        .bg(rgb(0x151a21))
-                                        .text_color(rgb(0xe7edf6))
+                                        .border_color(rgb(0xcfd1d2))
+                                        .bg(rgb(0xececed))
+                                        .text_color(rgb(0x5c6166))
                                         .child(
                                             div()
                                                 .flex()
@@ -507,7 +394,7 @@ mod macos {
                                                 .child(
                                                     div()
                                                         .text_xs()
-                                                        .text_color(rgb(0xff7147))
+                                                        .text_color(rgb(0xf1ad49))
                                                         .child("SURFACE 03 / GPUI OVERLAY"),
                                                 )
                                                 .child(
@@ -515,9 +402,9 @@ mod macos {
                                                         .px_2()
                                                         .py_1()
                                                         .rounded_md()
-                                                        .bg(rgb(0x202731))
+                                                        .bg(rgb(0xdfe0e1))
                                                         .text_xs()
-                                                        .text_color(rgb(0x94a0b0))
+                                                        .text_color(rgb(0x8b8e92))
                                                         .child("LIVE"),
                                                 ),
                                         )
@@ -530,18 +417,23 @@ mod macos {
                                                     "The native layer stays exactly where it is.",
                                                 ),
                                         )
-                                        .child(div().mt_3().text_color(rgb(0x94a0b0)).child(
+                                        .child(div().mt_3().text_color(rgb(0x8b8e92)).child(
                                             "GPUI splits its scene before deferred draws. \
                                                      AppKit places WKWebView between the base and \
                                                      this transparent overlay surface.",
                                         ))
-                                        .child(div().mt_5().h(px(1.)).w_full().bg(rgb(0x2c3541)))
-                                        .child(button("close-dialog", "Close").mt_5().on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                this.dialog_open = false;
-                                                cx.notify();
-                                            }),
-                                        )),
+                                        .child(div().mt_5().h(px(1.)).w_full().bg(rgb(0xcfd1d2)))
+                                        .child(
+                                            button("close-dialog", "Close").mt_5().on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.webview.focus_parent();
+                                                    this.dialog_open = false;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        ),
                                 ),
                         )
                         .priority(2),
@@ -567,7 +459,7 @@ mod macos {
 
                     cx.new(|_| NativeWebViewExample {
                         webview,
-                        dialog_open: true,
+                        dialog_open: false,
                         popover_open: false,
                     })
                 },
