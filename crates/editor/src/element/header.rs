@@ -706,10 +706,6 @@ pub(crate) fn render_buffer_header(
                 }
             });
         })
-        // Keep the header's text at the line height inherited from the editor;
-        // the wrapper at the end of this function overrides it for the deferred
-        // context menu only.
-        .line_height(window.text_style().line_height)
         .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
