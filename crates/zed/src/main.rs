@@ -495,6 +495,7 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
+        i18n_settings::init(Box::new(Assets), cx);
         zed::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
@@ -847,6 +848,7 @@ fn main() {
 
         let menus = app_menus(cx);
         cx.set_menus(menus);
+        rebuild_menus_on_locale_change(cx);
 
         if let Some(mut crash_handler) = crash_handler {
             let crash_handler2 = block_on(poll_once(&mut crash_handler));
@@ -1824,6 +1826,25 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+/// Rebuilds the application menus whenever the interface locale changes.
+///
+/// The menu bar is owned by the platform rather than rendered by GPUI, so unlike
+/// in-app views it does not pick up a new locale from a redraw.
+fn rebuild_menus_on_locale_change(cx: &mut App) {
+    let mut last_generation = i18n::generation();
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let generation = i18n::generation();
+        if generation == last_generation {
+            return;
+        }
+        last_generation = generation;
+
+        let menus = app_menus(cx);
+        cx.set_menus(menus);
+    })
+    .detach();
 }
 
 /// Spawns a background task to load the user themes from the themes directory.

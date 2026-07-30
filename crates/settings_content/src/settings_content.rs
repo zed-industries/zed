@@ -269,6 +269,15 @@ pub struct SettingsContent {
 
     pub title_bar: Option<TitleBarSettingsContent>,
 
+    /// The language to display Zed's interface in, as a BCP 47 language tag
+    /// such as `"en-US"` or `"zh-CN"`.
+    ///
+    /// Interface text that has no translation for the selected language is
+    /// shown in English.
+    ///
+    /// Default: "en-US"
+    pub ui_language: Option<String>,
+
     /// Whether or not to enable Vim mode.
     ///
     /// Default: false

@@ -25,6 +25,12 @@
   // 8. "Cursor"
   // 9. "None"
   "base_keymap": "Zed",
+  // The language to display Zed's interface in, as a BCP 47 language tag.
+  // Interface text with no translation for the selected language is shown
+  // in English.
+  //
+  // For example: "en-US", "zh-CN"
+  "ui_language": "en-US",
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.

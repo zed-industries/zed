@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+"""Reports how completely the bundled catalogs cover the strings marked with `t!`.
+
+Scans the Rust sources for `t!("…")` invocations, derives each one's catalog key
+the same way `i18n::derive_key` does, and compares that against the keys defined
+in `assets/i18n/<locale>/*.ftl`.
+
+Reports, per locale:
+  * missing   — marked for localization but absent from the catalog (shows English)
+  * orphaned  — defined in the catalog but no longer marked in the sources
+  * collision — distinct English strings that derive the same key
+
+Comments and `#[cfg(test)]` items are ignored, so documentation examples and test
+fixtures are not mistaken for real call sites.
+
+Exits non-zero if a collision is found, or if `--require-complete` is passed and
+any locale has missing keys.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import pathlib
+import re
+import sys
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+CATALOG_ROOT = REPO_ROOT / "assets" / "i18n"
+CRATES_ROOT = REPO_ROOT / "crates"
+
+# Matches `t!("…")`, capturing the literal. Rust escapes are resolved separately.
+T_MACRO = re.compile(r'\bt!\s*\(\s*"((?:[^"\\]|\\.)*)"')
+
+# A Fluent message definition at the start of a line: `key = value`.
+FTL_MESSAGE = re.compile(r"^([a-zA-Z][a-zA-Z0-9_-]*)\s*=", re.MULTILINE)
+
+CFG_TEST = re.compile(r"#\[cfg\(test\)\]")
+
+IDENTIFIER_CHARS = re.compile(r"[A-Za-z0-9_]")
+
+
+def derive_key(source: str) -> str:
+    """Mirrors `i18n::derive_key`. Keep the two in sync."""
+    characters: list[str] = []
+    pending_separator = False
+
+    for ch in source:
+        if ch.isascii() and ch.isalnum():
+            if pending_separator and characters:
+                characters.append("-")
+            pending_separator = False
+            characters.append(ch.lower())
+        else:
+            pending_separator = True
+
+    if not characters:
+        return "t"
+
+    derived = "".join(characters)
+    if not derived[0].isalpha():
+        derived = "t-" + derived
+    return derived
+
+
+def unescape_rust_literal(literal: str) -> str:
+    return (
+        literal.replace(r"\\", "\\")
+        .replace(r"\"", '"')
+        .replace(r"\n", "\n")
+        .replace(r"\t", "\t")
+    )
+
+
+def scan_literal(contents: str, index: int) -> int | None:
+    """If a string or char literal starts at `index`, returns the index past it.
+
+    Handles raw strings (`r"…"`, `r#"…"#`) and byte strings so that a `//` or a
+    brace inside a literal is never mistaken for a comment or a block delimiter.
+    """
+    length = len(contents)
+    cursor = index
+
+    # `b` and `r` prefixes, in either order.
+    while cursor < length and contents[cursor] in "br":
+        cursor += 1
+
+    if cursor == index:
+        prefixed = False
+    else:
+        prefixed = True
+        # A bare identifier such as `br` in `brace` is not a literal prefix.
+        if cursor < length and contents[cursor] not in '#"':
+            return None
+
+    is_raw = prefixed and "r" in contents[index:cursor]
+
+    if is_raw:
+        hashes = 0
+        while cursor < length and contents[cursor] == "#":
+            hashes += 1
+            cursor += 1
+        if cursor >= length or contents[cursor] != '"':
+            return None
+        terminator = '"' + "#" * hashes
+        end = contents.find(terminator, cursor + 1)
+        return length if end == -1 else end + len(terminator)
+
+    if cursor >= length:
+        return None
+
+    if contents[cursor] == '"':
+        cursor += 1
+        while cursor < length:
+            if contents[cursor] == "\\":
+                cursor += 2
+                continue
+            if contents[cursor] == '"':
+                return cursor + 1
+            cursor += 1
+        return length
+
+    if prefixed:
+        return None
+
+    # A char literal, as opposed to a lifetime such as `&'a str`.
+    if contents[cursor] == "'":
+        if cursor + 1 < length and contents[cursor + 1] == "\\":
+            cursor += 2
+            while cursor < length:
+                if contents[cursor] == "\\":
+                    cursor += 2
+                    continue
+                if contents[cursor] == "'":
+                    return cursor + 1
+                cursor += 1
+            return length
+        if cursor + 2 < length and contents[cursor + 2] == "'":
+            return cursor + 3
+
+    return None
+
+
+def scan_comment(contents: str, index: int) -> int | None:
+    """If a comment starts at `index`, returns the index past it."""
+    if contents[index] != "/" or index + 1 >= len(contents):
+        return None
+
+    following = contents[index + 1]
+    if following == "/":
+        newline = contents.find("\n", index)
+        return len(contents) if newline == -1 else newline
+    if following == "*":
+        # Rust block comments nest.
+        depth = 0
+        cursor = index
+        while cursor < len(contents) - 1:
+            pair = contents[cursor : cursor + 2]
+            if pair == "/*":
+                depth += 1
+                cursor += 2
+                continue
+            if pair == "*/":
+                depth -= 1
+                cursor += 2
+                if depth == 0:
+                    return cursor
+                continue
+            cursor += 1
+        return len(contents)
+
+    return None
+
+
+def strip_comments(contents: str) -> str:
+    """Removes comments, leaving literals untouched.
+
+    Documentation examples are comments, so this keeps them from being counted as
+    call sites.
+    """
+    out: list[str] = []
+    index = 0
+    length = len(contents)
+
+    while index < length:
+        if IDENTIFIER_CHARS.match(contents[index]) or contents[index] in "\"'":
+            # Only start a literal scan at a token boundary.
+            at_boundary = index == 0 or not IDENTIFIER_CHARS.match(contents[index - 1])
+            if at_boundary or contents[index] in "\"'":
+                end = scan_literal(contents, index)
+                if end is not None:
+                    out.append(contents[index:end])
+                    index = end
+                    continue
+
+        end = scan_comment(contents, index)
+        if end is not None:
+            # Keep newlines so line-based context is preserved.
+            out.append("\n" * contents.count("\n", index, end))
+            index = end
+            continue
+
+        out.append(contents[index])
+        index += 1
+
+    return "".join(out)
+
+
+def find_matching_brace(contents: str, open_index: int) -> int | None:
+    """Returns the index of the `}` matching the `{` at `open_index`."""
+    depth = 0
+    index = open_index
+    length = len(contents)
+
+    while index < length:
+        end = scan_literal(contents, index)
+        if end is not None and end > index:
+            index = end
+            continue
+
+        ch = contents[index]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+
+        index += 1
+
+    return None
+
+
+def strip_cfg_test_items(contents: str) -> str:
+    """Removes `#[cfg(test)]` items so test fixtures are not counted as call sites."""
+    while True:
+        attribute = CFG_TEST.search(contents)
+        if not attribute:
+            return contents
+
+        body = contents.find("{", attribute.end())
+        if body == -1:
+            # An attribute with no block body, e.g. `#[cfg(test)] use …;`.
+            return contents[: attribute.start()] + contents[attribute.end() :]
+
+        end = find_matching_brace(contents, body)
+        if end is None:
+            return contents[: attribute.start()]
+
+        contents = contents[: attribute.start()] + contents[end + 1 :]
+
+
+def collect_marked_strings() -> dict[str, list[str]]:
+    """Maps each derived key to the English strings that produced it."""
+    by_key: dict[str, list[str]] = collections.defaultdict(list)
+
+    for path in sorted(CRATES_ROOT.rglob("*.rs")):
+        try:
+            contents = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+
+        if "t!(" not in contents:
+            continue
+
+        contents = strip_cfg_test_items(strip_comments(contents))
+
+        for match in T_MACRO.finditer(contents):
+            english = unescape_rust_literal(match.group(1))
+            if english not in by_key[derive_key(english)]:
+                by_key[derive_key(english)].append(english)
+
+    return by_key
+
+
+def collect_catalog_keys(locale_dir: pathlib.Path) -> set[str]:
+    keys: set[str] = set()
+    for path in sorted(locale_dir.glob("*.ftl")):
+        keys.update(FTL_MESSAGE.findall(path.read_text(encoding="utf-8")))
+    return keys
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="exit non-zero if any locale is missing keys",
+    )
+    parser.add_argument(
+        "--locale",
+        action="append",
+        help="only check this locale (repeatable)",
+    )
+    args = parser.parse_args()
+
+    marked = collect_marked_strings()
+    if not marked:
+        print("No `t!` invocations found.", file=sys.stderr)
+        return 1
+
+    print(f"Marked for localization: {len(marked)} keys")
+
+    failed = False
+
+    collisions = {key: sources for key, sources in marked.items() if len(sources) > 1}
+    if collisions:
+        failed = True
+        print(f"\n{len(collisions)} key collision(s):")
+        for key, sources in sorted(collisions.items()):
+            print(f"  {key}")
+            for source in sources:
+                print(f"    <- {source!r}")
+        print(
+            "\n  Distinct strings deriving the same key would share one translation.\n"
+            "  Reword one of them, or give it a dedicated key."
+        )
+
+    if not CATALOG_ROOT.is_dir():
+        print(f"\nNo catalogs at {CATALOG_ROOT.relative_to(REPO_ROOT)}")
+        return 1
+
+    locale_dirs = sorted(path for path in CATALOG_ROOT.iterdir() if path.is_dir())
+    if args.locale:
+        wanted = set(args.locale)
+        locale_dirs = [path for path in locale_dirs if path.name in wanted]
+
+    for locale_dir in locale_dirs:
+        catalog = collect_catalog_keys(locale_dir)
+        missing = sorted(set(marked) - catalog)
+        orphaned = sorted(catalog - set(marked))
+        translated = len(marked) - len(missing)
+        percent = 100.0 * translated / len(marked)
+
+        print(f"\n{locale_dir.name}: {translated}/{len(marked)} ({percent:.1f}%)")
+
+        if missing:
+            print(f"  missing ({len(missing)}):")
+            for key in missing:
+                print(f"    {key}  <- {marked[key][0]!r}")
+            if args.require_complete:
+                failed = True
+
+        if orphaned:
+            print(f"  orphaned ({len(orphaned)}):")
+            for key in orphaned:
+                print(f"    {key}")
+
+        if not missing and not orphaned:
+            print("  complete, no orphans")
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

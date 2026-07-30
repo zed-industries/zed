@@ -7,6 +7,7 @@ use rust_embed::RustEmbed;
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
 #[include = "fonts/**/*"]
+#[include = "i18n/**/*"]
 #[include = "icons/**/*"]
 #[include = "images/**/*"]
 #[include = "themes/**/*"]

@@ -1,0 +1,21 @@
+[package]
+name = "i18n"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/i18n.rs"
+doctest = false
+
+[dependencies]
+fluent-bundle.workspace = true
+fluent-langneg.workspace = true
+gpui_shared_string.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+unic-langid.workspace = true
