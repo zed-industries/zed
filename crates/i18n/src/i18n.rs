@@ -77,7 +77,9 @@ pub use unic_langid::LanguageIdentifier;
 /// Reach for this only to break a collision that `script/i18n-coverage` reports.
 #[macro_export]
 macro_rules! t {
-    ($source:literal) => {{
+    // The trailing comma is optional here because rustfmt adds one whenever the
+    // literal is long enough to wrap onto its own line.
+    ($source:literal $(,)?) => {{
         static KEY: ::std::sync::OnceLock<&'static str> = ::std::sync::OnceLock::new();
         $crate::LocalizedString::from_parts(
             *KEY.get_or_init(|| $crate::derive_key_leaked($source)),
@@ -94,7 +96,7 @@ macro_rules! t {
             ],
         )
     }};
-    (key = $key:literal, $source:literal) => {
+    (key = $key:literal, $source:literal $(,)?) => {
         $crate::LocalizedString::from_parts($key, $source)
     };
     (key = $key:literal, $source:literal, $($name:ident = $value:expr),+ $(,)?) => {
@@ -192,6 +194,17 @@ mod tests {
         );
 
         i18n::reset();
+    }
+
+    #[test]
+    fn accepts_a_trailing_comma_after_the_source() {
+        // rustfmt puts a long literal on its own line and adds a trailing comma,
+        // so both argument-less forms have to tolerate one.
+        assert_eq!(
+            t!("Edit and save files directly in the results multibuffer!",).key(),
+            "edit-and-save-files-directly-in-the-results-multibuffer"
+        );
+        assert_eq!(t!(key = "open-action", "Open",).key(), "open-action");
     }
 
     #[test]
