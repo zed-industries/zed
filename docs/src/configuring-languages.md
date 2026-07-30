@@ -484,6 +484,43 @@ For language-specific inlay hint settings, refer to the documentation for each l
 
 Code actions provide quick fixes and refactoring options. Access code actions using the {#action editor::ToggleCodeActions} command or by clicking the lightbulb icon that appears next to your cursor when actions are available.
 
+#### Running code actions by kind
+
+The {#action editor::CodeAction} action runs an LSP action by kind (e.g. `quickfix`, `refactor`, `source.organizeImports`). Bind it from your keymap:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-alt-o": [
+        "editor::CodeAction",
+        { "kind": "source.organizeImports" }
+      ],
+      "ctrl-alt-q": [
+        "editor::CodeAction",
+        { "kind": "quickfix", "apply": "first" }
+      ],
+      "ctrl-alt-r": [
+        "editor::CodeAction",
+        { "kind": "refactor", "apply": "never" }
+      ]
+    }
+  }
+]
+```
+
+The `apply` field controls what happens when the language server returns zero, one, or multiple matching actions:
+
+| `apply`     | Zero matches | One match   | Multiple matches |
+| ----------- | ------------ | ----------- | ---------------- |
+| `if_single` | no-op        | apply       | open picker      |
+| `first`     | no-op        | apply       | apply the first  |
+| `never`     | no-op        | open picker | open picker      |
+| `all`       | no-op        | apply       | apply all        |
+
+`if_single` is the default if `apply` is omitted. `source.*` kinds apply to the whole file; other kinds target the cursor or selection.
+
 ### Go To Definition and References
 
 Use these commands to navigate your codebase:
