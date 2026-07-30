@@ -3617,6 +3617,107 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
 }
 
 #[gpui::test]
+async fn test_invalid_nested_git_dir_is_not_registered_as_repository(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "nested": {
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+    // A leftover, empty `.git` directory (no HEAD/objects/refs) is not a real
+    // repository: git ignores it and walks up to the parent, and so must we. If it
+    // were registered, it would shadow the parent repo for `nested/`'s files and
+    // load an empty diff base, rendering them as wholly added.
+    fs.create_dir(Path::new(path!("/root/nested/.git")))
+        .await
+        .unwrap();
+
+    let worktree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+}
+
+#[gpui::test]
+async fn test_gitfile_pointing_at_non_repository_is_not_registered(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "nested": {
+                // A `.git` *file* (gitfile) pointing at a directory that isn't a git
+                // repository — the same phantom-shadowing bug as an empty `.git`
+                // directory, but reached via gitfile indirection. Real git rejects it,
+                // so `nested/`'s files belong to the `/root` repo.
+                ".git": "gitdir: /root/phantom_gitdir\n",
+                "file.txt": "content",
+            },
+            // The gitfile's target exists but is not a valid repository (no
+            // HEAD/objects/refs), so it must not register `nested` as its own repo.
+            "phantom_gitdir": {},
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        path!("/root").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+}
+
+#[gpui::test]
 async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -3745,11 +3846,17 @@ async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut Te
         path!("/repo"),
         json!({
             ".git": {
+                "HEAD": "ref: refs/heads/main\n",
+                "objects": {},
+                "refs": {},
                 "info": {
                     "exclude": ".env.*"
                 },
                 "worktrees": {
                     "my-worktree": {
+                        // A real linked worktree has its own per-worktree HEAD; the
+                        // shared object/ref stores live in the common dir (`../..`).
+                        "HEAD": "ref: refs/heads/main\n",
                         "commondir": "../.."
                     }
                 }

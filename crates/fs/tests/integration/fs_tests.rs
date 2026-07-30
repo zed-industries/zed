@@ -431,6 +431,248 @@ async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+async fn test_realfs_is_git_repository(executor: BackgroundExecutor) {
+    // Exercises the production `Fs::is_git_repository` default impl against real
+    // on-disk `.git` layouts (FakeFs overrides it with an in-memory bit, so this is
+    // the only coverage of the actual HEAD/objects/refs parsing).
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    const VALID_HEAD: &str = "ref: refs/heads/main\n";
+    const DETACHED_HEAD: &str = "0123456789abcdef0123456789abcdef01234567\n";
+
+    let git_dir = |name: &str, head: Option<&str>, stores: &[&str]| {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(head) = head {
+            std::fs::write(dir.join("HEAD"), head).unwrap();
+        }
+        for store in stores {
+            std::fs::create_dir_all(dir.join(store)).unwrap();
+        }
+        dir
+    };
+
+    let cases: &[(&str, Option<&str>, &[&str], bool)] = &[
+        ("valid", Some(VALID_HEAD), &["objects", "refs"], true),
+        ("detached", Some(DETACHED_HEAD), &["objects", "refs"], true),
+        // What `git init --ref-format=reftable` creates: reftable *and* refs.
+        (
+            "reftable_with_refs",
+            Some(VALID_HEAD),
+            &["objects", "refs", "reftable"],
+            true,
+        ),
+        // Phantom shape git rejects (no refs); must not register as a repository.
+        (
+            "reftable_without_refs",
+            Some(VALID_HEAD),
+            &["objects", "reftable"],
+            false,
+        ),
+        ("empty", None, &[], false), // the phantom-repository bug
+        ("no_objects", Some(VALID_HEAD), &["refs"], false),
+        ("no_refs", Some(VALID_HEAD), &["objects"], false),
+        ("bad_head", Some("garbage\n"), &["objects", "refs"], false),
+    ];
+    for (name, head, stores, expected) in cases {
+        let dir = git_dir(name, *head, stores);
+        assert_eq!(
+            fs.is_git_repository(&dir, &dir).await.unwrap(),
+            *expected,
+            "is_git_repository({name})"
+        );
+    }
+
+    // Linked-worktree shape: HEAD is checked in the repository (per-worktree) dir, while
+    // objects/refs are checked in the shared common dir — exactly as git does.
+    let common_dir = git_dir("wt_common", None, &["objects", "refs"]);
+    let worktree_git_dir = git_dir("wt_repo", Some(VALID_HEAD), &[]);
+    assert!(
+        fs.is_git_repository(&worktree_git_dir, &common_dir)
+            .await
+            .unwrap()
+    );
+    // A leftover worktree admin dir whose own HEAD is gone is not a repository.
+    let worktree_without_head = git_dir("wt_repo_no_head", None, &[]);
+    assert!(
+        !fs.is_git_repository(&worktree_without_head, &common_dir)
+            .await
+            .unwrap()
+    );
+
+    // A symlink HEAD is validated by its link text without being followed (git's
+    // legacy symref form): `refs/…` is accepted even if the target is unborn, while a
+    // link to a non-`refs/` path is rejected regardless of what it points at.
+    #[cfg(unix)]
+    {
+        let symref = git_dir("symref", None, &["objects", "refs"]);
+        std::os::unix::fs::symlink("refs/heads/unborn", symref.join("HEAD")).unwrap();
+        assert!(fs.is_git_repository(&symref, &symref).await.unwrap());
+
+        let bad_symref = git_dir("bad_symref", None, &["objects", "refs"]);
+        std::fs::write(bad_symref.join("ORIG_HEAD"), DETACHED_HEAD).unwrap();
+        std::os::unix::fs::symlink("ORIG_HEAD", bad_symref.join("HEAD")).unwrap();
+        assert!(
+            !fs.is_git_repository(&bad_symref, &bad_symref)
+                .await
+                .unwrap()
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_realfs_resolve_git_repository(executor: BackgroundExecutor) {
+    // The canonical resolver: turns a `.git` entry (directory or gitfile) into its
+    // validated `(repository_dir, common_dir)`, or `Ok(None)` when it is not a repo.
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    const VALID_HEAD: &str = "ref: refs/heads/main\n";
+
+    // A normal repository directory resolves to itself.
+    let repo = root.join("repo/.git");
+    std::fs::create_dir_all(repo.join("objects")).unwrap();
+    std::fs::create_dir_all(repo.join("refs")).unwrap();
+    std::fs::write(repo.join("HEAD"), VALID_HEAD).unwrap();
+    // A plain `.git` directory keeps its own (un-canonicalized) identity.
+    let resolved = resolve_git_repository(&repo, &fs).await.unwrap();
+    assert_eq!(resolved, Some((repo.clone(), repo.clone())));
+    let repo_canonical = std::fs::canonicalize(&repo).unwrap();
+
+    // A linked worktree: `.git` is a gitfile pointing at the per-worktree admin dir,
+    // whose `commondir` points back at the shared repository.
+    let worktree_admin = repo.join("worktrees/wt");
+    std::fs::create_dir_all(&worktree_admin).unwrap();
+    std::fs::write(worktree_admin.join("HEAD"), VALID_HEAD).unwrap();
+    std::fs::write(worktree_admin.join("commondir"), "../..\n").unwrap();
+    let worktree = root.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", worktree_admin.display()),
+    )
+    .unwrap();
+    let (repository_dir, common_dir) = resolve_git_repository(&worktree.join(".git"), &fs)
+        .await
+        .unwrap()
+        .expect("linked worktree resolves");
+    assert_eq!(
+        repository_dir,
+        std::fs::canonicalize(&worktree_admin).unwrap()
+    );
+    assert_eq!(common_dir, repo_canonical);
+
+    // A gitfile without the literal `gitdir: ` (git rejects a missing space), a gitfile
+    // pointing nowhere, a `commondir` pointing nowhere, and a leftover empty `.git` are
+    // all confirmed non-repositories (`Ok(None)`), not errors.
+    let none_cases: &[(&str, &str)] = &[
+        ("no_space", "gitdir:/nowhere\n"),
+        ("bad_target", "gitdir: /does/not/exist\n"),
+        ("garbage", "not a gitfile\n"),
+    ];
+    for (name, contents) in none_cases {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".git"), contents).unwrap();
+        assert_eq!(
+            resolve_git_repository(&dir.join(".git"), &fs)
+                .await
+                .unwrap(),
+            None,
+            "resolve({name})"
+        );
+    }
+    let empty = root.join("empty/.git");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(resolve_git_repository(&empty, &fs).await.unwrap(), None);
+
+    // A present-but-broken `commondir` (target missing) rejects the whole repository
+    // rather than silently falling back to the repository dir.
+    let broken = root.join("broken/.git");
+    std::fs::create_dir_all(broken.join("objects")).unwrap();
+    std::fs::create_dir_all(broken.join("refs")).unwrap();
+    std::fs::write(broken.join("HEAD"), VALID_HEAD).unwrap();
+    std::fs::write(broken.join("commondir"), "/does/not/exist\n").unwrap();
+    assert_eq!(resolve_git_repository(&broken, &fs).await.unwrap(), None);
+
+    // An absent `.git` is `Ok(None)`.
+    assert_eq!(
+        resolve_git_repository(&root.join("missing/.git"), &fs)
+            .await
+            .unwrap(),
+        None
+    );
+
+    // A dangling-symlink `.git` is confirmed non-repo (`Ok(None)`), not a transient
+    // read error: RealFs reports the symlink's own metadata when the target is gone,
+    // so the path is treated as a gitfile whose content load then hits absence.
+    #[cfg(unix)]
+    {
+        let dangling = root.join("dangling");
+        std::fs::create_dir_all(&dangling).unwrap();
+        std::os::unix::fs::symlink("/does/not/exist", dangling.join(".git")).unwrap();
+        assert_eq!(
+            resolve_git_repository(&dangling.join(".git"), &fs)
+                .await
+                .unwrap(),
+            None,
+            "dangling-symlink .git must resolve to Ok(None), not Err"
+        );
+    }
+
+    // A directory `HEAD` is confirmed-invalid (`Ok(None)`). A symlink HEAD to
+    // `refs/…` remains valid, guarding the is_symlink-before-is_dir branch order.
+    let dir_head = root.join("dir_head/.git");
+    std::fs::create_dir_all(dir_head.join("objects")).unwrap();
+    std::fs::create_dir_all(dir_head.join("refs")).unwrap();
+    std::fs::create_dir_all(dir_head.join("HEAD")).unwrap();
+    assert_eq!(
+        resolve_git_repository(&dir_head, &fs).await.unwrap(),
+        None,
+        "directory HEAD must resolve to Ok(None)"
+    );
+
+    #[cfg(unix)]
+    {
+        let symlink_head = root.join("symlink_head/.git");
+        std::fs::create_dir_all(symlink_head.join("objects")).unwrap();
+        std::fs::create_dir_all(symlink_head.join("refs")).unwrap();
+        // Target is a directory so metadata is both symlink and dir; validating by
+        // link text (not rejecting as directory HEAD) requires is_symlink before is_dir.
+        std::fs::create_dir_all(symlink_head.join("refs/heads/main")).unwrap();
+        std::os::unix::fs::symlink("refs/heads/main", symlink_head.join("HEAD")).unwrap();
+        let resolved = resolve_git_repository(&symlink_head, &fs)
+            .await
+            .unwrap()
+            .expect("symlink HEAD to refs/… remains valid");
+        assert_eq!(resolved, (symlink_head.clone(), symlink_head));
+    }
+}
+
+#[gpui::test]
+async fn test_fakefs_resolve_missing_gitfile_target_is_ok_none(executor: BackgroundExecutor) {
+    // FakeFs must classify absence with a real io::Error so it downcasts like RealFs.
+    let fake_fs = FakeFs::new(executor);
+    fake_fs
+        .insert_tree(
+            path!("/linked"),
+            json!({
+                ".git": "gitdir: /does/not/exist\n",
+                "file.txt": "content",
+            }),
+        )
+        .await;
+    let fake_result = resolve_git_repository(Path::new(path!("/linked/.git")), fake_fs.as_ref())
+        .await
+        .expect("FakeFs: missing gitfile target must not be Err");
+    assert_eq!(
+        fake_result, None,
+        "FakeFs: missing gitfile target must be Ok(None)"
+    );
+}
+
+#[gpui::test]
 async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
     // With the file handle still open, the file should be replaced
     // https://github.com/zed-industries/zed/issues/30054
