@@ -107,7 +107,8 @@ pub async fn prediction_edits_for_single_file_diff(
                             if marker_len == INLINE_CURSOR_MARKER.len() {
                                 cursor_position.get_or_insert_with(|| {
                                     PredictedCursorPosition::new(
-                                        pending_range.start,
+                                        snapshot
+                                            .anchor_before(pending_range.start.to_offset(snapshot)),
                                         pending_offset,
                                     )
                                 });
@@ -130,7 +131,10 @@ pub async fn prediction_edits_for_single_file_diff(
                     while let Some(marker_offset) = remaining.find(INLINE_CURSOR_MARKER) {
                         output.push_str(&remaining[..marker_offset]);
                         cursor_position.get_or_insert_with(|| {
-                            PredictedCursorPosition::new(range.start, output.len())
+                            PredictedCursorPosition::new(
+                                snapshot.anchor_before(range.start.to_offset(snapshot)),
+                                output.len(),
+                            )
                         });
                         remaining = &remaining[marker_offset + INLINE_CURSOR_MARKER.len()..];
                     }
@@ -600,6 +604,57 @@ mod tests {
         buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
         buffer.read_with(cx, |buffer, _cx| {
             assert_eq!(buffer.text(), "Hello!\nHow are you?\nBye\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_places_cursor_after_inline_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "        }\n\n        let api_key = data.\n    }\n    drop(sender);\n    Ok(())\n}\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+                     }
+
+            -        let api_key = data.
+            +        let api_key = data.config.<|user_cursor|>open_ai_api_key.clone();
+                 }
+                 drop(sender);
+                 Ok(())
+             }
+        "#};
+
+        let (buffer, _, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+        let cursor_position = cursor_position.unwrap();
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            let snapshot = buffer.snapshot();
+            let cursor_offset = (cursor_position.anchor.to_offset(&snapshot)
+                + cursor_position.offset)
+                .min(snapshot.len());
+            let mut text = buffer.text();
+            text.insert(cursor_offset, 'ˇ');
+
+            assert_eq!(
+                text,
+                "        }\n\n        let api_key = data.config.ˇopen_ai_api_key.clone();\n    }\n    drop(sender);\n    Ok(())\n}\n"
+            );
         });
     }
 

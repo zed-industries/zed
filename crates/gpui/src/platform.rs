@@ -36,11 +36,11 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
-    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
+    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -886,6 +886,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
+    fn can_start_external_drag(&self) -> bool {
+        false
+    }
+    fn start_external_drag(&self, _payload: &ExternalDragPayload) -> bool {
+        false
+    }
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn set_exclusive_zone(&self, _zone: Pixels) {}
     #[cfg(all(target_os = "linux", feature = "wayland"))]
@@ -1303,6 +1309,11 @@ pub trait PlatformAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn contains(&self, _key: &AtlasKey) -> bool {
+        false
+    }
 }
 
 #[doc(hidden)]
@@ -1602,10 +1613,18 @@ impl PlatformInputHandler {
             .unwrap_or(true)
     }
 
-    #[allow(dead_code)]
+    /// See [`InputHandler::prefers_ime_for_printable_keys`].
+    ///
+    /// This is not a pure delegation to the handler: while a multi-stroke binding is pending this
+    /// returns `false` regardless of the handler's preference, because the next printable key may
+    /// complete a binding whose prefix already bypassed the IME.
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
         self.cx
-            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .update(|window, cx| {
+                // The next printable key may complete a chord whose prefix bypassed the IME.
+                !window.has_pending_keystrokes()
+                    && self.handler.prefers_ime_for_printable_keys(window, cx)
+            })
             .unwrap_or(false)
     }
 }
@@ -1824,8 +1843,8 @@ pub struct WindowOptions {
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
 
-    /// Whether to use client or server side decorations. Wayland only
-    /// Note that this may be ignored.
+    /// Whether to use client or server-side decorations on X11 and Wayland.
+    /// The platform may ignore requests it cannot satisfy.
     pub window_decorations: Option<WindowDecorations>,
 
     /// Icon image (X11 only)
@@ -2546,6 +2565,13 @@ impl Image {
     /// Use the GPUI `remove_asset` API to drop this image, if possible.
     pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
         ImageSource::Image(self).remove_asset(cx);
+    }
+
+    /// Check whether this image is present in GPUI's asset cache (loading or
+    /// loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(self: &Arc<Self>, cx: &App) -> bool {
+        ImageSource::Image(self.clone()).is_asset_cached(cx)
     }
 
     /// Convert the clipboard image to an `ImageData` object.
