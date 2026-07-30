@@ -31,14 +31,16 @@ CATALOG_ROOT = REPO_ROOT / "assets" / "i18n"
 CRATES_ROOT = REPO_ROOT / "crates"
 
 # Matches `t!("…")`, capturing the literal. Rust escapes are resolved separately.
-T_MACRO = re.compile(r'\bt!\s*\(\s*"((?:[^"\\]|\\.)*)"')
+# `\\[\s\S]` rather than `\\.` so that a `\` line continuation, which is how a long
+# literal is wrapped, does not end the match and lose the call site.
+T_MACRO = re.compile(r'\bt!\s*\(\s*"((?:[^"\\]|\\[\s\S])*)"')
 
 # Matches `t!(key = "…", "…")`, capturing the explicit key and then the literal.
 # A call site names its key to break a collision, so the key is taken as given
 # rather than derived. The pattern above cannot match these, since it requires the
 # literal to follow the opening parenthesis directly.
 T_MACRO_KEYED = re.compile(
-    r'\bt!\s*\(\s*key\s*=\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"'
+    r'\bt!\s*\(\s*key\s*=\s*"((?:[^"\\]|\\[\s\S])*)"\s*,\s*"((?:[^"\\]|\\[\s\S])*)"'
 )
 
 # A Fluent message definition at the start of a line: `key = value`.
@@ -73,12 +75,42 @@ def derive_key(source: str) -> str:
 
 
 def unescape_rust_literal(literal: str) -> str:
-    return (
-        literal.replace(r"\\", "\\")
-        .replace(r"\"", '"')
-        .replace(r"\n", "\n")
-        .replace(r"\t", "\t")
-    )
+    """Resolves the escapes a UI literal realistically contains.
+
+    Scanning rather than chaining replacements, so that a literal backslash
+    (`\\\\n`) is not mistaken for a newline escape. A `\\` at end of line is Rust's
+    line continuation: it drops the newline and the next line's indentation, which
+    is how a long message is wrapped in the source.
+    """
+    simple = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", '"': '"', "'": "'", "\\": "\\"}
+    out: list[str] = []
+    index = 0
+    length = len(literal)
+
+    while index < length:
+        ch = literal[index]
+        if ch != "\\" or index + 1 >= length:
+            out.append(ch)
+            index += 1
+            continue
+
+        following = literal[index + 1]
+        if following == "\n":
+            index += 2
+            while index < length and literal[index] in " \t\r":
+                index += 1
+            continue
+        if following in simple:
+            out.append(simple[following])
+            index += 2
+            continue
+
+        # An escape this tool does not model (`\u{…}`, `\x41`); keep it verbatim
+        # rather than guess, since only its alphanumerics affect the derived key.
+        out.append(ch)
+        index += 1
+
+    return "".join(out)
 
 
 def scan_literal(contents: str, index: int) -> int | None:
