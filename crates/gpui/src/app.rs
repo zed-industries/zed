@@ -2491,6 +2491,14 @@ impl App {
         self.loading_assets.remove(&asset_id);
     }
 
+    /// Check whether an asset is present in GPUI's cache (loading or loaded),
+    /// without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_asset<A: Asset>(&self, source: &A::Source) -> bool {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        self.loading_assets.contains_key(&asset_id)
+    }
+
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
     ///
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a

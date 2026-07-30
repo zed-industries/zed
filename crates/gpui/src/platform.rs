@@ -1309,6 +1309,11 @@ pub trait PlatformAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn contains(&self, _key: &AtlasKey) -> bool {
+        false
+    }
 }
 
 #[doc(hidden)]
@@ -2560,6 +2565,13 @@ impl Image {
     /// Use the GPUI `remove_asset` API to drop this image, if possible.
     pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
         ImageSource::Image(self).remove_asset(cx);
+    }
+
+    /// Check whether this image is present in GPUI's asset cache (loading or
+    /// loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(self: &Arc<Self>, cx: &App) -> bool {
+        ImageSource::Image(self.clone()).is_asset_cached(cx)
     }
 
     /// Convert the clipboard image to an `ImageData` object.
