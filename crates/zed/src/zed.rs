@@ -39,11 +39,11 @@ use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use git_ui::staged_diff::StagedDiffToolbar;
 use git_ui::unstaged_diff::UnstagedDiffToolbar;
 use gpui::{
-    Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
-    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
-    actions, image_cache, img, point, px, retain_all,
+    Action, App, AppContext as _, AssetSource, AsyncWindowContext, ClipboardItem, Context,
+    DismissEvent, Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding,
+    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt,
+    TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, actions, image_cache, img, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -89,7 +89,7 @@ use theme_settings::{ThemeSettings, load_user_theme};
 use ui::{Navigable, NavigableEntry, PopoverMenuHandle, TintColor, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
-use util::{ResultExt, asset_str, maybe};
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
@@ -235,14 +235,17 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
-            open_bundled_file(
-                workspace,
-                asset_str::<Assets>("licenses.md"),
-                "Open Source License Attribution",
-                "Markdown",
-                window,
-                cx,
-            );
+            match load_bundled_text("licenses.md") {
+                Ok(licenses) => open_bundled_file(
+                    workspace,
+                    licenses,
+                    "Open Source License Attribution",
+                    "Markdown",
+                    window,
+                    cx,
+                ),
+                Err(error) => workspace.show_error(error, cx),
+            }
         });
     })
     .on_action(|&zed_actions::OpenKeymapFile, cx| {
@@ -2621,6 +2624,16 @@ fn open_local_file(
     }
 }
 
+fn load_bundled_text(path: &str) -> anyhow::Result<Cow<'static, str>> {
+    let bytes = Assets
+        .load(path)?
+        .with_context(|| format!("bundled file {path:?} is unavailable"))?;
+    match bytes {
+        Cow::Borrowed(bytes) => Ok(Cow::Borrowed(std::str::from_utf8(bytes)?)),
+        Cow::Owned(bytes) => Ok(Cow::Owned(String::from_utf8(bytes)?)),
+    }
+}
+
 fn open_bundled_file(
     workspace: &mut Workspace,
     text: Cow<'static, str>,
@@ -2871,6 +2884,15 @@ mod tests {
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
+
+    #[test]
+    fn missing_bundled_text_returns_error() {
+        let error = load_bundled_text("missing.md").expect_err("asset should not exist");
+        assert_eq!(
+            error.to_string(),
+            "bundled file \"missing.md\" is unavailable"
+        );
+    }
 
     async fn flush_workspace_serialization(
         window: &WindowHandle<MultiWorkspace>,
