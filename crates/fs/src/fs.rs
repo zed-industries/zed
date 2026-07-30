@@ -53,9 +53,11 @@ use text::LineEnding;
 #[cfg(feature = "test-support")]
 mod fake_git_repo;
 #[cfg(feature = "test-support")]
-use collections::{BTreeMap, btree_map};
+use collections::{BTreeMap, HashMap, btree_map};
 #[cfg(feature = "test-support")]
-use fake_git_repo::{FakeCommitDataEntry, FakeGitRepositoryState};
+pub use fake_git_repo::FakeGitMutation;
+#[cfg(feature = "test-support")]
+use fake_git_repo::{FakeCommitDataEntry, FakeCommitSnapshot, FakeGitRepositoryState};
 #[cfg(feature = "test-support")]
 use git::{
     repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree, repo_path},
@@ -2314,6 +2316,35 @@ impl FakeFs {
                     .map(|(path, content)| (repo_path(path), content.clone())),
             );
             state.refs.insert("HEAD".into(), sha.into());
+        })
+        .unwrap();
+    }
+
+    pub fn set_commit_history_for_repo(
+        &self,
+        dot_git: &Path,
+        commits: &[(&str, Vec<(&str, String)>)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.commit_history = commits
+                .iter()
+                .map(|(sha, contents)| {
+                    let contents = contents
+                        .iter()
+                        .map(|(path, contents)| (repo_path(path), contents.clone()))
+                        .collect::<HashMap<_, _>>();
+                    FakeCommitSnapshot {
+                        head_contents: contents.clone(),
+                        index_contents: contents,
+                        sha: (*sha).to_string(),
+                    }
+                })
+                .collect();
+            if let Some(head) = state.commit_history.last() {
+                state.head_contents = head.head_contents.clone();
+                state.index_contents = head.index_contents.clone();
+                state.refs.insert("HEAD".into(), head.sha.clone());
+            }
         })
         .unwrap();
     }

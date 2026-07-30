@@ -311,6 +311,54 @@ message GitReset {
   enum ResetMode {
     SOFT = 0;
     MIXED = 1;
+    HARD = 2;
+  }
+}
+
+message GitCheckoutCommit {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string commit = 4;
+}
+
+message GitCreateTag {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string name = 4;
+  string target = 5;
+  optional string message = 6;
+}
+
+message GitCherryPick {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  repeated string commits = 4;
+  bool no_commit = 5;
+}
+
+message GitRevertCommit {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string commit = 4;
+  bool no_commit = 5;
+}
+
+message GitMerge {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string commit = 4;
+  MergeMode mode = 5;
+
+  enum MergeMode {
+    DEFAULT = 0;
+    FAST_FORWARD_ONLY = 1;
+    NO_FAST_FORWARD = 2;
+    SQUASH = 3;
   }
 }
 

@@ -35,11 +35,11 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions,
-        FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
-        delete_branch_flag,
+        CommitOptions, CreateTagOptions, CreateWorktreeTarget, DiffStatType, DiffType,
+        FetchOptions, FileHistoryChangedFileSets, GitCommitTemplate, GitRepository,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, MergeMode,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -61,7 +61,7 @@ use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, git_reset, split_repository_update},
+    proto::{self, git_merge, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use settings::{GitDiffBaseSetting, Settings, SettingsStore, WorktreeId};
@@ -815,6 +815,11 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
+        client.add_entity_request_handler(Self::handle_checkout_commit);
+        client.add_entity_request_handler(Self::handle_create_tag);
+        client.add_entity_request_handler(Self::handle_cherry_pick);
+        client.add_entity_request_handler(Self::handle_revert_commit);
+        client.add_entity_request_handler(Self::handle_merge);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_create_checkpoint);
         client.add_entity_request_handler(Self::handle_create_archive_checkpoint);
@@ -3951,14 +3956,94 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        let mode = match envelope.payload.mode() {
-            git_reset::ResetMode::Soft => ResetMode::Soft,
-            git_reset::ResetMode::Mixed => ResetMode::Mixed,
-        };
+        let mode = reset_mode_from_proto(envelope.payload.mode());
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.reset(envelope.payload.commit, mode, cx)
+            })
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_checkout_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckoutCommit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.checkout_commit(envelope.payload.commit, cx)
+            })
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_create_tag(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateTag>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.create_tag(
+                    CreateTagOptions {
+                        name: envelope.payload.name,
+                        target: envelope.payload.target,
+                        message: envelope.payload.message,
+                    },
+                    cx,
+                )
+            })
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_cherry_pick(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCherryPick>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.cherry_pick(envelope.payload.commits, envelope.payload.no_commit, cx)
+            })
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_revert_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRevertCommit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.revert(envelope.payload.commit, envelope.payload.no_commit, cx)
+            })
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_merge(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitMerge>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let mode = merge_mode_from_proto(envelope.payload.mode());
+        repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.merge(envelope.payload.commit, mode, cx)
             })
             .await??;
         Ok(proto::Ack {})
@@ -6401,7 +6486,6 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-
         let receiver = self.send_job("reset", None, move |git_repo, _| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
@@ -6415,33 +6499,162 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             commit,
-                            mode: match reset_mode {
-                                ResetMode::Soft => git_reset::ResetMode::Soft.into(),
-                                ResetMode::Mixed => git_reset::ResetMode::Mixed.into(),
-                            },
+                            mode: reset_mode_to_proto(reset_mode),
                         })
                         .await?;
-
                     Ok(())
                 }
             }
         });
+        self.finish_graph_mutation(receiver, cx)
+    }
 
-        let scan_updates_tx =
-            self.git_store()
-                .and_then(|git_store| match &git_store.read(cx).state {
-                    GitStoreState::Local { downstream, .. } => Some(
-                        downstream
-                            .as_ref()
-                            .map(|downstream| downstream.updates_tx.clone()),
-                    ),
-                    _ => None,
-                });
-        if let Some(updates_tx) = scan_updates_tx {
-            self.schedule_scan(updates_tx, cx);
-        }
+    pub fn checkout_commit(
+        &mut self,
+        commit: String,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let receiver = self.send_job("checkout_commit", None, move |git_repo, _| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => backend.checkout_commit(commit, environment).await,
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitCheckoutCommit {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            commit,
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        });
+        self.finish_graph_mutation(receiver, cx)
+    }
 
-        receiver
+    pub fn create_tag(
+        &mut self,
+        options: CreateTagOptions,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let receiver = self.send_job("create_tag", None, move |git_repo, _| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => backend.create_tag(options, environment).await,
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitCreateTag {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            name: options.name,
+                            target: options.target,
+                            message: options.message,
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        });
+        self.finish_graph_mutation(receiver, cx)
+    }
+
+    pub fn cherry_pick(
+        &mut self,
+        commits: Vec<String>,
+        no_commit: bool,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let receiver = self.send_job("cherry_pick", None, move |git_repo, _| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => backend.cherry_pick(commits, no_commit, environment).await,
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitCherryPick {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            commits,
+                            no_commit,
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        });
+        self.finish_graph_mutation(receiver, cx)
+    }
+
+    pub fn revert(
+        &mut self,
+        commit: String,
+        no_commit: bool,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let receiver = self.send_job("revert", None, move |git_repo, _| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => backend.revert(commit, no_commit, environment).await,
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitRevertCommit {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            commit,
+                            no_commit,
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        });
+        self.finish_graph_mutation(receiver, cx)
+    }
+
+    pub fn merge(
+        &mut self,
+        commit: String,
+        mode: MergeMode,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let receiver = self.send_job("merge", None, move |git_repo, _| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState {
+                    backend,
+                    environment,
+                    ..
+                }) => backend.merge(commit, mode, environment).await,
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitMerge {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            commit,
+                            mode: merge_mode_to_proto(mode),
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        });
+        self.finish_graph_mutation(receiver, cx)
     }
 
     pub fn show(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDetails>> {
@@ -9282,6 +9495,38 @@ impl Repository {
         self.pending_ops = updated;
     }
 
+    fn finish_graph_mutation(
+        &mut self,
+        receiver: oneshot::Receiver<Result<()>>,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (completion_tx, completion_rx) = oneshot::channel();
+        cx.spawn(async move |this, cx| {
+            let result = receiver.await.unwrap_or_else(|error| Err(anyhow!(error)));
+            if result.is_ok() {
+                this.update(cx, |this, cx| {
+                    let updates_tx =
+                        this.git_store()
+                            .and_then(|git_store| match &git_store.read(cx).state {
+                                GitStoreState::Local { downstream, .. } => Some(
+                                    downstream
+                                        .as_ref()
+                                        .map(|downstream| downstream.updates_tx.clone()),
+                                ),
+                                _ => None,
+                            });
+                    if let Some(updates_tx) = updates_tx {
+                        this.schedule_scan(updates_tx, cx);
+                    }
+                })
+                .ok();
+            }
+            completion_tx.send(result).ok();
+        })
+        .detach();
+        completion_rx
+    }
+
     fn schedule_scan(
         &mut self,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
@@ -10156,6 +10401,40 @@ fn deserialize_blame_buffer_response(
     })
 }
 
+fn merge_mode_to_proto(mode: MergeMode) -> i32 {
+    match mode {
+        MergeMode::Default => git_merge::MergeMode::Default.into(),
+        MergeMode::FastForwardOnly => git_merge::MergeMode::FastForwardOnly.into(),
+        MergeMode::NoFastForward => git_merge::MergeMode::NoFastForward.into(),
+        MergeMode::Squash => git_merge::MergeMode::Squash.into(),
+    }
+}
+
+fn merge_mode_from_proto(mode: git_merge::MergeMode) -> MergeMode {
+    match mode {
+        git_merge::MergeMode::Default => MergeMode::Default,
+        git_merge::MergeMode::FastForwardOnly => MergeMode::FastForwardOnly,
+        git_merge::MergeMode::NoFastForward => MergeMode::NoFastForward,
+        git_merge::MergeMode::Squash => MergeMode::Squash,
+    }
+}
+
+fn reset_mode_to_proto(mode: ResetMode) -> i32 {
+    match mode {
+        ResetMode::Soft => git_reset::ResetMode::Soft.into(),
+        ResetMode::Mixed => git_reset::ResetMode::Mixed.into(),
+        ResetMode::Hard => git_reset::ResetMode::Hard.into(),
+    }
+}
+
+fn reset_mode_from_proto(mode: git_reset::ResetMode) -> ResetMode {
+    match mode {
+        git_reset::ResetMode::Soft => ResetMode::Soft,
+        git_reset::ResetMode::Mixed => ResetMode::Mixed,
+        git_reset::ResetMode::Hard => ResetMode::Hard,
+    }
+}
+
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
     proto::GitLogSource {
         source: Some(match log_source {
@@ -10504,6 +10783,154 @@ mod tests {
         // to the raw path).
         let resolved = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/Foo/Bar")).await;
         assert_eq!(resolved, None);
+
+    }
+
+    #[test]
+    fn test_git_graph_mutation_proto_modes_round_trip() {
+        for mode in [
+            MergeMode::Default,
+            MergeMode::FastForwardOnly,
+            MergeMode::NoFastForward,
+            MergeMode::Squash,
+        ] {
+            let proto = proto::GitMerge {
+                mode: merge_mode_to_proto(mode),
+                ..Default::default()
+            }
+            .mode();
+            assert_eq!(merge_mode_from_proto(proto), mode);
+        }
+
+        for mode in [ResetMode::Soft, ResetMode::Mixed, ResetMode::Hard] {
+            let proto = proto::GitReset {
+                mode: reset_mode_to_proto(mode),
+                ..Default::default()
+            }
+            .mode();
+            assert_eq!(reset_mode_from_proto(proto), mode);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_local_git_graph_mutations_forward_exact_options(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(Path::new("/project"), json!({ ".git": {} }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository = project.update(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should have an active repository")
+        });
+        let dot_git = Path::new("/project/.git");
+        let commits = [
+            ("oid-1", vec![("file.txt", "one".to_string())]),
+            ("oid-2", vec![("file.txt", "two".to_string())]),
+            ("oid-3", vec![("file.txt", "three".to_string())]),
+        ];
+
+        fs.set_commit_history_for_repo(dot_git, &commits);
+        repository
+            .update(cx, |repository, cx| {
+                repository.checkout_commit("oid-1".into(), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.set_commit_history_for_repo(dot_git, &commits);
+        repository
+            .update(cx, |repository, cx| {
+                repository.create_tag(
+                    CreateTagOptions {
+                        name: "release".into(),
+                        target: "oid-2".into(),
+                        message: Some("annotated".into()),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.set_commit_history_for_repo(dot_git, &commits);
+        repository
+            .update(cx, |repository, cx| {
+                repository.cherry_pick(vec!["oid-1".into(), "oid-3".into()], true, cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.set_commit_history_for_repo(dot_git, &commits);
+        repository
+            .update(cx, |repository, cx| {
+                repository.revert("oid-2".into(), true, cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.set_commit_history_for_repo(dot_git, &commits);
+        repository
+            .update(cx, |repository, cx| {
+                repository.merge("oid-2".into(), MergeMode::Squash, cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.set_commit_history_for_repo(dot_git, &commits);
+        repository
+            .update(cx, |repository, cx| {
+                repository.reset("oid-1".into(), ResetMode::Hard, cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        cx.run_until_parked();
+
+        let mutations = fs
+            .with_git_state(dot_git, false, |state| state.graph_mutations.clone())
+            .unwrap();
+        assert_eq!(
+            mutations,
+            vec![
+                fs::FakeGitMutation::CheckoutCommit("oid-1".into()),
+                fs::FakeGitMutation::CreateTag(CreateTagOptions {
+                    name: "release".into(),
+                    target: "oid-2".into(),
+                    message: Some("annotated".into()),
+                }),
+                fs::FakeGitMutation::CherryPick {
+                    commits: vec!["oid-1".into(), "oid-3".into()],
+                    no_commit: true,
+                },
+                fs::FakeGitMutation::Revert {
+                    commit: "oid-2".into(),
+                    no_commit: true,
+                },
+                fs::FakeGitMutation::Merge {
+                    commit: "oid-2".into(),
+                    mode: MergeMode::Squash,
+                },
+                fs::FakeGitMutation::Reset {
+                    commit: "oid-1".into(),
+                    mode: ResetMode::Hard,
+                },
+            ]
+        );
     }
 
     #[gpui::test]

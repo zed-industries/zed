@@ -22,7 +22,10 @@ use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use git::{
     Oid,
-    repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
+    repository::{
+        CommitData, CreateTagOptions, GitCommitTemplate, MergeMode, RepoPath, ResetMode,
+        Worktree as GitWorktree,
+    },
 };
 use gpui::{
     AppContext as _, Entity, ImageSource, IntoElement as _, SharedString, TestAppContext,
@@ -3353,6 +3356,133 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
             text_2
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_git_graph_mutations_forward_exact_options(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
+    let dot_git = Path::new(path!("/code/project1/.git"));
+    let commits = [
+        ("oid-1", vec![("file.txt", "one".to_string())]),
+        ("oid-2", vec![("file.txt", "two".to_string())]),
+        ("oid-3", vec![("file.txt", "three".to_string())]),
+    ];
+
+    fs.set_commit_history_for_repo(dot_git, &commits);
+    repository
+        .update(cx, |repository, cx| {
+            repository.checkout_commit("oid-1".into(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    fs.set_commit_history_for_repo(dot_git, &commits);
+    repository
+        .update(cx, |repository, cx| {
+            repository.create_tag(
+                CreateTagOptions {
+                    name: "release".into(),
+                    target: "oid-2".into(),
+                    message: Some("annotated".into()),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    fs.set_commit_history_for_repo(dot_git, &commits);
+    repository
+        .update(cx, |repository, cx| {
+            repository.cherry_pick(vec!["oid-1".into(), "oid-3".into()], true, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    fs.set_commit_history_for_repo(dot_git, &commits);
+    repository
+        .update(cx, |repository, cx| {
+            repository.revert("oid-2".into(), true, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    fs.set_commit_history_for_repo(dot_git, &commits);
+    repository
+        .update(cx, |repository, cx| {
+            repository.merge("oid-2".into(), MergeMode::Squash, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    fs.set_commit_history_for_repo(dot_git, &commits);
+    repository
+        .update(cx, |repository, cx| {
+            repository.reset("oid-1".into(), ResetMode::Hard, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    server_cx.run_until_parked();
+    let mutations = fs
+        .with_git_state(dot_git, false, |state| state.graph_mutations.clone())
+        .unwrap();
+    assert_eq!(
+        mutations,
+        vec![
+            fs::FakeGitMutation::CheckoutCommit("oid-1".into()),
+            fs::FakeGitMutation::CreateTag(CreateTagOptions {
+                name: "release".into(),
+                target: "oid-2".into(),
+                message: Some("annotated".into()),
+            }),
+            fs::FakeGitMutation::CherryPick {
+                commits: vec!["oid-1".into(), "oid-3".into()],
+                no_commit: true,
+            },
+            fs::FakeGitMutation::Revert {
+                commit: "oid-2".into(),
+                no_commit: true,
+            },
+            fs::FakeGitMutation::Merge {
+                commit: "oid-2".into(),
+                mode: MergeMode::Squash,
+            },
+            fs::FakeGitMutation::Reset {
+                commit: "oid-1".into(),
+                mode: ResetMode::Hard,
+            },
+        ]
+    );
 }
 
 #[gpui::test]
