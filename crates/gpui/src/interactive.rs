@@ -782,8 +782,6 @@ pub enum PlatformInput {
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
     Touch(TouchEvent),
-    /// Keyboard focus moved to a native child view outside GPUI's view tree.
-    NativeViewFocus,
 }
 
 impl PlatformInput {
@@ -801,7 +799,6 @@ impl PlatformInput {
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
-            PlatformInput::NativeViewFocus => None,
         }
     }
 
@@ -819,7 +816,6 @@ impl PlatformInput {
             PlatformInput::Pinch(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
-            PlatformInput::NativeViewFocus => None,
         }
     }
 

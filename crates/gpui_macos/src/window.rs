@@ -435,14 +435,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             yes as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
-            sel!(makeFirstResponder:),
-            make_first_responder as extern "C" fn(&Object, Sel, id) -> BOOL,
-        );
-        decl.add_method(
-            sel!(sendEvent:),
-            send_event as extern "C" fn(&Object, Sel, id),
-        );
-        decl.add_method(
             sel!(windowDidResize:),
             window_did_resize as extern "C" fn(&Object, Sel, id),
         );
@@ -2259,70 +2251,6 @@ extern "C" fn dealloc_window(this: &Object, _: Sel) {
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
     }
-}
-
-extern "C" fn make_first_responder(this: &Object, _: Sel, responder: id) -> BOOL {
-    unsafe {
-        let accepted: BOOL =
-            msg_send![super(this, class!(NSWindow)), makeFirstResponder: responder];
-        if accepted == NO || responder == nil {
-            return accepted;
-        }
-
-        let window_state = get_window_state(this);
-        let state = window_state.lock();
-        let native_view = state.native_view.as_ptr() as id;
-        let belongs_to_gpui = responder == native_view;
-        drop(state);
-
-        if !belongs_to_gpui {
-            dispatch_native_view_focus(&window_state);
-        }
-
-        accepted
-    }
-}
-
-extern "C" fn send_event(this: &Object, _: Sel, event: id) {
-    unsafe {
-        if matches!(
-            event.eventType(),
-            NSEventType::NSLeftMouseDown
-                | NSEventType::NSRightMouseDown
-                | NSEventType::NSOtherMouseDown
-        ) {
-            let content_view: id = msg_send![this, contentView];
-            let location: NSPoint = msg_send![event, locationInWindow];
-            let location: NSPoint = msg_send![content_view, convertPoint: location fromView: nil];
-            let hit_view: id = msg_send![content_view, hitTest: location];
-
-            if hit_view != nil {
-                let window_state = get_window_state(this);
-                let state = window_state.lock();
-                let native_view = state.native_view.as_ptr() as id;
-                let in_overlay_view = state.overlay_view.is_some_and(|overlay_view| {
-                    let in_overlay: BOOL =
-                        msg_send![hit_view, isDescendantOf: overlay_view.as_ptr()];
-                    in_overlay == YES
-                });
-                drop(state);
-
-                if hit_view != native_view && !in_overlay_view {
-                    dispatch_native_view_focus(&window_state);
-                }
-            }
-        }
-
-        let _: () = msg_send![super(this, class!(NSWindow)), sendEvent: event];
-    }
-}
-
-fn dispatch_native_view_focus(window_state: &Arc<Mutex<MacWindowState>>) {
-    let mut callback = window_state.lock().event_callback.take();
-    if let Some(callback) = callback.as_mut() {
-        callback(PlatformInput::NativeViewFocus);
-    }
-    window_state.lock().event_callback = callback;
 }
 
 extern "C" fn dealloc_view(this: &Object, _: Sel) {

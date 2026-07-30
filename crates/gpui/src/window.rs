@@ -5017,10 +5017,6 @@ impl Window {
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
-            PlatformInput::NativeViewFocus => {
-                self.blur();
-                PlatformInput::NativeViewFocus
-            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -7119,23 +7115,4 @@ mod tests {
         assert_eq!(b_focus_count.get(), 1);
     }
 
-    #[gpui::test]
-    fn native_view_focus_clears_gpui_focus(cx: &mut TestAppContext) {
-        let window = cx.add_window(|_, cx| FocusForwarder {
-            a: cx.focus_handle(),
-            b: cx.focus_handle(),
-        });
-
-        window
-            .update(cx, |this, window, cx| {
-                window.focus(&this.a, cx);
-                assert!(this.a.is_focused(window));
-
-                window.dispatch_event(crate::PlatformInput::NativeViewFocus, cx);
-
-                assert!(window.focused(cx).is_none());
-                assert!(!this.a.is_focused(window));
-            })
-            .unwrap();
-    }
 }
