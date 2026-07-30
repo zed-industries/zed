@@ -9,7 +9,7 @@ mod macos {
 
     use cocoa::{
         appkit::NSView,
-        base::{id, nil},
+        base::{YES, id, nil},
         foundation::{NSPoint, NSRect, NSSize, NSString},
     };
     use gpui::{
@@ -56,6 +56,21 @@ mod macos {
                     let _: () = msg_send![configuration, release];
                     anyhow::bail!("failed to create WKWebView");
                 }
+
+                let _: () = msg_send![view, setWantsLayer: YES];
+                let layer: id = msg_send![view, layer];
+                let border_color: id = msg_send![
+                    class!(NSColor),
+                    colorWithSRGBRed: 63. / 255.
+                    green: 64. / 255.
+                    blue: 67. / 255.
+                    alpha: 1.
+                ];
+                let border_color: id = msg_send![border_color, CGColor];
+                let _: () = msg_send![layer, setMasksToBounds: YES];
+                let _: () = msg_send![layer, setCornerRadius: 8.];
+                let _: () = msg_send![layer, setBorderWidth: 1.];
+                let _: () = msg_send![layer, setBorderColor: border_color];
 
                 let html = NSString::alloc(nil).init_str(PAGE);
                 let _: id = msg_send![view, loadHTMLString: html baseURL: nil];
@@ -178,12 +193,12 @@ mod macos {
             .py_2()
             .rounded_md()
             .border_1()
-            .border_color(rgb(0xcfd1d2))
-            .bg(rgb(0xececed))
-            .text_color(rgb(0x5c6166))
+            .border_color(rgb(0x3f4043))
+            .bg(rgb(0x1f2127))
+            .text_color(rgb(0xbfbdb6))
             .text_sm()
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(0xdfe0e1)).border_color(rgb(0xcfd0d2)))
+            .hover(|style| style.bg(rgb(0x2d2f34)).border_color(rgb(0x3e4043)))
             .child(label)
     }
 
@@ -194,10 +209,10 @@ mod macos {
             .gap_2()
             .py_2()
             .border_b_1()
-            .border_color(rgb(0xcfd1d2))
+            .border_color(rgb(0x3f4043))
             .child(div().w_1().h_5().rounded_sm().bg(color))
-            .child(div().text_color(rgb(0xa9acae)).w(px(18.)).child(index))
-            .child(div().text_color(rgb(0x5c6166)).child(label))
+            .child(div().text_color(rgb(0x696a6a)).w(px(18.)).child(index))
+            .child(div().text_color(rgb(0xbfbdb6)).child(label))
     }
 
     impl Render for NativeWebViewExample {
@@ -209,8 +224,8 @@ mod macos {
                 .gap_6()
                 .size_full()
                 .p_7()
-                .bg(rgb(0xdcddde))
-                .text_color(rgb(0x5c6166))
+                .bg(rgb(0x313337))
+                .text_color(rgb(0xbfbdb6))
                 // While a deferred overlay is visible, the transparent GPUI
                 // NSView captures the whole window. This handler therefore
                 // also dismisses clicks geometrically over the WKWebView.
@@ -235,7 +250,7 @@ mod macos {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0xf1ad49))
+                                        .text_color(rgb(0xfeb454))
                                         .child("GPUI / LAB 04"),
                                 )
                                 .child(
@@ -249,7 +264,7 @@ mod macos {
                                     div()
                                         .mt_3()
                                         .text_sm()
-                                        .text_color(rgb(0x8b8e92))
+                                        .text_color(rgb(0x8a8986))
                                         .child("Three surfaces.\nOne visual stack."),
                                 ),
                         )
@@ -259,9 +274,9 @@ mod macos {
                                 .flex_col()
                                 .gap_1()
                                 .text_xs()
-                                .child(layer_row("03", "GPUI overlay", rgb(0xf1ad49)))
-                                .child(layer_row("02", "WKWebView", rgb(0x3b9ee5)))
-                                .child(layer_row("01", "GPUI base", rgb(0x8b8e92))),
+                                .child(layer_row("03", "GPUI overlay", rgb(0xfeb454)))
+                                .child(layer_row("02", "WKWebView", rgb(0x5ac1fe)))
+                                .child(layer_row("01", "GPUI base", rgb(0x8a8986))),
                         ),
                 )
                 .child(
@@ -282,7 +297,7 @@ mod macos {
                                         .child(
                                             div()
                                                 .text_xs()
-                                                .text_color(rgb(0x8b8e92))
+                                                .text_color(rgb(0x8a8986))
                                                 .child("COMPOSITION TARGET"),
                                         )
                                         .child(
@@ -315,21 +330,9 @@ mod macos {
                                         )),
                                 ),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .p(px(6.))
-                                .rounded_xl()
-                                .border_1()
-                                .border_color(rgb(0xcfd1d2))
-                                .bg(rgb(0xececed))
-                                .shadow_xl()
-                                .overflow_hidden()
-                                .child(NativeWebViewElement {
-                                    webview: self.webview.clone(),
-                                }),
-                        ),
+                        .child(div().flex_1().min_h_0().child(NativeWebViewElement {
+                            webview: self.webview.clone(),
+                        })),
                 )
                 .when(self.popover_open, |root| {
                     root.child(
@@ -343,13 +346,13 @@ mod macos {
                                 .rounded_lg()
                                 .shadow_xl()
                                 .border_1()
-                                .border_color(rgb(0xcfd1d2))
-                                .bg(rgb(0xececed))
-                                .text_color(rgb(0x5c6166))
+                                .border_color(rgb(0x3f4043))
+                                .bg(rgb(0x1f2127))
+                                .text_color(rgb(0xbfbdb6))
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0xf1ad49))
+                                        .text_color(rgb(0xfeb454))
                                         .child("SURFACE 03"),
                                 )
                                 .child(
@@ -358,7 +361,7 @@ mod macos {
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
                                         .child("Deferred GPUI popover"),
                                 )
-                                .child(div().mt_2().text_sm().text_color(rgb(0x8b8e92)).child(
+                                .child(div().mt_2().text_sm().text_color(rgb(0x8a8986)).child(
                                     "Painted after the native WebView without changing its \
                                          AppKit z-order.",
                                 )),
@@ -375,7 +378,7 @@ mod macos {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .bg(rgb(0x5c6166).opacity(0.38))
+                                .bg(rgb(0x0d1016).opacity(0.72))
                                 .child(
                                     div()
                                         .w(px(500.))
@@ -383,9 +386,9 @@ mod macos {
                                         .rounded_xl()
                                         .shadow_xl()
                                         .border_1()
-                                        .border_color(rgb(0xcfd1d2))
-                                        .bg(rgb(0xececed))
-                                        .text_color(rgb(0x5c6166))
+                                        .border_color(rgb(0x3f4043))
+                                        .bg(rgb(0x1f2127))
+                                        .text_color(rgb(0xbfbdb6))
                                         .child(
                                             div()
                                                 .flex()
@@ -394,7 +397,7 @@ mod macos {
                                                 .child(
                                                     div()
                                                         .text_xs()
-                                                        .text_color(rgb(0xf1ad49))
+                                                        .text_color(rgb(0xfeb454))
                                                         .child("SURFACE 03 / GPUI OVERLAY"),
                                                 )
                                                 .child(
@@ -402,9 +405,9 @@ mod macos {
                                                         .px_2()
                                                         .py_1()
                                                         .rounded_md()
-                                                        .bg(rgb(0xdfe0e1))
+                                                        .bg(rgb(0x2d2f34))
                                                         .text_xs()
-                                                        .text_color(rgb(0x8b8e92))
+                                                        .text_color(rgb(0x8a8986))
                                                         .child("LIVE"),
                                                 ),
                                         )
@@ -417,12 +420,12 @@ mod macos {
                                                     "The native layer stays exactly where it is.",
                                                 ),
                                         )
-                                        .child(div().mt_3().text_color(rgb(0x8b8e92)).child(
+                                        .child(div().mt_3().text_color(rgb(0x8a8986)).child(
                                             "GPUI splits its scene before deferred draws. \
                                                      AppKit places WKWebView between the base and \
                                                      this transparent overlay surface.",
                                         ))
-                                        .child(div().mt_5().h(px(1.)).w_full().bg(rgb(0xcfd1d2)))
+                                        .child(div().mt_5().h(px(1.)).w_full().bg(rgb(0x3f4043)))
                                         .child(
                                             button("close-dialog", "Close").mt_5().on_mouse_down(
                                                 MouseButton::Left,
