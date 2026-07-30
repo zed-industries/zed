@@ -6,14 +6,14 @@
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, Entity, KeyBinding, TestAppContext, Window, prelude::*};
+    use gpui::{Context, Entity, KeyBinding, ProjectionMut, TestAppContext, Window, prelude::*};
 
     use crate::example_editor::Editor;
     use crate::example_input::Input;
     use crate::{Backspace, Delete, End, Home, Left, Right};
 
     /// Two inputs, each backed by an editor we own (so the test can focus and
-    /// read them). Proves data flows through the shared `String` and that
+    /// read them). Proves data flows through the projected `String` and that
     /// sibling inputs stay isolated.
     struct Harness {
         a: Entity<Editor>,
@@ -45,15 +45,17 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (
         Entity<Editor>,
-        Entity<String>,
-        Entity<String>,
+        ProjectionMut<String>,
+        ProjectionMut<String>,
         &mut gpui::VisualTestContext,
     ) {
         bind_keys(cx);
 
         let (harness, cx) = cx.add_window_view(|window, cx| {
-            let a_value = cx.new(|_| String::new());
-            let b_value = cx.new(|_| String::new());
+            // A whole entity projects to itself, so an editor over an entity and
+            // an editor over one field of a form are the same thing to `Editor`.
+            let a_value = cx.new(|_| String::new()).into();
+            let b_value = cx.new(|_| String::new()).into();
             let a = cx.new(|cx| Editor::over(a_value, window, cx));
             let b = cx.new(|cx| Editor::over(b_value, window, cx));
             Harness { a, b }
@@ -79,7 +81,7 @@ mod tests {
 
         cx.simulate_input("hello");
 
-        cx.read_entity(&a_value, |value, _| assert_eq!(value, "hello"));
+        cx.update(|_, cx| assert_eq!(a_value.read(cx), "hello"));
         cx.read_entity(&editor, |editor, _| assert_eq!(editor.cursor, 5));
     }
 
@@ -89,9 +91,13 @@ mod tests {
 
         cx.simulate_input("x");
 
-        cx.read_entity(&a_value, |value, _| assert_eq!(value, "x"));
-        cx.read_entity(&b_value, |value, _| {
-            assert_eq!(value, "", "typing in input A must not touch input B")
+        cx.update(|_, cx| {
+            assert_eq!(a_value.read(cx), "x");
+            assert_eq!(
+                b_value.read(cx),
+                "",
+                "typing in input A must not touch input B"
+            );
         });
     }
 
@@ -105,14 +111,9 @@ mod tests {
         // Write the shared value from outside the editor. The old cursor (5)
         // now points into the middle of a multi-byte character; the editor's
         // observation must clamp it back onto a boundary.
-        cx.update(|_, cx| {
-            a_value.update(cx, |value, cx| {
-                *value = "日本".to_string();
-                cx.notify();
-            })
-        });
+        cx.update(|_, cx| a_value.update(cx, |value| *value = "日本".to_string()));
 
-        cx.read_entity(&a_value, |value, _| assert_eq!(value, "日本"));
+        cx.update(|_, cx| assert_eq!(a_value.read(cx), "日本"));
         cx.read_entity(&editor, |editor, _| {
             assert_eq!(editor.cursor, 3, "cursor must clamp to a char boundary");
         });

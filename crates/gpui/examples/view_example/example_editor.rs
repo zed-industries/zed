@@ -1,7 +1,11 @@
 //! `Editor` — the workhorse entity. It owns the cursor, blink, focus, keyboard
 //! handling, and the specialized text-shaping renderer. The *text itself* lives
-//! in a shared `Entity<String>` it's handed at construction, so the value is
+//! behind a `ProjectionMut<String>` it's handed at construction, so the value is
 //! readable/writable from outside while the editing machinery stays in here.
+//!
+//! Taking a projection rather than an `Entity<String>` is what lets one form
+//! entity back several editors: the caller decides whether the text is a whole
+//! entity or one field of a larger struct, and the editor can't tell.
 //!
 //! This is the piece that proves the point: a text input is genuinely
 //! complicated, and `View` lets all of that complexity live in one entity that
@@ -12,15 +16,16 @@ use std::time::Duration;
 
 use gpui::{
     App, Bounds, Context, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement, LayoutId, PaintQuad, Pixels, ShapedLine, SharedString, Subscription, Task,
-    TextRun, UTF16Selection, Window, fill, hsla, point, prelude::*, px, relative, size,
+    InteractiveElement, LayoutId, PaintQuad, Pixels, ProjectionMut, ShapedLine, SharedString,
+    Subscription, Task, TextRun, UTF16Selection, Window, fill, hsla, point, prelude::*, px,
+    relative, size,
 };
 use unicode_segmentation::*;
 
 use crate::{Backspace, Delete, End, Home, Left, Right};
 
 pub struct Editor {
-    pub value: Entity<String>,
+    pub value: ProjectionMut<String>,
     pub focus_handle: FocusHandle,
     pub cursor: usize,
     pub cursor_visible: bool,
@@ -32,12 +37,14 @@ impl Editor {
     /// An editor that owns its own string internally, seeded with `text`.
     /// Nothing to allocate or wire up at the call site.
     pub fn new(text: impl Into<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let value = cx.new(|_| text.into());
+        // A whole entity converts into a projection of itself, so the editor
+        // below doesn't need a second code path for the owned case.
+        let value = cx.new(|_| text.into()).into();
         Self::over(value, window, cx)
     }
 
     /// An editor over a string *you* own, so the value is shared in and out.
-    pub fn over(value: Entity<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn over(value: ProjectionMut<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let focus_sub = cx.on_focus(&focus_handle, window, |this, _window, cx| {
@@ -52,7 +59,7 @@ impl Editor {
         // boundary before the next IME round-trip can slice out of bounds, and
         // (b) notify us, so an `editor.cached(..)` subtree re-renders — the cache
         // is keyed on *our* notify, not the value's.
-        let value_sub = cx.observe(&value, |this, value, cx| {
+        let value_sub = value.observe(cx, |this, value, cx| {
             let content = value.read(cx);
             let mut cursor = this.cursor.min(content.len());
             while cursor > 0 && !content.is_char_boundary(cursor) {
@@ -145,9 +152,8 @@ impl Editor {
         if self.cursor > 0 {
             let prev = previous_boundary(&content, self.cursor);
             let cursor = self.cursor;
-            self.value.update(cx, |s, cx| {
+            self.value.update(cx, |s| {
                 s.drain(prev..cursor);
-                cx.notify();
             });
             self.cursor = prev;
         }
@@ -160,9 +166,8 @@ impl Editor {
         if self.cursor < content.len() {
             let next = next_boundary(&content, self.cursor);
             let cursor = self.cursor;
-            self.value.update(cx, |s, cx| {
+            self.value.update(cx, |s| {
                 s.drain(cursor..next);
-                cx.notify();
             });
         }
         self.reset_blink(cx);
@@ -171,10 +176,7 @@ impl Editor {
 
     pub fn insert_newline(&mut self, cx: &mut Context<Self>) {
         let cursor = self.cursor;
-        self.value.update(cx, |s, cx| {
-            s.insert(cursor, '\n');
-            cx.notify();
-        });
+        self.value.update(cx, |s| s.insert(cursor, '\n'));
         self.cursor += 1;
         self.reset_blink(cx);
         cx.notify();
@@ -289,10 +291,7 @@ impl EntityInputHandler for Editor {
 
         let new_content = content[..range.start].to_owned() + new_text + &content[range.end..];
         self.cursor = range.start + new_text.len();
-        self.value.update(cx, |s, cx| {
-            *s = new_content;
-            cx.notify();
-        });
+        self.value.update(cx, |s| *s = new_content);
         self.reset_blink(cx);
         cx.notify();
     }

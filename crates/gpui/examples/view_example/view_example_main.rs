@@ -7,9 +7,16 @@
 //!
 //!   * `Editor`  — the workhorse entity: cursor, blink, focus, keyboard, and a
 //!                 specialized text renderer. All the hard parts live here.
-//!   * `String`  — the data plane. `editor.text(cx)` / `value.read(cx)` get it out.
-//!   * `Input` / `TextArea` — the shaping layer. Each takes a `String` (and grows
-//!                 the editor internally) OR an `Editor` (so you can read the cursor).
+//!   * `Projection<String>` — the data plane. One `Profile` entity holds every
+//!                 field; each component gets a projection of the one field it
+//!                 touches, so nothing below needs to know the form exists.
+//!   * `Input` / `TextArea` — the shaping layer. Each takes a projected string
+//!                 (and grows the editor internally) OR an `Editor` (so you can
+//!                 read the cursor).
+//!
+//! The projections are built inline in the element tree with `project!`, which
+//! is the intended shape: a component is handed the field it edits, not the
+//! struct that contains it.
 //!
 //! Run: `cargo run -p gpui --example view_example`
 
@@ -25,8 +32,8 @@ use example_input::Input;
 use example_text_area::TextArea;
 
 use gpui::{
-    App, Bounds, Context, Div, Entity, IntoElement, KeyBinding, Render, SharedString, Window,
-    WindowBounds, WindowOptions, actions, div, hsla, prelude::*, px, rgb, size,
+    App, Bounds, Context, Div, Entity, IntoElement, KeyBinding, Projection, Render, SharedString,
+    Window, WindowBounds, WindowOptions, actions, div, hsla, prelude::*, project, px, rgb, size,
 };
 use gpui_platform::application;
 
@@ -34,6 +41,33 @@ actions!(
     view_example,
     [Backspace, Delete, Left, Right, Home, End, Enter, Quit]
 );
+
+/// The whole form, in one entity. No component below ever receives this — they
+/// get [`Projection`]s of individual fields, so a component that edits a name
+/// works the same whether the name is a field here or a standalone entity.
+struct Profile {
+    name: String,
+    email: String,
+    bio: String,
+}
+
+/// A stateless readout of a projected string, rendered far from the input that
+/// writes it: a read-only `Projection<String>` in, no subscription, no wiring.
+#[derive(IntoElement)]
+struct FieldReadout {
+    label: &'static str,
+    value: Projection<String>,
+}
+
+impl gpui::RenderOnce for FieldReadout {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let value = self.value.read(cx);
+        div()
+            .text_sm()
+            .text_color(hsla(0., 0., 0.45, 1.))
+            .child(SharedString::from(format!("{}: {value}", self.label)))
+    }
+}
 
 /// A tiny stateless view that reads an editor's cursor and is composed *beside*
 /// the thing editing it — two views over one entity, zero wiring.
@@ -68,10 +102,13 @@ impl ViewExample {
 
 impl Render for ViewExample {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // The data plane: plain strings, allocated at the top by the hook.
-        let name = window.use_state(cx, |_, _| String::new());
-        let email = window.use_state(cx, |_, _| String::from("me@example.com"));
-        let bio = window.use_state(cx, |_, _| String::new());
+        // The data plane: one entity for the whole form. Fields are handed out
+        // below as projections, built inline where they're used.
+        let profile = window.use_state(cx, |_, _| Profile {
+            name: String::new(),
+            email: String::from("me@example.com"),
+            bio: String::new(),
+        });
         // Editors that own their own string internally — no extra wiring up top.
         let notes = window.use_state(cx, |window, cx| Editor::new("multi\nline", window, cx));
         let owned = window.use_state(cx, |window, cx| Editor::new("editable", window, cx));
@@ -84,13 +121,27 @@ impl Render for ViewExample {
             .p(px(24.))
             .gap(px(24.))
             .child(
-                section("Inputs — from a String (cursor stays internal)")
-                    .child(Input::new(name).width(px(320.)))
+                section("Inputs — each one a projected field of a single entity")
+                    .child(Input::new(project!(window, cx, &profile, mut name)).width(px(320.)))
                     .child(
-                        Input::new(email)
+                        Input::new(project!(window, cx, &profile, mut email))
                             .width(px(320.))
                             .color(hsla(0., 0., 0.3, 1.)),
                     ),
+            )
+            // Read-only projections of the very same fields. Type above and
+            // these update, because a projection read during render subscribes
+            // the reader to its source.
+            .child(
+                section("Read-only projections — the same fields, somewhere else")
+                    .child(FieldReadout {
+                        label: "name",
+                        value: project!(window, cx, &profile, name),
+                    })
+                    .child(FieldReadout {
+                        label: "email",
+                        value: project!(window, cx, &profile, email),
+                    }),
             )
             .child(
                 section("Input — from an Editor (read its cursor beside it)").child(
@@ -103,8 +154,8 @@ impl Render for ViewExample {
                 ),
             )
             .child(
-                section("Text areas — from a String, or from an Editor")
-                    .child(TextArea::new(bio, 3))
+                section("Text areas — from a projected field, or from an Editor")
+                    .child(TextArea::new(project!(window, cx, &profile, mut bio), 3))
                     .child(
                         div()
                             .flex()

@@ -1,17 +1,18 @@
 //! `TextArea` — a multi-line text box. Same `Editor` workhorse, taller chrome,
 //! and `Enter` inserts a newline instead of being ignored. Constructible from a
-//! string or an editor, exactly like [`Input`](crate::example_input::Input).
+//! projected string or an editor, exactly like
+//! [`Input`](crate::example_input::Input).
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, StyleRefinement, Window, div,
-    hsla, point, prelude::*, px, white,
+    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, ProjectionMut,
+    StyleRefinement, Window, div, hsla, point, prelude::*, px, white,
 };
 
 use crate::Enter;
 use crate::example_editor::{Editor, standard_actions};
 
 enum Source {
-    Value(Entity<String>),
+    Value(ProjectionMut<String>),
     Editor(Entity<Editor>),
 }
 
@@ -23,7 +24,7 @@ pub struct TextArea {
 }
 
 impl TextArea {
-    pub fn new(value: Entity<String>, rows: usize) -> Self {
+    pub fn new(value: ProjectionMut<String>, rows: usize) -> Self {
         Self {
             source: Source::Value(value),
             rows,

@@ -1,24 +1,26 @@
 //! `Input` — a single-line text input. The shaping layer over `Editor`.
 //!
 //! Construct it two ways, depending on how much state you want to own:
-//!   * `Input::new(value: Entity<String>)`  — you hold just the string; the input
-//!     allocates the `Editor` internally via `use_state`. Value readable, cursor hidden.
+//!   * `Input::new(value: ProjectionMut<String>)` — you hold just the text; the
+//!     input allocates the `Editor` internally via `use_state`. Value readable,
+//!     cursor hidden. The text can be a whole `Entity<String>` (via `.into()`) or
+//!     one field of a bigger struct (via `project!`) — the input can't tell.
 //!   * `Input::editor(editor: Entity<Editor>)` — you hold the editor; cursor/selection
 //!     are now yours to read and drive too.
 //!
-//! Either way the chrome is identical. Because the string (or editor) is the
+//! Either way the chrome is identical. Because the projection (or editor) is the
 //! input's *identity*, the internal `use_state(Editor)` is collision-safe across
 //! any number of inputs.
 
 use gpui::{
-    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, Pixels, StyleRefinement,
-    Window, div, hsla, point, prelude::*, px, white,
+    App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, Pixels, ProjectionMut,
+    StyleRefinement, Window, div, hsla, point, prelude::*, px, white,
 };
 
 use crate::example_editor::{Editor, standard_actions};
 
 enum Source {
-    Value(Entity<String>),
+    Value(ProjectionMut<String>),
     Editor(Entity<Editor>),
 }
 
@@ -30,8 +32,8 @@ pub struct Input {
 }
 
 impl Input {
-    /// Backed by a bare string; the editor is allocated internally.
-    pub fn new(value: Entity<String>) -> Self {
+    /// Backed by a projected string; the editor is allocated internally.
+    pub fn new(value: ProjectionMut<String>) -> Self {
         Self {
             source: Source::Value(value),
             width: None,

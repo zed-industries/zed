@@ -185,6 +185,34 @@ impl<P: ?Sized + 'static> Projection<P> {
             read: self.read,
         }
     }
+
+    /// Arranges for `on_notify` to be called whenever the projected value may
+    /// have changed, i.e. whenever this projection's identity notifies.
+    ///
+    /// Writes notify the source entity and the backing state forwards that, so
+    /// this fires both for writes made through a [`ProjectionMut`] and for
+    /// writes made directly to the source. Like reads, it is no more
+    /// fine-grained than the source: an unrelated change to the source entity
+    /// still notifies.
+    pub fn observe<T: 'static>(
+        &self,
+        cx: &mut Context<T>,
+        mut on_notify: impl FnMut(&mut T, Projection<P>, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let observer = cx.weak_entity();
+        let projection = self.downgrade();
+        cx.new_observer(
+            self.entity_id(),
+            Box::new(move |cx| {
+                let (Some(observer), Some(projection)) = (observer.upgrade(), projection.upgrade())
+                else {
+                    return false;
+                };
+                observer.update(cx, |observer, cx| on_notify(observer, projection, cx));
+                true
+            }),
+        )
+    }
 }
 
 impl<P: ?Sized + 'static> std::fmt::Debug for Projection<P> {
@@ -255,6 +283,16 @@ impl<P: ?Sized + 'static> ProjectionMut<P> {
             read: self.read.downgrade(),
             write: self.write,
         }
+    }
+
+    /// See [`Projection::observe`]. The callback receives a read-only handle;
+    /// writing to the value being observed would re-enter the notification.
+    pub fn observe<T: 'static>(
+        &self,
+        cx: &mut Context<T>,
+        on_notify: impl FnMut(&mut T, Projection<P>, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        self.read.observe(cx, on_notify)
     }
 }
 
@@ -871,6 +909,56 @@ mod tests {
         cx.update(|cx| {
             escaped.update(cx, |name| name.push_str(" Lovelace"));
             assert_eq!(escaped.read(cx), "Ada Lovelace");
+        });
+    }
+
+    #[test]
+    fn observing_a_projection_fires_for_writes_from_either_side() {
+        struct Observer {
+            seen: Vec<String>,
+            _subscription: Option<Subscription>,
+        }
+
+        let mut cx = TestAppContext::single();
+        let person = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Ada".to_string(),
+                age: 36,
+            })
+        });
+        let name = render_projection(&mut cx, &person, |window, cx, person| {
+            crate::project!(window, cx, person, mut name)
+        });
+
+        let observer = cx.update(|cx| {
+            cx.new(|_| Observer {
+                seen: Vec::new(),
+                _subscription: None,
+            })
+        });
+        cx.update(|cx| {
+            observer.update(cx, |observer, cx| {
+                observer._subscription = Some(name.observe(cx, |this, name, cx| {
+                    this.seen.push(name.read(cx).clone());
+                }));
+            })
+        });
+
+        cx.update(|cx| name.update(cx, |name| name.push_str(" Lovelace")));
+        cx.update(|cx| {
+            person.update(cx, |person, cx| {
+                person.name = "Grace".to_string();
+                cx.notify();
+            })
+        });
+
+        cx.update(|cx| {
+            assert_eq!(
+                observer.read(cx).seen,
+                vec!["Ada Lovelace".to_string(), "Grace".to_string()],
+                "both writes through the projection and writes straight to the \
+                 source must notify"
+            );
         });
     }
 
