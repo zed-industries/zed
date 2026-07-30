@@ -19,6 +19,7 @@ use smallvec::SmallVec;
 use sum_tree::Bias;
 use text::BufferId;
 use theme::ActiveTheme;
+use theme_settings::BufferLineHeight;
 use ui::{
     ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*,
     right_click_menu, text_for_keystroke, utils::WithRemSize,
@@ -705,6 +706,10 @@ pub(crate) fn render_buffer_header(
                 }
             });
         })
+        // Keep the header's text at the line height inherited from the editor;
+        // the wrapper at the end of this function overrides it for the deferred
+        // context menu only.
+        .line_height(window.text_style().line_height)
         .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
@@ -979,7 +984,7 @@ pub(crate) fn render_buffer_header(
     let editor = editor.clone();
     let buffer_snapshot = buffer.clone();
 
-    right_click_menu(("buffer-header-context-menu", buffer_id.to_proto()))
+    let header_with_menu = right_click_menu(("buffer-header-context-menu", buffer_id.to_proto()))
         .trigger(move |_, _, _| header)
         .menu(move |window, cx| {
             let menu_context = focus_handle.clone();
@@ -1087,7 +1092,16 @@ pub(crate) fn render_buffer_header(
 
                 menu.context(menu_context)
             })
-        })
+        });
+
+    // The menu is drawn via a deferred draw, which inherits the editor's text
+    // style, including `buffer_line_height`. Override the line height so the menu
+    // matches context menus elsewhere, as `layout_mouse_context_menu` does for the
+    // editor's mouse context menu.
+    div()
+        .w_full()
+        .line_height(DefiniteLength::Fraction(BufferLineHeight::Comfortable.value()))
+        .child(header_with_menu)
 }
 
 pub fn file_status_label_color(file_status: Option<FileStatus>) -> Color {
