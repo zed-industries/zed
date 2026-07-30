@@ -1,5 +1,8 @@
 -- This file is auto-generated. Do not modify it by hand.
 -- To regenerate, run `cargo xtask db dump-schema app --collab` from the Cloud repository.
+--
+-- WARNING: If you are modifying this file you MUST open a PR to the Cloud repository prior to merging any changes.
+-- If you are not Zed staff you MUST coordinate with a staff member to apply the schema migrations before this PR is merged.
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
@@ -224,7 +227,8 @@ CREATE TABLE public.language_servers (
     id bigint NOT NULL,
     name character varying NOT NULL,
     capabilities text NOT NULL,
-    worktree_id bigint
+    worktree_id bigint,
+    language_name character varying
 );
 
 CREATE TABLE public.notification_kinds (
@@ -406,26 +410,14 @@ CREATE SEQUENCE public.servers_id_seq
 
 ALTER SEQUENCE public.servers_id_seq OWNED BY public.servers.id;
 
-CREATE TABLE public.shared_threads (
-    id uuid NOT NULL,
-    user_id integer NOT NULL,
-    title text NOT NULL,
-    data bytea NOT NULL,
-    created_at timestamp without time zone DEFAULT now() NOT NULL,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE public.users (
     id integer NOT NULL,
-    github_login character varying,
     admin boolean NOT NULL,
     email_address character varying(255) DEFAULT NULL::character varying,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
-    github_user_id integer NOT NULL,
     metrics_id uuid DEFAULT gen_random_uuid() NOT NULL,
     accepted_tos_at timestamp without time zone,
-    github_user_created_at timestamp without time zone,
     custom_llm_monthly_allowance_in_cents integer,
     name text
 );
@@ -446,7 +438,8 @@ CREATE TABLE public.worktree_diagnostic_summaries (
     path character varying NOT NULL,
     language_server_id bigint NOT NULL,
     error_count integer NOT NULL,
-    warning_count integer NOT NULL
+    warning_count integer NOT NULL,
+    info_count integer DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE public.worktree_entries (
@@ -596,9 +589,6 @@ ALTER TABLE ONLY public.rooms
 ALTER TABLE ONLY public.servers
     ADD CONSTRAINT servers_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.shared_threads
-    ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
@@ -613,8 +603,6 @@ ALTER TABLE ONLY public.worktree_settings_files
 
 ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
-
-CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
 
 CREATE INDEX index_breakpoints_on_project_id ON public.breakpoints USING btree (project_id);
 
@@ -696,8 +684,6 @@ CREATE INDEX index_settings_files_on_project_id ON public.worktree_settings_file
 
 CREATE INDEX index_settings_files_on_project_id_and_wt_id ON public.worktree_settings_files USING btree (project_id, worktree_id);
 
-CREATE UNIQUE INDEX index_users_github_login ON public.users USING btree (github_login);
-
 CREATE INDEX index_users_on_email_address ON public.users USING btree (email_address);
 
 CREATE INDEX index_worktree_diagnostic_summaries_on_project_id ON public.worktree_diagnostic_summaries USING btree (project_id);
@@ -712,13 +698,9 @@ CREATE INDEX index_worktrees_on_project_id ON public.worktrees USING btree (proj
 
 CREATE INDEX trigram_index_extensions_name ON public.extensions USING gin (name public.gin_trgm_ops);
 
-CREATE INDEX trigram_index_users_on_github_login ON public.users USING gin (github_login public.gin_trgm_ops);
-
 CREATE INDEX trigram_index_users_on_name ON public.users USING gin (name public.gin_trgm_ops);
 
 CREATE UNIQUE INDEX uix_channels_parent_path_name ON public.channels USING btree (parent_path, name) WHERE ((parent_path IS NOT NULL) AND (parent_path <> ''::text));
-
-CREATE UNIQUE INDEX uix_users_on_github_user_id ON public.users USING btree (github_user_id);
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
@@ -833,9 +815,6 @@ ALTER TABLE ONLY public.room_participants
 
 ALTER TABLE ONLY public.rooms
     ADD CONSTRAINT rooms_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.shared_threads
-    ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;

@@ -1,8 +1,7 @@
 use crate::tools::edit_file_tool::*;
 use crate::{
-    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ListDirectoryTool,
-    ListDirectoryToolInput, ReadFileTool, ReadFileToolInput, Template, Templates, Thread,
-    ToolCallEventStream, ToolInput,
+    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ReadFileTool,
+    ReadFileToolInput, Template, Templates, Thread, ToolCallEventStream, ToolInput,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -122,20 +121,6 @@ impl EvalAssertion {
             ) -> Result<EvalAssertionOutcome>,
     {
         EvalAssertion(Arc::new(f))
-    }
-
-    fn assert_eq(expected: impl Into<String>) -> Self {
-        let expected = expected.into();
-        Self::new(async move |sample, _judge, _cx| {
-            Ok(EvalAssertionOutcome {
-                score: if strip_empty_lines(&sample.text_after) == strip_empty_lines(&expected) {
-                    100
-                } else {
-                    0
-                },
-                message: None,
-            })
-        })
     }
 
     fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
@@ -376,7 +361,7 @@ impl EditToolTest {
                 abs_path: Path::new("/path/to/root").into(),
                 rules_file: None,
             }];
-            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let project_context = ProjectContext::new(worktrees);
             let tool_names = tools
                 .iter()
                 .map(|tool| tool.name.clone().into())
@@ -385,6 +370,11 @@ impl EditToolTest {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                user_agents_md: None,
+                sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             let templates = Templates::new();
             template.render(&templates)?
@@ -513,7 +503,9 @@ impl EditToolTest {
                     if tool_use.is_input_complete
                         && tool_use.name.as_ref() == EditFileTool::NAME =>
                 {
-                    let input: EditFileToolInput = serde_json::from_value(tool_use.input)
+                    let input: EditFileToolInput = tool_use
+                        .input
+                        .parse()
                         .context("Failed to parse tool input as EditFileToolInput")?;
                     return Ok(input);
                 }
@@ -562,33 +554,25 @@ impl EditToolTest {
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(rand::random());
-    let mut cx = TestAppContext::build(dispatcher, None);
-    let foreground_executor = cx.foreground_executor().clone();
-    let result = foreground_executor.block_test(async {
-        let test = EditToolTest::new(&mut cx).await;
-        let result = test.eval(eval, &mut cx).await;
-        drop(test);
-        cx.run_until_parked();
-        result
-    });
-    cx.quit();
-    match result {
-        Ok(output) => eval_utils::EvalOutput {
-            data: output.to_string(),
-            outcome: if output.assertion.score < 80 {
+    super::run_gpui_eval(
+        |cx| {
+            async move {
+                let test = EditToolTest::new(cx).await;
+                let result = test.eval(eval, cx).await;
+                drop(test);
+                cx.run_until_parked();
+                result
+            }
+            .boxed_local()
+        },
+        |output| {
+            if output.assertion.score < 80 {
                 eval_utils::OutcomeKind::Failed
             } else {
                 eval_utils::OutcomeKind::Passed
-            },
-            metadata: (),
+            }
         },
-        Err(err) => eval_utils::EvalOutput {
-            data: format!("{err:?}"),
-            outcome: eval_utils::OutcomeKind::Error,
-            metadata: (),
-        },
-    }
+    )
 }
 
 fn message(
@@ -625,7 +609,9 @@ fn tool_use(
         id: LanguageModelToolUseId::from(id.into()),
         name: name.into(),
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
-        input: serde_json::to_value(input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(input).unwrap(),
+        ),
         is_input_complete: true,
         thought_signature: None,
     })
@@ -1496,49 +1482,6 @@ fn eval_add_overwrite_test() {
             EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_create_empty_file() {
-    let input_file_path = "root/TODO3";
-    let input_file_content = None;
-    let expected_output_content = String::new();
-
-    eval_utils::eval(100, 0.99, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(User, [text("Create a second empty todo file ")]),
-                message(
-                    Assistant,
-                    [
-                        text(indoc::formatdoc! {"
-                            I'll help you create a second empty todo file.
-                            First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
-                            "}),
-                        tool_use(
-                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                            ListDirectoryTool::NAME,
-                            ListDirectoryToolInput {
-                                path: "root".to_string(),
-                            },
-                        ),
-                    ],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                        ListDirectoryTool::NAME,
-                        "root/TODO\nroot/TODO2\nroot/new.txt\n",
-                    )],
-                ),
-            ],
-            input_file_path,
-            input_file_content.clone(),
-            EvalAssertion::assert_eq(expected_output_content.clone()),
         ))
     });
 }

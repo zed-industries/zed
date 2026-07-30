@@ -2,14 +2,15 @@ use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
+    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, decode_static_image,
+    decode_static_image_from_decoder, px,
 };
 use anyhow::Result;
 
 use futures::Future;
 use gpui_util::ResultExt;
 use image::{
-    AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
+    AnimationDecoder, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
 use scheduler::Instant;
@@ -317,7 +318,7 @@ impl Element for Img {
 
                             if let Some(state) = &mut state {
                                 state.frame_index = state.frame_index.min(max_frame_index);
-                                if frame_count > 1 {
+                                if frame_count > 1 && !cx.reduce_motion() {
                                     if window.is_window_active() {
                                         let current_time = Instant::now();
                                         if let Some(last_frame_time) = state.last_frame_time {
@@ -378,6 +379,7 @@ impl Element for Img {
                             if global_id.is_some()
                                 && data.frame_count() > 1
                                 && window.is_window_active()
+                                && !cx.reduce_motion()
                             {
                                 window.request_animation_frame();
                             }
@@ -486,12 +488,10 @@ impl Element for Img {
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
-                    let corner_radii = style
-                        .corner_radii
-                        .to_pixels(window.rem_size())
-                        .clamp_radii_for_quad_size(new_bounds.size);
+                    let corner_radii = style.corner_radii.to_pixels(window.rem_size());
                     window
                         .paint_image(
+                            bounds,
                             new_bounds,
                             corner_radii,
                             data,
@@ -578,6 +578,17 @@ impl ImageSource {
             }
             ImageSource::Custom(_) | ImageSource::Render(_) => {}
             ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
+        }
+    }
+
+    /// Check whether this image source is present in the asset system (loading
+    /// or loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(&self, cx: &App) -> bool {
+        match self {
+            ImageSource::Resource(resource) => cx.has_asset::<ImgResourceLoader>(resource),
+            ImageSource::Custom(_) | ImageSource::Render(_) => false,
+            ImageSource::Image(data) => cx.has_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
@@ -715,27 +726,10 @@ impl Asset for ImageAssetLoader {
 
                             frames
                         } else {
-                            let mut data = DynamicImage::from_decoder(decoder)?.into_rgba8();
-
-                            // Convert from RGBA to BGRA.
-                            for pixel in data.chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
-                            }
-
-                            SmallVec::from_elem(Frame::new(data), 1)
+                            decode_static_image_from_decoder(decoder)?
                         }
                     }
-                    _ => {
-                        let mut data =
-                            image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
-
-                        // Convert from RGBA to BGRA.
-                        for pixel in data.chunks_exact_mut(4) {
-                            pixel.swap(0, 2);
-                        }
-
-                        SmallVec::from_elem(Frame::new(data), 1)
-                    }
+                    _ => decode_static_image(&bytes, format)?,
                 };
 
                 Ok(Arc::new(RenderImage::new(data)))
@@ -817,6 +811,11 @@ mod tests {
         )))
     }
 
+    fn test_image_with_size(width: u32, height: u32) -> Arc<RenderImage> {
+        let frame = Frame::new(ImageBuffer::from_pixel(width, height, Rgba([0, 0, 0, 0])));
+        Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1)))
+    }
+
     /// Overwrites the cached `frame_index` of the sibling `img` during paint.
     fn seed_frame_index(frame_index: usize) -> impl IntoElement {
         canvas(
@@ -839,6 +838,86 @@ mod tests {
             .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
                 img(ImageSource::Render(test_image(0))).into_any_element()
             });
+    }
+
+    #[gpui::test]
+    fn image_object_fit_cover_crops_to_element_bounds(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let image = test_image_with_size(200, 100);
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(image.clone()))
+                .size_full()
+                .object_fit(ObjectFit::Fill)
+                .into_any_element()
+        });
+        let full_tile_bounds = window.update(|window, _| {
+            window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("fill image should paint a sprite")
+                .tile
+                .bounds
+        });
+
+        window.draw(point(px(10.), px(20.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(image))
+                .size_full()
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        });
+
+        let (rendered_bounds, rendered_tile_bounds, scale_factor) = window.update(|window, _| {
+            let sprite = window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("cover image should paint a sprite");
+            (sprite.bounds, sprite.tile.bounds, window.scale_factor())
+        });
+        assert_eq!(
+            rendered_bounds,
+            Bounds {
+                origin: point(px(10.).scale(scale_factor), px(20.).scale(scale_factor)),
+                size: size(px(100.).scale(scale_factor), px(100.).scale(scale_factor)),
+            }
+        );
+        assert_eq!(
+            (
+                rendered_tile_bounds.origin.x.0 - full_tile_bounds.origin.x.0,
+                rendered_tile_bounds.origin.y.0 - full_tile_bounds.origin.y.0,
+                rendered_tile_bounds.size.width.0,
+                rendered_tile_bounds.size.height.0,
+            ),
+            (50, 0, 100, 100),
+        );
+    }
+
+    #[gpui::test]
+    fn image_object_fit_cover_clamps_corner_radii_to_visible_bounds(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(test_image_with_size(200, 100)))
+                .size_full()
+                .rounded(px(100.))
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        });
+
+        let (corner_radius, expected_corner_radius) = window.update(|window, _| {
+            (
+                window
+                    .rendered_frame
+                    .scene
+                    .polychrome_sprites
+                    .last()
+                    .map(|sprite| sprite.corner_radii.top_left),
+                px(50.).scale(window.scale_factor()),
+            )
+        });
+        assert_eq!(corner_radius, Some(expected_corner_radius));
     }
 
     #[gpui::test]

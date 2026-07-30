@@ -1,11 +1,13 @@
 use std::path::Path;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix,
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, dependant_job, named},
-    vars::{assets, bundle_envs},
+    steps::{
+        CommonPermissionSets, FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep,
+        dependant_job, named,
+    },
+    vars::{self, assets, bundle_envs},
 };
 
 use super::{runners, steps};
@@ -16,14 +18,15 @@ pub fn run_bundling() -> Workflow {
     let bundle = ReleaseBundleJobs {
         linux_aarch64: bundle_linux(Arch::AARCH64, None, &[]),
         linux_x86_64: bundle_linux(Arch::X86_64, None, &[]),
+        bwrap_linux_aarch64: build_static_bwrap(Arch::AARCH64, &[]),
+        bwrap_linux_x86_64: build_static_bwrap(Arch::X86_64, &[]),
         mac_aarch64: bundle_mac(Arch::AARCH64, None, &[]),
         mac_x86_64: bundle_mac(Arch::X86_64, None, &[]),
         windows_aarch64: bundle_windows(Arch::AARCH64, None, &[]),
         windows_x86_64: bundle_windows(Arch::X86_64, None, &[]),
     };
-    let nix_linux_x86_64 = nix_job(Platform::Linux, Arch::X86_64);
-    let nix_mac_aarch64 = nix_job(Platform::Mac, Arch::AARCH64);
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))
@@ -41,25 +44,6 @@ pub fn run_bundling() -> Workflow {
             }
             workflow
         })
-        .add_job(nix_linux_x86_64.name, nix_linux_x86_64.job)
-        .add_job(nix_mac_aarch64.name, nix_mac_aarch64.job)
-}
-
-fn nix_job(platform: Platform, arch: Arch) -> NamedJob {
-    let mut job = build_nix(
-        platform,
-        arch,
-        "default",
-        // don't push PR builds to the cache
-        Some("-zed-editor-[0-9.]*"),
-        &[],
-    );
-    job.job = job.job.cond(Expression::new(format!(
-        "{} && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || \
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))",
-        DEFAULT_REPOSITORY_OWNER_GUARD
-    )));
-    job
 }
 
 fn bundle_job(deps: &[&NamedJob]) -> Job {
@@ -96,6 +80,7 @@ pub(crate) fn bundle_mac(
             .runs_on(runners::MAC_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -112,19 +97,53 @@ pub(crate) fn bundle_mac(
     }
 }
 
-pub fn upload_artifact(path: &str) -> Step<Use> {
+pub fn upload_artifact(path: &str) -> UploadArtifactStep {
     let name = Path::new(path).file_name().unwrap().to_str().unwrap();
-    Step::new(format!("@actions/upload-artifact {}", name))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        // N.B. "name" is the name for the asset. The uploaded
-        // file retains its filename.
-        .add_with(("name", name))
-        .add_with(("path", path))
-        .add_with(("if-no-files-found", "error"))
+    steps::upload_artifact(name, path).if_no_files_found(IfNoFilesFound::Error)
+}
+
+pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
+    let artifact_name = match arch {
+        Arch::X86_64 => assets::BWRAP_LINUX_X86_64,
+        Arch::AARCH64 => assets::BWRAP_LINUX_AARCH64,
+    };
+    let binary_name = artifact_name
+        .strip_suffix(".gz")
+        .expect("static bwrap artifact name should end in .gz");
+    let copy_artifact = indoc::formatdoc! {r#"
+        cp result/bin/bwrap {binary_name}
+        chmod 755 {binary_name}
+        gzip -f --stdout --best {binary_name} > {artifact_name}
+    "#};
+
+    NamedJob {
+        name: format!("build_static_bwrap_linux_{arch}"),
+        job: bundle_job(deps)
+            .runs_on(arch.linux_bundler())
+            .timeout_minutes(60u32)
+            .add_step(steps::cache_nix_dependencies_namespace())
+            .add_step(
+                named::uses(
+                    "cachix",
+                    "install-nix-action",
+                    "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
+                )
+                .add_with(("github_access_token", vars::GITHUB_TOKEN)),
+            )
+            .add_step(
+                named::uses(
+                    "cachix",
+                    "cachix-action",
+                    "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
+                )
+                .add_with(("name", "zed"))
+                .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
+                .add_with(("cachixArgs", "-v")),
+            )
+            .add_step(named::bash("nix build nixpkgs#pkgsStatic.bubblewrap -L"))
+            .add_step(named::bash(&copy_artifact))
+            .add_step(upload_artifact(artifact_name)),
+    }
 }
 
 pub(crate) fn bundle_linux(
@@ -149,6 +168,7 @@ pub(crate) fn bundle_linux(
             .add_env(Env::new("CC", "clang-18"))
             .add_env(Env::new("CXX", "clang++-18"))
             .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -193,6 +213,7 @@ pub(crate) fn bundle_windows(
                 job.add_step(set_release_channel(platform, release_channel))
             })
             .add_step(steps::setup_sentry())
+            .add_step(steps::clear_target_dir_if_large(platform))
             .add_step(bundle_windows(arch))
             .add_step(upload_artifact(&format!("target/{artifact_name}")))
             .add_step(upload_artifact(&format!(

@@ -19,7 +19,7 @@ use project::{
     debugger::{dap_store, session::Session},
     search::SearchQuery,
 };
-use settings::Settings as _;
+use settings::{SeedQuerySetting, Settings as _};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, VecDeque},
@@ -1031,12 +1031,13 @@ impl SearchableItem for DapLogView {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
-        self.editor
-            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.query_suggestion(seed_query_override, window, cx)
+        })
     }
 
     fn activate_match(

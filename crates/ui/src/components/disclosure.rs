@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{ClickEvent, CursorStyle, SharedString};
+use gpui::{AnyView, ClickEvent, SharedString};
 
+use crate::IconButtonShape;
 use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
@@ -10,11 +11,12 @@ pub struct Disclosure {
     is_open: bool,
     selected: bool,
     disabled: bool,
-    on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
-    cursor_style: CursorStyle,
-    opened_icon: IconName,
     closed_icon: IconName,
+    shape: Option<IconButtonShape>,
     visible_on_hover: Option<SharedString>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    opened_icon: IconName,
 }
 
 impl Disclosure {
@@ -25,11 +27,17 @@ impl Disclosure {
             selected: false,
             disabled: false,
             on_toggle_expanded: None,
-            cursor_style: CursorStyle::PointingHand,
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
+            shape: None,
             visible_on_hover: None,
+            tooltip: None,
         }
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
+        self
     }
 
     pub fn on_toggle_expanded(
@@ -54,23 +62,22 @@ impl Disclosure {
         self.disabled = disabled;
         self
     }
+
+    /// Sets the shape of the underlying [`IconButton`].
+    pub fn shape(mut self, shape: IconButtonShape) -> Self {
+        self.shape = Some(shape);
+        self
+    }
+
+    /// Alias for [`Self::on_toggle_expanded`].
+    pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.on_toggle_expanded(Arc::new(handler) as Arc<_>)
+    }
 }
 
 impl Toggleable for Disclosure {
     fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
-        self
-    }
-}
-
-impl Clickable for Disclosure {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle_expanded = Some(Arc::new(handler));
-        self
-    }
-
-    fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
-        self.cursor_style = cursor_style;
         self
     }
 }
@@ -93,11 +100,15 @@ impl RenderOnce for Disclosure {
         )
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
+        .aria_label(if self.is_open { "Collapse" } else { "Expand" })
+        .aria_expanded(self.is_open)
         .disabled(self.disabled)
+        .when_some(self.shape, |this, shape| this.shape(shape))
         .toggle_state(self.selected)
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
             this.visible_on_hover(group_name)
         })
+        .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
         .when_some(self.on_toggle_expanded, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
@@ -109,43 +120,37 @@ impl Component for Disclosure {
         ComponentScope::Input
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "An interactive element used to show or hide content, typically used in expandable sections or tree-like structures.",
-        )
+    fn description() -> &'static str {
+        "An interactive element used to show or hide content, \
+            typically used in expandable sections or tree-like structures."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Disclosure States",
-                        vec![
-                            single_example(
-                                "Closed",
-                                Disclosure::new("closed", false).into_any_element(),
-                            ),
-                            single_example(
-                                "Open",
-                                Disclosure::new("open", true).into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Interactive Example",
-                        vec![single_example(
-                            "Toggleable",
-                            v_flex()
-                                .gap_2()
-                                .child(Disclosure::new("interactive", false).into_any_element())
-                                .child(Label::new("Click to toggle"))
-                                .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Disclosure States",
+                    vec![
+                        single_example(
+                            "Closed",
+                            Disclosure::new("closed", false).into_any_element(),
+                        ),
+                        single_example("Open", Disclosure::new("open", true).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Interactive Example",
+                    vec![single_example(
+                        "Toggleable",
+                        v_flex()
+                            .gap_2()
+                            .child(Disclosure::new("interactive", false).into_any_element())
+                            .child(Label::new("Click to toggle"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

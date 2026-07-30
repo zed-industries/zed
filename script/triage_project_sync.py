@@ -72,6 +72,7 @@ STAFF_TEAM_SLUG = "staff"
 # (Casing matters — GH Projects single-select option matching is case-sensitive.)
 STATUS_NEEDS_LABELS = "Needs labels"
 STATUS_NEEDS_REPRO_ATTEMPT = "Needs repro attempt"
+STATUS_NEEDS_ASK = "Needs ask"
 STATUS_USER_REPLIED = "User replied (review)"
 STATUS_AWAITING_USER = "Awaiting user"
 STATUS_RESPONDED_NO_REPRO = "Responded, no repro"
@@ -90,6 +91,8 @@ AGE_THRESHOLDS_DAYS = {
     STATUS_NEEDS_REPRO_ATTEMPT: 7,
     STATUS_AWAITING_USER: 14,
     STATUS_USER_REPLIED: 3,
+    # Needs ask is handled explicitly in derive_aged (always flagged), so
+    # it doesn't need a threshold here.
 }
 
 TERMINAL_OR_RESTING_STATUSES = {
@@ -370,34 +373,46 @@ def derive_status(issue: IssueData, staff: set[str]) -> tuple[str, str, str]:
             "reproducible, no assignee, no substantive staff comment — close the loop",
         )
 
-    if "state:needs triage" in L:
-        return STATUS_NEEDS_LABELS, "R3", "state:needs triage label present"
-
+    # R4 (state:needs info) and R5 (state:needs repro) intentionally come
+    # before R3 (state:needs triage). Per the team's actual practice,
+    # state:needs triage is often left on while triage is in progress; only
+    # when no other state label is more specific should we treat the issue
+    # as "needs initial labels."
     if "state:needs info" in L:
-        last_staff = None
+        # R4 splits into three sub-cases based on whether we've actually
+        # asked anything (substantive staff comment) and whether the reporter
+        # or a third-party has responded.
+        substantive_staff = None
         for c in issue.comments:
-            if c["user"]["login"] in staff and not is_bot(c["user"]):
-                last_staff = c
-        if last_staff is None:
-            return STATUS_AWAITING_USER, "R4a", "needs info, no staff comment yet"
+            if is_substantive_staff_comment(c, staff):
+                substantive_staff = c
+        if substantive_staff is None:
+            # state:needs info applied without an actual question to the user.
+            # Runbook violation — we owe the reporter a comment explaining
+            # what info we need.
+            return (
+                STATUS_NEEDS_ASK,
+                "R4c",
+                "state:needs info present but no substantive staff comment exists — we haven't asked anything",
+            )
         last_comment = issue.comments[-1] if issue.comments else None
         if last_comment is not None:
             author = last_comment["user"]["login"]
             non_staff = author not in staff and not is_bot(last_comment["user"])
             if non_staff:
                 ct = parse_dt(last_comment["created_at"])
-                st = parse_dt(last_staff["created_at"])
+                st = parse_dt(substantive_staff["created_at"])
                 if ct and st and ct > st:
                     relation = "reporter" if author == issue.reporter else "third-party"
                     return (
                         STATUS_USER_REPLIED,
                         "R4b",
-                        f"{relation} (@{author}) replied {ct.isoformat()} after staff @ {st.isoformat()}",
+                        f"{relation} (@{author}) replied {ct.isoformat()} after substantive staff @ {st.isoformat()}",
                     )
         return (
             STATUS_AWAITING_USER,
             "R4a",
-            f"last staff comment @ {last_staff['created_at']}, no non-staff reply since",
+            f"substantive staff comment @ {substantive_staff['created_at']}, no non-staff reply since",
         )
 
     if "state:needs repro" in L:
@@ -412,6 +427,13 @@ def derive_status(issue: IssueData, staff: set[str]) -> tuple[str, str, str]:
                 )
         return STATUS_NEEDS_REPRO_ATTEMPT, "R5a", "no substantive staff comment after reporter's last activity"
 
+    # R3 (state:needs triage) is checked LAST among recognized state labels.
+    # If state:needs triage is the only state label, the issue genuinely needs
+    # initial labeling. If any other state label is also present, that state
+    # has already been matched above and won.
+    if "state:needs triage" in L:
+        return STATUS_NEEDS_LABELS, "R3", "state:needs triage label present (no other state:* matched)"
+
     return STATUS_UNKNOWN, "R6", f"open with no recognized state label (labels: {sorted(L) or '<none>'})"
 
 
@@ -425,12 +447,18 @@ def derive_stale_since(
         return issue.created_at
     if status == STATUS_NEEDS_REPRO_ATTEMPT:
         return latest_reporter_activity(issue)
+    if status == STATUS_NEEDS_ASK:
+        # Anchor on issue creation — measures how long the runbook violation
+        # has gone unaddressed. Aging threshold is 0 (always flagged).
+        return issue.created_at
     if status == STATUS_AWAITING_USER:
-        last_staff = None
+        # Anchor on the most recent SUBSTANTIVE staff comment (the actual
+        # "ask"), consistent with R4's substantive-comment requirement.
+        substantive_staff = None
         for c in issue.comments:
-            if c["user"]["login"] in staff and not is_bot(c["user"]):
-                last_staff = c
-        return parse_dt(last_staff["created_at"]) if last_staff else issue.created_at
+            if is_substantive_staff_comment(c, staff):
+                substantive_staff = c
+        return parse_dt(substantive_staff["created_at"]) if substantive_staff else issue.created_at
     if status == STATUS_USER_REPLIED:
         last_non_staff = None
         for c in issue.comments:
@@ -450,6 +478,8 @@ def derive_aged(status: str, stale_since: datetime | None) -> tuple[str, str]:
     """Returns ('Yes' | 'No', why)."""
     if status == STATUS_HANDOFF_INCOMPLETE:
         return "Yes", "always-flagged for loop closure"
+    if status == STATUS_NEEDS_ASK:
+        return "Yes", "always-flagged: state:needs info applied without a substantive staff comment"
     if status in TERMINAL_OR_RESTING_STATUSES or status == STATUS_UNKNOWN:
         return "No", "terminal/resting"
     if not stale_since:

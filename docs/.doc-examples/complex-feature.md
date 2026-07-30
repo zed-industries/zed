@@ -226,7 +226,7 @@ Zed currently supports LLM-powered commit message generation.
 You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage} ({#kb git::GenerateCommitMessage}) keybinding.
 
 > **Note:** You need to have an LLM provider configured either via your own API keys or through Zed's hosted AI models.
-> Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
+> Visit [AI Quick Start](./ai/quick-start.md) to learn how to do so.
 
 You can specify your preferred model to use by providing a `commit_message_model` agent setting.
 See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
@@ -242,10 +242,17 @@ See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) fo
 }
 ```
 
-To customize the format of generated commit messages, run {#action agent::OpenRulesLibrary} and select the "Commit message" rule on the left side.
-From there, you can modify the prompt to match your desired format.
+To add custom instructions that apply only to commit message generation, use the `commit_message_instructions` field in your agent settings:
 
-Any specific instructions for commit messages added to [Rules files](./ai/rules.md) are also picked up by the model tasked with writing your commit message.
+```json [settings]
+{
+  "agent": {
+    "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
+  }
+}
+```
+
+These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 ## Git Integrations {#git-integrations}
 
