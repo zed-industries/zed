@@ -14,6 +14,7 @@ use gpui::{
     Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
     WeakEntity, actions, anchored, deferred, div,
 };
+use i18n::t;
 use menu;
 use persistence::TerminalDb;
 use project::{Project, ProjectEntryId, search::SearchQuery};
@@ -528,39 +529,42 @@ impl TerminalView {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .when(self.shows_workspace_actions(), |menu| {
-                    menu.action("New Terminal", Box::new(NewTerminal::default()))
+                    menu.action(t!("New Terminal"), Box::new(NewTerminal::default()))
                         .action(
-                            "New Center Terminal",
+                            t!("New Center Terminal"),
                             Box::new(NewCenterTerminal::default()),
                         )
                         .separator()
                 })
-                .action("Copy", Box::new(Copy))
+                .action(t!("Copy"), Box::new(Copy))
                 .when(
                     !matches!(self.mode, TerminalMode::Embedded { .. }),
                     |menu| {
-                        menu.action("Paste", Box::new(Paste))
-                            .action("Paste Text", Box::new(PasteText))
+                        menu.action(t!("Paste"), Box::new(Paste))
+                            .action(t!("Paste Text"), Box::new(PasteText))
                     },
                 )
-                .action("Select All", Box::new(SelectAll))
+                .action(t!("Select All"), Box::new(SelectAll))
                 .when(
                     !matches!(self.mode, TerminalMode::Embedded { .. }),
-                    |menu| menu.action("Clear", Box::new(Clear)),
+                    |menu| menu.action(t!("Clear"), Box::new(Clear)),
                 )
                 .when(
                     assistant_enabled && !matches!(self.mode, TerminalMode::Embedded { .. }),
                     |menu| {
                         menu.separator()
-                            .action("Inline Assist", Box::new(InlineAssist::default()))
+                            .action(t!("Inline Assist"), Box::new(InlineAssist::default()))
                             .when(has_selection && self.shows_workspace_actions(), |menu| {
-                                menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                                menu.action(
+                                    t!("Add to Agent Thread"),
+                                    Box::new(AddSelectionToThread),
+                                )
                             })
                     },
                 )
                 .when(self.shows_workspace_actions(), |menu| {
                     menu.separator().action(
-                        "Close Terminal Tab",
+                        t!("Close Terminal Tab"),
                         Box::new(CloseActiveItem {
                             save_intent: None,
                             close_pinned: true,
@@ -1091,7 +1095,7 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
+                .tooltip(move |_window, cx| Tooltip::for_action(t!("Rerun task"), &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
@@ -1446,7 +1450,7 @@ impl Item for TerminalView {
                     .child(Label::new(title.clone()))
                     .child(h_flex().flex_grow_1().child(Divider::horizontal()))
                     .child(
-                        Label::new(format!("Process ID (PID): {}", pid))
+                        Label::new(t!("Process ID (PID): {$pid}", pid = pid.as_u32()))
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                     )
