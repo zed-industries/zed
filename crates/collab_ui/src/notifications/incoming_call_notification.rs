@@ -2,6 +2,7 @@ use crate::notification_window_options;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{App, TaskExt, WindowHandle, prelude::*};
+use i18n::t;
 
 use std::sync::{Arc, Weak};
 use ui::{CollabNotification, prelude::*};
@@ -116,18 +117,18 @@ impl Render for IncomingCallNotification {
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.state.call.calling_user.avatar_uri.clone(),
-                Button::new("accept", "Accept").on_click({
+                Button::new("accept", t!("Accept")).on_click({
                     let state = self.state.clone();
                     move |_, _, cx| state.respond(true, cx)
                 }),
-                Button::new("decline", "Decline").on_click({
+                Button::new("decline", t!("Decline")).on_click({
                     let state = self.state.clone();
                     move |_, _, cx| state.respond(false, cx)
                 }),
             )
-            .child(Label::new(format!(
-                "{} is sharing a project in Zed",
-                self.state.call.calling_user.username
+            .child(Label::new(t!(
+                "{$login} is sharing a project in Zed",
+                login = self.state.call.calling_user.username.clone()
             ))),
         )
     }

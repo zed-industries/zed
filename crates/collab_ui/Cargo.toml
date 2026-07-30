@@ -39,6 +39,7 @@ editor.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 livekit_client.workspace = true
 menu.workspace = true
 notifications.workspace = true

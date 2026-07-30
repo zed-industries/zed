@@ -3,6 +3,7 @@ use call::{ActiveCall, room};
 use client::User;
 use collections::HashMap;
 use gpui::{App, Size, TaskExt};
+use i18n::t;
 use std::sync::{Arc, Weak};
 
 use ui::{CollabNotification, prelude::*};
@@ -123,20 +124,27 @@ impl Render for ProjectSharedNotification {
         let ui_font = theme_settings::setup_ui_font(window, cx);
         let no_worktree_root_names = self.worktree_root_names.is_empty();
 
-        let punctuation = if no_worktree_root_names { "" } else { ":" };
-        let main_label = format!(
-            "{} is sharing a project with you{}",
-            self.owner.username.clone(),
-            punctuation
+        let sharing_notice = t!(
+            "{$login} is sharing a project with you",
+            login = self.owner.username.clone()
         );
+        // The colon is layout rather than prose: it only introduces the worktree
+        // list below, so it stays out of the catalog.
+        let main_label = if no_worktree_root_names {
+            String::from(sharing_notice)
+        } else {
+            format!("{sharing_notice}:")
+        };
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.owner.avatar_uri.clone(),
-                Button::new("open", "Open").on_click(cx.listener(move |this, _event, _, cx| {
-                    this.join(cx);
-                })),
-                Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                Button::new("open", t!(key = "open-action", "Open")).on_click(cx.listener(
+                    move |this, _event, _, cx| {
+                        this.join(cx);
+                    },
+                )),
+                Button::new("dismiss", t!("Dismiss")).on_click(cx.listener(
                     move |this, _event, _, cx| {
                         this.dismiss(cx);
                     },

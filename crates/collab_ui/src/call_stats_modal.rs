@@ -8,6 +8,7 @@ use gpui::{
     ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Render,
     Subscription, Task, TaskExt as _, Window,
 };
+use i18n::{LocalizedString, t};
 use livekit_client::ConnectionQuality;
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Serialize;
@@ -153,57 +154,59 @@ fn call_diagnostics(cx: &App) -> Option<Entity<CallDiagnostics>> {
     ActiveCall::try_global(cx)?.read(cx).call_diagnostics(cx)
 }
 
-fn quality_label(quality: Option<ConnectionQuality>) -> (&'static str, Color) {
+fn quality_label(quality: Option<ConnectionQuality>) -> (SharedString, Color) {
     match quality {
-        Some(ConnectionQuality::Excellent) => ("Excellent", Color::Success),
-        Some(ConnectionQuality::Good) => ("Good", Color::Success),
-        Some(ConnectionQuality::Poor) => ("Poor", Color::Warning),
-        Some(ConnectionQuality::Lost) => ("Lost", Color::Error),
-        None => ("—", Color::Muted),
+        Some(ConnectionQuality::Excellent) => (t!("Excellent").resolve(), Color::Success),
+        Some(ConnectionQuality::Good) => (t!("Good").resolve(), Color::Success),
+        Some(ConnectionQuality::Poor) => (t!("Poor").resolve(), Color::Warning),
+        Some(ConnectionQuality::Lost) => (t!("Lost").resolve(), Color::Error),
+        None => ("—".into(), Color::Muted),
     }
 }
 
-fn metric_rating(label: &str, value_ms: f64) -> (&'static str, Color) {
+// `label` identifies which metric is being rated, so it stays an untranslated
+// English tag rather than the localized title shown in the row.
+fn metric_rating(label: &str, value_ms: f64) -> (SharedString, Color) {
     match label {
         "Latency" => {
             if value_ms < 100.0 {
-                ("Normal", Color::Success)
+                (t!("Normal").resolve(), Color::Success)
             } else if value_ms < 300.0 {
-                ("High", Color::Warning)
+                (t!("High").resolve(), Color::Warning)
             } else {
-                ("Poor", Color::Error)
+                (t!("Poor").resolve(), Color::Error)
             }
         }
         "Jitter" => {
             if value_ms < 30.0 {
-                ("Normal", Color::Success)
+                (t!("Normal").resolve(), Color::Success)
             } else if value_ms < 75.0 {
-                ("High", Color::Warning)
+                (t!("High").resolve(), Color::Warning)
             } else {
-                ("Poor", Color::Error)
+                (t!("Poor").resolve(), Color::Error)
             }
         }
-        _ => ("Normal", Color::Success),
+        _ => (t!("Normal").resolve(), Color::Success),
     }
 }
 
-fn input_lag_rating(value_ms: u128) -> (&'static str, Color) {
+fn input_lag_rating(value_ms: u128) -> (SharedString, Color) {
     if value_ms < 20 {
-        ("Normal", Color::Success)
+        (t!("Normal").resolve(), Color::Success)
     } else if value_ms < 50 {
-        ("High", Color::Warning)
+        (t!("High").resolve(), Color::Warning)
     } else {
-        ("Poor", Color::Error)
+        (t!("Poor").resolve(), Color::Error)
     }
 }
 
-fn packet_loss_rating(loss_pct: f64) -> (&'static str, Color) {
+fn packet_loss_rating(loss_pct: f64) -> (SharedString, Color) {
     if loss_pct < 1.0 {
-        ("Normal", Color::Success)
+        (t!("Normal").resolve(), Color::Success)
     } else if loss_pct < 5.0 {
-        ("High", Color::Warning)
+        (t!("High").resolve(), Color::Warning)
     } else {
-        ("Poor", Color::Error)
+        (t!("Poor").resolve(), Color::Error)
     }
 }
 
@@ -296,7 +299,7 @@ impl Render for CallStatsModal {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Label::new("Call Diagnostics").size(LabelSize::Large))
+                    .child(Label::new(t!("Call Diagnostics")).size(LabelSize::Large))
                     .child(
                         Label::new(quality_text)
                             .size(LabelSize::Large)
@@ -307,7 +310,7 @@ impl Render for CallStatsModal {
                 this.child(
                     h_flex()
                         .justify_center()
-                        .child(Label::new("Showing diagnostics from the most recent call").color(Color::Muted)),
+                        .child(Label::new(t!("Showing diagnostics from the most recent call")).color(Color::Muted)),
                 )
             })
             .when(!has_diagnostics, |this| {
@@ -315,7 +318,9 @@ impl Render for CallStatsModal {
                     h_flex()
                         .justify_center()
                         .py_4()
-                        .child(Label::new("No call diagnostics available").color(Color::Muted)),
+                        .child(
+                            Label::new(t!("No call diagnostics available")).color(Color::Muted),
+                        ),
                 )
             })
             .when(has_diagnostics, |this| {
@@ -326,9 +331,11 @@ impl Render for CallStatsModal {
                         .max_h(rems(32.))
                         .overflow_y_scroll()
                         .child(
-                            Label::new(format!(
-                                "{sample_count} samples · {:.0}s retained · {recent_issue_count} affected intervals in the last 60s",
-                                retained_duration.as_secs_f64()
+                            Label::new(t!(
+                                "{$samples} samples · {$retained}s retained · {$intervals} affected intervals in the last 60s",
+                                samples = sample_count,
+                                retained = format!("{:.0}", retained_duration.as_secs_f64()),
+                                intervals = recent_issue_count
                             ))
                             .size(LabelSize::Small)
                             .color(Color::Muted),
@@ -336,31 +343,31 @@ impl Render for CallStatsModal {
                         .child(
                             v_flex()
                                 .gap_1()
-                                .child(Label::new("Network").weight(FontWeight::SEMIBOLD))
+                                .child(Label::new(t!("Network")).weight(FontWeight::SEMIBOLD))
                                 .child(self.render_metric_row(
-                                    "Latency",
-                                    "Time for data to travel to the server",
+                                    t!("Latency"),
+                                    t!("Time for data to travel to the server"),
                                     stats.latency_ms,
                                     |v| format!("{:.0}ms", v),
                                     |v| metric_rating("Latency", v),
                                 ))
                                 .child(self.render_metric_row(
-                                    "Jitter",
-                                    "Variance or fluctuation in latency",
+                                    t!("Jitter"),
+                                    t!("Variance or fluctuation in latency"),
                                     stats.jitter_ms,
                                     |v| format!("{:.0}ms", v),
                                     |v| metric_rating("Jitter", v),
                                 ))
                                 .child(self.render_metric_row(
-                                    "Packet loss",
-                                    "Amount of data lost during transfer",
+                                    t!("Packet loss"),
+                                    t!("Amount of data lost during transfer"),
                                     stats.packet_loss_pct,
                                     |v| format!("{:.1}%", v),
                                     packet_loss_rating,
                                 ))
                                 .child(self.render_metric_row(
-                                    "Input lag",
-                                    "Delay from audio capture to WebRTC",
+                                    t!("Input lag"),
+                                    t!("Delay from audio capture to WebRTC"),
                                     stats.input_lag.map(|d| d.0.as_millis()),
                                     |v| format!("{}ms", v),
                                     input_lag_rating,
@@ -369,10 +376,12 @@ impl Render for CallStatsModal {
                         .child(
                             v_flex()
                                 .gap_1()
-                                .child(Label::new("Inbound audio").weight(FontWeight::SEMIBOLD))
+                                .child(
+                                    Label::new(t!("Inbound audio")).weight(FontWeight::SEMIBOLD),
+                                )
                                 .when(remote_audio.is_empty(), |this| {
                                     this.child(
-                                        Label::new("Waiting for inbound audio statistics")
+                                        Label::new(t!("Waiting for inbound audio statistics"))
                                             .color(Color::Muted),
                                     )
                                 })
@@ -390,11 +399,11 @@ impl Render for CallStatsModal {
                         .justify_end()
                         .gap_2()
                         .child(
-                            Button::new("copy-call-diagnostics", "Copy Report")
+                            Button::new("copy-call-diagnostics", t!("Copy Report"))
                                 .on_click(cx.listener(|this, _, _, cx| this.copy_report(cx))),
                         )
                         .child(
-                            Button::new("save-call-diagnostics", "Save Report…")
+                            Button::new("save-call-diagnostics", t!("Save Report…"))
                                 .on_click(cx.listener(|this, _, _, cx| this.save_report(cx))),
                         ),
                 )
@@ -406,9 +415,9 @@ impl CallStatsModal {
     fn render_remote_audio(&self, audio: RemoteAudioDiagnostics) -> impl IntoElement {
         let issue_score = audio_issue_score(&audio);
         let (status, color) = if issue_score > 0 {
-            ("Affected", Color::Warning)
+            (t!("Affected").resolve(), Color::Warning)
         } else {
-            ("Healthy", Color::Success)
+            (t!("Healthy").resolve(), Color::Success)
         };
         let packet_loss = audio
             .packet_loss_pct
@@ -441,10 +450,20 @@ impl CallStatsModal {
                 .maximum_queue_depth
                 .saturating_mul(PLAYBACK_FRAME_DURATION_MILLISECONDS) as f64,
         );
-        let repair_event_label = if audio.concealment_events == 1 {
-            "event"
+        // English distinguishes the singular, so the two forms are separate whole
+        // sentences rather than a phrase stitched together from fragments.
+        let repaired_audio = if audio.concealment_events == 1 {
+            t!(
+                "WebRTC repaired {$duration} in {$count} event",
+                duration = repaired_audio_duration,
+                count = audio.concealment_events
+            )
         } else {
-            "events"
+            t!(
+                "WebRTC repaired {$duration} in {$count} events",
+                duration = repaired_audio_duration,
+                count = audio.concealment_events
+            )
         };
 
         v_flex()
@@ -471,24 +490,27 @@ impl CallStatsModal {
                     .child(Label::new(status).color(color)),
             )
             .child(
-                Label::new(format!(
-                    "Loss {packet_loss} · jitter {:.1}ms · jitter buffer {jitter_buffer_delay}",
-                    audio.jitter_ms
+                Label::new(t!(
+                    "Loss {$loss} · jitter {$jitter}ms · jitter buffer {$buffer}",
+                    loss = packet_loss,
+                    jitter = format!("{:.1}", audio.jitter_ms),
+                    buffer = jitter_buffer_delay
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
             )
             .child(
-                Label::new(format!(
-                    "WebRTC repaired {repaired_audio_duration} in {} {repair_event_label}",
-                    audio.concealment_events,
-                ))
-                .size(LabelSize::Small)
-                .color(Color::Muted),
+                Label::new(repaired_audio)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
             )
             .child(
-                Label::new(format!(
-                    "Local playback starved for {starved_audio_duration} · dropped {dropped_audio_duration} · buffered {buffered_audio_duration} (peak {peak_buffered_audio_duration})",
+                Label::new(t!(
+                    "Local playback starved for {$starved} · dropped {$dropped} · buffered {$buffered} (peak {$peak})",
+                    starved = starved_audio_duration,
+                    dropped = dropped_audio_duration,
+                    buffered = buffered_audio_duration,
+                    peak = peak_buffered_audio_duration
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
@@ -497,18 +519,18 @@ impl CallStatsModal {
 
     fn render_metric_row<T: Copy + Clone>(
         &self,
-        title: &str,
-        description: &str,
+        title: LocalizedString,
+        description: LocalizedString,
         value: Option<T>,
         format_value: impl Fn(T) -> String,
-        rate: impl Fn(T) -> (&'static str, Color),
+        rate: impl Fn(T) -> (SharedString, Color),
     ) -> impl IntoElement {
         let (rating_text, rating_color, value_text) = match value {
             Some(v) => {
                 let (rt, rc) = rate(v);
                 (rt, rc, format_value(v))
             }
-            None => ("—", Color::Muted, "—".to_string()),
+            None => ("—".into(), Color::Muted, "—".to_string()),
         };
 
         h_flex()
@@ -518,9 +540,9 @@ impl CallStatsModal {
             .justify_between()
             .child(
                 v_flex()
-                    .child(Label::new(title.to_string()).size(LabelSize::Default))
+                    .child(Label::new(title).size(LabelSize::Default))
                     .child(
-                        Label::new(description.to_string())
+                        Label::new(description)
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     ),

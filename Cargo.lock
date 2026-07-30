@@ -3516,6 +3516,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "gpui",
+ "i18n",
  "livekit_client",
  "menu",
  "notifications",

@@ -14,6 +14,7 @@ use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
     Subscription, Task, VisualContext as _, WeakEntity, Window, actions,
 };
+use i18n::t;
 use project::Project;
 use rpc::proto::ChannelVisibility;
 use std::{
@@ -208,7 +209,7 @@ impl ChannelView {
             editor.set_custom_context_menu(move |_, position, window, cx| {
                 let this = this.clone();
                 Some(ui::ContextMenu::build(window, cx, move |menu, _, _| {
-                    menu.entry("Copy Link to Section", None, move |window, cx| {
+                    menu.entry(t!("Copy Link to Section"), None, move |window, cx| {
                         this.update(cx, |this, cx| {
                             this.copy_link_for_position(position, window, cx)
                         })
@@ -333,7 +334,7 @@ impl ChannelView {
                 workspace.show_toast(
                     Toast::new(
                         NotificationId::unique::<CopyLinkForPositionToast>(),
-                        "Link copied to clipboard",
+                        String::from(t!("Link copied to clipboard")),
                     ),
                     cx,
                 );
@@ -408,13 +409,16 @@ impl ChannelView {
                 self.channel_buffer.read(cx).is_connected(),
             ) {
                 (false, true) => None,
-                (true, true) => Some("read-only"),
-                (_, false) => Some("disconnected"),
+                (true, true) => Some(t!("Read-only").resolve()),
+                (_, false) => Some(t!("Disconnected").resolve()),
             };
 
-            (channel.name.clone(), status.map(Into::into))
+            (channel.name.clone(), status)
         } else {
-            ("<unknown>".into(), Some("disconnected".into()))
+            (
+                t!(key = "unknown-channel", "<unknown>").resolve(),
+                Some(t!("Disconnected").resolve()),
+            )
         }
     }
 }
