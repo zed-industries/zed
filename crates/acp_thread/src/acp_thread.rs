@@ -182,7 +182,12 @@ pub struct SandboxAuthorizationDetails {
     #[serde(default)]
     pub unsandboxed: bool,
     #[serde(default)]
-    pub write_paths: Vec<PathBuf>,
+    pub write_paths: Vec<settings::GrantedWritePath>,
+    /// Windows/WSL only: the command will write to a path on a Windows drive
+    /// (DrvFs), whose sandbox-integrity guarantees are weaker. Drives the
+    /// weaker-guarantee warning banner in the approval prompt.
+    #[serde(default)]
+    pub warn_windows_fs: bool,
     /// The agent-provided justification for requesting these permissions,
     /// shown to the user (attributed to the agent) in the approval prompt.
     #[serde(default)]
