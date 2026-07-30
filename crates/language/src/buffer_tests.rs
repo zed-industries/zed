@@ -2503,6 +2503,46 @@ fn test_autoindent_block_mode_with_newline(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_blank_first_line(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = "fn a() {\n    b();\n}\n";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // Vim's linewise `p` prepends a newline, so yanking a block whose first
+        // line is blank yields text that starts with two newlines.
+        buffer.edit(
+            [(Point::new(1, 8)..Point::new(1, 8), "\n\n    c();")],
+            Some(AutoindentMode::Block {
+                original_indent_columns: vec![Some(4)],
+            }),
+            cx,
+        );
+
+        // The blank line has no indentation to serve as the block's basis, so
+        // the block is inserted verbatim instead of being shifted right.
+        assert_eq!(buffer.text(), "fn a() {\n    b();\n\n    c();\n}\n");
+
+        // A line holding nothing but whitespace is blank as well.
+        buffer.edit(
+            [(Point::new(3, 8)..Point::new(3, 8), "\n\u{a0}\n    d();")],
+            Some(AutoindentMode::Block {
+                original_indent_columns: vec![Some(4)],
+            }),
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n    b();\n\n    c();\n\u{a0}\n    d();\n}\n"
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
     init_settings(cx, |_| {});
 
