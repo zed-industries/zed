@@ -38,6 +38,7 @@ use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, TaskExt,
     UpdateGlobal, WeakEntity, Window, point,
 };
+use i18n::t;
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{ConfigurationError, ConfiguredModel, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
@@ -278,7 +279,10 @@ impl InlineAssistant {
                             gpui::PromptLevel::Warning,
                             &error.to_string(),
                             None,
-                            &["Configure", "Cancel"],
+                            &[
+                                gpui::PromptButton::new(t!("Configure")),
+                                gpui::PromptButton::cancel(t!("Cancel")),
+                            ],
                         )
                         .await
                         .ok();
@@ -1727,7 +1731,10 @@ impl InlineAssist {
                                         .ok();
                                 }
 
-                                let error = format!("Inline assistant error: {}", error);
+                                let error = String::from(t!(
+                                    "Inline assistant error: {$error}",
+                                    error = error.to_string()
+                                ));
                                 workspace.update(cx, |workspace, cx| {
                                     struct InlineAssistantError;
 

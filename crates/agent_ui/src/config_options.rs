@@ -10,6 +10,7 @@ use fuzzy::StringMatchCandidate;
 use gpui::{
     App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
+use i18n::{LocalizedString, t};
 use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
@@ -381,15 +382,15 @@ impl ConfigOptionSelector {
 
     fn current_value_name(&self) -> String {
         let Some(option) = self.current_option() else {
-            return "Unknown".to_string();
+            return String::from(t!("Unknown"));
         };
 
         match &option.kind {
             acp::SessionConfigKind::Select(select) => {
                 find_option_name(&select.options, &select.current_value)
-                    .unwrap_or_else(|| "Unknown".to_string())
+                    .unwrap_or_else(|| String::from(t!("Unknown")))
             }
-            _ => "Unknown".to_string(),
+            _ => String::from(t!("Unknown")),
         }
     }
 
@@ -406,7 +407,7 @@ impl ConfigOptionSelector {
 
     fn render_trigger_button(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Button {
         let Some(option) = self.current_option() else {
-            return Button::new("config-option-trigger", "Unknown")
+            return Button::new("config-option-trigger", t!("Unknown"))
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
                 .disabled(true);
@@ -477,49 +478,50 @@ impl Render for ConfigOptionSelector {
                         );
                     }
 
-                    let action_tooltip_container = |label: &str, keybinding: KeyBinding| {
-                        h_flex()
-                            .pt_1()
-                            .gap_2()
-                            .justify_between()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(Label::new(label))
-                            .child(keybinding)
-                    };
+                    let action_tooltip_container =
+                        |label: LocalizedString, keybinding: KeyBinding| {
+                            h_flex()
+                                .pt_1()
+                                .gap_2()
+                                .justify_between()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(Label::new(label))
+                                .child(keybinding)
+                        };
 
                     if show_category_keybindings && let Some(category) = &option_category {
                         match category {
                             acp::SessionConfigOptionCategory::Mode => {
                                 content = content
                                     .child(action_tooltip_container(
-                                        "Change Mode",
+                                        t!("Change Mode"),
                                         KeyBinding::for_action(&ToggleProfileSelector, cx),
                                     ))
                                     .child(action_tooltip_container(
-                                        "Cycle Through Modes",
+                                        t!("Cycle Through Modes"),
                                         KeyBinding::for_action(&CycleModeSelector, cx),
                                     ));
                             }
                             acp::SessionConfigOptionCategory::Model => {
                                 content = content
                                     .child(action_tooltip_container(
-                                        "Change Model",
+                                        t!("Change Model"),
                                         KeyBinding::for_action(&ToggleModelSelector, cx),
                                     ))
                                     .child(action_tooltip_container(
-                                        "Cycle Favorite Models",
+                                        t!("Cycle Favorite Models"),
                                         KeyBinding::for_action(&CycleFavoriteModels, cx),
                                     ));
                             }
                             acp::SessionConfigOptionCategory::ThoughtLevel => {
                                 content = content
                                     .child(action_tooltip_container(
-                                        "Change Thinking Effort",
+                                        t!("Change Thinking Effort"),
                                         KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
                                     ))
                                     .child(action_tooltip_container(
-                                        "Cycle Thinking Effort",
+                                        t!("Cycle Thinking Effort"),
                                         KeyBinding::for_action(&CycleThinkingEffort, cx),
                                     ));
                             }
@@ -726,7 +728,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select an option…".into()
+        String::from(t!("Select an option…")).into()
     }
 
     fn update_matches(
@@ -862,9 +864,9 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                 }))
                                 .end_slot_on_hover(div().pr_1p5().child({
                                     let (icon, color, tooltip) = if is_favorite {
-                                        (IconName::StarFilled, Color::Accent, "Unfavorite")
+                                        (IconName::StarFilled, Color::Accent, t!("Unfavorite"))
                                     } else {
-                                        (IconName::Star, Color::Default, "Favorite")
+                                        (IconName::Star, Color::Default, t!("Favorite"))
                                     };
 
                                     let config_id = self.config_id.clone();
@@ -999,7 +1001,9 @@ fn options_to_picker_entries(
     }
 
     if !favorite_options.is_empty() {
-        entries.push(ConfigOptionPickerEntry::Separator("Favorites".into()));
+        entries.push(ConfigOptionPickerEntry::Separator(
+            t!("Favorites").resolve(),
+        ));
         for option in favorite_options {
             entries.push(ConfigOptionPickerEntry::Option(option));
         }
@@ -1009,7 +1013,9 @@ fn options_to_picker_entries(
         if let Some(option) = options.first()
             && option.group.is_none()
         {
-            entries.push(ConfigOptionPickerEntry::Separator("All Options".into()));
+            entries.push(ConfigOptionPickerEntry::Separator(
+                t!("All Options").resolve(),
+            ));
         }
     }
 

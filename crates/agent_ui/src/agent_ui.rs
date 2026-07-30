@@ -51,6 +51,7 @@ use gpui::{
     Action, App, Context, Entity, ImageSource, ReadGlobal as _, Resource, SharedString, SharedUri,
     TaskExt, Window, actions,
 };
+use i18n::t;
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -734,7 +735,7 @@ fn rerun_rules_to_skills_migration(
             cx.update(|_window, cx| {
                 show_rules_to_skills_migration_toast(
                     &workspace,
-                    "Rules-to-skills migration rerun. Please double-check AGENTS.md and Skills for missing or duplicated prompts.",
+                    String::from(t!("Rules-to-skills migration rerun. Please double-check AGENTS.md and Skills for missing or duplicated prompts.")),
                     cx,
                 );
             })?;
@@ -745,7 +746,7 @@ fn rerun_rules_to_skills_migration(
 
 fn show_rules_to_skills_migration_toast(
     workspace: &gpui::WeakEntity<Workspace>,
-    message: &'static str,
+    message: String,
     cx: &mut App,
 ) {
     if let Some(workspace) = workspace.upgrade() {

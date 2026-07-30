@@ -13,6 +13,7 @@ use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
 use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, WeakEntity};
+use i18n::t;
 use language::Buffer;
 use language_model::{
     CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
@@ -443,7 +444,10 @@ impl TerminalInlineAssist {
                                 && assist.prompt_editor.is_none()
                                 && let Some(workspace) = assist.workspace.upgrade()
                             {
-                                let error = format!("Terminal inline assistant error: {}", error);
+                                let error = String::from(t!(
+                                    "Terminal inline assistant error: {$error}",
+                                    error = error.to_string()
+                                ));
                                 workspace.update(cx, |workspace, cx| {
                                     struct InlineAssistantError;
 

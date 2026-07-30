@@ -14,6 +14,7 @@ use gpui::{
     Focusable, MouseDownEvent, Render, SharedString, Task, TaskExt, WeakEntity, Window,
     pulsating_between,
 };
+use i18n::t;
 use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, AgentServerStore};
@@ -118,10 +119,16 @@ impl AgentImportStatus {
 
     fn tooltip_text(&self) -> Option<SharedString> {
         match self {
-            Self::Loading => Some("Fetching Sessions…".into()),
+            Self::Loading => Some(t!("Fetching Sessions…").resolve()),
             Self::Ready { .. } => None,
-            Self::Unsupported => Some("Importing threads from this agent is not possible as it doesn't support ACP's session/list capability.".into()),
-            Self::Error(error) => Some(format!("Failed to fetch sessions: {error}").into()),
+            Self::Unsupported => Some(t!("Importing threads from this agent is not possible as it doesn't support ACP's session/list capability.").resolve()),
+            Self::Error(error) => Some(
+                t!(
+                    "Failed to fetch sessions: {$error}",
+                    error = error.clone()
+                )
+                .resolve(),
+            ),
         }
     }
 }
@@ -215,14 +222,14 @@ impl ThreadImportModal {
         }
 
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-            self.mark_all_agents_failed("Could not find workspace to import from.");
+            self.mark_all_agents_failed(t!("Could not find workspace to import from."));
             return;
         };
 
         let stores = resolve_agent_connection_stores(&multi_workspace, cx);
         if stores.is_empty() {
             log::error!("Did not find any workspaces to import from");
-            self.mark_all_agents_failed("Did not find any workspaces to import from.");
+            self.mark_all_agents_failed(t!("Did not find any workspaces to import from."));
             return;
         }
 
@@ -389,7 +396,7 @@ impl ThreadImportModal {
 
     fn show_imported_threads_toast(&self, imported_count: usize, cx: &mut App) {
         let status_toast = if imported_count == 0 {
-            StatusToast::new("No threads found to import.", cx, |this, _cx| {
+            StatusToast::new(t!("No threads found to import."), cx, |this, _cx| {
                 this.icon(
                     Icon::new(IconName::Info)
                         .size(IconSize::Small)
@@ -399,9 +406,9 @@ impl ThreadImportModal {
             })
         } else {
             let message = if imported_count == 1 {
-                "Imported 1 thread.".to_string()
+                t!("Imported 1 thread.")
             } else {
-                format!("Imported {imported_count} threads.")
+                t!("Imported {$count} threads.", count = imported_count)
             };
             StatusToast::new(message, cx, |this, _cx| {
                 this.icon(
@@ -501,9 +508,9 @@ impl Render for ThreadImportModal {
                             importable_count: count,
                         } => {
                             let label: SharedString = if count == 0 {
-                                "No threads".into()
+                                t!("No threads").resolve()
                             } else {
-                                format!("{} threads", count).into()
+                                t!("{$count} threads", count = count).resolve()
                             };
                             this.child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
                         }
@@ -570,10 +577,10 @@ impl Render for ThreadImportModal {
                 Modal::new("import-threads", None)
                     .header(
                         ModalHeader::new()
-                            .headline("Import External Agent Threads")
+                            .headline(t!("Import External Agent Threads"))
                             .description(
-                                "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
-                                Choose which agents to include, and their threads will appear in your thread history."
+                                t!("Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
+                                Choose which agents to include, and their threads will appear in your thread history.")
                             )
                             .show_dismiss_button(true),
 
@@ -588,7 +595,7 @@ impl Render for ThreadImportModal {
                                 .when(has_agents, |this| this.children(agent_rows))
                                 .when(!has_agents, |this| {
                                     this.child(
-                                        Label::new("No external agents available.")
+                                        Label::new(t!("No external agents available."))
                                             .color(Color::Muted)
                                             .size(LabelSize::Small),
                                     )
@@ -607,7 +614,7 @@ impl Render for ThreadImportModal {
                                                 .color(Color::Muted)
                                                 .with_rotate_animation(3),
                                         )
-                                        .child(Label::new("Fetching Agent Threads…")
+                                        .child(Label::new(t!("Fetching Agent Threads…"))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted))
 
@@ -622,7 +629,7 @@ impl Render for ThreadImportModal {
                                 )
                             })
                             .end_slot(
-                                Button::new("import-threads", "Import Threads")
+                                Button::new("import-threads", t!("Import Threads"))
                                     .loading(self.is_importing)
                                     .disabled(disabled_import_thread)
                                     .key_binding(
@@ -773,7 +780,7 @@ fn fetch_sessions_for_agent(
                     .errors
                     .first()
                     .cloned()
-                    .unwrap_or_else(|| "Failed to list sessions.".into()),
+                    .unwrap_or_else(|| t!("Failed to list sessions.").resolve()),
             )
         } else if stats.unsupported_attempt_count > 0 {
             AgentImportStatus::Unsupported
@@ -961,15 +968,18 @@ fn show_cross_channel_import_toast(
     cx: &mut App,
 ) {
     let status_toast = if imported_count == 0 {
-        StatusToast::new("No new threads found to import.", cx, |this, _cx| {
+        StatusToast::new(t!("No new threads found to import."), cx, |this, _cx| {
             this.icon(Icon::new(IconName::Info).color(Color::Muted))
                 .dismiss_button(true)
         })
     } else {
         let message = if imported_count == 1 {
-            "Imported 1 thread from other channels.".to_string()
+            t!("Imported 1 thread from other channels.")
         } else {
-            format!("Imported {imported_count} threads from other channels.")
+            t!(
+                "Imported {$count} threads from other channels.",
+                count = imported_count
+            )
         };
         StatusToast::new(message, cx, |this, _cx| {
             this.icon(Icon::new(IconName::Check).color(Color::Success))

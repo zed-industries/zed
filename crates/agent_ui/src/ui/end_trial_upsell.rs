@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ai_onboarding::{AgentPanelOnboardingCard, PlanDefinitions};
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
+use i18n::t;
 use ui::{Divider, Tooltip, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
@@ -33,7 +34,7 @@ impl RenderOnce for EndTrialUpsell {
             )
             .child(PlanDefinitions.pro_plan())
             .child(
-                Button::new("cta-button", "Upgrade to Zed Pro")
+                Button::new("cta-button", t!("Upgrade to Zed Pro"))
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click(move |_, _window, cx| {
@@ -55,7 +56,7 @@ impl RenderOnce for EndTrialUpsell {
                             .buffer_font(cx),
                     )
                     .child(
-                        Label::new("(Current Plan)")
+                        Label::new(t!("(Current Plan)"))
                             .size(LabelSize::Small)
                             .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)))
                             .buffer_font(cx),
@@ -65,9 +66,9 @@ impl RenderOnce for EndTrialUpsell {
             .child(PlanDefinitions.free_plan());
 
         AgentPanelOnboardingCard::new()
-            .child(Headline::new("Your Zed Pro Trial has expired"))
+            .child(Headline::new(t!("Your Zed Pro Trial has expired")))
             .child(
-                Label::new("You've been automatically reset to the Free plan.")
+                Label::new(t!("You've been automatically reset to the Free plan."))
                     .color(Color::Muted)
                     .mb_2(),
             )
@@ -77,7 +78,7 @@ impl RenderOnce for EndTrialUpsell {
                 h_flex().absolute().top_4().right_4().child(
                     IconButton::new("dismiss_onboarding", IconName::Close)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Dismiss"))
+                        .tooltip(Tooltip::text(t!("Dismiss")))
                         .on_click({
                             let callback = self.dismiss_upsell.clone();
                             move |_, window, cx| {

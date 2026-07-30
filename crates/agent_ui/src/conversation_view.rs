@@ -33,6 +33,7 @@ use gpui::{
     TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
     linear_gradient, list, pulsating_between,
 };
+use i18n::t;
 use language::{Buffer, Language, Rope};
 use language_model::LanguageModelCompletionError;
 use markdown::{
@@ -1038,7 +1039,7 @@ impl ConversationView {
         {
             return ServerState::LoadError {
                 error: LoadError::Other(
-                    "External agents are not yet supported in shared projects.".into(),
+                    t!("External agents are not yet supported in shared projects.").resolve(),
                 ),
             };
         }
@@ -1128,7 +1129,8 @@ impl ConversationView {
                         )
                     } else {
                         Task::ready(Err(anyhow!(LoadError::Other(
-                            "Loading or resuming sessions is not supported by this agent.".into()
+                            t!("Loading or resuming sessions is not supported by this agent.")
+                                .resolve()
                         ))))
                     }
                 })
@@ -1533,17 +1535,20 @@ impl ConversationView {
             ServerState::Loading { .. } => self
                 .loading_status
                 .clone()
-                .unwrap_or_else(|| "Loading…".into()),
-            ServerState::LoadError { error, .. } => match error {
-                LoadError::Unsupported { .. } => {
-                    format!("Upgrade {}", self.agent.agent_id()).into()
+                .unwrap_or_else(|| t!("Loading…").resolve()),
+            ServerState::LoadError { error, .. } => {
+                let agent = self.agent.agent_id().0;
+                match error {
+                    LoadError::Unsupported { .. } => {
+                        t!("Upgrade {$agent}", agent = agent).resolve()
+                    }
+                    LoadError::FailedToInstall(_) => {
+                        t!("Failed to Install {$agent}", agent = agent).resolve()
+                    }
+                    LoadError::Exited { .. } => t!("{$agent} Exited", agent = agent).resolve(),
+                    LoadError::Other(_) => t!("Error Loading {$agent}", agent = agent).resolve(),
                 }
-                LoadError::FailedToInstall(_) => {
-                    format!("Failed to Install {}", self.agent.agent_id()).into()
-                }
-                LoadError::Exited { .. } => format!("{} Exited", self.agent.agent_id()).into(),
-                LoadError::Other(_) => format!("Error Loading {}", self.agent.agent_id()).into(),
-            },
+            }
         }
     }
 
@@ -1641,11 +1646,16 @@ impl ConversationView {
                 self.load_subagent_session(subagent_session_id.clone(), session_id, window, cx)
             }
             AcpThreadEvent::ToolAuthorizationRequested(_) => {
-                self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
+                self.notify_with_sound(
+                    t!("Waiting for tool confirmation"),
+                    IconName::Info,
+                    window,
+                    cx,
+                );
             }
             AcpThreadEvent::ToolAuthorizationReceived(_) => {}
             AcpThreadEvent::ElicitationRequested(_) => {
-                self.notify_with_sound("Waiting for input", IconName::Info, window, cx);
+                self.notify_with_sound(t!("Waiting for input"), IconName::Info, window, cx);
             }
             AcpThreadEvent::ElicitationResponded(_) => {}
             AcpThreadEvent::Retry(retry) => {
@@ -1707,9 +1717,9 @@ impl ConversationView {
                     let used_tools = thread.read(cx).used_tools_since_last_user_message();
                     self.notify_with_sound(
                         if used_tools {
-                            "Finished running tools"
+                            t!("Finished running tools")
                         } else {
-                            "New message"
+                            t!("New message")
                         },
                         IconName::ZedAssistant,
                         window,
@@ -1727,9 +1737,11 @@ impl ConversationView {
                 }
                 if !is_subagent {
                     let model_or_agent_name = self.current_model_name(cx);
-                    let notification_message =
-                        format!("{} refused to respond to this request", model_or_agent_name);
-                    self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
+                    let notification_message = t!(
+                        "{$name} refused to respond to this request",
+                        name = model_or_agent_name
+                    );
+                    self.notify_with_sound(notification_message, IconName::Warning, window, cx);
                 }
             }
             AcpThreadEvent::Error => {
@@ -1748,7 +1760,7 @@ impl ConversationView {
                 }
                 if !is_subagent {
                     self.notify_with_sound(
-                        "Agent stopped due to an error",
+                        t!("Agent stopped due to an error"),
                         IconName::Warning,
                         window,
                         cx,
@@ -2293,7 +2305,10 @@ impl ConversationView {
         if pending_auth_method.is_some() {
             return Callout::new()
                 .icon(IconName::Info)
-                .title(format!("Authenticating to {}…", agent_display_name))
+                .title(t!(
+                    "Authenticating to {$agent}…",
+                    agent = agent_display_name
+                ))
                 .actions_slot(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
@@ -2306,7 +2321,7 @@ impl ConversationView {
 
         Callout::new()
             .icon(IconName::Info)
-            .title(format!("Authenticate to {}", agent_display_name))
+            .title(t!("Authenticate to {$agent}", agent = agent_display_name))
             .when(auth_methods.len() == 1, |this| {
                 this.actions_slot(auth_buttons())
             })
@@ -2316,9 +2331,11 @@ impl ConversationView {
                     .map(|this| {
                         if show_fallback_description {
                             this.child(
-                                Label::new("Choose one of the following authentication options:")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                Label::new(t!(
+                                    "Choose one of the following authentication options:"
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             )
                         } else {
                             this.children(description.map(|desc| {
@@ -2712,12 +2729,15 @@ impl ConversationView {
                 return self.render_unsupported(path, current_version, minimum_version, window, cx);
             }
             LoadError::FailedToInstall(msg) => (
-                "Failed to Install",
+                t!("Failed to Install"),
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
             LoadError::Exited { status, stderr } => {
-                let mut message = format!("Server exited with status {status}");
+                let mut message = String::from(t!(
+                    "Server exited with status {$status}",
+                    status = status.to_string()
+                ));
                 if let Some(stderr) = stderr {
                     message.push_str("\n");
                     message.push_str(stderr);
@@ -2725,10 +2745,10 @@ impl ConversationView {
                 let action_slot = stderr
                     .is_some()
                     .then(|| self.create_copy_button(message.clone()).into_any_element());
-                ("Failed to Launch", message.into(), action_slot)
+                (t!("Failed to Launch"), message.into(), action_slot)
             }
             LoadError::Other(msg) => (
-                "Failed to Launch",
+                t!("Failed to Launch"),
                 msg.into(),
                 Some(self.create_copy_button(msg.to_string()).into_any_element()),
             ),
@@ -2752,17 +2772,25 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (heading_label, description_label) = (
-            format!("Upgrade {} to work with Zed", self.agent.agent_id()),
+            t!(
+                "Upgrade {$agent} to work with Zed",
+                agent = self.agent.agent_id().0
+            )
+            .resolve(),
             if version.is_empty() {
-                format!(
-                    "Currently using {}, which does not report a valid --version",
-                    path,
+                t!(
+                    "Currently using {$path}, which does not report a valid --version",
+                    path = path.clone()
                 )
+                .resolve()
             } else {
-                format!(
-                    "Currently using {}, which is only version {} (need at least {minimum_version})",
-                    path, version
+                t!(
+                    "Currently using {$path}, which is only version {$version} (need at least {$minimum})",
+                    path = path.clone(),
+                    version = version.clone(),
+                    minimum = minimum_version.clone()
                 )
+                .resolve()
             },
         );
 
@@ -3203,7 +3231,7 @@ impl ConversationView {
                 .and_then(|active| active.read(cx).model_selector.clone())
                 .and_then(|selector| selector.read(cx).active_model(cx))
                 .map(|model| model.name.clone())
-                .unwrap_or_else(|| SharedString::from("The model"))
+                .unwrap_or_else(|| t!("The model").resolve())
         } else {
             // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
             self.agent.agent_id().0
@@ -3213,7 +3241,7 @@ impl ConversationView {
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
         let message = message.into();
 
-        CopyButton::new("copy-error-message", message).tooltip_label("Copy Error Message")
+        CopyButton::new("copy-error-message", message).tooltip_label(t!("Copy Error Message"))
     }
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3310,17 +3338,20 @@ fn native_available_skills(
 
 fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     if agent_name == agent::ZED_AGENT_ID.as_ref() {
-        format!(
-            "Message the {}, @ to include context, / for commands",
-            agent_name
-        )
+        String::from(t!(
+            "Message the {$agent}, @ to include context, / for commands",
+            agent = agent_name.to_string()
+        ))
     } else if has_commands {
-        format!(
-            "Message {} — @ to include context, / for commands",
-            agent_name
-        )
+        String::from(t!(
+            "Message {$agent} — @ to include context, / for commands",
+            agent = agent_name.to_string()
+        ))
     } else {
-        format!("Message {} — @ to include context", agent_name)
+        String::from(t!(
+            "Message {$agent} — @ to include context",
+            agent = agent_name.to_string()
+        ))
     }
 }
 
@@ -3379,7 +3410,7 @@ impl Render for ConversationView {
                 let label_text = self
                     .loading_status
                     .clone()
-                    .unwrap_or_else(|| "Loading…".into());
+                    .unwrap_or_else(|| t!("Loading…").resolve());
                 v_flex()
                     .flex_1()
                     .size_full()

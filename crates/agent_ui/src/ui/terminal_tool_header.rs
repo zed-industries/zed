@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use gpui::{AnyElement, ClickEvent, CursorStyle, Window};
+use i18n::t;
 use ui::{CommonAnimationExt, Disclosure, Divider, DividerColor, Tooltip, prelude::*};
 use util::time::duration_alt_display;
 
@@ -185,10 +186,10 @@ impl RenderOnce for TerminalToolHeader {
                             .icon_color(Color::Error)
                             .tooltip(move |_window, cx| {
                                 Tooltip::with_meta(
-                                    "Stop This Command",
+                                    t!("Stop This Command"),
                                     None,
-                                    "Also possible by placing your cursor inside the terminal \
-                                     and using regular terminal bindings.",
+                                    t!("Also possible by placing your cursor inside the terminal \
+                                         and using regular terminal bindings."),
                                     cx,
                                 )
                             })
@@ -213,7 +214,7 @@ impl RenderOnce for TerminalToolHeader {
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
                         .when_some(exit_code, |this, code| {
-                            this.tooltip(Tooltip::text(format!("Exited with code {code}")))
+                            this.tooltip(Tooltip::text(t!("Exited with code {$code}", code = code)))
                         }),
                 )
             })
@@ -230,7 +231,10 @@ impl RenderOnce for TerminalToolHeader {
                             Tooltip::with_meta(
                                 title.clone(),
                                 None,
-                                format!("{detail} Click to learn more about sandboxing."),
+                                t!(
+                                    "{$detail} Click to learn more about sandboxing.",
+                                    detail = detail.clone()
+                                ),
                                 cx,
                             )
                         })

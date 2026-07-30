@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use gpui::{Entity, FocusHandle};
+use i18n::t;
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
@@ -50,7 +51,7 @@ impl Render for ModelSelectorPopover {
         let model_name = model
             .as_ref()
             .map(|model| model.name.clone())
-            .unwrap_or_else(|| SharedString::from("Select a Model"));
+            .unwrap_or_else(|| t!(key = "select-a-model-title", "Select a Model").resolve());
 
         let model_icon = model.as_ref().and_then(|model| model.icon.clone());
 

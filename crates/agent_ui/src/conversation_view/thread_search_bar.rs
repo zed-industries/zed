@@ -15,6 +15,7 @@ use gpui::{
     Action, Entity, EntityId, EventEmitter, FocusHandle, Focusable, KeyContext, Subscription, Task,
     TextStyle, WeakEntity, actions, prelude::*,
 };
+use i18n::{LocalizedString, t};
 use markdown::Markdown;
 use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot};
 use project::search::SearchQuery;
@@ -169,7 +170,7 @@ impl ThreadSearchBar {
     ) -> Self {
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search this thread…", window, cx);
+            editor.set_placeholder_text(&t!("Search this thread…").resolve(), window, cx);
             editor
         });
         let editor_subscription = cx.subscribe_in(
@@ -778,7 +779,7 @@ impl Render for ThreadSearchBar {
                         "thread-search-prev",
                         IconName::ChevronLeft,
                         !has_matches,
-                        "Previous Match",
+                        t!("Previous Match"),
                         &SelectPreviousThreadMatch,
                         focus_handle.clone(),
                     ))
@@ -786,7 +787,7 @@ impl Render for ThreadSearchBar {
                         "thread-search-next",
                         IconName::ChevronRight,
                         !has_matches,
-                        "Next Match",
+                        t!("Next Match"),
                         &SelectNextThreadMatch,
                         focus_handle.clone(),
                     ))
@@ -801,7 +802,7 @@ impl Render for ThreadSearchBar {
                         "thread-search-dismiss",
                         IconName::Close,
                         false,
-                        "Close Search",
+                        t!("Close Search"),
                         &DismissThreadSearch,
                         focus_handle,
                     )),
@@ -859,7 +860,7 @@ fn nav_button(
     id: &'static str,
     icon: IconName,
     disabled: bool,
-    tooltip: &'static str,
+    tooltip: LocalizedString,
     action: &'static dyn Action,
     focus_handle: FocusHandle,
 ) -> IconButton {
@@ -876,7 +877,9 @@ fn nav_button(
                 window.dispatch_action(action_for_dispatch.boxed_clone(), cx);
             }
         })
-        .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
+        .tooltip(move |_window, cx| {
+            Tooltip::for_action_in(tooltip.clone(), action, &focus_handle, cx)
+        })
 }
 
 fn collect_markdowns(

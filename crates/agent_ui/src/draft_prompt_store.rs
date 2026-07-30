@@ -13,6 +13,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Entity, Task};
+use i18n::t;
 use itertools::Itertools;
 use project::AgentId;
 use ui::SharedString;
@@ -180,7 +181,7 @@ pub fn empty_draft_placeholder_label(
             .unwrap_or_else(|| SharedString::from(agent_id.to_string()))
     };
 
-    format!("New {} Thread", agent_name).into()
+    t!("New {$agent} Thread", agent = agent_name).resolve()
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ use gpui::{
     ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, list,
     prelude::*, px,
 };
+use i18n::{LocalizedString, t};
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{
@@ -90,13 +91,13 @@ impl TimeBucket {
         TimeBucket::Older
     }
 
-    fn label(&self) -> &'static str {
+    fn label(&self) -> LocalizedString {
         match self {
-            TimeBucket::Today => "Today",
-            TimeBucket::Yesterday => "Yesterday",
-            TimeBucket::ThisWeek => "This Week",
-            TimeBucket::PastWeek => "Past Week",
-            TimeBucket::Older => "Older",
+            TimeBucket::Today => t!("Today"),
+            TimeBucket::Yesterday => t!("Yesterday"),
+            TimeBucket::ThisWeek => t!("This Week"),
+            TimeBucket::PastWeek => t!("Past Week"),
+            TimeBucket::Older => t!("Older"),
         }
     }
 }
@@ -170,7 +171,7 @@ impl ThreadsArchiveView {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search all threads…", window, cx);
+            editor.set_placeholder_text(&t!("Search all threads…").resolve(), window, cx);
             editor
         });
 
@@ -693,7 +694,7 @@ impl ThreadsArchiveView {
                             IconButton::new("cancel-restore", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
-                                .tooltip(Tooltip::text("Cancel Restore"))
+                                .tooltip(Tooltip::text(t!("Cancel Restore")))
                                 .on_click({
                                     let thread_id = thread.thread_id;
                                     cx.listener(move |this, _, _, cx| {
@@ -714,7 +715,7 @@ impl ThreadsArchiveView {
                             .tooltip({
                                 move |_window, cx| {
                                     Tooltip::for_action_in(
-                                        "Delete Thread",
+                                        t!("Delete Thread"),
                                         &RemoveSelectedThread,
                                         &focus_handle,
                                         cx,
@@ -752,7 +753,7 @@ impl ThreadsArchiveView {
                             .tooltip({
                                 move |_window, cx| {
                                     Tooltip::for_action_in(
-                                        "Archive Thread",
+                                        t!("Archive Thread"),
                                         &ArchiveSelectedThread,
                                         &focus_handle,
                                         cx,
@@ -910,7 +911,7 @@ impl ThreadsArchiveView {
                 this.child(
                     IconButton::new("clear-filter", IconName::Close)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Clear Search"))
+                        .tooltip(Tooltip::text(t!("Clear Search")))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.reset_filter_editor_text(window, cx);
                             this.update_items(cx);
@@ -951,9 +952,9 @@ impl ThreadsArchiveView {
         };
 
         let count_label = if entry_count == 1 {
-            "1 thread".to_string()
+            t!("1 thread")
         } else {
-            format!("{} threads", entry_count)
+            t!("{$count} threads", count = entry_count)
         };
 
         h_flex()
@@ -975,7 +976,7 @@ impl ThreadsArchiveView {
                     .child(
                         IconButton::new("new-thread", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Start New Agent Thread"))
+                            .tooltip(Tooltip::text(t!("Start New Agent Thread")))
                             .on_click(cx.listener(|_this, _, _, cx| {
                                 cx.emit(ThreadsArchiveViewEvent::NewThread);
                             })),
@@ -983,7 +984,7 @@ impl ThreadsArchiveView {
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Import Threads"))
+                            .tooltip(Tooltip::text(t!("Import Threads")))
                             .on_click(cx.listener(|_this, _, _, cx| {
                                 cx.emit(ThreadsArchiveViewEvent::Import);
                             })),
@@ -995,9 +996,9 @@ impl ThreadsArchiveView {
                             .toggle_state(self.thread_filter == ThreadFilter::ArchivedOnly)
                             .tooltip(Tooltip::text(
                                 if self.thread_filter == ThreadFilter::ArchivedOnly {
-                                    "Show All Threads"
+                                    t!("Show All Threads")
                                 } else {
-                                    "Show Only Archived Threads"
+                                    t!("Show Only Archived Threads")
                                 },
                             ))
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -1050,9 +1051,9 @@ impl Render for ThreadsArchiveView {
 
         let content = if is_empty {
             let message = if has_query {
-                "No threads match your search."
+                t!("No threads match your search.")
             } else {
-                "No threads yet."
+                t!(key = "no-threads-yet-empty-state", "No threads yet.")
             };
 
             v_flex()
@@ -1609,7 +1610,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open_local_folder", "Choose from Local Folders")
+                    Button::new("open_local_folder", t!("Choose from Local Folders"))
                         .key_binding(KeyBinding::for_action_in(
                             &workspace::Open::default(),
                             &focus_handle,
@@ -1620,7 +1621,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                         })),
                 )
                 .child(
-                    Button::new("select_project", "Select")
+                    Button::new("select_project", t!("Select"))
                         .disabled(!has_selection)
                         .key_binding(KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx))
                         .on_click(cx.listener(move |picker, _, window, cx| {

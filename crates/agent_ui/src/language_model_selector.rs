@@ -7,6 +7,7 @@ use gpui::{
     Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, ForegroundExecutor,
     Subscription, Task,
 };
+use i18n::t;
 use language_model::{
     ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelRegistry,
@@ -276,14 +277,18 @@ impl GroupedModels {
         let mut entries = Vec::new();
 
         if !self.favorites.is_empty() {
-            entries.push(LanguageModelPickerEntry::Separator("Favorite".into()));
+            entries.push(LanguageModelPickerEntry::Separator(
+                t!("Favorite").resolve(),
+            ));
             for info in &self.favorites {
                 entries.push(LanguageModelPickerEntry::Model(info.clone()));
             }
         }
 
         if !self.recommended.is_empty() {
-            entries.push(LanguageModelPickerEntry::Separator("Recommended".into()));
+            entries.push(LanguageModelPickerEntry::Separator(
+                t!("Recommended").resolve(),
+            ));
             for info in &self.recommended {
                 entries.push(LanguageModelPickerEntry::Model(info.clone()));
             }
@@ -417,7 +422,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a model…".into()
+        String::from(t!("Select a model…")).into()
     }
 
     fn update_matches(

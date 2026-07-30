@@ -13,6 +13,7 @@ use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
+use i18n::t;
 use language::language_settings::SoftWrap;
 use project::{AgentId, Project, project_settings::DiagnosticSeverity};
 use rope::Point;
@@ -257,7 +258,7 @@ impl EntryViewState {
                             self.thread_store.clone(),
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
-                            "Edit message － @ to include context",
+                            &t!("Edit message － @ to include context").resolve(),
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,

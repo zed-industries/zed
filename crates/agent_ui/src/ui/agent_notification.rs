@@ -3,6 +3,7 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
     linear_color_stop, linear_gradient, point,
 };
+use i18n::t;
 use release_channel::ReleaseChannel;
 use std::rc::Rc;
 use ui::{Render, prelude::*};
@@ -180,7 +181,7 @@ impl Render for AgentNotification {
                     .gap_1()
                     .items_center()
                     .child(
-                        Button::new("open", "View")
+                        Button::new("open", t!(key = "view-agent-notification", "View"))
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click({
@@ -189,11 +190,15 @@ impl Render for AgentNotification {
                                 })
                             }),
                     )
-                    .child(Button::new("dismiss", "Dismiss").full_width().on_click({
-                        cx.listener(move |this, _event, _, cx| {
-                            this.dismiss(cx);
-                        })
-                    })),
+                    .child(
+                        Button::new("dismiss", t!("Dismiss"))
+                            .full_width()
+                            .on_click({
+                                cx.listener(move |this, _event, _, cx| {
+                                    this.dismiss(cx);
+                                })
+                            }),
+                    ),
             )
     }
 }

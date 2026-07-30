@@ -7,6 +7,7 @@ use gpui::{
     Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
     pulsating_between,
 };
+use i18n::t;
 use language::Buffer;
 use rope::Point;
 use settings::Settings;
@@ -228,9 +229,9 @@ pub(crate) fn open_migrated_rule(
     workspace.show_toast(
         workspace::Toast::new(
             workspace::notifications::NotificationId::unique::<RulesMigratedToSkillsToast>(),
-            "Rules have been migrated to Skills.",
+            String::from(t!("Rules have been migrated to Skills.")),
         )
-        .on_click("View docs", |_, cx| {
+        .on_click(String::from(t!("View docs")), |_, cx| {
             cx.open_url("https://zed.dev/docs/ai/skills");
         })
         .autohide(),

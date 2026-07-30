@@ -1,4 +1,5 @@
 use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
+use i18n::t;
 use language_model::DisabledReason;
 use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
@@ -164,14 +165,16 @@ impl RenderOnce for ModelSelectorListItem {
                             .when(is_disabled, |this| this.color(Color::Disabled))
                             .truncate(),
                     )
-                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest")))
+                    .when(self.is_latest, |parent| {
+                        parent.child(Chip::new(t!("Latest")))
+                    })
                     .when_some(self.cost_info, |this, cost_info| {
                         let tooltip_text = if cost_info.ends_with('×') {
-                            format!("Cost Multiplier: {}", cost_info)
+                            t!("Cost Multiplier: {$cost}", cost = cost_info.clone())
                         } else if cost_info.contains('$') {
-                            format!("Cost per Million Tokens: {}", cost_info)
+                            t!("Cost per Million Tokens: {$cost}", cost = cost_info.clone())
                         } else {
-                            format!("Cost: {}", cost_info)
+                            t!("Cost: {$cost}", cost = cost_info.clone())
                         };
 
                         this.child(Chip::new(cost_info).tooltip(Tooltip::text(tooltip_text)))
@@ -192,9 +195,9 @@ impl RenderOnce for ModelSelectorListItem {
                 this.end_slot_on_hover(div().pr_1p5().when_some(self.on_toggle_favorite, {
                     |this, handle_click| {
                         let (icon, color, tooltip) = if is_favorite {
-                            (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                            (IconName::StarFilled, Color::Accent, t!("Unfavorite Model"))
                         } else {
-                            (IconName::Star, Color::Default, "Favorite Model")
+                            (IconName::Star, Color::Default, t!("Favorite Model"))
                         };
                         this.child(
                             IconButton::new(("toggle-favorite", self.index), icon)
@@ -238,7 +241,7 @@ impl RenderOnce for ModelSelectorFooter {
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
-                Button::new("configure", "Configure")
+                Button::new("configure", t!("Configure"))
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .key_binding(
@@ -278,7 +281,7 @@ impl RenderOnce for ModelSelectorTooltip {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .child(Label::new("Change Model"))
+                    .child(Label::new(t!("Change Model")))
                     .child(KeyBinding::for_action(&ToggleModelSelector, cx)),
             )
             .when(self.show_cycle_row, |this| {
@@ -289,7 +292,7 @@ impl RenderOnce for ModelSelectorTooltip {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .justify_between()
-                        .child(Label::new("Cycle Favorite Models"))
+                        .child(Label::new(t!("Cycle Favorite Models")))
                         .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
                 )
             })

@@ -10,6 +10,7 @@ use gpui::{
     Action, AnyElement, AnyView, App, BackgroundExecutor, Context, DismissEvent, Empty, Entity,
     FocusHandle, Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
+use i18n::{LocalizedString, t};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::{
@@ -181,11 +182,11 @@ impl Render for ProfileSelector {
         }
 
         if !self.provider.profiles_supported(cx) {
-            return Button::new("tools-not-supported-button", "Tools Unsupported")
+            return Button::new("tools-not-supported-button", t!("Tools Unsupported"))
                 .disabled(true)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
-                .tooltip(Tooltip::text("This model does not support tools."))
+                .tooltip(Tooltip::text(t!("This model does not support tools.")))
                 .into_any_element();
         }
 
@@ -197,7 +198,7 @@ impl Render for ProfileSelector {
 
         let selected_profile = profile
             .map(|profile| profile.name.clone())
-            .unwrap_or_else(|| "Unknown".into());
+            .unwrap_or_else(|| t!("Unknown").resolve());
 
         let icon = if self.picker_handle.is_deployed() {
             IconName::ChevronUp
@@ -231,7 +232,7 @@ impl Render for ProfileSelector {
                     .gap_1()
                     .child(
                         container()
-                            .child(Label::new("Change Profile"))
+                            .child(Label::new(t!("Change Profile")))
                             .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
                     )
                     .child(
@@ -239,7 +240,7 @@ impl Render for ProfileSelector {
                             .pt_1()
                             .border_t_1()
                             .border_color(cx.theme().colors().border_variant)
-                            .child(Label::new("Cycle Through Profiles"))
+                            .child(Label::new(t!("Cycle Through Profiles")))
                             .child(KeyBinding::for_action(&CycleModeSelector, cx)),
                     )
                     .into_any()
@@ -386,11 +387,11 @@ impl ProfilePickerDelegate {
             .collect()
     }
 
-    fn documentation(candidate: &ProfileCandidate) -> Option<&'static str> {
+    fn documentation(candidate: &ProfileCandidate) -> Option<LocalizedString> {
         match candidate.id.as_str() {
-            builtin_profiles::WRITE => Some("Get help to write anything."),
-            builtin_profiles::ASK => Some("Chat about your codebase."),
-            builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
+            builtin_profiles::WRITE => Some(t!("Get help to write anything.")),
+            builtin_profiles::ASK => Some(t!("Chat about your codebase.")),
+            builtin_profiles::MINIMAL => Some(t!("Chat about anything with no tools.")),
             _ => None,
         }
     }
@@ -402,7 +403,7 @@ impl ProfilePickerDelegate {
         for (idx, candidate) in candidates.iter().enumerate() {
             if !candidate.is_builtin && !inserted_custom_header {
                 if !entries.is_empty() {
-                    entries.push(ProfilePickerEntry::Header("Custom Profiles".into()));
+                    entries.push(ProfilePickerEntry::Header(t!("Custom Profiles").resolve()));
                 }
                 inserted_custom_header = true;
             }
@@ -481,14 +482,14 @@ impl PickerDelegate for ProfilePickerDelegate {
     }
 
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
-        "Search profiles…".into()
+        String::from(t!("Search profiles…")).into()
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         let text = if self.candidates.is_empty() {
-            "No profiles.".into()
+            t!("No profiles.").resolve()
         } else {
-            "No profiles match your search.".into()
+            t!("No profiles match your search.").resolve()
         };
         Some(text)
     }
@@ -752,7 +753,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                                                 .color(Color::Warning),
                                         )
                                         .child(
-                                            Label::new("Disabled in Restricted Mode")
+                                            Label::new(t!("Disabled in Restricted Mode"))
                                                 .size(LabelSize::Small),
                                         ),
                                 )
@@ -790,7 +791,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                         .border_color(cx.theme().colors().border_variant)
                         .p_1p5()
                         .child(
-                            Button::new("configure", "Configure")
+                            Button::new("configure", t!("Configure"))
                                 .full_width()
                                 .style(ButtonStyle::Outlined)
                                 .key_binding(
@@ -817,7 +818,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                             .border_color(cx.theme().colors().border_variant)
                             .p_1p5()
                             .child(
-                                Button::new("restricted-mode", "Restricted Mode")
+                                Button::new("restricted-mode", t!("Restricted Mode"))
                                     .full_width()
                                     .style(ButtonStyle::Tinted(TintColor::Warning))
                                     .color(Color::Warning)
@@ -826,9 +827,9 @@ impl PickerDelegate for ProfilePickerDelegate {
                                             .size(IconSize::Small)
                                             .color(Color::Warning),
                                     )
-                                    .tooltip(Tooltip::text(
-                                        "Some tools are disabled. Click to review trust settings.",
-                                    ))
+                                    .tooltip(Tooltip::text(t!(
+                                        "Some tools are disabled. Click to review trust settings."
+                                    )))
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(
                                             ToggleWorktreeSecurity.boxed_clone(),

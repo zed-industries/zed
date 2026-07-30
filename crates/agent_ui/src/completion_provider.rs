@@ -15,6 +15,7 @@ use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{
     App, BackgroundExecutor, Entity, Focusable, Hsla, SharedString, Task, WeakEntity, Window,
 };
+use i18n::{LocalizedString, t};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
@@ -177,9 +178,9 @@ impl PromptContextAction {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> LocalizedString {
         match self {
-            Self::AddSelections => "Selection",
+            Self::AddSelections => t!(key = "selection-context", "Selection"),
         }
     }
 
@@ -209,21 +210,21 @@ impl PromptLocalCommand {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> LocalizedString {
         match self {
-            Self::ThumbsUp => "Positive Feedback",
-            Self::ThumbsDown => "Negative Feedback",
+            Self::ThumbsUp => t!("Positive Feedback"),
+            Self::ThumbsDown => t!("Negative Feedback"),
         }
     }
 
-    pub fn description(&self) -> &'static str {
+    pub fn description(&self) -> LocalizedString {
         match self {
             Self::ThumbsUp => {
-                "Rate this response as helpful. Sends the current conversation to the Zed team."
+                t!("Rate this response as helpful. Sends the current conversation to the Zed team.")
             }
-            Self::ThumbsDown => {
+            Self::ThumbsDown => t!(
                 "Rate this response as not helpful. Sends the current conversation to the Zed team."
-            }
+            ),
         }
     }
 
@@ -265,15 +266,15 @@ impl PromptContextType {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> LocalizedString {
         match self {
-            Self::File => "Files & Directories",
-            Self::Symbol => "Symbols",
-            Self::Fetch => "Fetch",
-            Self::Thread => "Threads",
-            Self::Skill => "Skills",
-            Self::Diagnostics => "Diagnostics",
-            Self::BranchDiff => "Branch Diff",
+            Self::File => t!("Files & Directories"),
+            Self::Symbol => t!("Symbols"),
+            Self::Fetch => t!(key = "fetch-tool", "Fetch"),
+            Self::Thread => t!("Threads"),
+            Self::Skill => t!("Skills"),
+            Self::Diagnostics => t!("Diagnostics"),
+            Self::BranchDiff => t!("Branch Diff"),
         }
     }
 
@@ -396,13 +397,13 @@ impl AvailableCommand {
     /// Completion group key and header label for this command's category.
     fn group(&self) -> CompletionGroup {
         let (key, label) = match self.category {
-            Some(acp_thread::CommandCategory::Native) => ("commands", "Commands"),
-            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", "MCP Server Commands"),
-            None => ("acp-commands", "Commands"),
+            Some(acp_thread::CommandCategory::Native) => ("commands", t!("Commands")),
+            Some(acp_thread::CommandCategory::Mcp) => ("mcp-commands", t!("MCP Server Commands")),
+            None => ("acp-commands", t!("Commands")),
         };
         CompletionGroup {
             key: key.into(),
-            label: Some(label.into()),
+            label: Some(label.resolve()),
         }
     }
 }
@@ -977,7 +978,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let uri = MentionUri::GitDiff {
             base_ref: base_ref.to_string(),
         };
-        let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
+        let crease_text: SharedString =
+            t!("Branch Diff (vs {$base})", base = base_ref.to_string()).resolve();
         let display_text = format!("@{}", crease_text);
         let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
         let new_text_len = new_text.len();
@@ -1549,7 +1551,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     confirm: Some(confirm),
                                     group: show_section_headers.then(|| CompletionGroup {
                                         key: "skills".into(),
-                                        label: Some("Skills".into()),
+                                        label: Some(t!("Skills").resolve()),
                                     }),
                                 }
                             }
@@ -1618,7 +1620,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                             SlashCompletionCandidate::LocalCommand(command) => {
                                 let group = show_section_headers.then(|| CompletionGroup {
                                     key: "local-commands".into(),
-                                    label: Some("Actions".into()),
+                                    label: Some(t!("Actions").resolve()),
                                 });
 
                                 Completion {
@@ -2167,34 +2169,30 @@ fn diagnostics_label(
     let mut parts = Vec::new();
 
     if include_errors && summary.error_count > 0 {
-        parts.push(format!(
-            "{} {}",
-            summary.error_count,
-            pluralize("error", summary.error_count)
-        ));
+        parts.push(error_count_label(summary.error_count));
     }
 
     if include_warnings && summary.warning_count > 0 {
-        parts.push(format!(
-            "{} {}",
-            summary.warning_count,
-            pluralize("warning", summary.warning_count)
-        ));
+        parts.push(warning_count_label(summary.warning_count));
     }
 
     if parts.is_empty() {
-        return "Diagnostics".into();
+        return String::from(t!("Diagnostics"));
     }
 
     let body = if parts.len() == 2 {
-        format!("{} and {}", parts[0], parts[1])
+        String::from(t!(
+            "{$errors} and {$warnings}",
+            errors = parts[0].clone(),
+            warnings = parts[1].clone()
+        ))
     } else {
         parts
             .pop()
             .expect("at least one part present after non-empty check")
     };
 
-    format!("Diagnostics: {body}")
+    String::from(t!("Diagnostics: {$body}", body = body))
 }
 
 fn diagnostics_submenu_label(
@@ -2203,24 +2201,30 @@ fn diagnostics_submenu_label(
     include_warnings: bool,
 ) -> String {
     match (include_errors, include_warnings) {
-        (true, true) => format!(
-            "{} {} & {} {}",
-            summary.error_count,
-            pluralize("error", summary.error_count),
-            summary.warning_count,
-            pluralize("warning", summary.warning_count)
-        ),
-        (true, _) => format!(
-            "{} {}",
-            summary.error_count,
-            pluralize("error", summary.error_count)
-        ),
-        (_, true) => format!(
-            "{} {}",
-            summary.warning_count,
-            pluralize("warning", summary.warning_count)
-        ),
-        _ => "Diagnostics".into(),
+        (true, true) => String::from(t!(
+            "{$errors} & {$warnings}",
+            errors = error_count_label(summary.error_count),
+            warnings = warning_count_label(summary.warning_count)
+        )),
+        (true, _) => error_count_label(summary.error_count),
+        (_, true) => warning_count_label(summary.warning_count),
+        _ => String::from(t!("Diagnostics")),
+    }
+}
+
+fn error_count_label(count: usize) -> String {
+    if count == 1 {
+        String::from(t!("1 error"))
+    } else {
+        String::from(t!("{$count} errors", count = count))
+    }
+}
+
+fn warning_count_label(count: usize) -> String {
+    if count == 1 {
+        String::from(t!("1 warning"))
+    } else {
+        String::from(t!("{$count} warnings", count = count))
     }
 }
 

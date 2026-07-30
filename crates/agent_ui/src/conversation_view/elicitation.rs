@@ -5,6 +5,7 @@ use component::{Component, ComponentScope, example_group_with_title, single_exam
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AnyElement, App, Div, Empty, Entity, Hsla, SharedString, Window, div};
+use i18n::{LocalizedString, t};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
@@ -238,7 +239,11 @@ impl ElicitationFormSubmission {
                 ) => {
                     if value.is_empty() {
                         if is_required {
-                            Err(format!("{} is required", property_title(name, property)).into())
+                            Err(t!(
+                                "{$field} is required",
+                                field = property_title(name, property)
+                            )
+                            .resolve())
                         } else {
                             Ok(None)
                         }
@@ -258,7 +263,11 @@ impl ElicitationFormSubmission {
                             })
                             .map(|()| Some(value.clone().into()))
                     } else if is_required {
-                        Err(format!("{} is required", property_title(name, property)).into())
+                        Err(t!(
+                            "{$field} is required",
+                            field = property_title(name, property)
+                        )
+                        .resolve())
                     } else {
                         Ok(None)
                     }
@@ -270,7 +279,11 @@ impl ElicitationFormSubmission {
                     let value = value.trim();
                     if value.is_empty() {
                         if is_required {
-                            Err(format!("{} is required", property_title(name, property)).into())
+                            Err(t!(
+                                "{$field} is required",
+                                field = property_title(name, property)
+                            )
+                            .resolve())
                         } else {
                             Ok(None)
                         }
@@ -286,7 +299,11 @@ impl ElicitationFormSubmission {
                     let value = value.trim();
                     if value.is_empty() {
                         if is_required {
-                            Err(format!("{} is required", property_title(name, property)).into())
+                            Err(t!(
+                                "{$field} is required",
+                                field = property_title(name, property)
+                            )
+                            .resolve())
                         } else {
                             Ok(None)
                         }
@@ -322,18 +339,20 @@ impl ElicitationFormSubmission {
                         .min_items
                         .is_some_and(|min_items| values.len() < min_items as usize)
                     {
-                        Err(
-                            format!("{} needs more selections", property_title(name, property))
-                                .into(),
+                        Err(t!(
+                            "{$field} needs more selections",
+                            field = property_title(name, property)
                         )
+                        .resolve())
                     } else if schema
                         .max_items
                         .is_some_and(|max_items| values.len() > max_items as usize)
                     {
-                        Err(
-                            format!("{} has too many selections", property_title(name, property))
-                                .into(),
+                        Err(t!(
+                            "{$field} has too many selections",
+                            field = property_title(name, property)
                         )
+                        .resolve())
                     } else {
                         Ok(Some(values.into()))
                     }
@@ -1107,19 +1126,29 @@ fn validate_number_value(
 ) -> Result<f64, SharedString> {
     let parsed = value
         .parse::<f64>()
-        .map_err(|_| SharedString::from(format!("{title} must be a number")))?;
+        .map_err(|_| t!("{$title} must be a number", title = title.clone()).resolve())?;
     if !parsed.is_finite() {
-        return Err(format!("{title} must be a finite number").into());
+        return Err(t!("{$title} must be a finite number", title = title).resolve());
     }
     if let Some(minimum) = schema.minimum
         && parsed < minimum
     {
-        return Err(format!("{title} must be at least {minimum}").into());
+        return Err(t!(
+            "{$title} must be at least {$minimum}",
+            title = title,
+            minimum = minimum
+        )
+        .resolve());
     }
     if let Some(maximum) = schema.maximum
         && parsed > maximum
     {
-        return Err(format!("{title} must be at most {maximum}").into());
+        return Err(t!(
+            "{$title} must be at most {$maximum}",
+            title = title,
+            maximum = maximum
+        )
+        .resolve());
     }
 
     Ok(parsed)
@@ -1132,16 +1161,26 @@ fn validate_integer_value(
 ) -> Result<i64, SharedString> {
     let parsed = value
         .parse::<i64>()
-        .map_err(|_| SharedString::from(format!("{title} must be an integer")))?;
+        .map_err(|_| t!("{$title} must be an integer", title = title.clone()).resolve())?;
     if let Some(minimum) = schema.minimum
         && parsed < minimum
     {
-        return Err(format!("{title} must be at least {minimum}").into());
+        return Err(t!(
+            "{$title} must be at least {$minimum}",
+            title = title,
+            minimum = minimum
+        )
+        .resolve());
     }
     if let Some(maximum) = schema.maximum
         && parsed > maximum
     {
-        return Err(format!("{title} must be at most {maximum}").into());
+        return Err(t!(
+            "{$title} must be at most {$maximum}",
+            title = title,
+            maximum = maximum
+        )
+        .resolve());
     }
 
     Ok(parsed)
@@ -1157,13 +1196,13 @@ fn validate_string_value(
         .min_length
         .is_some_and(|min_length| length < min_length as usize)
     {
-        return Err(format!("{title} is too short").into());
+        return Err(t!("{$title} is too short", title = title).resolve());
     }
     if schema
         .max_length
         .is_some_and(|max_length| length > max_length as usize)
     {
-        return Err(format!("{title} is too long").into());
+        return Err(t!("{$title} is too long", title = title).resolve());
     }
 
     validate_string_pattern_and_format(title, schema, value)
@@ -1178,7 +1217,11 @@ fn validate_single_select_value(
     if options.iter().any(|option| option.value.as_str() == value) {
         Ok(())
     } else {
-        Err(format!("{title} must be one of the provided options").into())
+        Err(t!(
+            "{$title} must be one of the provided options",
+            title = title
+        )
+        .resolve())
     }
 }
 
@@ -1201,10 +1244,10 @@ fn validate_string_pattern_and_format(
         .as_ref()
         .is_some_and(|pattern| pattern.len() > MAX_ELICITATION_PATTERN_BYTES)
     {
-        return Err(format!("{title} has an invalid validation pattern").into());
+        return Err(t!("{$title} has an invalid validation pattern", title = title).resolve());
     }
     if schema.pattern.is_some() && value.len() > MAX_ELICITATION_PATTERN_INPUT_BYTES {
-        return Err(format!("{title} is too long to validate safely").into());
+        return Err(t!("{$title} is too long to validate safely", title = title).resolve());
     }
 
     let mut validation_schema = serde_json::Map::new();
@@ -1237,9 +1280,17 @@ fn validate_string_pattern_and_format(
         .build(&validation_schema)
         .map_err(|_| {
             if schema.pattern.is_some() {
-                format!("{title} has an invalid validation pattern")
+                t!(
+                    "{$title} has an invalid validation pattern",
+                    title = title.clone()
+                )
+                .resolve()
             } else {
-                format!("{title} has an invalid validation format")
+                t!(
+                    "{$title} has an invalid validation format",
+                    title = title.clone()
+                )
+                .resolve()
             }
         })?;
     let value = serde_json::Value::String(value.to_string());
@@ -1248,7 +1299,11 @@ fn validate_string_pattern_and_format(
             error.kind(),
             jsonschema::error::ValidationErrorKind::BacktrackLimitExceeded { .. }
         ) {
-            return Err(format!("{title} has a validation pattern that is too complex").into());
+            return Err(t!(
+                "{$title} has a validation pattern that is too complex",
+                title = title
+            )
+            .resolve());
         }
     } else {
         return Ok(());
@@ -1258,9 +1313,22 @@ fn validate_string_pattern_and_format(
         schema.pattern.is_some(),
         schema.format.and_then(string_format_label),
     ) {
-        (true, Some(_)) => Err(format!("{title} does not match the requested constraints").into()),
-        (true, None) => Err(format!("{title} does not match the requested pattern").into()),
-        (false, Some(format)) => Err(format!("{title} must be {format}").into()),
+        (true, Some(_)) => Err(t!(
+            "{$title} does not match the requested constraints",
+            title = title
+        )
+        .resolve()),
+        (true, None) => Err(t!(
+            "{$title} does not match the requested pattern",
+            title = title
+        )
+        .resolve()),
+        (false, Some(format)) => Err(t!(
+            "{$title} must be {$format}",
+            title = title,
+            format = format.resolve()
+        )
+        .resolve()),
         (false, None) => Ok(()),
     }
 }
@@ -1275,12 +1343,12 @@ fn string_format_json_name(format: acp::StringFormat) -> Option<&'static str> {
     }
 }
 
-fn string_format_label(format: acp::StringFormat) -> Option<&'static str> {
+fn string_format_label(format: acp::StringFormat) -> Option<LocalizedString> {
     match format {
-        acp::StringFormat::Email => Some("an email address"),
-        acp::StringFormat::Uri => Some("a URI"),
-        acp::StringFormat::Date => Some("a date"),
-        acp::StringFormat::DateTime => Some("a date and time"),
+        acp::StringFormat::Email => Some(t!("an email address")),
+        acp::StringFormat::Uri => Some(t!("a URI")),
+        acp::StringFormat::Date => Some(t!("a date")),
+        acp::StringFormat::DateTime => Some(t!("a date and time")),
         _ => None,
     }
 }
@@ -1464,14 +1532,16 @@ impl<'a> ElicitationCard<'a> {
             (ElicitationStatus::Accepted, acp::ElicitationMode::Url(_))
         );
         let (status_label, status_icon, status_color) = match &self.elicitation.status {
-            ElicitationStatus::Pending { .. } => ("Waiting for input", IconName::Info, Color::Info),
-            ElicitationStatus::Accepted if is_accepted_url => {
-                ("Waiting for completion", IconName::Info, Color::Info)
+            ElicitationStatus::Pending { .. } => {
+                (t!("Waiting for input"), IconName::Info, Color::Info)
             }
-            ElicitationStatus::Accepted => ("Submitted", IconName::Check, Color::Success),
-            ElicitationStatus::Declined => ("Declined", IconName::Close, Color::Muted),
-            ElicitationStatus::Canceled => ("Canceled", IconName::Circle, Color::Muted),
-            ElicitationStatus::Completed => ("Completed", IconName::Check, Color::Success),
+            ElicitationStatus::Accepted if is_accepted_url => {
+                (t!("Waiting for completion"), IconName::Info, Color::Info)
+            }
+            ElicitationStatus::Accepted => (t!("Submitted"), IconName::Check, Color::Success),
+            ElicitationStatus::Declined => (t!("Declined"), IconName::Close, Color::Muted),
+            ElicitationStatus::Canceled => (t!("Canceled"), IconName::Circle, Color::Muted),
+            ElicitationStatus::Completed => (t!("Completed"), IconName::Check, Color::Success),
         };
 
         let body = v_flex()
@@ -1513,9 +1583,12 @@ impl<'a> ElicitationCard<'a> {
                                     .color(status_color),
                             )
                             .child(
-                                Label::new(format!("Input Requested by {}", self.requester_name))
-                                    .size(LabelSize::Custom(tool_name_font_size))
-                                    .truncate(),
+                                Label::new(t!(
+                                    "Input Requested by {$requester}",
+                                    requester = self.requester_name.clone()
+                                ))
+                                .size(LabelSize::Custom(tool_name_font_size))
+                                .truncate(),
                             ),
                     )
                     .child(
@@ -1884,7 +1957,7 @@ impl<'a> ElicitationCard<'a> {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Label::new("Destination")
+                                    Label::new(t!("Destination"))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 )
@@ -1903,8 +1976,9 @@ impl<'a> ElicitationCard<'a> {
                                                 .color(Color::Warning),
                                         )
                                         .child(
-                                            Label::new(format!(
-                                                "This internationalized address displays as {decoded_host}. Verify it carefully."
+                                            Label::new(t!(
+                                                "This internationalized address displays as {$host}. Verify it carefully.",
+                                                host = decoded_host
                                             ))
                                             .size(LabelSize::Small)
                                             .color(Color::Warning),
@@ -1950,11 +2024,15 @@ impl<'a> ElicitationCard<'a> {
             open_url.is_some() && matches!(self.elicitation.status, ElicitationStatus::Accepted);
         let is_submitting = self.form_state.is_some_and(|state| state.is_submitting);
         let (accept_label, accept_icon, accept_icon_color) = if is_accepted_url {
-            ("Open Again", IconName::ArrowUpRight, Color::Muted)
+            (t!("Open Again"), IconName::ArrowUpRight, Color::Muted)
         } else if open_url.is_some() {
-            ("Open", IconName::ArrowUpRight, Color::Muted)
+            (
+                t!(key = "open-action", "Open"),
+                IconName::ArrowUpRight,
+                Color::Muted,
+            )
         } else {
-            ("Submit", IconName::Check, Color::Success)
+            (t!("Submit"), IconName::Check, Color::Success)
         };
         let border_color = cx.theme().colors().border.opacity(0.8);
         let on_submit = self.handlers.on_submit.clone();
@@ -1996,7 +2074,7 @@ impl<'a> ElicitationCard<'a> {
             )
             .when(!is_accepted_url, |this| {
                 this.child(
-                    Button::new(("elicitation-decline", self.entry_ix), "Decline")
+                    Button::new(("elicitation-decline", self.entry_ix), t!("Decline"))
                         .start_icon(
                             Icon::new(IconName::Close)
                                 .size(IconSize::XSmall)
@@ -2008,7 +2086,7 @@ impl<'a> ElicitationCard<'a> {
                         }),
                 )
                 .child(
-                    Button::new(("elicitation-cancel", self.entry_ix), "Cancel")
+                    Button::new(("elicitation-cancel", self.entry_ix), t!("Cancel"))
                         .label_size(LabelSize::Small)
                         .on_click(move |_, window, cx| {
                             on_cancel(cancel_id.clone(), window, cx);
@@ -2017,7 +2095,7 @@ impl<'a> ElicitationCard<'a> {
             })
             .when(is_accepted_url, |this| {
                 this.child(
-                    Button::new(("elicitation-dismiss-url", self.entry_ix), "Cancel")
+                    Button::new(("elicitation-dismiss-url", self.entry_ix), t!("Cancel"))
                         .label_size(LabelSize::Small)
                         .on_click(move |_, window, cx| {
                             on_dismiss_url(dismiss_id.clone(), window, cx);

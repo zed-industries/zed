@@ -497,6 +497,7 @@ dependencies = [
  "heapless",
  "html_to_markdown",
  "http_client",
+ "i18n",
  "idna",
  "image",
  "indoc",

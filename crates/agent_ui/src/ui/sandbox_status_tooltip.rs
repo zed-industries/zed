@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use file_icons::FileIcons;
 use gpui::{AnyElement, App};
+use i18n::t;
 use ui::{Divider, prelude::*};
 
 #[derive(Clone)]
@@ -167,7 +168,7 @@ impl RenderOnce for SandboxStatusTooltip {
         let content = match self {
             SandboxStatusTooltip::DisabledInSettings => v_flex()
                 .child(
-                    Label::new("You have sandboxing disabled in settings.")
+                    Label::new(t!("You have sandboxing disabled in settings."))
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
@@ -176,7 +177,9 @@ impl RenderOnce for SandboxStatusTooltip {
                 .gap_1()
                 .child(div().opacity(0.5).child(settings.render(cx)))
                 .child(Divider::horizontal())
-                .child(Label::new("Sandboxing is disabled for this thread").size(LabelSize::Small))
+                .child(
+                    Label::new(t!("Sandboxing is disabled for this thread")).size(LabelSize::Small),
+                )
                 .into_any_element(),
             SandboxStatusTooltip::Enabled { settings, thread } => v_flex()
                 .gap_2()
@@ -193,7 +196,7 @@ impl RenderOnce for SandboxStatusTooltip {
         v_flex()
             .w(rems_from_px(280.))
             .gap_1()
-            .child(Label::new("Sandboxing"))
+            .child(Label::new(t!("Sandboxing")))
             .child(content)
     }
 }

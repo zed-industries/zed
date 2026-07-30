@@ -63,6 +63,7 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+i18n.workspace = true
 idna.workspace = true
 indoc.workspace = true
 itertools.workspace = true
