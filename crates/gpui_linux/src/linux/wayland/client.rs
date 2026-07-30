@@ -95,8 +95,8 @@ use crate::linux::{
 };
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    FileDragPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
     Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, profiler, px, size,
@@ -374,6 +374,7 @@ pub(crate) enum DataSourceKind {
 pub(crate) struct ExternalDrag {
     source: wl_data_source::WlDataSource,
     bytes: Vec<u8>,
+    window: WaylandWindowStatePtr,
 }
 
 fn file_uri_list(paths: &FileDragPaths) -> String {
@@ -447,6 +448,10 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
         let mut state = client.borrow_mut();
 
+        let Some(window) = get_window(&mut state, &surface.id()) else {
+            return false;
+        };
+
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.as_ref(),
             state.data_device.as_ref(),
@@ -470,6 +475,7 @@ impl WaylandClientStatePtr {
         state.external_drag = Some(ExternalDrag {
             source,
             bytes: uri_list.into_bytes(),
+            window,
         });
         true
     }
@@ -2705,9 +2711,14 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
                 DataSourceKind::Drag,
                 wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled,
             ) => {
-                if let Some(external_drag) = state.external_drag.take() {
-                    external_drag.source.destroy();
-                }
+                let Some(external_drag) = state.external_drag.take() else {
+                    return;
+                };
+                external_drag.source.destroy();
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Ended);
+                drop(state);
+                external_drag.window.handle_input(input);
             }
             _ => {}
         }
@@ -2874,7 +2885,9 @@ mod tests {
     #[test]
     fn builds_empty_uri_list_without_convertible_paths() {
         assert!(file_uri_list(&FileDragPaths::default()).is_empty());
-        assert!(file_uri_list(&FileDragPaths::new([(PathBuf::from("relative"), false)])).is_empty());
+        assert!(
+            file_uri_list(&FileDragPaths::new([(PathBuf::from("relative"), false)])).is_empty()
+        );
     }
 
     fn ime_cursor_bounds(x: f32) -> Bounds<Pixels> {
