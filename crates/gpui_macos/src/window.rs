@@ -439,6 +439,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             make_first_responder as extern "C" fn(&Object, Sel, id) -> BOOL,
         );
         decl.add_method(
+            sel!(sendEvent:),
+            send_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(windowDidResize:),
             window_did_resize as extern "C" fn(&Object, Sel, id),
         );
@@ -2286,6 +2290,43 @@ extern "C" fn make_first_responder(this: &Object, _: Sel, responder: id) -> BOOL
         }
 
         accepted
+    }
+}
+
+extern "C" fn send_event(this: &Object, _: Sel, event: id) {
+    unsafe {
+        if matches!(
+            event.eventType(),
+            NSEventType::NSLeftMouseDown
+                | NSEventType::NSRightMouseDown
+                | NSEventType::NSOtherMouseDown
+        ) {
+            let content_view: id = msg_send![this, contentView];
+            let location: NSPoint = msg_send![event, locationInWindow];
+            let location: NSPoint = msg_send![content_view, convertPoint: location fromView: nil];
+            let hit_view: id = msg_send![content_view, hitTest: location];
+
+            if hit_view != nil {
+                let window_state = get_window_state(this);
+                let mut state = window_state.lock();
+                let native_view = state.native_view.as_ptr() as id;
+                let in_gpui_view: BOOL = msg_send![hit_view, isDescendantOf: native_view];
+                let in_overlay_view = state.overlay_view.is_some_and(|overlay_view| {
+                    let in_overlay: BOOL =
+                        msg_send![hit_view, isDescendantOf: overlay_view.as_ptr()];
+                    in_overlay == YES
+                });
+
+                if in_gpui_view == NO
+                    && !in_overlay_view
+                    && let Some(callback) = state.native_view_focus_callback.as_mut()
+                {
+                    callback();
+                }
+            }
+        }
+
+        let _: () = msg_send![super(this, class!(NSWindow)), sendEvent: event];
     }
 }
 
