@@ -4,6 +4,7 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use i18n::t;
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
     FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -222,11 +223,13 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
-            title: "Enable Fast Mode for OpenAI?".into(),
-            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+            title: t!("Enable Fast Mode for OpenAI?").into(),
+            message: t!(
+                "Fast mode sends requests using OpenAI's Priority processing tier, which \
                 targets significantly lower latency than the standard tier and is billed at a \
                 premium per-token rate."
-                .into(),
+            )
+            .into(),
         })
     }
 }

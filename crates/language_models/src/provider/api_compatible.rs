@@ -5,6 +5,7 @@ use anyhow::Result;
 use convert_case::{Case, Casing};
 use credentials_provider::CredentialsProvider;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, TaskExt, Window};
+use i18n::t;
 use language_model::{ApiKeyState, AuthenticateError, EnvVar};
 use settings::SettingsStore;
 use ui::{ElevationIndex, Tooltip, prelude::*};
@@ -210,8 +211,9 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!(
-                    "To use Zed's agent with an {provider_name}-compatible provider, you need to add an API key."
+                .child(Label::new(t!(
+                    "To use Zed's agent with an {$provider_name}-compatible provider, you need to add an API key.",
+                    provider_name = provider_name,
                 )))
                 .child(
                     div()
@@ -219,8 +221,9 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                         .child(self.api_key_editor.clone()),
                 )
                 .child(
-                    Label::new(format!(
-                        "You can also set the {env_var_name} environment variable and restart Zed.",
+                    Label::new(t!(
+                        "You can also set the {$env_var_name} environment variable and restart Zed.",
+                        env_var_name = env_var_name.clone(),
                     ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -244,22 +247,29 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                         .child(
                             div().w_full().overflow_x_hidden().text_ellipsis().child(Label::new(
                                 if env_var_set {
-                                    format!("API key set in {env_var_name} environment variable")
+                                    t!(
+                                        "API key set in {$env_var_name} environment variable",
+                                        env_var_name = env_var_name.clone(),
+                                    )
                                 } else {
-                                    format!("API key configured for {}", state.settings.api_url())
+                                    t!(
+                                        "API key configured for {$api_url}",
+                                        api_url = state.settings.api_url().to_string(),
+                                    )
                                 },
                             )),
                         ),
                 )
                 .child(
                     h_flex().flex_shrink_0().child(
-                        Button::new("reset-api-key", "Reset API Key")
+                        Button::new("reset-api-key", t!("Reset API Key"))
                             .label_size(LabelSize::Small)
                             .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                             .layer(ElevationIndex::ModalSurface)
                             .when(env_var_set, |this| {
-                                this.tooltip(Tooltip::text(format!(
-                                    "To reset your API key, unset the {env_var_name} environment variable.",
+                                this.tooltip(Tooltip::text(t!(
+                                    "To reset your API key, unset the {$env_var_name} environment variable.",
+                                    env_var_name = env_var_name.clone(),
                                 )))
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -271,7 +281,9 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
         };
 
         if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials…")).into_any()
+            div()
+                .child(Label::new(t!("Loading credentials…")))
+                .into_any()
         } else {
             v_flex()
                 .size_full()
@@ -279,7 +291,7 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                 .child(api_key_section)
                 .child(
                     h_flex().w_full().justify_end().child(
-                        Button::new("remove-compatible-provider", "Remove Provider")
+                        Button::new("remove-compatible-provider", t!("Remove Provider"))
                             .style(ButtonStyle::OutlinedGhost)
                             .label_size(LabelSize::Small)
                             .start_icon(

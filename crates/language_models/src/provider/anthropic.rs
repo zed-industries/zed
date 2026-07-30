@@ -7,6 +7,7 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use i18n::t;
 use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyConfiguration, ApiKeyState,
     AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
@@ -290,12 +291,14 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
-            title: "Enable Fast Mode for Anthropic?".into(),
-            message: "Fast mode lets requests use your Anthropic Priority Tier capacity, which \
+            title: t!("Enable Fast Mode for Anthropic?").into(),
+            message: t!(
+                "Fast mode lets requests use your Anthropic Priority Tier capacity, which \
                 Anthropic prioritizes over standard requests during peak load. Requires a \
                 Priority Tier commitment with Anthropic; without one, requests behave the same \
                 as the standard tier."
-                .into(),
+            )
+            .into(),
         })
     }
 }

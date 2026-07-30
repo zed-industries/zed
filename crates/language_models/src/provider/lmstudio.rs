@@ -5,6 +5,7 @@ use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
+use i18n::t;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -320,7 +321,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
+                t!("Run local LLMs like Llama, Phi, and Qwen with LM Studio.").into(),
             )),
         ))
     }
@@ -873,10 +874,12 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     pub fn new(state: Entity<State>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor = cx.new(|cx| InputField::new(_window, cx, "sk-...").label("API key"));
+        let api_key_editor = cx.new(|cx| {
+            InputField::new(_window, cx, "sk-...").label(t!(key = "api-key-input-label", "API key"))
+        });
 
         let api_url_editor = cx.new(|cx| {
-            let input = InputField::new(_window, cx, LMSTUDIO_API_URL).label("API URL");
+            let input = InputField::new(_window, cx, LMSTUDIO_API_URL).label(t!("API URL"));
             input.set_text(&LmStudioLanguageModelProvider::api_url(cx), _window, cx);
             input
         });
@@ -1008,9 +1011,12 @@ impl ConfigurationView {
         let state = self.state.read(cx);
         let env_var_set = state.api_key_state.is_from_env_var();
         let configured_card_label = if env_var_set {
-            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
+            t!(
+                "API key set in {$env_var_name} environment variable",
+                env_var_name = API_KEY_ENV_VAR_NAME,
+            )
         } else {
-            "API key configured".to_string()
+            t!(key = "api-key-configured-status", "API key configured")
         };
 
         let api_key_control = if !state.api_key_state.has_key() {
@@ -1020,8 +1026,9 @@ impl ConfigurationView {
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, _window, cx| this.reset_api_key(_window, cx)))
                 .when(env_var_set, |this| {
-                    this.tooltip_label(format!(
-                        "To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."
+                    this.tooltip_label(t!(
+                        "To reset your API key, unset the {$env_var_name} environment variable.",
+                        env_var_name = API_KEY_ENV_VAR_NAME,
                     ))
                 })
                 .into_any_element()
@@ -1033,8 +1040,9 @@ impl ConfigurationView {
             .gap_1p5()
             .mb_2()
             .child(
-                Label::new(format!(
-                    "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                Label::new(t!(
+                    "You can also set the {$env_var_name} environment variable and restart Zed.",
+                    env_var_name = API_KEY_ENV_VAR_NAME,
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
@@ -1053,23 +1061,24 @@ impl Render for ConfigurationView {
                     .gap_1()
                     .child(Headline::new("LM Studio").size(HeadlineSize::Small))
                     .child(
-                        Label::new("Run local LLMs like Llama, Phi, and Qwen.").color(Color::Muted),
+                        Label::new(t!("Run local LLMs like Llama, Phi, and Qwen."))
+                            .color(Color::Muted),
                     )
                     .child(
                         List::new()
-                            .child(ListBulletItem::new(
-                                "LM Studio needs to be running with at least one model downloaded.",
-                            ).label_color(Color::Muted))
+                            .child(ListBulletItem::new(t!(
+                                "LM Studio needs to be running with at least one model downloaded."
+                            )).label_color(Color::Muted))
                             .child(
                                 ListBulletItem::new("")
-                                    .child(Label::new("To get your first model, try running").color(Color::Muted))
+                                    .child(Label::new(t!("To get your first model, try running")).color(Color::Muted))
                                     .child(Label::new("lms get qwen2.5-coder-7b").inline_code(cx).color(Color::Muted).ml_1()),
                             ),
                     )
-                    .child(Label::new(
+                    .child(Label::new(t!(
                         "Alternatively, you can connect to an LM Studio server by specifying its \
-                        URL and API key (may not be required):",
-                    ).color(Color::Muted)),
+                        URL and API key (may not be required):"
+                    )).color(Color::Muted)),
             )
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
@@ -1104,7 +1113,7 @@ impl Render for ConfigurationView {
                                     this.child(
                                         Button::new(
                                             "download_lmstudio_button",
-                                            "Download LM Studio",
+                                            t!("Download LM Studio"),
                                         )
                                         .style(ButtonStyle::OutlinedGhost)
                                         .size(ButtonSize::Medium)
@@ -1121,7 +1130,7 @@ impl Render for ConfigurationView {
                                 }
                             })
                             .child(
-                                Button::new("view-models", "Model Catalog")
+                                Button::new("view-models", t!("Model Catalog"))
                                     .style(ButtonStyle::OutlinedGhost)
                                     .size(ButtonSize::Medium)
                                     .end_icon(
@@ -1143,11 +1152,11 @@ impl Render for ConfigurationView {
                                         h_flex()
                                             .gap_1()
                                             .child(Icon::new(IconName::Check).color(Color::Success))
-                                            .child(Label::new("Connected"))
+                                            .child(Label::new(t!("Connected")))
                                     )
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
-                                            .tooltip(Tooltip::text("Refresh Models"))
+                                            .tooltip(Tooltip::text(t!("Refresh Models")))
                                             .icon_size(IconSize::Small)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.state.update(cx, |state, _| {
@@ -1159,7 +1168,7 @@ impl Render for ConfigurationView {
                             )
                         } else {
                             this.child(
-                                Button::new("retry_lmstudio_models", "Connect")
+                                Button::new("retry_lmstudio_models", t!("Connect"))
                                     .style(ButtonStyle::Outlined)
                                     .size(ButtonSize::Medium)
                                     .start_icon(

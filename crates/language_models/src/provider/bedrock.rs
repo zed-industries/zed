@@ -39,6 +39,7 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
     http::{HeaderValue, header::AUTHORIZATION},
 };
+use i18n::t;
 use language_model::{
     AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -704,7 +705,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
+                t!("To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.").into(),
             )),
         ))
     }
@@ -2514,28 +2515,28 @@ impl ConfigurationView {
 
         let access_key_id_editor = cx.new(|cx| {
             InputField::new(window, cx, Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT)
-                .label("Access Key ID")
+                .label(t!("Access Key ID"))
                 .tab_index(0)
                 .tab_stop(true)
         });
 
         let secret_access_key_editor = cx.new(|cx| {
             InputField::new(window, cx, Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT)
-                .label("Secret Access Key")
+                .label(t!("Secret Access Key"))
                 .tab_index(1)
                 .tab_stop(true)
         });
 
         let session_token_editor = cx.new(|cx| {
             InputField::new(window, cx, Self::PLACEHOLDER_SESSION_TOKEN_TEXT)
-                .label("Session Token (Optional)")
+                .label(t!("Session Token (Optional)"))
                 .tab_index(2)
                 .tab_stop(true)
         });
 
         let bearer_token_editor = cx.new(|cx| {
             InputField::new(window, cx, Self::PLACEHOLDER_BEARER_TOKEN_TEXT)
-                .label("Bedrock API Key")
+                .label(t!("Bedrock API Key"))
                 .tab_index(3)
                 .tab_stop(true)
         });
@@ -2665,34 +2666,33 @@ impl Render for ConfigurationView {
             .and_then(|s| s.authentication_method.clone());
 
         if self.load_credentials_task.is_some() {
-            return div().child(Label::new("Loading credentials...")).into_any();
+            return div()
+                .child(Label::new(t!("Loading credentials…")))
+                .into_any();
         }
 
         let configured_label = match &auth {
-            Some(BedrockAuth::Automatic) => {
-                "Using automatic credentials (AWS default chain)".into()
-            }
-            Some(BedrockAuth::NamedProfile { profile_name }) => {
-                format!("Using AWS profile: {profile_name}")
-            }
-            Some(BedrockAuth::SingleSignOn { profile_name }) => {
-                format!("Using AWS SSO profile: {profile_name}")
-            }
-            Some(BedrockAuth::IamCredentials { .. }) if env_var_set => {
-                format!(
-                    "Using IAM credentials from {} and {} environment variables",
-                    ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name
-                )
-            }
-            Some(BedrockAuth::IamCredentials { .. }) => "Using IAM credentials".into(),
-            Some(BedrockAuth::ApiKey { .. }) if env_var_set => {
-                format!(
-                    "Using Bedrock API Key from {} environment variable",
-                    ZED_BEDROCK_BEARER_TOKEN_VAR.name
-                )
-            }
-            Some(BedrockAuth::ApiKey { .. }) => "Using Bedrock API Key".into(),
-            None => "Not authenticated".into(),
+            Some(BedrockAuth::Automatic) => t!("Using automatic credentials (AWS default chain)"),
+            Some(BedrockAuth::NamedProfile { profile_name }) => t!(
+                "Using AWS profile: {$profile_name}",
+                profile_name = profile_name.clone(),
+            ),
+            Some(BedrockAuth::SingleSignOn { profile_name }) => t!(
+                "Using AWS SSO profile: {$profile_name}",
+                profile_name = profile_name.clone(),
+            ),
+            Some(BedrockAuth::IamCredentials { .. }) if env_var_set => t!(
+                "Using IAM credentials from {$access_key_id_var} and {$secret_access_key_var} environment variables",
+                access_key_id_var = ZED_BEDROCK_ACCESS_KEY_ID_VAR.name.clone(),
+                secret_access_key_var = ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name.clone(),
+            ),
+            Some(BedrockAuth::IamCredentials { .. }) => t!("Using IAM credentials"),
+            Some(BedrockAuth::ApiKey { .. }) if env_var_set => t!(
+                "Using Bedrock API Key from {$bearer_token_var} environment variable",
+                bearer_token_var = ZED_BEDROCK_BEARER_TOKEN_VAR.name.clone(),
+            ),
+            Some(BedrockAuth::ApiKey { .. }) => t!("Using Bedrock API Key"),
+            None => t!("Not authenticated"),
         };
 
         // Determine if credentials can be reset
@@ -2705,18 +2705,17 @@ impl Render for ConfigurationView {
         );
 
         let tooltip_label = if env_var_set {
-            Some(format!(
-                "To reset your credentials, unset the {}, {}, and {} or {} environment variables.",
-                ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
-                ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                ZED_BEDROCK_SESSION_TOKEN_VAR.name,
-                ZED_BEDROCK_BEARER_TOKEN_VAR.name
+            Some(t!(
+                "To reset your credentials, unset the {$access_key_id_var}, {$secret_access_key_var}, and {$session_token_var} or {$bearer_token_var} environment variables.",
+                access_key_id_var = ZED_BEDROCK_ACCESS_KEY_ID_VAR.name.clone(),
+                secret_access_key_var = ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name.clone(),
+                session_token_var = ZED_BEDROCK_SESSION_TOKEN_VAR.name.clone(),
+                bearer_token_var = ZED_BEDROCK_BEARER_TOKEN_VAR.name.clone(),
             ))
         } else if is_settings_derived {
-            Some(
+            Some(t!(
                 "Authentication method is configured in settings. Edit settings.json to change."
-                    .to_string(),
-            )
+            ))
         } else {
             None
         };
@@ -2741,13 +2740,13 @@ impl Render for ConfigurationView {
             .gap_1()
             .child(Headline::new("Amazon Bedrock").size(HeadlineSize::Small))
             .child(
-                Label::new(
-                    "To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials.",
-                )
+                Label::new(t!(
+                    "To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials."
+                ))
                 .color(Color::Muted),
             )
             .child(
-                Label::new("But first, to access models on AWS, you need to:")
+                Label::new(t!("But first, to access models on AWS, you need to:"))
                     .mt_1()
                     .color(Color::Muted),
             )
@@ -2756,9 +2755,9 @@ impl Render for ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(
-                                Label::new(
-                                    "Grant permissions to the strategy you'll use according to the:",
-                                )
+                                Label::new(t!(
+                                    "Grant permissions to the strategy you'll use according to the:"
+                                ))
                                 .color(Color::Muted),
                             )
                             .child(ButtonLink::new(
@@ -2769,7 +2768,7 @@ impl Render for ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(
-                                Label::new("Select the models you would like access to:")
+                                Label::new(t!("Select the models you would like access to:"))
                                     .color(Color::Muted),
                             )
                             .child(ButtonLink::new(
@@ -2789,9 +2788,9 @@ impl ConfigurationView {
             .child(
                 ListBulletItem::new("")
                     .child(
-                        Label::new(
-                            "For access keys: Create an IAM user in the AWS console with programmatic access",
-                        )
+                        Label::new(t!(
+                            "For access keys: Create an IAM user in the AWS console with programmatic access"
+                        ))
                         .color(Color::Muted),
                     )
                     .child(ButtonLink::new(
@@ -2802,7 +2801,7 @@ impl ConfigurationView {
             .child(
                 ListBulletItem::new("")
                     .child(
-                        Label::new("For Bedrock API Keys: Generate an API key from the")
+                        Label::new(t!("For Bedrock API Keys: Generate an API key from the"))
                             .color(Color::Muted),
                     )
                     .child(ButtonLink::new(
@@ -2813,18 +2812,18 @@ impl ConfigurationView {
             .child(
                 ListBulletItem::new("")
                     .child(
-                        Label::new("Attach the necessary Bedrock permissions to")
+                        Label::new(t!("Attach the necessary Bedrock permissions to"))
                             .color(Color::Muted),
                     )
                     .child(ButtonLink::new(
-                        "this user",
+                        t!("this user"),
                         "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
                     )),
             )
             .child(
-                ListBulletItem::new(
-                    "Enter either access keys OR a Bedrock API Key below (not both)",
-                )
+                ListBulletItem::new(t!(
+                    "Enter either access keys OR a Bedrock API Key below (not both)"
+                ))
                 .label_color(Color::Muted),
             );
 
@@ -2833,11 +2832,11 @@ impl ConfigurationView {
             .tab_group()
             .gap_1p5()
             .child(Divider::horizontal())
-            .child(Label::new("Static Credentials").mt_2())
+            .child(Label::new(t!("Static Credentials")).mt_2())
             .child(
-                Label::new(
-                    "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
-                )
+                Label::new(t!(
+                    "This method uses your AWS access key ID and secret access key, or a Bedrock API Key."
+                ))
                 .color(Color::Muted),
             )
             .child(list_item)
@@ -2849,22 +2848,22 @@ impl ConfigurationView {
                     .child(self.session_token_editor.clone()),
             )
             .child(
-                Label::new(format!(
-                    "You can also set the {}, {} and {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.",
-                    ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
-                    ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
-                    ZED_BEDROCK_REGION_VAR.name,
-                    ZED_BEDROCK_BEARER_TOKEN_VAR.name
+                Label::new(t!(
+                    "You can also set the {$access_key_id_var}, {$secret_access_key_var} and {$region_var} environment variables (or {$bearer_token_var} for Bedrock API Key authentication) and restart Zed.",
+                    access_key_id_var = ZED_BEDROCK_ACCESS_KEY_ID_VAR.name.clone(),
+                    secret_access_key_var = ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name.clone(),
+                    region_var = ZED_BEDROCK_REGION_VAR.name.clone(),
+                    bearer_token_var = ZED_BEDROCK_BEARER_TOKEN_VAR.name.clone(),
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
             )
             .child(
-                Label::new(format!(
-                    "Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.",
-                    ZED_AWS_PROFILE_VAR.name,
-                    ZED_AWS_ENDPOINT_VAR.name,
-                    ZED_BEDROCK_SESSION_TOKEN_VAR.name
+                Label::new(t!(
+                    "Optionally, if your environment uses AWS CLI profiles, you can set {$profile_var}; if it requires a custom endpoint, you can set {$endpoint_var}; and if it requires a Session Token, you can set {$session_token_var}.",
+                    profile_var = ZED_AWS_PROFILE_VAR.name.clone(),
+                    endpoint_var = ZED_AWS_ENDPOINT_VAR.name.clone(),
+                    session_token_var = ZED_BEDROCK_SESSION_TOKEN_VAR.name.clone(),
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted)
@@ -2872,12 +2871,12 @@ impl ConfigurationView {
                 .mb_2p5(),
             )
             .child(Divider::horizontal())
-            .child(Label::new("Using the API key").mt_2().mb_1())
+            .child(Label::new(t!("Using the API key")).mt_2().mb_1())
             .child(self.bearer_token_editor.clone())
             .child(
-                Label::new(format!(
-                    "Region is configured via {} environment variable or settings.json (defaults to us-east-1).",
-                    ZED_BEDROCK_REGION_VAR.name
+                Label::new(t!(
+                    "Region is configured via {$region_var} environment variable or settings.json (defaults to us-east-1).",
+                    region_var = ZED_BEDROCK_REGION_VAR.name.clone(),
                 ))
                 .size(LabelSize::Small)
                 .color(Color::Muted)

@@ -9961,6 +9961,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "i18n",
  "language",
  "language_model",
  "language_models_cloud",

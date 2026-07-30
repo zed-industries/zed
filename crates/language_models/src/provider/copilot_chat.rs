@@ -17,6 +17,7 @@ use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
+use i18n::t;
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, CompletionIntent, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -153,13 +154,13 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         let title = if is_authenticated {
             None
         } else {
-            Some("Configure Copilot Chat".into())
+            Some(t!("Configure Copilot Chat").into())
         };
         let description = if is_authenticated {
             None
         } else {
             Some(language_model::InlineDescription::Text(
-                "Requires an active GitHub Copilot subscription.".into(),
+                t!("Requires an active GitHub Copilot subscription.").into(),
             ))
         };
 
