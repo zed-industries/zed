@@ -13,6 +13,8 @@
 ok = 确定
 cancel = 取消
 retry = 重试
+yes = 是
+no = 否
 
 ## Actions with no single owner
 

@@ -19,6 +19,7 @@ client.workspace = true
 cloud_api_types.workspace = true
 component.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 language_model.workspace = true
 serde.workspace = true
 smallvec.workspace = true

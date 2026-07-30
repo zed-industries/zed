@@ -607,6 +607,7 @@ dependencies = [
  "cloud_api_types",
  "component",
  "gpui",
+ "i18n",
  "language_model",
  "serde",
  "smallvec",
