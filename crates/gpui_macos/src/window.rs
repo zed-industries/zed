@@ -583,7 +583,6 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
-    native_view_focus_callback: Option<Box<dyn FnMut()>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -990,7 +989,6 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
-                native_view_focus_callback: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1751,10 +1749,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
 
-    fn on_native_view_focus(&self, callback: Box<dyn FnMut()>) {
-        self.0.as_ref().lock().native_view_focus_callback = Some(callback);
-    }
-
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -2276,12 +2270,13 @@ extern "C" fn make_first_responder(this: &Object, _: Sel, responder: id) -> BOOL
         }
 
         let window_state = get_window_state(this);
-        let mut state = window_state.lock();
+        let state = window_state.lock();
         let native_view = state.native_view.as_ptr() as id;
         let belongs_to_gpui = responder == native_view;
+        drop(state);
 
-        if !belongs_to_gpui && let Some(callback) = state.native_view_focus_callback.as_mut() {
-            callback();
+        if !belongs_to_gpui {
+            dispatch_native_view_focus(&window_state);
         }
 
         accepted
@@ -2303,25 +2298,31 @@ extern "C" fn send_event(this: &Object, _: Sel, event: id) {
 
             if hit_view != nil {
                 let window_state = get_window_state(this);
-                let mut state = window_state.lock();
+                let state = window_state.lock();
                 let native_view = state.native_view.as_ptr() as id;
                 let in_overlay_view = state.overlay_view.is_some_and(|overlay_view| {
                     let in_overlay: BOOL =
                         msg_send![hit_view, isDescendantOf: overlay_view.as_ptr()];
                     in_overlay == YES
                 });
+                drop(state);
 
-                if hit_view != native_view
-                    && !in_overlay_view
-                    && let Some(callback) = state.native_view_focus_callback.as_mut()
-                {
-                    callback();
+                if hit_view != native_view && !in_overlay_view {
+                    dispatch_native_view_focus(&window_state);
                 }
             }
         }
 
         let _: () = msg_send![super(this, class!(NSWindow)), sendEvent: event];
     }
+}
+
+fn dispatch_native_view_focus(window_state: &Arc<Mutex<MacWindowState>>) {
+    let mut callback = window_state.lock().event_callback.take();
+    if let Some(callback) = callback.as_mut() {
+        callback(PlatformInput::NativeViewFocus);
+    }
+    window_state.lock().event_callback = callback;
 }
 
 extern "C" fn dealloc_view(this: &Object, _: Sel) {

@@ -1736,14 +1736,6 @@ impl Window {
                     .log_err();
             }
         }));
-        platform_window.on_native_view_focus(Box::new({
-            let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, _| window.blur())
-                    .log_err();
-            }
-        }));
         platform_window.on_hover_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -5025,6 +5017,10 @@ impl Window {
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
+            PlatformInput::NativeViewFocus => {
+                self.blur();
+                PlatformInput::NativeViewFocus
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
