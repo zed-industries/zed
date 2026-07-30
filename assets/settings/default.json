@@ -229,10 +229,12 @@
   //
   // Default: true
   "zoomed_padding": true,
-  // What draws Zed's window decorations (titlebar):
-  // 1. Client application (Zed) draws its own window decorations
+  // On Linux, what draws Zed's window decorations (titlebar).
+  // This setting has no effect on other platforms:
+  // 1. Zed draws its own window decorations.
   //    "client"
-  // 2. Display server draws the window decorations. Not supported by GNOME Wayland.
+  // 2. The window manager or compositor draws the window decorations.
+  //    Not supported by GNOME Wayland.
   //    "server"
   //
   // This requires restarting Zed for changes to take effect.
