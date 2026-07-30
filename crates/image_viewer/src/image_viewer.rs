@@ -90,6 +90,19 @@ impl DisplayedImage {
 }
 
 impl ImageView {
+    fn register_release_cleanup(window: &Window, cx: &mut Context<Self>) {
+        cx.on_release_in(window, |this, window, cx| {
+            if let Some(pending_image) = this.pending_image.take() {
+                pending_image.remove_asset(cx);
+            }
+            if let Some(displayed_image) = this.displayed_image.take() {
+                displayed_image.release(window, cx);
+            }
+            this.image_item.read(cx).image.clone().remove_asset(cx);
+        })
+        .detach();
+    }
+
     fn is_dragging(&self) -> bool {
         self.last_mouse_position.is_some()
     }
@@ -148,16 +161,7 @@ impl ImageView {
         let _render_image = pending_image.clone().get_render_image(window, cx);
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
-        cx.on_release_in(window, |this, window, cx| {
-            if let Some(pending_image) = this.pending_image.take() {
-                pending_image.remove_asset(cx);
-            }
-            if let Some(displayed_image) = this.displayed_image.take() {
-                displayed_image.release(window, cx);
-            }
-            this.image_item.read(cx).image.clone().remove_asset(cx);
-        })
-        .detach();
+        Self::register_release_cleanup(window, cx);
 
         let image_size = image_item
             .read(cx)
@@ -632,23 +636,26 @@ impl Item for ImageView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| Self {
-            image_item: self.image_item.clone(),
-            project: self.project.clone(),
-            focus_handle: cx.focus_handle(),
-            zoom_level: self.zoom_level,
-            pan_offset: self.pan_offset,
-            last_mouse_position: None,
-            container_bounds: None,
-            image_size: self.image_size,
-            pending_image: None,
-            displayed_image: None,
+        Task::ready(Some(cx.new(|cx| {
+            Self::register_release_cleanup(window, cx);
+            Self {
+                image_item: self.image_item.clone(),
+                project: self.project.clone(),
+                focus_handle: cx.focus_handle(),
+                zoom_level: self.zoom_level,
+                pan_offset: self.pan_offset,
+                last_mouse_position: None,
+                container_bounds: None,
+                image_size: self.image_size,
+                pending_image: None,
+                displayed_image: None,
+            }
         })))
     }
 
@@ -1242,6 +1249,60 @@ mod tests {
         assert!(
             !prefetched_image_is_cached,
             "the superseded constructor prefetch remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_clone_removes_displayed_image_from_asset_cache_on_release(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let source_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let cx = cx.add_empty_window();
+        let original_image_view = cx.update(|window, cx| {
+            cx.new(|cx| ImageView::new(image_item.clone(), project, window, cx))
+        });
+        let split_image_view = original_image_view
+            .update_in(cx, |image_view, window, cx| {
+                image_view.clone_on_split(None, window, cx)
+            })
+            .await
+            .expect("image view should support splitting");
+
+        drop(original_image_view);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            split_image_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            split_image_view.clone().into_any_element()
+        });
+
+        assert_eq!(
+            displayed_source_id(&split_image_view, cx),
+            Some(source_image.id()),
+            "the split image view should finish decoding the image"
+        );
+        assert!(
+            image_is_cached(&source_image, cx),
+            "the split image view should cache its displayed image"
+        );
+
+        drop(split_image_view);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+
+        let source_image_is_cached = image_is_cached(&source_image, cx);
+        cx.run_until_parked();
+
+        assert!(
+            !source_image_is_cached,
+            "the released split image view left its displayed image in GPUI's asset cache"
         );
     }
 }
