@@ -906,24 +906,32 @@ impl Render for ConfigurationView {
 
         let api_key_section = v_flex()
             .on_action(cx.listener(Self::save_api_key))
-            .child(Label::new(t!(
-                key = "to-use-opencode-models-in-zed-you-need-an-api-key-colon",
-                "To use OpenCode models in Zed, you need an API key:"
-            )).color(Color::Muted))
+            .child(
+                Label::new(t!(
+                    key = "to-use-opencode-models-in-zed-you-need-an-api-key-colon",
+                    "To use OpenCode models in Zed, you need an API key:"
+                ))
+                .color(Color::Muted),
+            )
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new(t!("Sign in and get your key at")).color(Color::Muted))
+                            .child(
+                                Label::new(t!("Sign in and get your key at")).color(Color::Muted),
+                            )
                             .child(ButtonLink::new(
                                 "OpenCode Console",
                                 "https://opencode.ai/auth",
                             )),
                     )
                     .when(is_editing, |this| {
-                        this.child(ListBulletItem::new(t!(
-                            "Paste your API key below and hit enter to start using OpenCode"
-                        )).label_color(Color::Muted))
+                        this.child(
+                            ListBulletItem::new(t!(
+                                "Paste your API key below and hit enter to start using OpenCode"
+                            ))
+                            .label_color(Color::Muted),
+                        )
                     }),
             )
             .child(api_key_control)
@@ -933,7 +941,8 @@ impl Render for ConfigurationView {
                     env_var_name = API_KEY_ENV_VAR_NAME,
                 ))
                 .size(LabelSize::Small)
-                .color(Color::Muted).mt_1p5(),
+                .color(Color::Muted)
+                .mt_1p5(),
             )
             .into_any_element();
 

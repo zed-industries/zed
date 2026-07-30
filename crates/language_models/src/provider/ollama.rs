@@ -925,18 +925,18 @@ impl ConfigurationView {
         };
 
         v_flex()
-          .on_action(cx.listener(Self::save_api_key))
-          .child(api_key_control)
-          .gap_1p5()
-          .mb_2()
-          .child(
-              Label::new(t!(
-                  "You can also set the {$env_var_name} environment variable and restart Zed.",
-                  env_var_name = API_KEY_ENV_VAR_NAME,
-              ))
-              .size(LabelSize::Small)
-              .color(Color::Muted),
-          )
+            .on_action(cx.listener(Self::save_api_key))
+            .child(api_key_control)
+            .gap_1p5()
+            .mb_2()
+            .child(
+                Label::new(t!(
+                    "You can also set the {$env_var_name} environment variable and restart Zed.",
+                    env_var_name = API_KEY_ENV_VAR_NAME,
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
     }
 
     fn render_context_window_editor(&self, cx: &Context<Self>) -> Div {
@@ -1069,17 +1069,15 @@ impl Render for ConfigurationView {
                                             "download_ollama_button",
                                             t!("Download Ollama"),
                                         )
-                                            .style(ButtonStyle::OutlinedGhost)
-                                            .size(ButtonSize::Medium)
-                                            .end_icon(
-                                                Icon::new(IconName::ArrowUpRight)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Muted),
-                                            )
-                                            .on_click(move |_, _, cx| {
-                                                cx.open_url(OLLAMA_DOWNLOAD_URL)
-                                            })
-                                            .into_any_element(),
+                                        .style(ButtonStyle::OutlinedGhost)
+                                        .size(ButtonSize::Medium)
+                                        .end_icon(
+                                            Icon::new(IconName::ArrowUpRight)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+                                        .into_any_element(),
                                     )
                                 }
                             })

@@ -145,10 +145,8 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
-        t!(
-            "You are not signed in to your ChatGPT account. \
-        Sign in via Settings > AI > LLM Providers to continue."
-        )
+        t!("You are not signed in to your ChatGPT account. \
+        Sign in via Settings > AI > LLM Providers to continue.")
         .into()
     }
 

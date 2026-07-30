@@ -115,8 +115,8 @@ fn render_empty_state(cx: &App) -> AnyElement {
             Label::new(t!(
                 "No MCP servers added yet. Click \"Add Server\" to get started."
             ))
-                .color(Color::Muted)
-                .size(LabelSize::Small),
+            .color(Color::Muted)
+            .size(LabelSize::Small),
         )
         .into_any_element()
 }
@@ -133,8 +133,8 @@ fn render_no_project_state(cx: &App) -> AnyElement {
             Label::new(t!(
                 "No active project found. Open a workspace to manage MCP servers."
             ))
-                .color(Color::Muted)
-                .size(LabelSize::Small),
+            .color(Color::Muted)
+            .size(LabelSize::Small),
         )
         .into_any_element()
 }
@@ -1173,9 +1173,8 @@ fn save_mcp_server_form(
         });
     if collides_with_other_server {
         if let Some(form) = settings_window.mcp_server_form.as_mut() {
-            form.error = Some(
-                t!("A server named \"{$name}\" already exists.", name = id.0).resolve(),
-            );
+            form.error =
+                Some(t!("A server named \"{$name}\" already exists.", name = id.0).resolve());
         }
         cx.notify();
         return;
@@ -1295,9 +1294,7 @@ fn build_settings_from_values(
             // render, so a clearly invalid URL is reported to the user instead of
             // being silently written and failing later when the server starts.
             if let Err(error) = url::Url::parse(&url) {
-                return Err(
-                    t!("Invalid URL: {$error}", error = error.to_string()).resolve(),
-                );
+                return Err(t!("Invalid URL: {$error}", error = error.to_string()).resolve());
             }
             let header_label = t!("header").resolve();
             let headers = collect_kv(&values.headers, header_label.as_ref())?;
@@ -1367,10 +1364,12 @@ fn collect_kv(
             continue;
         }
         if map.contains_key(&key) {
-            return Err(
-                t!("Duplicate {$label} \"{$key}\".", label = label.to_owned(), key = key)
-                    .resolve(),
-            );
+            return Err(t!(
+                "Duplicate {$label} \"{$key}\".",
+                label = label.to_owned(),
+                key = key
+            )
+            .resolve());
         }
         map.insert(key, value.clone());
     }

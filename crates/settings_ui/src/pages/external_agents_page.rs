@@ -124,8 +124,8 @@ fn render_empty_state(cx: &App) -> AnyElement {
             Label::new(t!(
                 "No external agents added yet. Click \"Add Agent\" to get started."
             ))
-                .color(Color::Muted)
-                .size(LabelSize::Small),
+            .color(Color::Muted)
+            .size(LabelSize::Small),
         )
         .into_any_element()
 }
@@ -142,8 +142,8 @@ fn render_no_project_state(cx: &App) -> AnyElement {
             Label::new(t!(
                 "No active project found. Open a workspace to manage external agents."
             ))
-                .color(Color::Muted)
-                .size(LabelSize::Small),
+            .color(Color::Muted)
+            .size(LabelSize::Small),
         )
         .into_any_element()
 }
@@ -760,9 +760,8 @@ fn save_custom_agent_form(
         });
     if collides_with_other_agent {
         if let Some(form) = settings_window.custom_agent_form.as_mut() {
-            form.error = Some(
-                t!("An agent named \"{$name}\" already exists.", name = id.0).resolve(),
-            );
+            form.error =
+                Some(t!("An agent named \"{$name}\" already exists.", name = id.0).resolve());
         }
         cx.notify();
         return;
@@ -874,10 +873,12 @@ fn collect_kv(
             continue;
         }
         if map.contains_key(&key) {
-            return Err(
-                t!("Duplicate {$label} \"{$key}\".", label = label.to_owned(), key = key)
-                    .resolve(),
-            );
+            return Err(t!(
+                "Duplicate {$label} \"{$key}\".",
+                label = label.to_owned(),
+                key = key
+            )
+            .resolve());
         }
         map.insert(key, value.clone());
     }

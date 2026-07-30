@@ -1578,17 +1578,17 @@ impl Render for ConfigurationView {
                                             "download_llama_cpp_button",
                                             t!("Get llama.cpp"),
                                         )
-                                            .style(ButtonStyle::OutlinedGhost)
-                                            .size(ButtonSize::Medium)
-                                            .end_icon(
-                                                Icon::new(IconName::ArrowUpRight)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Muted),
-                                            )
-                                            .on_click(move |_, _, cx| {
-                                                cx.open_url(LLAMA_CPP_DOWNLOAD_URL)
-                                            })
-                                            .into_any_element(),
+                                        .style(ButtonStyle::OutlinedGhost)
+                                        .size(ButtonSize::Medium)
+                                        .end_icon(
+                                            Icon::new(IconName::ArrowUpRight)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .on_click(move |_, _, cx| {
+                                            cx.open_url(LLAMA_CPP_DOWNLOAD_URL)
+                                        })
+                                        .into_any_element(),
                                     )
                                 }
                             })

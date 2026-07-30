@@ -368,7 +368,10 @@ impl SecurityModal {
             1 => Some(
                 t!(
                     "Trust all projects in the {$folder} folder",
-                    folder = self.shorten_path(available_parents[0]).display().to_string()
+                    folder = self
+                        .shorten_path(available_parents[0])
+                        .display()
+                        .to_string()
                 )
                 .resolve(),
             ),

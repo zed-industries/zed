@@ -941,17 +941,19 @@ pub(crate) fn render_buffer_header(
                                                 cx,
                                             ))
                                         })
-                                        .on_click(window.listener_for(editor, {
-                                            let jump_data = jump_data.clone();
-                                            move |editor, e: &ClickEvent, window, cx| {
-                                                editor.open_excerpts_common(
-                                                    Some(jump_data.clone()),
-                                                    e.modifiers().secondary(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                        })),
+                                        .on_click(
+                                            window.listener_for(editor, {
+                                                let jump_data = jump_data.clone();
+                                                move |editor, e: &ClickEvent, window, cx| {
+                                                    editor.open_excerpts_common(
+                                                        Some(jump_data.clone()),
+                                                        e.modifiers().secondary(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            }),
+                                        ),
                                     )
                                 }),
                         )

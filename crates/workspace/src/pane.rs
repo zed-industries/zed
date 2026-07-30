@@ -4077,8 +4077,10 @@ impl Pane {
             .workspace
             .update(cx, |workspace, cx| {
                 if workspace.project().read(cx).is_via_collab() {
-                    workspace
-                        .show_error(String::from(t!("Cannot drop files on a remote project")), cx);
+                    workspace.show_error(
+                        String::from(t!("Cannot drop files on a remote project")),
+                        cx,
+                    );
                     true
                 } else {
                     false
@@ -4135,10 +4137,7 @@ impl Pane {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
                                     workspace.show_error(
-                                        String::from(t!(
-                                            "Error: {$error}",
-                                            error = format!("{e}")
-                                        )),
+                                        String::from(t!("Error: {$error}", error = format!("{e}"))),
                                         cx,
                                     );
                                 }
@@ -4245,7 +4244,10 @@ fn default_render_tab_bar_buttons(
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action(t!("New File"), NewFile.boxed_clone())
-                            .action(t!(key = "open-file-button", "Open File"), ToggleFileFinder::default().boxed_clone())
+                            .action(
+                                t!(key = "open-file-button", "Open File"),
+                                ToggleFileFinder::default().boxed_clone(),
+                            )
                             .separator()
                             .action(t!("Search Project"), DeploySearch::default().boxed_clone())
                             .action(t!("Search Symbols"), ToggleProjectSymbols.boxed_clone())
@@ -4297,7 +4299,11 @@ fn default_render_tab_bar_buttons(
                 }))
                 .tooltip(move |_window, cx| {
                     Tooltip::for_action(
-                        if zoomed { t!("Zoom Out") } else { t!("Zoom In") },
+                        if zoomed {
+                            t!("Zoom Out")
+                        } else {
+                            t!("Zoom In")
+                        },
                         &ToggleZoom,
                         cx,
                     )

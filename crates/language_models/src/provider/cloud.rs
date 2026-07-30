@@ -410,10 +410,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
-        t!(
-            "You are not signed in to your Zed account. \
-        Sign in to continue."
-        )
+        t!("You are not signed in to your Zed account. \
+        Sign in to continue.")
         .into()
     }
 
@@ -448,7 +446,9 @@ fn zed_ai_description(
     eligible_for_trial: bool,
 ) -> LocalizedString {
     if !is_connected {
-        return t!("Sign in to have access to Zed's complete agentic experience with hosted models.");
+        return t!(
+            "Sign in to have access to Zed's complete agentic experience with hosted models."
+        );
     }
 
     match plan {

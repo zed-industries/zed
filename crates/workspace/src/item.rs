@@ -597,11 +597,8 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(SharedString, Box<dyn Action>)>;
-    fn tab_double_click_action(
-        &self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Box<dyn Action>>;
+    fn tab_double_click_action(&self, window: &mut Window, cx: &mut App)
+    -> Option<Box<dyn Action>>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted

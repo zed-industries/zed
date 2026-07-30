@@ -218,9 +218,7 @@ impl RenderOnce for SettingsInputField {
         let confirm_for_button = self.confirm.clone();
         let is_editor_empty = editor_text.trim().is_empty();
 
-        let aria_label = self
-            .aria_label
-            .or_else(|| self.placeholder.clone());
+        let aria_label = self.aria_label.or_else(|| self.placeholder.clone());
         let aria_description = self.aria_description;
 
         let (a11y_value, a11y_text_runs) =

@@ -1216,10 +1216,7 @@ impl SettingsPageItem {
                                 ("sub-page".into(), sub_page_link.title.clone()),
                                 t!("Configure"),
                             )
-                            .aria_label(t!(
-                                "Configure {$name}",
-                                name = sub_page_link.title.clone()
-                            ))
+                            .aria_label(t!("Configure {$name}", name = sub_page_link.title.clone()))
                             .tab_index(0_isize)
                             .end_icon(
                                 Icon::new(IconName::ChevronRight)
@@ -1242,8 +1239,7 @@ impl SettingsPageItem {
                                                 .take(item_index)
                                                 .rev()
                                                 .find_map(|item| {
-                                                    item.header_text()
-                                                        .map(LocalizedString::resolve)
+                                                    item.header_text().map(LocalizedString::resolve)
                                                 })
                                         });
 
@@ -2438,8 +2434,11 @@ impl SettingsWindow {
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         json_path = sub_page_link.json_path;
-                        let mut parts =
-                            vec![page.title.fallback(), header_str, sub_page_link.title.as_ref()];
+                        let mut parts = vec![
+                            page.title.fallback(),
+                            header_str,
+                            sub_page_link.title.as_ref(),
+                        ];
                         parts.extend(sub_page_link.search_aliases);
                         documents.push(SearchDocument {
                             id: key_index,
@@ -2470,7 +2469,11 @@ impl SettingsWindow {
                         );
                     }
                 }
-                push_candidates(&mut fuzzy_match_candidates, key_index, page.title.fallback());
+                push_candidates(
+                    &mut fuzzy_match_candidates,
+                    key_index,
+                    page.title.fallback(),
+                );
                 push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
 
                 key_lut.push(SearchKeyLUTEntry {

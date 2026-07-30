@@ -1277,9 +1277,12 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddWsl => {
                 Some(self.render_action_item(ix, IconName::Plus, t!("Add WSL Distro"), selected))
             }
-            RemoteMatch::OpenFolder { .. } => {
-                Some(self.render_action_item(ix, IconName::Plus, t!(key = "open-folder-action", "Open Folder"), selected))
-            }
+            RemoteMatch::OpenFolder { .. } => Some(self.render_action_item(
+                ix,
+                IconName::Plus,
+                t!(key = "open-folder-action", "Open Folder"),
+                selected,
+            )),
             RemoteMatch::ViewServerOptions { .. } => Some(self.render_action_item(
                 ix,
                 IconName::Settings,
