@@ -6,7 +6,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TaskExt,
     TextStyle, WeakEntity, Window, combine_highlights, relative,
 };
-use language::Point;
+use language::{Point, SymbolKind};
 use picker::{Picker, PickerDelegate, PreviewUpdate};
 use project::{Project, ProjectPath};
 use settings::Settings;
@@ -17,6 +17,34 @@ use workspace::{
     Workspace,
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
+
+/// Maps a `SymbolKind` to a syntax highlight name for label coloring.
+/// Returns `None` for kinds without a natural highlight name.
+fn symbol_kind_highlight_name(kind: SymbolKind) -> Option<&'static str> {
+    match kind {
+        SymbolKind::Function | SymbolKind::Method => Some("function.method"),
+        SymbolKind::Constructor => Some("constructor"),
+        SymbolKind::Struct | SymbolKind::Class | SymbolKind::Interface | SymbolKind::TypeParameter => {
+            Some("type")
+        }
+        SymbolKind::Enum => Some("enum"),
+        SymbolKind::EnumMember => Some("variant"),
+        SymbolKind::Field | SymbolKind::Property => Some("property"),
+        SymbolKind::Constant => Some("constant"),
+        SymbolKind::Variable => Some("variable"),
+        SymbolKind::Module | SymbolKind::Namespace | SymbolKind::Package => Some("namespace"),
+        SymbolKind::Operator => Some("operator"),
+        SymbolKind::Event => Some("function"),
+        SymbolKind::File
+        | SymbolKind::String
+        | SymbolKind::Number
+        | SymbolKind::Boolean
+        | SymbolKind::Array
+        | SymbolKind::Object
+        | SymbolKind::Key
+        | SymbolKind::Null => None,
+    }
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -162,7 +190,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             .read(cx)
             .worktree_for_id(project_path.worktree_id, cx)?;
         let abs_path = worktree.read(cx).absolutize(&project_path.path);
-        Some(PreviewUpdate::from_path(abs_path))
+        let position = Point::new(result.symbol.row, result.symbol.column);
+        Some(PreviewUpdate::from_path_with_position(abs_path, position))
     }
 
     fn update_matches(
@@ -243,8 +272,9 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             path.display(path_style).into_owned().into()
         };
 
-        let label = result.symbol.name.clone();
-        let line_number = result.symbol.row + 1;
+        let symbol = &result.symbol;
+        let label = symbol.display_text.as_str();
+        let line_number = symbol.row + 1;
 
         let settings = ThemeSettings::get_global(cx);
 
@@ -259,16 +289,39 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             ..Default::default()
         };
 
-        let highlight_style = HighlightStyle {
+        // Build syntax highlight runs: context in keyword color, name in kind color.
+        let syntax_theme = cx.theme().syntax();
+        let name_start = symbol.name_range.start;
+        let name_end = symbol.name_range.end;
+
+        let mut syntax_runs: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+
+        // Context portion (e.g., "fn ", "struct ") styled as keyword.
+        if name_start > 0 {
+            if let Some(style) = syntax_theme.style_for_name("keyword") {
+                syntax_runs.push((0..name_start, style));
+            }
+        }
+
+        // Name portion styled by symbol kind.
+        if let Some(highlight_name) = symbol_kind_highlight_name(symbol.kind)
+            && let Some(style) = syntax_theme.style_for_name(highlight_name)
+        {
+            syntax_runs.push((name_start..name_end, style));
+        }
+
+        // Fuzzy match highlight: positions are relative to the candidate string
+        // (which is the symbol name), so offset them by name_start.
+        let fuzzy_highlight = HighlightStyle {
             background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
             ..Default::default()
         };
-        let custom_highlights = result
-            .positions
-            .iter()
-            .map(|pos| (*pos..label.ceil_char_boundary(pos + 1), highlight_style));
+        let fuzzy_highlights = result.positions.iter().map(|pos| {
+            let offset_pos = pos + name_start;
+            (offset_pos..label.ceil_char_boundary(offset_pos + 1), fuzzy_highlight)
+        });
 
-        let highlights = combine_highlights(custom_highlights, std::iter::empty());
+        let highlights = combine_highlights(fuzzy_highlights, syntax_runs.iter().cloned());
 
         Some(
             ListItem::new(ix)
@@ -279,7 +332,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     v_flex()
                         .child(
                             LabelLike::new().child(
-                                StyledText::new(&label)
+                                StyledText::new(label)
                                     .with_default_highlights(&text_style, highlights),
                             ),
                         )

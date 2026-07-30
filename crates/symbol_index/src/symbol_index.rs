@@ -1,6 +1,7 @@
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate};
 use gpui::BackgroundExecutor;
 use language_core::{Grammar, SymbolKind};
+use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tree_sitter::StreamingIterator;
@@ -35,6 +36,9 @@ pub struct IndexedSymbol {
     pub name: String,
     /// Display text including context (e.g., "fn initBookForOfficial").
     pub display_text: String,
+    /// Byte range of the name within `display_text`, for syntax highlighting
+    /// and fuzzy match position offsetting.
+    pub name_range: Range<usize>,
     /// File location.
     pub location: SymbolLocation,
     /// Inferred symbol kind.
@@ -274,14 +278,18 @@ impl SymbolIndex {
         for (location, extracted) in updates {
             self.symbols.retain(|symbol| symbol.location != location);
             for symbol in extracted {
-                let display_text = if symbol.context.is_empty() {
-                    symbol.name.clone()
+                let (display_text, name_range) = if symbol.context.is_empty() {
+                    let len = symbol.name.len();
+                    (symbol.name.clone(), 0..len)
                 } else {
-                    format!("{} {}", symbol.context, symbol.name)
+                    let prefix_len = symbol.context.len() + 1; // +1 for space
+                    let end = prefix_len + symbol.name.len();
+                    (format!("{} {}", symbol.context, symbol.name), prefix_len..end)
                 };
                 self.symbols.push(IndexedSymbol {
                     name: symbol.name,
                     display_text,
+                    name_range,
                     location: location.clone(),
                     kind: symbol.kind,
                     row: symbol.row,
