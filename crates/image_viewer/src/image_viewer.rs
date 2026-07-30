@@ -1183,6 +1183,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reloading_removes_replaced_image_from_asset_cache(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let original_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+
+        cx.run_until_parked();
+        draw_window(cx);
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(original_image.id()),
+            "the original image should finish decoding and be displayed"
+        );
+
+        let reloaded_image = test_image(1);
+        replace_image_and_draw(&image_item, reloaded_image.clone(), cx);
+        cx.run_until_parked();
+        draw_window(cx);
+
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(reloaded_image.id()),
+            "the reloaded image should replace the original"
+        );
+        let original_image_is_cached = image_is_cached(&original_image, cx);
+        cx.run_until_parked();
+
+        assert!(
+            !original_image_is_cached,
+            "the replaced image remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
     async fn test_superseded_in_flight_image_is_removed_from_asset_cache(cx: &mut TestAppContext) {
         init_test(cx);
         let (project, image_item) = open_test_image(cx).await;
