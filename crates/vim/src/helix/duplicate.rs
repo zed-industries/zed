@@ -1,13 +1,16 @@
 use std::ops::Range;
 
 use editor::{
-    DisplayPoint, MultiBufferOffset, display_map::DisplaySnapshot, movement::TextLayoutDetails,
+    DisplayPoint, MultiBufferOffset,
+    display_map::{DisplaySnapshot, FoldPoint},
+    movement::TextLayoutDetails,
 };
 use gpui::Context;
-use text::Bias;
+use multi_buffer::MultiBufferRow;
+use text::{Bias, SelectionGoal};
 use ui::Window;
 
-use crate::Vim;
+use crate::{Vim, motion::up_down_buffer_rows};
 
 #[derive(Copy, Clone)]
 enum Direction {
@@ -88,51 +91,110 @@ fn find_next_valid_duplicate_space(
     direction: Direction,
     text_layout_details: &TextLayoutDetails,
 ) -> Option<Range<DisplayPoint>> {
+    // records which soft-wrap sub-row the origin start/end are on
+    let wrapped_row_for = |point: DisplayPoint| {
+        let fold_point = map.display_point_to_fold_point(point, Bias::Left);
+        let begin_folded_line = map.fold_point_to_display_point(
+            map.fold_snapshot()
+                .clip_point(FoldPoint::new(fold_point.row(), 0), Bias::Left),
+        );
+        point.row().0 - begin_folded_line.row().0
+    };
+
+    let start_wrapped_row = wrapped_row_for(origin.start);
+    let end_wrapped_row = wrapped_row_for(origin.end);
+
     let start_x = map.x_for_display_point(origin.start, text_layout_details);
     let end_x = map.x_for_display_point(origin.end, text_layout_details);
 
-    let mut candidate = origin;
+    let times = match direction {
+        Direction::Above => -1,
+        Direction::Below => 1,
+    };
+
+    let mut candidate = origin.clone();
+    let mut start_goal = SelectionGoal::None;
+    let mut end_goal = SelectionGoal::None;
+
+    // If the pos is in a `inlay_hint`, preserve the buffer column across inlays
+    let preserve_buffer_column_across_inlays =
+        |origin: DisplayPoint, candidate: DisplayPoint, bias: Bias| {
+            let origin_buffer_point = map.display_point_to_point(origin, bias);
+            let candidate_buffer_point = map.display_point_to_point(candidate, bias);
+
+            let origin_inlay_point = map.inlay_snapshot().to_inlay_point(origin_buffer_point);
+            let candidate_inlay_point = map.inlay_snapshot().to_inlay_point(candidate_buffer_point);
+
+            let has_inlay_before_origin = origin_inlay_point.0.column > origin_buffer_point.column;
+            let has_inlay_before_candidate =
+                candidate_inlay_point.0.column > candidate_buffer_point.column;
+
+            if origin_buffer_point.column == candidate_buffer_point.column
+                || !(has_inlay_before_origin || has_inlay_before_candidate)
+            {
+                return candidate;
+            }
+
+            // FIXME: This fallback compares/assigns raw buffer columns (byte offsets),
+            // not tab-expanded (visual) columns. If either the origin or candidate line
+            // contains tabs whose expansion width differs before this column, falling
+            // back to "same raw buffer column" can land on a visually misaligned
+            // position, the same class of bug the pixel-based (`up_down_buffer_rows`)
+            // path is otherwise designed to avoid. This case isn't currently covered by
+            // tests (existing tests exercise inlays and tabs separately, not combined
+            // on the same line/column).
+            let mut target_buffer_point = candidate_buffer_point;
+            target_buffer_point.column = origin_buffer_point.column.min(
+                map.buffer_snapshot()
+                    .line_len(MultiBufferRow(target_buffer_point.row)),
+            );
+            map.point_to_display_point(target_buffer_point, bias)
+        };
+
     loop {
-        match direction {
-            Direction::Below => {
-                if candidate.end.row() >= map.max_point().row() {
-                    return None;
-                }
+        let previous_boundary = match direction {
+            Direction::Above => candidate.start,
+            Direction::Below => candidate.end,
+        };
+        let (candidate_start, next_start_goal) =
+            up_down_buffer_rows(map, candidate.start, start_goal, times, text_layout_details);
+        let (candidate_end, next_end_goal) =
+            up_down_buffer_rows(map, candidate.end, end_goal, times, text_layout_details);
 
-                candidate = map.start_of_relative_buffer_row(
-                    DisplayPoint::new(candidate.start.row(), candidate.start.column()),
-                    1,
-                )
-                    ..map.start_of_relative_buffer_row(
-                        DisplayPoint::new(candidate.end.row(), candidate.end.column()),
-                        1,
-                    );
-            }
-            Direction::Above => {
-                if candidate.start.row() == DisplayPoint::zero().row() {
-                    return None;
-                }
+        let candidate_start =
+            preserve_buffer_column_across_inlays(origin.start, candidate_start, Bias::Left);
+        let candidate_end =
+            preserve_buffer_column_across_inlays(origin.end, candidate_end, Bias::Right);
+        candidate = candidate_start..candidate_end;
 
-                candidate = map.start_of_relative_buffer_row(
-                    DisplayPoint::new(candidate.start.row(), candidate.start.column()),
-                    -1,
-                )
-                    ..map.start_of_relative_buffer_row(
-                        DisplayPoint::new(candidate.end.row(), candidate.start.column()),
-                        -1,
-                    );
-            }
+        start_goal = next_start_goal;
+        end_goal = next_end_goal;
+
+        let boundary = match direction {
+            Direction::Above => candidate.start,
+            Direction::Below => candidate.end,
+        };
+
+        if map
+            .display_point_to_fold_point(previous_boundary, Bias::Left)
+            .row()
+            == map.display_point_to_fold_point(boundary, Bias::Left).row()
+        {
+            return None;
         }
 
-        let start_row = candidate.start.row();
-        let end_row = candidate.end.row();
+        if wrapped_row_for(candidate.start) != start_wrapped_row
+            || wrapped_row_for(candidate.end) != end_wrapped_row
+        {
+            continue;
+        }
 
         let start_row_end_x = map.x_for_display_point(
-            DisplayPoint::new(start_row, map.line_len(start_row)),
+            DisplayPoint::new(candidate.start.row(), map.line_len(candidate.start.row())),
             text_layout_details,
         );
         let end_row_end_x = map.x_for_display_point(
-            DisplayPoint::new(end_row, map.line_len(end_row)),
+            DisplayPoint::new(candidate.end.row(), map.line_len(candidate.end.row())),
             text_layout_details,
         );
 
@@ -140,17 +202,7 @@ fn find_next_valid_duplicate_space(
             continue;
         }
 
-        let start_col = map.display_column_for_x(start_row, start_x, text_layout_details);
-        let end_col = map.display_column_for_x(end_row, end_x, text_layout_details);
-
-        let candidate_start = DisplayPoint::new(start_row, start_col);
-        let candidate_end = DisplayPoint::new(end_row, end_col);
-
-        if map.clip_point(candidate_start, Bias::Left) == candidate_start
-            && map.clip_point(candidate_end, Bias::Right) == candidate_end
-        {
-            return Some(candidate_start..candidate_end);
-        }
+        return Some(candidate);
     }
 }
 
@@ -370,6 +422,40 @@ let y: i32 = 2;",
                let y = «2ˇ»;"},
             Mode::HelixNormal,
         );
+
+        cx.set_state(
+            indoc! {"
+               let x «=ˇ» 1;
+               let xyz = 2;"},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            let buffer = &editor.snapshot(window, cx).buffer;
+            editor.splice_inlays(
+                &[],
+                vec![
+                    Inlay::mock_hint(0, buffer.anchor_after(MultiBufferOffset(5)), ": i32"),
+                    Inlay::mock_hint(1, buffer.anchor_after(MultiBufferOffset(18)), ": i32"),
+                ],
+                cx,
+            );
+        });
+
+        cx.simulate_keystrokes("C");
+
+        assert_eq!(
+            cx.display_text(),
+            "let x: i32 = 1;
+let xyz: i32 = 2;",
+        );
+
+        cx.assert_state(
+            indoc! {"
+               let x «=ˇ» 1;
+               let xy«zˇ» = 2;"},
+            Mode::HelixNormal,
+        );
     }
 
     #[gpui::test]
@@ -443,7 +529,8 @@ let y: i32 = 2;",
 
         cx.set_state(
             indoc! {"
-                «1ˇ»2345678901234567890
+                12345678901234567890
+                1234567890123«4ˇ»567890
                 12345678901234567890
                 12345678901234567890
                 12345678901234567890
@@ -455,10 +542,24 @@ let y: i32 = 2;",
 
         cx.assert_state(
             indoc! {"
-                «1ˇ»2345678901234567890
-                «1ˇ»2345678901234567890
-                «1ˇ»2345678901234567890
-                «1ˇ»2345678901234567890
+                12345678901234567890
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("alt-C");
+
+        cx.assert_state(
+            indoc! {"
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
+                1234567890123«4ˇ»567890
             "},
             Mode::HelixNormal,
         );
