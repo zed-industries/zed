@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use gpui::{Action, SharedString};
+use i18n::t;
 use ui::{IconName, IconPosition};
 use zed_actions::OpenBrowser;
 
@@ -81,7 +82,7 @@ impl ErrorAction {
     /// recovery affordance beyond closing the notification.
     pub fn dismiss() -> Self {
         Self {
-            label: "Dismiss".into(),
+            label: t!("Dismiss").into(),
             icon: None,
             tooltip: None,
             handler: ErrorActionHandler::Dismiss,
@@ -197,7 +198,7 @@ impl WorkspaceError for PortalError {
 
     fn primary_action(&self) -> ErrorAction {
         ErrorAction::link(
-            "See docs",
+            t!("See Docs"),
             "https://zed.dev/docs/linux#i-cant-open-any-files",
         )
     }

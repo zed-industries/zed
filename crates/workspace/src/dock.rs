@@ -13,6 +13,7 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
+use i18n::t;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, TerminalDockPosition};
 use std::sync::Arc;
@@ -1264,8 +1265,12 @@ impl Render for PanelButtons {
                 let (action, tooltip) = if is_active_button {
                     let action = dock.toggle_action();
 
-                    let tooltip: SharedString =
-                        format!("Close {} Dock", dock.position.label()).into();
+                    let tooltip: SharedString = match dock.position {
+                        DockPosition::Left => t!("Close Left Dock"),
+                        DockPosition::Bottom => t!("Close Bottom Dock"),
+                        DockPosition::Right => t!("Close Right Dock"),
+                    }
+                    .into();
 
                     (action, tooltip)
                 } else {
@@ -1293,8 +1298,13 @@ impl Render for PanelButtons {
                                     if panel.position_is_valid(position, cx) {
                                         let is_current = position == dock_position;
                                         let panel = panel.clone();
+                                        let label = match position {
+                                            DockPosition::Left => t!("Dock Left"),
+                                            DockPosition::Bottom => t!("Dock Bottom"),
+                                            DockPosition::Right => t!("Dock Right"),
+                                        };
                                         menu = menu.toggleable_entry(
-                                            format!("Dock {}", position.label()),
+                                            label,
                                             is_current,
                                             IconPosition::Start,
                                             None,
@@ -1315,7 +1325,7 @@ impl Render for PanelButtons {
                                     let dock_for_flex = dock_for_menu.clone();
                                     let workspace_for_flex = workspace_for_menu.clone();
                                     menu = menu.toggleable_entry(
-                                        "Flex Width",
+                                        t!("Flex Width"),
                                         currently_flexible,
                                         IconPosition::Start,
                                         None,
@@ -1338,7 +1348,7 @@ impl Render for PanelButtons {
                                     let dock_for_fixed = dock_for_menu.clone();
                                     let workspace_for_fixed = workspace_for_menu.clone();
                                     menu = menu.toggleable_entry(
-                                        "Fixed Width",
+                                        t!("Fixed Width"),
                                         !currently_flexible,
                                         IconPosition::Start,
                                         None,

@@ -6,6 +6,7 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, TaskExt, WeakEntity, Window,
     WindowId, actions, deferred, px,
 };
+use i18n::{LocalizedString, t};
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
@@ -71,9 +72,9 @@ pub fn sidebar_side_context_menu(
     right_click_menu(id).menu(move |window, cx| {
         let fs = <dyn fs::Fs>::global(cx);
         ContextMenu::build(window, cx, move |mut menu, _, _cx| {
-            let positions: [(SidebarDockPosition, &str); 2] = [
-                (SidebarDockPosition::Left, "Left"),
-                (SidebarDockPosition::Right, "Right"),
+            let positions: [(SidebarDockPosition, LocalizedString); 2] = [
+                (SidebarDockPosition::Left, t!("Left")),
+                (SidebarDockPosition::Right, t!("Right")),
             ];
             for (position, label) in positions {
                 let fs = fs.clone();
