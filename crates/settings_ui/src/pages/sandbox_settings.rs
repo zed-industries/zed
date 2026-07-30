@@ -3,16 +3,13 @@ use std::path::PathBuf;
 use agent_settings::AgentSettings;
 use gpui::{ReadGlobal as _, ScrollHandle, prelude::*};
 use http_proxy::HostPattern;
+use i18n::{LocalizedString, t};
 use settings::{Settings as _, SettingsStore};
 use ui::{Banner, Divider, Severity, SwitchField, ToggleState, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 use crate::SettingsWindow;
 use crate::components::{SettingsInputField, SettingsSectionHeader};
-
-const DOMAINS_DESCRIPTION: &str = "Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed.";
-
-const WRITE_PATHS_DESCRIPTION: &str = "Each entry must be an absolute path and grants write access to the whole subtree, except protected Git metadata.";
 
 pub(crate) fn render_sandbox_settings_page(
     settings_window: &SettingsWindow,
@@ -61,10 +58,10 @@ pub(crate) fn render_sandbox_settings_page(
         .child(
             SwitchField::new(
                 "sandbox-enabled",
-                Some("Enable Sandbox"),
+                Some(t!("Enable Sandbox")),
                 Some(
-                    "Wrap agent-run terminal commands in an OS-level sandbox. When off, commands run with Zed's own permissions."
-                        .into(),
+                    t!("Wrap agent-run terminal commands in an OS-level sandbox. When off, commands run with Zed's own permissions.")
+                        .resolve(),
                 ),
                 sandbox_enabled,
                 move |state, _window, cx| {
@@ -76,11 +73,11 @@ pub(crate) fn render_sandbox_settings_page(
         .child({
             let docs_url =
                 client::zed_urls::sandboxing_docs(Some("persistent-sandbox-permissions"), cx);
-            let tooltip = format!("Opens {docs_url}");
+            let tooltip = t!("Opens {$url}", url = docs_url.clone());
             // Wrap in a row so the button shrinks to its content width instead
             // of stretching across the settings page.
             h_flex().child(
-                Button::new("sandbox-docs-link", "Learn more about sandboxing")
+                Button::new("sandbox-docs-link", t!("Learn more about sandboxing"))
                     .label_size(LabelSize::Small)
                     .color(Color::Muted)
                     .end_icon(
@@ -99,7 +96,7 @@ pub(crate) fn render_sandbox_settings_page(
                     .severity(Severity::Warning)
                     .child(Label::new(error).size(LabelSize::Small))
                     .action_slot(
-                        Button::new("dismiss-sandbox-host-error", "Dismiss")
+                        Button::new("dismiss-sandbox-host-error", t!("Dismiss"))
                             .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.sandbox_host_validation_error = None;
@@ -111,14 +108,14 @@ pub(crate) fn render_sandbox_settings_page(
         .child(
             v_flex()
                 .gap_4()
-                .child(SettingsSectionHeader::new("Network").no_padding(true))
+                .child(SettingsSectionHeader::new(t!("Network")).no_padding(true))
                 .child(
                     SwitchField::new(
                         "sandbox-allow-all-hosts",
-                        Some("Allow All Domains"),
+                        Some(t!("Allow All Domains")),
                         Some(
-                            "Let sandboxed commands reach any domain over the network without prompting."
-                                .into(),
+                            t!("Let sandboxed commands reach any domain over the network without prompting.")
+                                .resolve(),
                         ),
                         permissions.allow_all_hosts,
                         move |state, _window, cx| {
@@ -128,8 +125,8 @@ pub(crate) fn render_sandbox_settings_page(
                     .tab_index(0),
                 )
                 .child(render_list_section(
-                    "Allowed Domains",
-                    DOMAINS_DESCRIPTION,
+                    t!("Allowed Domains"),
+                    t!("Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed."),
                     host_rows,
                     add_host_input,
                     empty_border,
@@ -140,14 +137,14 @@ pub(crate) fn render_sandbox_settings_page(
         .child(
             v_flex()
                 .gap_4()
-                .child(SettingsSectionHeader::new("File System").no_padding(true))
+                .child(SettingsSectionHeader::new(t!("File System")).no_padding(true))
                 .child(
                     SwitchField::new(
                         "sandbox-allow-fs-write-all",
-                        Some("Allow All File System Writes"),
+                        Some(t!("Allow All File System Writes")),
                         Some(
-                            "Let sandboxed commands write anywhere except protected Git metadata without prompting."
-                                .into(),
+                            t!("Let sandboxed commands write anywhere except protected Git metadata without prompting.")
+                                .resolve(),
                         ),
                         permissions.allow_fs_write_all,
                         move |state, _window, cx| {
@@ -157,8 +154,8 @@ pub(crate) fn render_sandbox_settings_page(
                     .tab_index(0),
                 )
                 .child(render_list_section(
-                    "Writable Paths",
-                    WRITE_PATHS_DESCRIPTION,
+                    t!("Writable Paths"),
+                    t!("Each entry must be an absolute path and grants write access to the whole subtree, except protected Git metadata."),
                     path_rows,
                     add_path_input,
                     empty_border,
@@ -168,14 +165,14 @@ pub(crate) fn render_sandbox_settings_page(
         .child(
             v_flex()
                 .gap_4()
-                .child(SettingsSectionHeader::new("Escalation Prompts").no_padding(true))
+                .child(SettingsSectionHeader::new(t!("Escalation Prompts")).no_padding(true))
                 .child(
                     SwitchField::new(
                         "sandbox-warn-confusable-unicode",
-                        Some("Warn About Confusable Unicode"),
+                        Some(t!("Warn About Confusable Unicode")),
                         Some(
-                            "Warn when an approval prompt requests a domain or write path that contains potentially confusable Unicode characters, such as homoglyphs (i.e. two symbols that look similar, such as a Cyrillic `а`)"
-                                .into(),
+                            t!("Warn when an approval prompt requests a domain or write path that contains potentially confusable Unicode characters, such as homoglyphs (i.e. two symbols that look similar, such as a Cyrillic `а`)")
+                                .resolve(),
                         ),
                         permissions.warn_confusable_unicode,
                         move |state, _window, cx| {
@@ -187,10 +184,10 @@ pub(crate) fn render_sandbox_settings_page(
                 .child(
                     SwitchField::new(
                         "sandbox-warn-ntfs-grants",
-                        Some("Warn About Windows-Drive Grants"),
+                        Some(t!("Warn About Windows-Drive Grants")),
                         Some(
-                            "Windows only: warn when a sandbox grant targets a file on a Windows drive (accessed inside WSL via DrvFs). Such grants are enforced through a translated path and their sandbox-integrity guarantees are weaker than files on the Linux distro's own filesystem."
-                                .into(),
+                            t!("Windows only: warn when a sandbox grant targets a file on a Windows drive (accessed inside WSL via DrvFs). Such grants are enforced through a translated path and their sandbox-integrity guarantees are weaker than files on the Linux distro's own filesystem.")
+                                .resolve(),
                         ),
                         permissions.warn_ntfs_grants,
                         move |state, _window, cx| {
@@ -205,8 +202,8 @@ pub(crate) fn render_sandbox_settings_page(
 }
 
 fn render_list_section(
-    title: &'static str,
-    description: &'static str,
+    title: LocalizedString,
+    description: LocalizedString,
     rows: Vec<AnyElement>,
     add_input: AnyElement,
     empty_border: gpui::Hsla,
@@ -244,7 +241,7 @@ fn render_empty_state(border_color: gpui::Hsla) -> AnyElement {
         .border_dashed()
         .border_color(border_color)
         .child(
-            Label::new("Nothing configured")
+            Label::new(t!("Nothing configured"))
                 .size(LabelSize::Small)
                 .color(Color::Disabled),
         )
@@ -265,7 +262,7 @@ fn render_host_row(index: usize, host: String, cx: &mut Context<SettingsWindow>)
             IconButton::new(format!("sandbox-host-delete-{}", index), IconName::Trash)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Remove Domain"))
+                .tooltip(Tooltip::text(t!("Remove Domain")))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     remove_network_host(host_for_delete.clone(), cx);
                 })),
@@ -301,7 +298,7 @@ fn render_add_host_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
     SettingsInputField::new("sandbox-host-new")
-        .with_placeholder("Add domain (e.g. github.com or *.npmjs.org)…")
+        .with_placeholder(t!("Add domain (e.g. github.com or *.npmjs.org)…"))
         .tab_index(0)
         .with_buffer_font()
         .display_clear_button()
@@ -348,7 +345,7 @@ fn render_path_row(index: usize, path: PathBuf, cx: &mut Context<SettingsWindow>
             IconButton::new(format!("sandbox-path-delete-{}", index), IconName::Trash)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Remove Path"))
+                .tooltip(Tooltip::text(t!("Remove Path")))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     remove_write_path(path_for_delete.clone(), cx);
                 })),
@@ -375,7 +372,7 @@ fn render_add_path_input(cx: &mut Context<SettingsWindow>) -> AnyElement {
     let settings_window = cx.entity().downgrade();
 
     SettingsInputField::new("sandbox-path-new")
-        .with_placeholder("Add an absolute path (e.g. /path/to/directory)…")
+        .with_placeholder(t!("Add an absolute path (e.g. /path/to/directory)…"))
         .tab_index(0)
         .with_buffer_font()
         .display_clear_button()
@@ -433,17 +430,16 @@ fn canonicalize_host(host: &str) -> Result<String, String> {
     HostPattern::parse(host)
         .map(|pattern| pattern.to_string())
         .map_err(|error| match error {
-            HostPatternError::Empty => "Domain cannot be empty.".to_string(),
-            HostPatternError::IpLiteral(_) => {
+            HostPatternError::Empty => String::from(t!("Domain cannot be empty.")),
+            HostPatternError::IpLiteral(_) => String::from(t!(
                 "IP addresses and local domains aren't allowed; enter a domain like github.com."
-                    .to_string()
-            }
-            HostPatternError::InvalidWildcard(_) => {
-                "Wildcards are only allowed as a leading label, e.g. *.github.com.".to_string()
-            }
-            HostPatternError::Invalid { .. } => {
-                "Not a valid domain. Use a domain like github.com or *.npmjs.org.".to_string()
-            }
+            )),
+            HostPatternError::InvalidWildcard(_) => String::from(t!(
+                "Wildcards are only allowed as a leading label, e.g. *.github.com."
+            )),
+            HostPatternError::Invalid { .. } => String::from(t!(
+                "Not a valid domain. Use a domain like github.com or *.npmjs.org."
+            )),
         })
 }
 

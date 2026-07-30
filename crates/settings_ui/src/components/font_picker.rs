@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AnyElement, App, Context, DismissEvent, SharedString, Task, Window};
+use i18n::t;
 use picker::{Picker, PickerDelegate};
 use theme::FontFamilyCache;
 use ui::{ListItem, ListItemSpacing, prelude::*};
@@ -74,7 +75,7 @@ impl PickerDelegate for FontPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search fonts…".into()
+        String::from(t!("Search fonts…")).into()
     }
 
     fn update_matches(

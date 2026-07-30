@@ -12,6 +12,7 @@ use gpui::{
     WeakEntity, WindowHandle, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
+use i18n::{LocalizedString, t};
 use language::{Buffer, language_settings::SoftWrap};
 use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
@@ -145,7 +146,7 @@ pub struct SkillCreatorPage {
     disable_model_invocation: bool,
     name_error: Option<&'static str>,
     description_error: Option<&'static str>,
-    body_error: Option<&'static str>,
+    body_error: Option<LocalizedString>,
     save_error: Option<SharedString>,
     url_import_status: UrlImportStatus,
     saving: bool,
@@ -183,7 +184,7 @@ impl SkillCreatorPage {
 
         let name_editor = cx.new(|cx| {
             InputField::new(window, cx, "my-new-skill")
-                .label("Name")
+                .label(t!("Name"))
                 .tab_index(NAME_FIELD_TAB_INDEX)
                 .tab_stop(true)
         });
@@ -194,9 +195,11 @@ impl SkillCreatorPage {
             InputField::new(
                 window,
                 cx,
-                "e.g., Fill the PR description following this template.",
+                t!("e.g., Fill the PR description following this template.")
+                    .resolve()
+                    .as_ref(),
             )
-            .label("Description")
+            .label(t!("Description"))
             .tab_index(DESCRIPTION_FIELD_TAB_INDEX)
             .tab_stop(true)
         });
@@ -208,7 +211,7 @@ impl SkillCreatorPage {
                 buffer
             });
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
-            editor.set_placeholder_text("Add skill content…", window, cx);
+            editor.set_placeholder_text(t!("Add skill content…").resolve().as_ref(), window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
@@ -412,7 +415,7 @@ impl SkillCreatorPage {
     fn recompute_body_error(&mut self, cx: &App) {
         let body = self.current_body(cx);
         self.body_error = if body.trim().is_empty() {
-            Some("Body is required.")
+            Some(t!("Body is required."))
         } else {
             None
         };
@@ -457,9 +460,13 @@ impl SkillCreatorPage {
         match parse_imported_skill(&content, "") {
             Ok(imported) => self.apply_imported_skill(imported, window, cx),
             Err(err) => {
-                self.save_error = Some(SharedString::from(format!(
-                    "Couldn't read shared skill: {err}"
-                )));
+                self.save_error = Some(
+                    t!(
+                        "Couldn't read shared skill: {$error}",
+                        error = format!("{err:#}")
+                    )
+                    .resolve(),
+                );
                 cx.notify();
             }
         }
@@ -703,20 +710,19 @@ impl SkillCreatorPage {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(Label::new("Import from URL"))
-                    .child(Label::new("(optional)").color(Color::Muted)),
+                    .child(Label::new(t!("Import from URL")))
+                    .child(Label::new(t!("(optional)")).color(Color::Muted)),
             )
             .child(self.url_editor.clone())
             .child(match &self.url_import_status {
-                UrlImportStatus::Idle => Label::new(
-                    "Paste a GitHub .md URL to fetch it and fill out the form. \
-                     For private files, Zed retries using GITHUB_TOKEN, if set.",
-                )
+                UrlImportStatus::Idle => Label::new(t!(
+                    "Paste a GitHub .md URL to fetch it and fill out the form. For private files, Zed retries using GITHUB_TOKEN, if set."
+                ))
                 .size(LabelSize::Small)
                 .color(Color::Muted)
                 .into_any_element(),
                 UrlImportStatus::Fetching => {
-                    LoadingLabel::new("Fetching and parsing…").into_any_element()
+                    LoadingLabel::new(t!("Fetching and parsing…")).into_any_element()
                 }
                 UrlImportStatus::Error(error) => h_flex()
                     .gap_1()
@@ -743,7 +749,7 @@ impl SkillCreatorPage {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Label::new("Front-matter"))
+                    .child(Label::new(t!("Front-matter")))
                     .child(self.name_editor.clone())
                     .child(self.description_editor.clone()),
             )
@@ -754,9 +760,9 @@ impl SkillCreatorPage {
                     .flex_grow_1()
                     .flex_shrink_0()
                     .gap_2()
-                    .child(Label::new("Skill Content"))
+                    .child(Label::new(t!("Skill Content")))
                     .child(self.render_body_field(window, cx))
-                    .when_some(self.body_error, |this, error| {
+                    .when_some(self.body_error.clone(), |this, error| {
                         this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
                     }),
             )
@@ -767,10 +773,10 @@ impl SkillCreatorPage {
 
         SwitchField::new(
             "disable-model-invocation",
-            Some("Disable model invocation"),
+            Some(t!("Disable model invocation")),
             Some(
-                "Hide this skill from the model's catalog. It can still be invoked via slash command."
-                    .into(),
+                t!("Hide this skill from the model's catalog. It can still be invoked via slash command.")
+                    .resolve(),
             ),
             toggle_state,
             cx.listener(|this, _state: &ToggleState, _window, cx| {
@@ -835,7 +841,11 @@ impl SkillCreatorPage {
 
     fn render_footer(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let saving = self.saving;
-        let main_action = if saving { "Saving…" } else { "Save Skill" };
+        let main_action = if saving {
+            t!("Saving…")
+        } else {
+            t!("Save Skill")
+        };
 
         v_flex()
             .w_full()

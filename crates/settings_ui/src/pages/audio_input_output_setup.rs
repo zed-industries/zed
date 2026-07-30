@@ -1,14 +1,13 @@
 use audio::{AudioDeviceInfo, AvailableAudioDevices};
 use cpal::DeviceId;
 use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
+use i18n::{LocalizedString, t};
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, SettingsStore};
 use std::str::FromStr;
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, FluentBuilder, IconPosition, IntoElement};
 use util::ResultExt;
 
 use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file};
-
-pub(crate) const SYSTEM_DEFAULT: &str = "System Default";
 
 pub(crate) fn get_current_device(
     current_id: Option<&DeviceId>,
@@ -46,7 +45,7 @@ where
         move |mut menu, _, _cx| {
             let is_system_default = current_device.is_none();
             menu = menu.toggleable_entry(
-                SYSTEM_DEFAULT,
+                t!("System Default"),
                 is_system_default,
                 IconPosition::Start,
                 None,
@@ -86,7 +85,7 @@ where
         dropdown_id,
         current_device
             .map(|info| info.desc.name().to_string())
-            .unwrap_or(SYSTEM_DEFAULT.to_string()),
+            .unwrap_or_else(|| String::from(t!("System Default"))),
         menu,
     )
     .style(DropdownStyle::Outlined)
@@ -102,8 +101,8 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
     field: SettingField<T>,
     file: SettingsUiFile,
     is_input: bool,
-    title: &'static str,
-    description: &'static str,
+    title: &LocalizedString,
+    description: &LocalizedString,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -135,8 +134,8 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
             )
             .log_err();
         },
-        Some(SharedString::new_static(title)),
-        (!description.is_empty()).then(|| SharedString::new_static(description)),
+        Some(title.resolve()),
+        (!description.fallback().is_empty()).then(|| description.resolve()),
         window,
         cx,
     )
@@ -146,8 +145,8 @@ pub fn render_input_audio_device_dropdown(
     field: SettingField<AudioInputDeviceName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
-    title: &'static str,
-    description: &'static str,
+    title: &LocalizedString,
+    description: &LocalizedString,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -158,8 +157,8 @@ pub fn render_output_audio_device_dropdown(
     field: SettingField<AudioOutputDeviceName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
-    title: &'static str,
-    description: &'static str,
+    title: &LocalizedString,
+    description: &LocalizedString,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {

@@ -43,6 +43,7 @@ gpui.workspace = true
 heck.workspace = true
 http_client.workspace = true
 http_proxy.workspace = true
+i18n.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true

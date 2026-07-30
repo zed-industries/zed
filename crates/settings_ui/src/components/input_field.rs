@@ -6,6 +6,7 @@ use gpui::{
     TextStyleRefinement,
     accesskit::{self, ActionData},
 };
+use i18n::t;
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
@@ -14,7 +15,7 @@ use ui::{Tooltip, prelude::*, rems};
 pub struct SettingsInputField {
     id: ElementId,
     initial_text: Option<String>,
-    placeholder: Option<&'static str>,
+    placeholder: Option<SharedString>,
     confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
     tab_index: Option<isize>,
     use_buffer_font: bool,
@@ -59,8 +60,8 @@ impl SettingsInputField {
         self
     }
 
-    pub fn with_placeholder(mut self, placeholder: &'static str) -> Self {
-        self.placeholder = Some(placeholder);
+    pub fn with_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+        self.placeholder = Some(placeholder.into());
         self
     }
 
@@ -147,7 +148,7 @@ impl RenderOnce for SettingsInputField {
 
         let editor = window.use_keyed_state((self.id.clone(), "editor"), cx, {
             let initial_text = self.initial_text.clone();
-            let placeholder = self.placeholder;
+            let placeholder = self.placeholder.clone();
             let mut confirm = self.confirm.clone();
 
             move |window, cx| {
@@ -174,7 +175,7 @@ impl RenderOnce for SettingsInputField {
                     .detach();
                 }
 
-                if let Some(placeholder) = placeholder {
+                if let Some(placeholder) = placeholder.as_deref() {
                     editor.set_placeholder_text(placeholder, window, cx);
                 }
                 editor.set_text_style_refinement(styles);
@@ -219,7 +220,7 @@ impl RenderOnce for SettingsInputField {
 
         let aria_label = self
             .aria_label
-            .or_else(|| self.placeholder.map(SharedString::new_static));
+            .or_else(|| self.placeholder.clone());
         let aria_description = self.aria_description;
 
         let (a11y_value, a11y_text_runs) =
@@ -235,7 +236,7 @@ impl RenderOnce for SettingsInputField {
                 this.aria_description(description)
             })
             .aria_value(a11y_value)
-            .when_some(self.placeholder, |this, placeholder| {
+            .when_some(self.placeholder.clone(), |this, placeholder| {
                 this.aria_placeholder(placeholder)
             })
             .a11y_synthetic_children(a11y_text_runs)
@@ -295,8 +296,8 @@ impl RenderOnce for SettingsInputField {
                                 IconButton::new("clear-button", IconName::Close)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
-                                    .aria_label("Clear")
-                                    .tooltip(Tooltip::text("Clear"))
+                                    .aria_label(t!("Clear"))
+                                    .tooltip(Tooltip::text(t!("Clear")))
                                     .on_click(move |_, window, cx| {
                                         let Some(editor) = weak_editor_for_clear.upgrade() else {
                                             return;
@@ -315,8 +316,8 @@ impl RenderOnce for SettingsInputField {
                                 IconButton::new("confirm-button", IconName::Check)
                                     .icon_size(IconSize::Small)
                                     .icon_color(Color::Success)
-                                    .aria_label("Confirm")
-                                    .tooltip(Tooltip::text("Enter to Confirm"))
+                                    .aria_label(t!("Confirm"))
+                                    .tooltip(Tooltip::text(t!("Enter to Confirm")))
                                     .on_click(move |_, window, cx| {
                                         let Some(confirm) = confirm_for_button.as_ref() else {
                                             return;

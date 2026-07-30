@@ -1,6 +1,7 @@
 use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{App, ClipboardItem, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, PromptButton, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use i18n::t;
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -58,9 +59,9 @@ pub(crate) fn render_skills_setup_page(
         .map(|this| {
             if skills.is_empty() {
                 let message = match &settings_window.current_file {
-                    SettingsUiFile::User => "No global skills installed.",
-                    SettingsUiFile::Project(_) => "No project skills found.",
-                    _ => "No skills available for this context.",
+                    SettingsUiFile::User => t!("No global skills installed."),
+                    SettingsUiFile::Project(_) => t!("No project skills found."),
+                    _ => t!("No skills available for this context."),
                 };
 
                 this.px_8().items_center().justify_center().child(
@@ -69,7 +70,7 @@ pub(crate) fn render_skills_setup_page(
                         .gap_2()
                         .child(Label::new(message).color(Color::Muted))
                         .child(
-                            Button::new("open-skill-creator-empty", "Create a Skill")
+                            Button::new("open-skill-creator-empty", t!("Create a Skill"))
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
                                 .start_icon(
@@ -119,8 +120,8 @@ fn render_skill_row(
     let skill_name = skill.name.clone();
 
     let (skill_scope, shared_scope) = match &skill.source {
-        SkillSource::ProjectLocal { .. } => ("project", "used in this project"),
-        _ => ("global", "on this machine"),
+        SkillSource::ProjectLocal { .. } => (t!("project"), t!("used in this project")),
+        _ => (t!("global"), t!("on this machine")),
     };
 
     let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
@@ -149,7 +150,7 @@ fn render_skill_row(
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .icon_color(share_icon_color)
-            .tooltip(Tooltip::text("Copy Share Link"))
+            .tooltip(Tooltip::text(t!("Copy Share Link")))
             .visible_on_hover(&group)
             .on_click(cx.listener(move |_settings_window, _event, _window, cx| {
                 let skill_file_path = share_skill_file_path.clone();
@@ -219,7 +220,7 @@ fn render_skill_row(
                     )
                     .tab_index(0_isize)
                     .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Delete Skill"))
+                    .tooltip(Tooltip::text(t!("Delete Skill")))
                     .on_click(cx.listener(
                         move |settings_window, _event, window, cx| {
                             let directory_path = directory_path.clone();
@@ -230,19 +231,24 @@ fn render_skill_row(
                                 return;
                             }
 
-                            let prompt_message =
-                                format!("Delete the {skill_scope} skill \"{skill_name}\"?");
-                            let prompt_detail = format!(
-                                "This will move {} to the trash. This skill is shared with other \
-                                 agent tools {shared_scope}, so it will no longer be available to \
-                                 them either.",
-                                directory_path.compact().display(),
-                            );
+                            let prompt_message = String::from(t!(
+                                "Delete the {$scope} skill「{$name}」?",
+                                scope = skill_scope.resolve(),
+                                name = skill_name.clone()
+                            ));
+                            let prompt_detail = String::from(t!(
+                                "This will move {$path} to the trash. This skill is shared with other agent tools {$scope}, so it will no longer be available to them either.",
+                                path = directory_path.compact().display().to_string(),
+                                scope = shared_scope.resolve()
+                            ));
                             let answer = window.prompt(
                                 PromptLevel::Info,
                                 &prompt_message,
                                 Some(&prompt_detail),
-                                &["Delete", "Cancel"],
+                                &[
+                                    PromptButton::new(t!("Delete")),
+                                    PromptButton::cancel(t!("Cancel")),
+                                ],
                                 cx,
                             );
 
@@ -297,7 +303,10 @@ fn render_skill_row(
                     )),
                 )
                 .child(
-                    Button::new(SharedString::from(format!("open-{}", skill.name)), "Open")
+                    Button::new(
+                        SharedString::from(format!("open-{}", skill.name)),
+                        t!(key = "open-action", "Open"),
+                    )
                         .tab_index(0_isize)
                         .style(ButtonStyle::OutlinedGhost)
                         .size(ButtonSize::Medium)

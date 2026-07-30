@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use fuzzy::StringMatch;
 use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Task, Window, px};
+use i18n::{LocalizedString, t};
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};
@@ -85,7 +86,7 @@ impl PickerDelegate for OllamaModelPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search models…".into()
+        String::from(t!("Search models…")).into()
     }
 
     fn update_matches(
@@ -160,8 +161,8 @@ pub fn render_ollama_model_picker(
     field: SettingField<settings::OllamaModelName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
-    title: &'static str,
-    description: &'static str,
+    title: &LocalizedString,
+    description: &LocalizedString,
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -171,7 +172,7 @@ pub fn render_ollama_model_picker(
         .unwrap_or_else(|| "".into());
 
     let trigger_value: SharedString = if current_value.is_empty() {
-        "Select a model…".into()
+        t!("Select a model…").resolve()
     } else {
         current_value.clone()
     };
@@ -179,9 +180,9 @@ pub fn render_ollama_model_picker(
     PopoverMenu::new("ollama-model-picker")
         .trigger(
             render_picker_trigger_button("ollama_model_picker_trigger".into(), trigger_value)
-                .aria_label(title)
-                .when(!description.is_empty(), |this| {
-                    this.aria_description(description)
+                .aria_label(title.clone())
+                .when(!description.fallback().is_empty(), |this| {
+                    this.aria_description(description.clone())
                 }),
         )
         .menu(move |window, cx| {
