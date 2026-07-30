@@ -91,7 +91,7 @@ fn find_next_valid_duplicate_space(
     direction: Direction,
     text_layout_details: &TextLayoutDetails,
 ) -> Option<Range<DisplayPoint>> {
-    // records which soft-wrap sub-row the origin start/end are on
+    // Keep each endpoint on the same soft-wrapped subrow as the original.
     let wrapped_row_for = |point: DisplayPoint| {
         let fold_point = map.display_point_to_fold_point(point, Bias::Left);
         let begin_folded_line = map.fold_point_to_display_point(
@@ -116,7 +116,7 @@ fn find_next_valid_duplicate_space(
     let mut start_goal = SelectionGoal::None;
     let mut end_goal = SelectionGoal::None;
 
-    // If the pos is in a `inlay_hint`, preserve the buffer column across inlays
+    // Rendered x includes inlay text, so preserve the buffer column when inlays shift it.
     let preserve_buffer_column_across_inlays =
         |origin: DisplayPoint, candidate: DisplayPoint, bias: Bias| {
             let origin_buffer_point = map.display_point_to_point(origin, bias);
@@ -135,14 +135,7 @@ fn find_next_valid_duplicate_space(
                 return candidate;
             }
 
-            // FIXME: This fallback compares/assigns raw buffer columns (byte offsets),
-            // not tab-expanded (visual) columns. If either the origin or candidate line
-            // contains tabs whose expansion width differs before this column, falling
-            // back to "same raw buffer column" can land on a visually misaligned
-            // position, the same class of bug the pixel-based (`up_down_buffer_rows`)
-            // path is otherwise designed to avoid. This case isn't currently covered by
-            // tests (existing tests exercise inlays and tabs separately, not combined
-            // on the same line/column).
+            // FIXME: This byte-column fallback can misalign tabs before the endpoint.
             let mut target_buffer_point = candidate_buffer_point;
             target_buffer_point.column = origin_buffer_point.column.min(
                 map.buffer_snapshot()
