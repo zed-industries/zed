@@ -272,6 +272,26 @@ mod tests {
     }
 
     #[test]
+    fn preserves_the_line_breaks_in_a_block_value() {
+        let _guard = lock_for_test();
+        reset();
+        // A quoted Fluent value cannot contain a line break, so a message whose
+        // English literal has them is written as a block value instead. Catalogs
+        // rely on the lines coming back joined by newlines.
+        add_ftl(
+            &locale("zh-CN"),
+            "format-on-save =\n    On：格式化整个缓冲区。\n    Off：不格式化。\n".to_owned(),
+        )
+        .unwrap();
+        set_locale(locale("zh-CN"));
+
+        assert_eq!(
+            lookup("format-on-save", None).as_deref(),
+            Some("On：格式化整个缓冲区。\nOff：不格式化。")
+        );
+    }
+
+    #[test]
     fn tolerates_a_partially_invalid_catalog() {
         let _guard = lock_for_test();
         reset();

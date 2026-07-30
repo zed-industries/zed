@@ -59,6 +59,12 @@ impl From<String> for ArgValue {
     }
 }
 
+impl From<Arc<str>> for ArgValue {
+    fn from(value: Arc<str>) -> Self {
+        ArgValue::Str(SharedString::from(value))
+    }
+}
+
 macro_rules! impl_from_number {
     ($($ty:ty),+ $(,)?) => {
         $(
