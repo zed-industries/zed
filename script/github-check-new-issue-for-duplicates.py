@@ -6,7 +6,7 @@ This script is run by a GitHub Actions workflow when a new issue is opened. It:
 1. Checks eligibility (bug/crash type or untyped, non-staff author)
 2. Detects relevant areas using Claude + the area label taxonomy
 3. Parses known "duplicate magnets" from tracking issue #46355
-4. Searches for similar issues — open (last 60 days) and recently closed (last 30 days) —
+4. Searches for similar issues — open (area searches cover 120 days) and recently closed (last 90 days) —
    and Discussions (feature requests / open-ended topics)
 5. Asks Claude to sort open candidates into likely and possible duplicates, surface
    recently closed issues that may be useful triage context, and flag discussions the
@@ -82,17 +82,16 @@ def github_api_get(path, params=None):
             time.sleep(wait)
 
 
-def github_search_issues(query, per_page=15):
-    """Search issues, returning most recently created first."""
-    params = {"q": query, "sort": "created", "order": "desc", "per_page": per_page}
+def github_search_issues(query, per_page=50, sort=None):
+    """Search issues, using GitHub's relevance ordering unless a sort is specified."""
+    params = {"q": query, "per_page": per_page}
+    if sort:
+        params.update({"sort": sort, "order": "desc"})
     return github_api_get("/search/issues", params).get("items", [])
 
 
 def github_api_graphql(query, variables=None):
-    """Run a GraphQL query against the GitHub API, retrying transient failures.
-
-    Used for Discussions, which the REST search API does not cover.
-    """
+    """Run a GraphQL query against the GitHub API, retrying transient failures. """
     url = f"{GITHUB_API}/graphql"
     for attempt in range(3):
         try:
@@ -479,7 +478,7 @@ def enrich_magnets(magnets):
             "url": data["html_url"],
             "state": data["state"],
             "state_reason": data.get("state_reason"),
-            "body_preview": (data.get("body") or "")[:1000],
+            "body_preview": (data.get("body") or "")[:3000],
             "source": "known_duplicate_magnet",
         })
 
@@ -513,25 +512,33 @@ def filter_magnets_by_areas(magnets, detected_areas):
     return list(filter(matches, magnets))
 
 
+def rank_search_candidates(candidates):
+    def rank(candidate):
+        matched_searches = candidate["matched_searches"]
+        return (
+            "error_pattern" in matched_searches,
+            len(matched_searches) > 1,
+            "title_keywords" in matched_searches,
+            len(matched_searches),
+            -candidate.get("best_match_rank", 1000),
+            candidate.get("created_at", ""),
+        )
+
+    return sorted(candidates, key=rank, reverse=True)
+
+
 def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
-    """Search for similar issues — both open and recently closed.
-
-    Runs two passes:
-    - Open issues: title keywords / error pattern unrestricted, area searches last 60 days.
-    - Closed issues: closed within the last 30 days (across all query types).
-
-    max_searches_per_state caps queries per state to keep token usage and context size bounded.
-    """
+    """Search for similar open issues and issues closed within the last 90 days."""
     log("Searching for similar issues")
 
-    sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    one_hundred_twenty_days_ago = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
+    ninety_days_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
     title_keywords = [word for word in issue["title"].split() if word.lower() not in STOPWORDS and len(word) > 2]
     keywords_query = " ".join(title_keywords) if title_keywords else None
 
     # error pattern search: capture 5–90 chars after keyword, colon optional
-    error_pattern = r"(?i:\b(?:error|panicked|panic|failed)\b)\s*([^\n]{5,90})"
+    error_pattern = r"(?i:\b(?:error|panicked|panic|failed)\b)\s*:?\s*([^\n]{5,90})"
     error_match = re.search(error_pattern, issue["body"])
     error_snippet = error_match.group(1).strip() if error_match else None
 
@@ -539,24 +546,24 @@ def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
         queries = []
         if keywords_query:
             queries.append(("title_keywords", f"{base} {keywords_query}"))
+        if error_snippet:
+            queries.append(("error_pattern", f'{base} in:body "{error_snippet}"'))
         for area in detected_areas:
             area_q = f'{base} label:"area:{area}"'
             if area_window:
                 area_q += f" created:>{area_window}"
             queries.append(("area_label", area_q))
-        if error_snippet:
-            queries.append(("error_pattern", f'{base} in:body "{error_snippet}"'))
         return queries
 
     open_queries = build_queries(
         f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open",
-        area_window=sixty_days_ago,
+        area_window=one_hundred_twenty_days_ago,
     )
     # closed pass: filter by close date so we catch issues closed recently regardless of
     # when they were opened. closed:> already restricts the result set, so the per-query
     # area window is unnecessary.
     closed_queries = build_queries(
-        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{thirty_days_ago}",
+        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{ninety_days_ago}",
     )
 
     seen_issues = {}
@@ -567,27 +574,38 @@ def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
         for search_type, query in queries:
             log(f"  Search ({state_label} / {search_type}): {query}")
             try:
-                results = github_search_issues(query, per_page=15)
-                for item in results:
+                sort = "created" if search_type == "area_label" else None
+                results = github_search_issues(query, per_page=50, sort=sort)
+                for result_rank, item in enumerate(results):
                     number = item["number"]
-                    if number != issue["number"] and number not in seen_issues:
-                        body = item.get("body") or ""
-                        seen_issues[number] = {
-                            "key": f"issue:{number}",
-                            "kind": "issue",
-                            "number": number,
-                            "title": item["title"],
-                            "url": item["html_url"],
-                            "state": item.get("state", ""),
-                            "state_reason": item.get("state_reason"),
-                            "created_at": item.get("created_at", ""),
-                            "body_preview": body[:1000],
-                            "source": search_type,
-                        }
+                    if number == issue["number"]:
+                        continue
+                    existing = seen_issues.get(number)
+                    if existing:
+                        if search_type not in existing["matched_searches"]:
+                            existing["matched_searches"].append(search_type)
+                        if search_type != "area_label":
+                            existing["best_match_rank"] = min(existing["best_match_rank"], result_rank)
+                        continue
+                    body = item.get("body") or ""
+                    seen_issues[number] = {
+                        "key": f"issue:{number}",
+                        "kind": "issue",
+                        "number": number,
+                        "title": item["title"],
+                        "url": item["html_url"],
+                        "state": item.get("state", ""),
+                        "state_reason": item.get("state_reason"),
+                        "created_at": item.get("created_at", ""),
+                        "body_preview": body[:3000],
+                        "source": "issue_search",
+                        "matched_searches": [search_type],
+                        "best_match_rank": result_rank if search_type != "area_label" else 1000,
+                    }
             except requests.RequestException as e:
                 log(f"  Search failed: {e}")
 
-    similar_issues = list(seen_issues.values())
+    similar_issues = rank_search_candidates(seen_issues.values())
     log(f"  Found {len(similar_issues)} similar issues")
     return similar_issues
 
@@ -613,7 +631,7 @@ def search_discussions(issue, detected_areas, max_searches=4):
 
     gql = """
     query($q: String!) {
-      search(query: $q, type: DISCUSSION, first: 10) {
+      search(query: $q, type: DISCUSSION, first: 30) {
         nodes {
           ... on Discussion {
             number
@@ -631,11 +649,15 @@ def search_discussions(issue, detected_areas, max_searches=4):
         log(f"  Discussion search ({search_type}): {query}")
         try:
             data = github_api_graphql(gql, {"q": query})
-            for node in data["search"]["nodes"]:
+            for result_rank, node in enumerate(data["search"]["nodes"]):
                 if not node:
                     continue
                 number = node["number"]
-                if number in seen:
+                existing = seen.get(number)
+                if existing:
+                    if search_type not in existing["matched_searches"]:
+                        existing["matched_searches"].append(search_type)
+                    existing["best_match_rank"] = min(existing["best_match_rank"], result_rank)
                     continue
                 body = node.get("bodyText") or ""
                 seen[number] = {
@@ -647,12 +669,14 @@ def search_discussions(issue, detected_areas, max_searches=4):
                     "state": "open",
                     "state_reason": None,
                     "category": (node.get("category") or {}).get("name"),
-                    "body_preview": body[:1000],
-                    "source": search_type,
+                    "body_preview": body[:3000],
+                    "source": "discussion_search",
+                    "matched_searches": [search_type],
+                    "best_match_rank": result_rank,
                 }
         except (requests.RequestException, ValueError, KeyError, TypeError) as e:
             log(f"  Discussion search failed: {e}")
-    discussions = list(seen.values())
+    discussions = rank_search_candidates(seen.values())
     log(f"  Found {len(discussions)} candidate discussions")
     return discussions
 
@@ -676,7 +700,7 @@ def analyze_duplicates(anthropic_key, issue, candidates):
         if candidate["kind"] == "discussion" and candidate["state"] == "open"
     ]
 
-    selected_candidates = magnets[:10] + open_issues[:10] + closed_issues[:5] + open_discussions[:10]
+    selected_candidates = magnets[:10] + open_issues[:30] + closed_issues[:10] + open_discussions[:10]
     if not selected_candidates:
         return {"likely_matches": [], "possible_matches": [], "related_closed_candidates": []}
 
@@ -685,8 +709,7 @@ def analyze_duplicates(anthropic_key, issue, candidates):
         f"  Candidate pool: {len(magnets)} magnets, {len(open_issues)} open issues, "
         f"{len(closed_issues)} closed issues, {len(open_discussions)} open discussions"
     )
-    if closed_issues:
-        log(f"  Closed candidates given to proposer: {[c['key'] for c in closed_issues[:5]]}")
+    log(f"  Candidates given to proposer: {[candidate['key'] for candidate in selected_candidates]}")
 
     system_prompt = """You analyze a new GitHub issue against candidates that may be issues or discussions.
 
@@ -806,7 +829,7 @@ found."""
 **Title:** {issue['title']}
 
 **Body:**
-{issue['body'][:3000]}
+{issue['body'][:6000]}
 
 ## Candidates to Compare
 {json.dumps(selected_candidates, indent=2)}"""
@@ -989,7 +1012,7 @@ def critique_closed_candidates(anthropic_key, issue, proposed):
 **Title:** {issue['title']}
 
 **Body:**
-{issue['body'][:3000]}
+{issue['body'][:6000]}
 
 ## Closed Candidate {key}
 **Title:** {candidate.get('title', '')}
