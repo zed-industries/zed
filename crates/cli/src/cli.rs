@@ -68,10 +68,18 @@ pub enum CliRequest {
         dev_container: bool,
         #[serde(default)]
         cwd: Option<PathBuf>,
+        #[serde(default)]
+        terminal_origin: Option<CliTerminalOrigin>,
     },
     SetOpenBehavior {
         behavior: CliBehaviorSetting,
     },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct CliTerminalOrigin {
+    pub window_id: u64,
+    pub workspace_id: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

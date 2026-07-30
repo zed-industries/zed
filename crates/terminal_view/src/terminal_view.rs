@@ -35,7 +35,8 @@ use task::TaskId;
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, Paste, PasteText, Point, Range,
     ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
-    Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, TerminalSource,
+    ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -220,13 +221,22 @@ impl TerminalView {
     ) {
         let local = action.local;
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
-            if local {
-                project.create_local_terminal(cx)
-            } else {
-                project.create_terminal_shell(working_directory, cx)
-            }
-        })
+        TerminalPanel::add_center_terminal(
+            workspace,
+            window,
+            cx,
+            move |project, origin_window_id, cx| {
+                if local {
+                    project.create_local_terminal_with_origin(origin_window_id, cx)
+                } else {
+                    project.create_terminal_shell_with_origin(
+                        working_directory,
+                        origin_window_id,
+                        cx,
+                    )
+                }
+            },
+        )
         .detach_and_log_err(cx);
     }
 
@@ -1745,11 +1755,15 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
+        let terminal_source = Some(TerminalSource {
+            window_id: window.window_handle().window_id().as_u64(),
+            workspace_id: self.workspace.entity_id().as_u64(),
+        });
         let Ok(terminal) = self.project.update(cx, |project, cx| {
             let cwd = project
                 .active_project_directory(cx)
                 .map(|it| it.to_path_buf());
-            project.clone_terminal(self.terminal(), cx, cwd)
+            project.clone_terminal_with_origin(self.terminal(), cx, cwd, terminal_source)
         }) else {
             return Task::ready(None);
         };
@@ -1901,8 +1915,8 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
-                .update(|_window, cx| {
+            let (cwd, custom_title, terminal_source) = cx
+                .update(|window, cx| {
                     let db = TerminalDb::global(cx);
                     let from_db = db
                         .get_working_directory(item_id, workspace_id)
@@ -1923,13 +1937,22 @@ impl SerializableItem for TerminalView {
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    (
+                        cwd,
+                        custom_title,
+                        Some(TerminalSource {
+                            window_id: window.window_handle().window_id().as_u64(),
+                            workspace_id: workspace.entity_id().as_u64(),
+                        }),
+                    )
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell_with_origin(cwd, terminal_source, cx)
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {

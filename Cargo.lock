@@ -3180,6 +3180,7 @@ dependencies = [
  "walkdir",
  "windows 0.61.3",
  "windows_resources",
+ "zed_env_vars",
 ]
 
 [[package]]
@@ -18591,6 +18592,7 @@ dependencies = [
  "util_macros",
  "vte",
  "windows 0.61.3",
+ "zed_env_vars",
 ]
 
 [[package]]

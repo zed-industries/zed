@@ -32,6 +32,7 @@ use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, Ter
 use theme::{ActiveTheme, Theme};
 use urlencoding;
 use util::{ResultExt as _, paths::PathStyle, truncate_and_trailoff};
+use zed_env_vars::{ZED_CLI_ORIGIN_WINDOW_ID, ZED_CLI_ORIGIN_WORKSPACE_ID};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -667,12 +668,29 @@ const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 pub fn insert_zed_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
+    source: Option<TerminalSource>,
 ) {
     env.insert("ZED_TERM".to_string(), "true".to_string());
     env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+    if let Some(source) = source {
+        env.insert(
+            ZED_CLI_ORIGIN_WINDOW_ID.to_string(),
+            source.window_id.to_string(),
+        );
+        env.insert(
+            ZED_CLI_ORIGIN_WORKSPACE_ID.to_string(),
+            source.workspace_id.to_string(),
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TerminalSource {
+    pub window_id: u64,
+    pub workspace_id: u64,
 }
 
 ///Upward flowing events, for changing the title and such
@@ -1056,6 +1074,7 @@ impl TerminalBuilder {
         path_hyperlink_timeout_ms: u64,
         is_remote_terminal: bool,
         window_id: u64,
+        terminal_source: Option<TerminalSource>,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
@@ -1088,7 +1107,11 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            insert_zed_terminal_env(
+                &mut env,
+                &version,
+                (!is_remote_terminal).then_some(terminal_source).flatten(),
+            );
 
             #[derive(Default)]
             struct ShellParams {
@@ -2974,7 +2997,12 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: Option<PathBuf>,
+        terminal_source: Option<TerminalSource>,
+    ) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
@@ -2988,6 +3016,7 @@ impl Terminal {
             self.template.path_hyperlink_timeout_ms,
             self.is_remote_terminal,
             self.template.window_id,
+            terminal_source,
             None,
             cx,
             self.activation_script.clone(),
@@ -3380,6 +3409,26 @@ mod tests {
     use task::{Shell, ShellBuilder};
 
     #[test]
+    fn test_insert_zed_terminal_env_includes_cli_origin() {
+        let mut env = HashMap::default();
+
+        insert_zed_terminal_env(
+            &mut env,
+            &"1.0.0",
+            Some(TerminalSource {
+                window_id: 42,
+                workspace_id: 24,
+            }),
+        );
+
+        assert_eq!(env.get(ZED_CLI_ORIGIN_WINDOW_ID), Some(&"42".to_string()));
+        assert_eq!(
+            env.get(ZED_CLI_ORIGIN_WORKSPACE_ID),
+            Some(&"24".to_string())
+        );
+    }
+
+    #[test]
     fn test_init_command_startup_marker_commands_do_not_contain_marker() {
         let marker_id = 42;
         let marker = init_command_startup_marker(marker_id);
@@ -3533,6 +3582,7 @@ mod tests {
                     0,
                     false,
                     0,
+                    None,
                     Some(completion_tx),
                     cx,
                     vec![],
@@ -3584,6 +3634,7 @@ mod tests {
                     0,
                     false,
                     0,
+                    None,
                     Some(completion_tx),
                     cx,
                     vec![],
@@ -3989,6 +4040,7 @@ mod tests {
                     0,
                     false,
                     0,
+                    None,
                     Some(completion_tx),
                     cx,
                     Vec::new(),
@@ -4058,6 +4110,7 @@ mod tests {
                     false,
                     0,
                     None,
+                    None,
                     cx,
                     Vec::new(),
                     PathStyle::local(),
@@ -4123,6 +4176,7 @@ mod tests {
                     0,
                     false,
                     0,
+                    None,
                     Some(completion_tx),
                     cx,
                     Vec::new(),
@@ -5092,6 +5146,7 @@ mod tests {
                         test_path_hyperlink_timeout_ms,
                         false,
                         window.window_handle().window_id().as_u64(),
+                        None,
                         None,
                         cx,
                         vec![],
