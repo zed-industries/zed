@@ -25,6 +25,7 @@ documented.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 menu.workspace = true
 notifications.workspace = true
 picker.workspace = true

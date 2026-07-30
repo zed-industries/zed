@@ -12410,6 +12410,7 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "i18n",
  "menu",
  "notifications",
  "picker",

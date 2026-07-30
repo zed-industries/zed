@@ -3,6 +3,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
     actions,
 };
+use i18n::t;
 use picker::{Picker, PickerDelegate};
 use project::Fs;
 use settings::{BaseKeymap, Settings, update_settings_file};
@@ -107,7 +108,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a base keymap...".into()
+        Arc::from(t!("Select a base keymap...").resolve().as_ref())
     }
 
     fn match_count(&self) -> usize {

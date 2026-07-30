@@ -8,6 +8,7 @@ use gpui::{
     FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, ScrollHandle, SharedString,
     Subscription, Task, WeakEntity, Window, actions,
 };
+use i18n::t;
 use notifications::status_toast::StatusToast;
 use project::agent_server_store::AllAgentServersSettings;
 use schemars::JsonSchema;
@@ -351,19 +352,21 @@ impl Render for Onboarding {
                                             .child(
                                                 v_flex()
                                                     .child(
-                                                        Headline::new("Welcome to Zed")
+                                                        Headline::new(t!("Welcome to Zed"))
                                                             .size(HeadlineSize::Small),
                                                     )
                                                     .child(
-                                                        Label::new("The editor for what's next")
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::Small)
-                                                            .italic(),
+                                                        Label::new(t!(
+                                                            "The editor for what's next"
+                                                        ))
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small)
+                                                        .italic(),
                                                     ),
                                             ),
                                     )
                                     .child({
-                                        Button::new("finish_setup", "Finish Setup")
+                                        Button::new("finish_setup", t!("Finish Setup"))
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Medium)
                                             .width(rems_from_px(200.))
@@ -397,7 +400,7 @@ impl Item for Onboarding {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Onboarding".into()
+        t!("Onboarding").into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -482,25 +485,26 @@ pub async fn handle_import_vscode_settings(
             Ok(vscode_settings) => vscode_settings,
             Err(err) => {
                 zlog::error!("{err:?}");
-                let _ = cx.prompt(
-                    gpui::PromptLevel::Info,
-                    &format!("Could not find or load a {source} settings file"),
-                    None,
-                    &["OK"],
-                );
+                let message = t!(
+                    "Could not find or load a {$source} settings file",
+                    source = source.to_string()
+                )
+                .resolve();
+                let _ = cx.prompt(gpui::PromptLevel::Info, &message, None, &["OK"]);
                 return;
             }
         };
 
     if !skip_prompt {
+        let message = t!(
+            "Importing {$source} settings may overwrite your existing settings. Will import settings from {$path}",
+            source = vscode_settings.source.to_string(),
+            path = truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128)
+        )
+        .resolve();
         let prompt = cx.prompt(
             gpui::PromptLevel::Warning,
-            &format!(
-                "Importing {} settings may overwrite your existing settings. \
-                Will import settings from {}",
-                vscode_settings.source,
-                truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
-            ),
+            &message,
             None,
             &["Import", "Cancel"],
         );
@@ -527,7 +531,10 @@ pub async fn handle_import_vscode_settings(
         .update_in(cx, |workspace, _, cx| match result {
             Ok(_) => {
                 let confirmation_toast = StatusToast::new(
-                    format!("Your {} settings were successfully imported.", source),
+                    t!(
+                        "Your {$source} settings were successfully imported.",
+                        source = source.to_string()
+                    ),
                     cx,
                     |this, _| {
                         this.icon(
@@ -550,7 +557,7 @@ pub async fn handle_import_vscode_settings(
             }
             Err(_) => {
                 let error_toast = StatusToast::new(
-                    "Failed to import settings. See log for details",
+                    t!("Failed to import settings. See log for details"),
                     cx,
                     |this, _| {
                         this.icon(
@@ -558,7 +565,7 @@ pub async fn handle_import_vscode_settings(
                                 .size(IconSize::Small)
                                 .color(Color::Error),
                         )
-                        .action("Open Log", |window, cx| {
+                        .action(t!("Open Log"), |window, cx| {
                             window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
                         })
                         .dismiss_button(true)
