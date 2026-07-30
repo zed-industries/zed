@@ -219,7 +219,9 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         self.show_worktree_root_name = self.project.read(cx).visible_worktrees(cx).count() > 1;
 
         let snapshot = self.project.update(cx, |project, cx| {
-            project.symbol_index(cx).read(cx).snapshot()
+            project
+                .symbol_index(cx)
+                .update(cx, |manager, _cx| manager.snapshot())
         });
 
         let executor = cx.background_executor().clone();
@@ -273,7 +275,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         };
 
         let symbol = &result.symbol;
-        let label = symbol.display_text.as_str();
+        let display_text = if symbol.context.is_empty() {
+            symbol.name.to_string()
+        } else {
+            format!("{} {}", symbol.context, symbol.name)
+        };
+        let label = display_text.as_str();
         let line_number = symbol.row + 1;
 
         let settings = ThemeSettings::get_global(cx);
@@ -291,8 +298,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 
         // Build syntax highlight runs: context in keyword color, name in kind color.
         let syntax_theme = cx.theme().syntax();
-        let name_start = symbol.name_range.start;
-        let name_end = symbol.name_range.end;
+        let name_start = if symbol.context.is_empty() {
+            0
+        } else {
+            symbol.context.len() + 1
+        };
+        let name_end = name_start + symbol.name.len();
 
         let mut syntax_runs: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
 
@@ -457,7 +468,7 @@ enum DeltaEnum {}
         symbols.read_with(cx, |symbols, _| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 1);
-            assert_eq!(delegate.matches[0].symbol.name, "alpha_function");
+            assert_eq!(delegate.matches[0].symbol.name.as_ref(), "alpha_function");
         });
 
         // Search for "function" — should match both functions
@@ -532,7 +543,7 @@ fn my_function() {}
             let names: Vec<&str> = delegate
                 .matches
                 .iter()
-                .map(|m| m.symbol.name.as_str())
+                .map(|m| m.symbol.name.as_ref())
                 .collect();
             assert!(names.contains(&"MyStruct"));
             assert!(names.contains(&"MyEnum"));

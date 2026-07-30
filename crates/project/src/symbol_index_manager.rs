@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use fs::Fs;
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, WeakEntity};
-use language::LanguageRegistry;
+use gpui::{AsyncApp, Context, Entity, EventEmitter, WeakEntity};
+use language::{Grammar, LanguageRegistry};
 use symbol_index::{SymbolIndex, SymbolLocation};
 use worktree::{EntryKind, PathChange, UpdatedEntriesSet, WorktreeId};
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -90,6 +90,10 @@ impl SymbolIndexManager {
                     continue;
                 }
                 let abs_path = worktree_entity.read(cx).absolutize(entry.path.as_ref());
+                // Pre-filter: skip files with no known language
+                if self.languages.language_for_file_path(&abs_path).is_none() {
+                    continue;
+                }
                 let rel_path = entry.path.as_ref().as_unix_str().to_string();
                 file_list.push((worktree_id, rel_path, abs_path));
             }
@@ -106,42 +110,89 @@ impl SymbolIndexManager {
         let weak_self = cx.weak_entity();
 
         cx.spawn(async move |_, cx: &mut AsyncApp| {
-            let mut batch: Vec<(SymbolLocation, Vec<symbol_index::ExtractedSymbol>)> = Vec::new();
-            let mut indexed = 0usize;
+            use futures::stream::{self, StreamExt};
 
-            for (worktree_id, rel_path, abs_path) in file_list {
-                let language = match languages.load_language_for_file_path(&abs_path).await {
+            // Group files by extension and load each language once.
+            let mut by_extension: HashMap<String, Vec<(WorktreeId, String, PathBuf)>> =
+                HashMap::new();
+            for file in file_list {
+                let ext = file
+                    .2
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                by_extension.entry(ext).or_default().push(file);
+            }
+
+            let mut grammar_cache: HashMap<String, Option<Arc<Grammar>>> = HashMap::new();
+            for (ext, files) in &by_extension {
+                if files.is_empty() {
+                    continue;
+                }
+                let sample_path = files[0].2.clone();
+                let language = match languages.load_language_for_file_path(&sample_path).await {
                     Ok(language) => language,
                     Err(_) => continue,
                 };
                 let grammar = match language.grammar() {
-                    Some(g) if g.outline_config.is_some() => g.clone(),
+                    Some(g) if g.outline_config.is_some() => Some(g.clone()),
+                    _ => None,
+                };
+                grammar_cache.insert(ext.clone(), grammar);
+            }
+
+            // Flatten back to a file list with pre-resolved grammars.
+            let mut file_list_with_grammar: Vec<(SymbolLocation, PathBuf, Arc<Grammar>)> =
+                Vec::new();
+            for (ext, files) in by_extension {
+                let grammar = match grammar_cache.get(&ext) {
+                    Some(Some(g)) => g.clone(),
                     _ => continue,
                 };
+                for (worktree_id, rel_path, abs_path) in files {
+                    let location = SymbolLocation {
+                        worktree_id: worktree_id.to_proto(),
+                        path: Arc::from(rel_path.as_str()),
+                    };
+                    file_list_with_grammar.push((location, abs_path, grammar.clone()));
+                }
+            }
 
-                let location = SymbolLocation {
-                    worktree_id: worktree_id.to_proto(),
-                    path: Arc::from(rel_path.as_str()),
-                };
-                let abs_path = abs_path.clone();
-                let grammar = grammar.clone();
-                let fs = fs.clone();
+            let background = cx.background_executor().clone();
+            let concurrency = background.num_cpus() * 2;
+            let mut batch: Vec<(SymbolLocation, Vec<symbol_index::ExtractedSymbol>)> = Vec::new();
+            let mut indexed = 0usize;
 
-                let extracted = cx
-                    .background_spawn(async move {
-                        let text = match fs.load(&abs_path).await {
-                            Ok(text) => text,
-                            Err(err) => {
-                                log::warn!("symbol_index: failed to read {abs_path:?}: {err}");
-                                return Vec::new();
-                            }
-                        };
-                        symbol_index::extract_symbols(&text, &grammar)
-                    })
-                    .await;
+            let mut results = stream::iter(file_list_with_grammar)
+                .map(|(location, abs_path, grammar)| {
+                    let fs = fs.clone();
+                    let background = background.clone();
+                    async move {
+                        let extracted = background
+                            .spawn(async move {
+                                let text = match fs.load(&abs_path).await {
+                                    Ok(text) => text,
+                                    Err(err) => {
+                                        log::warn!(
+                                            "symbol_index: failed to read {abs_path:?}: {err}"
+                                        );
+                                        return Vec::new();
+                                    }
+                                };
+                                symbol_index::extract_symbols(&text, &grammar)
+                            })
+                            .await;
+                        Some((location, extracted))
+                    }
+                })
+                .buffer_unordered(concurrency);
 
-                batch.push((location, extracted));
+            while let Some(result) = results.next().await {
                 indexed += 1;
+                if let Some((location, extracted)) = result {
+                    batch.push((location, extracted));
+                }
 
                 if batch.len() >= 64 {
                     let batch_to_flush = std::mem::take(&mut batch);
@@ -220,9 +271,7 @@ impl SymbolIndexManager {
             }
         });
 
-        for location in &to_remove {
-            self.index.remove_file(location);
-        }
+        self.index.remove_files_batch(&to_remove);
 
         if !to_remove.is_empty() || !to_index.is_empty() {
             cx.emit(SymbolIndexEvent::UpdatedEntries);
@@ -238,38 +287,51 @@ impl SymbolIndexManager {
         let weak_self = cx.weak_entity();
 
         cx.spawn(async move |_, cx: &mut AsyncApp| {
+            use futures::stream::{self, StreamExt};
+
+            let background = cx.background_executor().clone();
             let mut batch: Vec<(SymbolLocation, Vec<symbol_index::ExtractedSymbol>)> = Vec::new();
 
-            for (location, abs_path) in to_index {
-                let language = match languages.load_language_for_file_path(&abs_path).await {
-                    Ok(language) => language,
-                    Err(_) => continue,
-                };
-                let grammar = match language.grammar() {
-                    Some(g) if g.outline_config.is_some() => g.clone(),
-                    _ => continue,
-                };
-
-                let abs_path_clone = abs_path.clone();
-                let grammar_clone = grammar.clone();
-                let fs = fs.clone();
-
-                let extracted = cx
-                    .background_spawn(async move {
-                        let text = match fs.load(&abs_path_clone).await {
-                            Ok(text) => text,
-                            Err(err) => {
-                                log::warn!(
-                                    "symbol_index: failed to read {abs_path_clone:?}: {err}"
-                                );
-                                return Vec::new();
-                            }
+            let mut results = stream::iter(to_index)
+                .map(|(location, abs_path)| {
+                    let languages = languages.clone();
+                    let fs = fs.clone();
+                    let background = background.clone();
+                    async move {
+                        let language =
+                            match languages.load_language_for_file_path(&abs_path).await {
+                                Ok(language) => language,
+                                Err(_) => return (abs_path, None),
+                            };
+                        let grammar = match language.grammar() {
+                            Some(g) if g.outline_config.is_some() => g.clone(),
+                            _ => return (abs_path, None),
                         };
-                        symbol_index::extract_symbols(&text, &grammar_clone)
-                    })
-                    .await;
 
-                batch.push((location, extracted));
+                        let abs_path_for_io = abs_path.clone();
+                        let extracted = background
+                            .spawn(async move {
+                                let text = match fs.load(&abs_path_for_io).await {
+                                    Ok(text) => text,
+                                    Err(err) => {
+                                        log::warn!(
+                                            "symbol_index: failed to read {abs_path_for_io:?}: {err}"
+                                        );
+                                        return Vec::new();
+                                    }
+                                };
+                                symbol_index::extract_symbols(&text, &grammar)
+                            })
+                            .await;
+                        (abs_path, Some((location, extracted)))
+                    }
+                })
+                .buffer_unordered(4);
+
+            while let Some((abs_path, result)) = results.next().await {
+                if let Some((location, extracted)) = result {
+                    batch.push((location, extracted));
+                }
 
                 let result = weak_self.update(cx, |this, cx| {
                     this.pending_index.remove(&abs_path);
@@ -302,7 +364,7 @@ impl SymbolIndexManager {
         cx.notify();
     }
 
-    pub fn snapshot(&self) -> symbol_index::IndexSnapshot {
+    pub fn snapshot(&mut self) -> symbol_index::IndexSnapshot {
         self.index.snapshot()
     }
 

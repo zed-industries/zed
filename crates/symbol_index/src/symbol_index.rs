@@ -1,7 +1,7 @@
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate};
 use gpui::BackgroundExecutor;
 use language_core::{Grammar, SymbolKind};
-use std::ops::Range;
+use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tree_sitter::StreamingIterator;
@@ -33,12 +33,10 @@ pub struct ExtractedSymbol {
 #[derive(Clone, Debug)]
 pub struct IndexedSymbol {
     /// Symbol name only — used as the fuzzy match candidate string.
-    pub name: String,
-    /// Display text including context (e.g., "fn initBookForOfficial").
-    pub display_text: String,
-    /// Byte range of the name within `display_text`, for syntax highlighting
-    /// and fuzzy match position offsetting.
-    pub name_range: Range<usize>,
+    pub name: Arc<str>,
+    /// Context text (e.g., "fn", "struct"), stored separately to avoid
+    /// redundant string allocations; display text is computed on demand.
+    pub context: Arc<str>,
     /// File location.
     pub location: SymbolLocation,
     /// Inferred symbol kind.
@@ -59,6 +57,7 @@ pub struct SymbolSearchResult {
 
 /// A consistent snapshot of the index used for concurrent search.
 /// Self-contained — safe to search on a background thread while the index mutates.
+#[derive(Clone)]
 pub struct IndexSnapshot {
     symbols: Arc<[IndexedSymbol]>,
     candidates: Arc<[StringMatchCandidate]>,
@@ -112,6 +111,7 @@ pub struct SymbolIndex {
     symbols: Vec<IndexedSymbol>,
     candidates: Vec<StringMatchCandidate>,
     snapshot: IndexSnapshot,
+    snapshot_dirty: bool,
 }
 
 /// Extract symbols from source text using the grammar's outline query.
@@ -254,13 +254,14 @@ impl SymbolIndex {
                 symbols: Arc::from(Vec::new()),
                 candidates: Arc::from(Vec::new()),
             },
+            snapshot_dirty: false,
         }
     }
 
     /// Set all symbols at once (for initial bulk index build).
     pub fn set_symbols(&mut self, symbols: Vec<IndexedSymbol>) {
         self.symbols = symbols;
-        self.rebuild_candidates();
+        self.snapshot_dirty = true;
     }
 
     /// Add or replace symbols for a single file path.
@@ -275,21 +276,17 @@ impl SymbolIndex {
         &mut self,
         updates: impl IntoIterator<Item = (SymbolLocation, Vec<ExtractedSymbol>)>,
     ) {
+        let updates: Vec<_> = updates.into_iter().collect();
+        let locations: HashSet<&SymbolLocation> = updates.iter().map(|(l, _)| l).collect();
+        if !locations.is_empty() {
+            self.symbols
+                .retain(|symbol| !locations.contains(&symbol.location));
+        }
         for (location, extracted) in updates {
-            self.symbols.retain(|symbol| symbol.location != location);
             for symbol in extracted {
-                let (display_text, name_range) = if symbol.context.is_empty() {
-                    let len = symbol.name.len();
-                    (symbol.name.clone(), 0..len)
-                } else {
-                    let prefix_len = symbol.context.len() + 1; // +1 for space
-                    let end = prefix_len + symbol.name.len();
-                    (format!("{} {}", symbol.context, symbol.name), prefix_len..end)
-                };
                 self.symbols.push(IndexedSymbol {
-                    name: symbol.name,
-                    display_text,
-                    name_range,
+                    name: Arc::from(symbol.name.as_str()),
+                    context: Arc::from(symbol.context.as_str()),
                     location: location.clone(),
                     kind: symbol.kind,
                     row: symbol.row,
@@ -297,30 +294,42 @@ impl SymbolIndex {
                 });
             }
         }
-        self.rebuild_candidates();
+        self.snapshot_dirty = true;
     }
 
     /// Remove all symbols for a file path.
     pub fn remove_file(&mut self, location: &SymbolLocation) {
         self.symbols.retain(|symbol| &symbol.location != location);
-        self.rebuild_candidates();
+        self.snapshot_dirty = true;
+    }
+
+    /// Remove all symbols for multiple file paths in a single pass.
+    pub fn remove_files_batch(&mut self, locations: &[SymbolLocation]) {
+        if locations.is_empty() {
+            return;
+        }
+        let location_set: HashSet<&SymbolLocation> = locations.iter().collect();
+        self.symbols
+            .retain(|symbol| !location_set.contains(&symbol.location));
+        self.snapshot_dirty = true;
     }
 
     /// Remove all symbols belonging to a worktree.
     pub fn remove_worktree(&mut self, worktree_id: u64) {
         self.symbols
             .retain(|symbol| symbol.location.worktree_id != worktree_id);
-        self.rebuild_candidates();
+        self.snapshot_dirty = true;
     }
 
     /// Take a snapshot of the index for concurrent search.
     /// The returned snapshot is self-contained and can be searched on a background
     /// thread without holding a borrow on the index.
-    pub fn snapshot(&self) -> IndexSnapshot {
-        IndexSnapshot {
-            symbols: self.snapshot.symbols.clone(),
-            candidates: self.snapshot.candidates.clone(),
+    pub fn snapshot(&mut self) -> IndexSnapshot {
+        if self.snapshot_dirty {
+            self.rebuild_candidates();
+            self.snapshot_dirty = false;
         }
+        self.snapshot.clone()
     }
 
     /// Total number of indexed symbols.
@@ -337,12 +346,12 @@ impl SymbolIndex {
             .symbols
             .iter()
             .enumerate()
-            .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.name))
+            .map(|(id, symbol)| StringMatchCandidate::new(id, symbol.name.clone()))
             .collect();
 
         self.snapshot = IndexSnapshot {
-            symbols: Arc::from(self.symbols.clone()),
-            candidates: Arc::from(self.candidates.clone()),
+            symbols: Arc::from(&self.symbols[..]),
+            candidates: Arc::from(&self.candidates[..]),
         };
     }
 }
@@ -466,7 +475,7 @@ enum Status { Active, Inactive }
 
         let results = index.snapshot().search("ibfo", 10, cancel_flag.clone(), executor.clone()).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].symbol.name, "initBookForOfficial");
+        assert_eq!(results[0].symbol.name.as_ref(), "initBookForOfficial");
 
         let results = index.snapshot().search("oib", 10, cancel_flag, executor).await;
         assert!(results.is_empty());
@@ -606,6 +615,6 @@ enum Status { Active, Inactive }
 
         let results = search_future.await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].symbol.name, "alpha_func");
+        assert_eq!(results[0].symbol.name.as_ref(), "alpha_func");
     }
 }
