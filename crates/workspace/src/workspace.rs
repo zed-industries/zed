@@ -958,6 +958,42 @@ type WorkspaceItemBuilder =
 
 impl Global for ProjectItemRegistry {}
 
+type AlternateBufferItemOpener = Arc<
+    dyn Fn(
+        &mut Workspace,
+        &Entity<Pane>,
+        &Entity<Buffer>,
+        &mut Window,
+        &mut Context<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>>,
+>;
+
+#[derive(Default)]
+struct AlternateBufferItemOpeners(Vec<AlternateBufferItemOpener>);
+
+impl Global for AlternateBufferItemOpeners {}
+
+/// Registers a callback that can open a singleton buffer as a non-editor
+/// workspace item (e.g. a markdown preview). Callers that open buffers
+/// directly (bypassing path-based project item builders) consult these
+/// openers via [`Workspace::open_alternate_item_for_buffer`]; an opener
+/// declines by returning `None`.
+pub fn register_alternate_buffer_item_opener(
+    cx: &mut App,
+    opener: impl Fn(
+        &mut Workspace,
+        &Entity<Pane>,
+        &Entity<Buffer>,
+        &mut Window,
+        &mut Context<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>>
+    + 'static,
+) {
+    cx.default_global::<AlternateBufferItemOpeners>()
+        .0
+        .push(Arc::new(opener));
+}
+
 /// Registers a [ProjectItem] for the app. When opening a file, all the registered
 /// items will get a chance to open the file, starting from the project item that
 /// was added last.
@@ -4990,6 +5026,22 @@ impl Workspace {
             cx,
         );
         item
+    }
+
+    /// Gives registered alternate buffer item openers a chance to open this
+    /// buffer as a non-editor item in the given pane. Returns `None` when no
+    /// opener claims the buffer.
+    pub fn open_alternate_item_for_buffer(
+        &mut self,
+        pane: &Entity<Pane>,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let openers = cx.try_global::<AlternateBufferItemOpeners>()?.0.clone();
+        openers
+            .iter()
+            .find_map(|opener| opener(self, pane, buffer, window, cx))
     }
 
     pub fn open_shared_screen(

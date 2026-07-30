@@ -7,6 +7,9 @@ pub struct MarkdownPreviewSettings {
     /// The maximum width of the rendered markdown content, or `None` to render
     /// content edge to edge.
     pub max_width: Option<Pixels>,
+    /// Whether opening a markdown file opens a markdown preview tab instead
+    /// of a text editor.
+    pub open_preview_on_file_open: bool,
 }
 
 impl Settings for MarkdownPreviewSettings {
@@ -17,6 +20,9 @@ impl Settings for MarkdownPreviewSettings {
         } else {
             None
         };
-        Self { max_width }
+        Self {
+            max_width,
+            open_preview_on_file_open: content.open_preview_on_file_open.unwrap_or(false),
+        }
     }
 }
