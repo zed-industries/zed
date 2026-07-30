@@ -19951,6 +19951,7 @@ dependencies = [
  "gpui",
  "gpui_macros",
  "gpui_util",
+ "i18n",
  "icons",
  "itertools 0.14.0",
  "log",

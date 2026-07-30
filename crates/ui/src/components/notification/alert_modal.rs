@@ -5,6 +5,7 @@ use gpui::Action;
 use gpui::FocusHandle;
 use gpui::IntoElement;
 use gpui::Stateful;
+use i18n::t;
 use smallvec::{SmallVec, smallvec};
 use theme::ActiveTheme;
 
@@ -141,8 +142,8 @@ impl RenderOnce for AlertModal {
         if let Some(footer) = self.footer {
             modal = modal.child(footer);
         } else if has_default_footer {
-            let primary_action = self.primary_action.unwrap_or_else(|| "OK".into());
-            let dismiss_label = self.dismiss_label.unwrap_or_else(|| "Cancel".into());
+            let primary_action = self.primary_action.unwrap_or_else(|| t!("OK").into());
+            let dismiss_label = self.dismiss_label.unwrap_or_else(|| t!("Cancel").into());
 
             modal = modal.child(
                 h_flex()

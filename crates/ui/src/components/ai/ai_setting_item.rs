@@ -1,5 +1,6 @@
 use crate::{IconDecoration, IconDecorationKind, Tooltip, prelude::*};
 use gpui::{Animation, AnimationExt, SharedString, pulsating_between};
+use i18n::{LocalizedString, t};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -15,15 +16,15 @@ pub enum AiSettingItemStatus {
 }
 
 impl AiSettingItemStatus {
-    fn tooltip_text(&self) -> &'static str {
+    fn tooltip_text(&self) -> LocalizedString {
         match self {
-            Self::Stopped => "Server is stopped.",
-            Self::Starting => "Server is starting.",
-            Self::Running => "Server is active.",
-            Self::Error => "Server has an error.",
-            Self::AuthRequired => "Authentication Required.",
-            Self::ClientSecretRequired => "Client Secret Required.",
-            Self::Authenticating => "Waiting for Authorization…",
+            Self::Stopped => t!("Server is stopped."),
+            Self::Starting => t!("Server is starting."),
+            Self::Running => t!("Server is active."),
+            Self::Error => t!("Server has an error."),
+            Self::AuthRequired => t!("Authentication Required."),
+            Self::ClientSecretRequired => t!("Client Secret Required."),
+            Self::Authenticating => t!("Waiting for Authorization…"),
         }
     }
 
@@ -58,11 +59,20 @@ impl AiSettingItemSource {
         }
     }
 
-    fn tooltip_text(&self, label: &str) -> String {
+    fn tooltip_text(&self, label: &str) -> LocalizedString {
         match self {
-            Self::Extension => format!("{label} was installed from an extension."),
-            Self::Registry => format!("{label} was installed from the ACP registry."),
-            Self::Custom => format!("{label} was configured manually."),
+            Self::Extension => t!(
+                "{$label} was installed from an extension.",
+                label = label.to_string()
+            ),
+            Self::Registry => t!(
+                "{$label} was installed from the ACP registry.",
+                label = label.to_string()
+            ),
+            Self::Custom => t!(
+                "{$label} was configured manually.",
+                label = label.to_string()
+            ),
         }
     }
 }

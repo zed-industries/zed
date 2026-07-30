@@ -1,5 +1,6 @@
 use crate::{Tooltip, prelude::*};
 use gpui::{ClickEvent, ElementId, IntoElement, ParentElement, SharedString};
+use i18n::t;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct ConfiguredApiCard {
@@ -56,7 +57,7 @@ impl ConfiguredApiCard {
 
 impl RenderOnce for ConfiguredApiCard {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let button_label = self.button_label.unwrap_or("Reset Key".into());
+        let button_label = self.button_label.unwrap_or(t!("Reset Key").into());
         let button_id = self.id;
 
         h_flex()

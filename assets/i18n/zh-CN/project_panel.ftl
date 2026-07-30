@@ -1,17 +1,15 @@
 # Simplified Chinese (zh-CN) catalog for the project panel.
 #
-# Platform file manager names (Finder, File Explorer), file names
-# (.gitignore, .git/info/exclude), settings keys (file_scan_exclusions) and
-# Git path attributes (private) are deliberately left untranslated.
+# File names (.gitignore, .git/info/exclude), settings keys
+# (file_scan_exclusions) and Git path attributes (private) are deliberately left
+# untranslated. The reveal-in-* keys live in ui.ftl, whose
+# `ui::utils::reveal_in_file_manager_label` this panel now calls.
 
 ## Context menu
 
 open-markdown-preview = 打开 Markdown 预览
 search-inside = 在其中搜索
 new-folder = 新建文件夹
-reveal-in-finder = 在 Finder 中显示
-reveal-in-file-explorer = 在 File Explorer 中显示
-reveal-in-file-manager = 在文件管理器中显示
 find-in-folder = 在文件夹中查找…
 unfold-directory = 展开目录
 fold-directory = 折叠目录

@@ -30,7 +30,7 @@ use gpui::{
     deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
     uniform_list,
 };
-use i18n::{LocalizedString, t};
+use i18n::t;
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -643,18 +643,6 @@ fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
     }
 }
 
-/// Localized counterpart of [`ui::utils::reveal_in_file_manager_label`], which
-/// returns a `&'static str` and so cannot carry a translation.
-fn reveal_in_file_manager_label(is_remote: bool) -> LocalizedString {
-    if cfg!(target_os = "macos") && !is_remote {
-        t!("Reveal in Finder")
-    } else if cfg!(target_os = "windows") && !is_remote {
-        t!("Reveal in File Explorer")
-    } else {
-        t!("Reveal in File Manager")
-    }
-}
-
 enum DeleteEntryOutcome {
     /// Entry was successfully trashed, returning the `Change` that can be
     /// recorded to the undo stack.
@@ -1152,7 +1140,7 @@ impl ProjectPanel {
                             .separator()
                             .when(is_local, |menu| {
                                 menu.action(
-                                    reveal_in_file_manager_label(is_remote),
+                                    ui::utils::reveal_in_file_manager_label(is_remote),
                                     Box::new(RevealInFileManager),
                                 )
                             })
@@ -1198,11 +1186,7 @@ impl ProjectPanel {
                                     let can_redo = self.undo_manager.can_redo();
 
                                     menu.action_disabled_when(!can_undo, t!("Undo"), Box::new(Undo))
-                                        .action_disabled_when(
-                                            !can_redo,
-                                            t!("Redo"),
-                                            Box::new(Redo),
-                                        )
+                                        .action_disabled_when(!can_redo, t!("Redo"), Box::new(Redo))
                                 },
                             )
                             .when(is_remote, |menu| {
@@ -2446,7 +2430,10 @@ impl ProjectPanel {
                     PromptLevel::Info,
                     &prompt,
                     None,
-                    &[PromptButton::new(t!("Restore")), PromptButton::cancel(t!("Cancel"))],
+                    &[
+                        PromptButton::new(t!("Restore")),
+                        PromptButton::cancel(t!("Cancel")),
+                    ],
                     cx,
                 ))
             } else {
@@ -2545,8 +2532,10 @@ impl ProjectPanel {
                 if let Err(e) = receiver.await? {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
-                            let message =
-                                t!("Failed to add to .gitignore: {$error}", error = e.to_string());
+                            let message = t!(
+                                "Failed to add to .gitignore: {$error}",
+                                error = e.to_string()
+                            );
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(Icon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)
@@ -2665,7 +2654,10 @@ impl ProjectPanel {
                         let question = if trash {
                             t!("Do you want to trash {$path}?", path = path)
                         } else {
-                            t!("Are you sure you want to permanently delete {$path}?", path = path)
+                            t!(
+                                "Are you sure you want to permanently delete {$path}?",
+                                path = path
+                            )
                         };
 
                         format!("{question}{unsaved_warning}")
@@ -2731,7 +2723,10 @@ impl ProjectPanel {
                     PromptLevel::Info,
                     &prompt,
                     detail.as_deref(),
-                    &[PromptButton::new(operation), PromptButton::cancel(t!("Cancel"))],
+                    &[
+                        PromptButton::new(operation),
+                        PromptButton::cancel(t!("Cancel")),
+                    ],
                     cx,
                 ))
             } else {
@@ -7629,7 +7624,7 @@ impl Render for ProjectPanel {
                 .size_full()
                 .child(
                     ProjectEmptyState::new(
-                        "Project Panel",
+                        t!("Project Panel"),
                         focus_handle.clone(),
                         KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
                     )
