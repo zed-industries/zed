@@ -10240,8 +10240,7 @@ mod tests {
         // A submodule must not resolve to the superproject's `.git/modules/<name>`;
         // it stays at its own working directory (handled by the caller falling back
         // to the raw path).
-        let resolved =
-            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/Foo/Bar")).await;
+        let resolved = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/Foo/Bar")).await;
         assert_eq!(resolved, None);
     }
 

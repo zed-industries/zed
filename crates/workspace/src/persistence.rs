@@ -5318,9 +5318,13 @@ mod tests {
 
         let t0 = Utc::now();
 
-        let result =
-            local_recent_workspace(WorkspaceId(1), PathList::new(&["/Foo/Bar"]), t0, fs.as_ref())
-                .await;
+        let result = local_recent_workspace(
+            WorkspaceId(1),
+            PathList::new(&["/Foo/Bar"]),
+            t0,
+            fs.as_ref(),
+        )
+        .await;
 
         // Submodules are independent projects: their identity is their own
         // working directory, not the superproject's `.git/modules/<name>`.
