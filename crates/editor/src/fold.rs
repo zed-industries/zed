@@ -819,16 +819,40 @@ impl Editor {
         let Some(buffer_snapshot) = display_snapshot.buffer_snapshot().as_singleton() else {
             return;
         };
-        let inmemory_folds = display_snapshot
+        // (start, end, start_fp, end_fp) tuples feeding both the in-memory restoration data and
+        // the file_folds rows; fingerprints are the first/last min(32, fold_len) bytes of interior.
+        const FINGERPRINT_LEN: usize = 32;
+        let folds: Vec<(usize, usize, String, String)> = display_snapshot
             .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
             .map(|fold| {
-                let start = fold.range.start.text_anchor_in(buffer_snapshot);
-                let end = fold.range.end.text_anchor_in(buffer_snapshot);
-                (start..end).to_point(buffer_snapshot)
+                let start = fold
+                    .range
+                    .start
+                    .text_anchor_in(buffer_snapshot)
+                    .to_offset(buffer_snapshot);
+                let end = fold
+                    .range
+                    .end
+                    .text_anchor_in(buffer_snapshot)
+                    .to_offset(buffer_snapshot);
+
+                let fold_len = end - start;
+                let start_fp_end = buffer_snapshot
+                    .clip_offset(start + std::cmp::min(FINGERPRINT_LEN, fold_len), Bias::Left);
+                let start_fp: String = buffer_snapshot
+                    .text_for_range(start..start_fp_end)
+                    .collect();
+                let end_fp_start = buffer_snapshot
+                    .clip_offset(end.saturating_sub(FINGERPRINT_LEN).max(start), Bias::Right);
+                let end_fp: String = buffer_snapshot.text_for_range(end_fp_start..end).collect();
+
+                (start, end, start_fp, end_fp)
             })
             .collect();
-        self.update_restoration_data(cx, |data| {
-            data.folds = inmemory_folds;
+
+        let restoration_folds = folds.clone();
+        self.update_restoration_data(cx, move |data| {
+            data.folds = restoration_folds;
         });
 
         let Some(workspace_id) = self.workspace_serialization_id(cx) else {
@@ -844,51 +868,17 @@ impl Editor {
         };
 
         let background_executor = cx.background_executor().clone();
-        const FINGERPRINT_LEN: usize = 32;
-        let db_folds = display_snapshot
-            .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
-            .map(|fold| {
-                let start = fold
-                    .range
-                    .start
-                    .text_anchor_in(buffer_snapshot)
-                    .to_offset(buffer_snapshot);
-                let end = fold
-                    .range
-                    .end
-                    .text_anchor_in(buffer_snapshot)
-                    .to_offset(buffer_snapshot);
-
-                // Extract fingerprints - content at fold boundaries for validation on restore
-                // Both fingerprints must be INSIDE the fold to avoid capturing surrounding
-                // content that might change independently.
-                // start_fp: first min(32, fold_len) bytes of fold content
-                // end_fp: last min(32, fold_len) bytes of fold content
-                // Clip to character boundaries to handle multibyte UTF-8 characters.
-                let fold_len = end - start;
-                let start_fp_end = buffer_snapshot
-                    .clip_offset(start + std::cmp::min(FINGERPRINT_LEN, fold_len), Bias::Left);
-                let start_fp: String = buffer_snapshot
-                    .text_for_range(start..start_fp_end)
-                    .collect();
-                let end_fp_start = buffer_snapshot
-                    .clip_offset(end.saturating_sub(FINGERPRINT_LEN).max(start), Bias::Right);
-                let end_fp: String = buffer_snapshot.text_for_range(end_fp_start..end).collect();
-
-                (start, end, start_fp, end_fp)
-            })
-            .collect::<Vec<_>>();
         let db = EditorDb::global(cx);
         self.serialize_folds = cx.background_spawn(async move {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-            if db_folds.is_empty() {
+            if folds.is_empty() {
                 // No folds - delete any persisted folds for this file
                 db.delete_file_folds(workspace_id, file_path)
                     .await
                     .with_context(|| format!("deleting file folds for workspace {workspace_id:?}"))
                     .log_err();
             } else {
-                db.save_file_folds(workspace_id, file_path, db_folds)
+                db.save_file_folds(workspace_id, file_path, folds)
                     .await
                     .with_context(|| {
                         format!("persisting file folds for workspace {workspace_id:?}")
@@ -1001,69 +991,9 @@ impl Editor {
         }
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let snapshot_len = snapshot.len().0;
-
-        // Helper: search for fingerprint in buffer, return offset if found
-        let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
-            let search_start = snapshot
-                .clip_offset(MultiBufferOffset(search_start), Bias::Left)
-                .0;
-            let search_end = snapshot_len.saturating_sub(fingerprint.len());
-
-            let mut byte_offset = search_start;
-            for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
-                if byte_offset > search_end {
-                    break;
-                }
-                if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
-                    return Some(byte_offset);
-                }
-                byte_offset += ch.len_utf8();
-            }
-            None
-        };
-
-        let mut search_start = 0usize;
-
-        let valid_folds: Vec<_> = folds
+        let valid_folds: Vec<_> = reanchor_folds(folds, &snapshot)
             .into_iter()
-            .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
-                let sfp = start_fp?;
-                let efp = end_fp?;
-                let efp_len = efp.len();
-
-                let start_matches = stored_start < snapshot_len
-                    && snapshot.contains_str_at(MultiBufferOffset(stored_start), &sfp);
-                let efp_check_pos = stored_end.saturating_sub(efp_len);
-                let end_matches = efp_check_pos >= stored_start
-                    && stored_end <= snapshot_len
-                    && snapshot.contains_str_at(MultiBufferOffset(efp_check_pos), &efp);
-
-                let (new_start, new_end) = if start_matches && end_matches {
-                    (stored_start, stored_end)
-                } else if sfp == efp {
-                    let new_start = find_fingerprint(&sfp, search_start)?;
-                    let fold_len = stored_end - stored_start;
-                    let new_end = new_start + fold_len;
-                    (new_start, new_end)
-                } else {
-                    let new_start = find_fingerprint(&sfp, search_start)?;
-                    let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
-                    let new_end = efp_pos + efp_len;
-                    (new_start, new_end)
-                };
-
-                search_start = new_end;
-
-                if new_end <= new_start {
-                    return None;
-                }
-
-                Some(
-                    snapshot.clip_offset(MultiBufferOffset(new_start), Bias::Left)
-                        ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right),
-                )
-            })
+            .map(|fold| fold.range)
             .collect();
 
         if !valid_folds.is_empty() {
@@ -1092,4 +1022,95 @@ impl Editor {
         self.scrollbar_marker_state.dirty = true;
         self.active_indent_guides_state.dirty = true;
     }
+}
+
+/// A persisted fold re-anchored against the current buffer content.
+pub(crate) struct ReanchoredFold {
+    /// Re-anchored range, clipped to char boundaries — ready to fold.
+    pub range: Range<MultiBufferOffset>,
+    // Unclipped offsets + original fingerprints, for callers that re-persist (e.g. migration).
+    pub start: usize,
+    pub end: usize,
+    pub start_fingerprint: String,
+    pub end_fingerprint: String,
+}
+
+/// Re-anchor persisted folds against the current buffer via their saved content fingerprints.
+/// The single content-validated re-anchor shared by every fold-restore path.
+pub(crate) fn reanchor_folds(
+    stored: impl IntoIterator<Item = (usize, usize, Option<String>, Option<String>)>,
+    snapshot: &MultiBufferSnapshot,
+) -> Vec<ReanchoredFold> {
+    let snapshot_len = snapshot.len().0;
+
+    // Search for `fingerprint` in the buffer at or after `search_start`, returning its offset.
+    let find_fingerprint = |fingerprint: &str, search_start: usize| -> Option<usize> {
+        let search_start = snapshot
+            .clip_offset(MultiBufferOffset(search_start), Bias::Left)
+            .0;
+        let search_end = snapshot_len.saturating_sub(fingerprint.len());
+
+        let mut byte_offset = search_start;
+        for ch in snapshot.chars_at(MultiBufferOffset(search_start)) {
+            if byte_offset > search_end {
+                break;
+            }
+            if snapshot.contains_str_at(MultiBufferOffset(byte_offset), fingerprint) {
+                return Some(byte_offset);
+            }
+            byte_offset += ch.len_utf8();
+        }
+        None
+    };
+
+    // Advance past each match so duplicate fingerprints resolve to successive occurrences.
+    let mut search_start = 0usize;
+
+    stored
+        .into_iter()
+        .filter_map(|(stored_start, stored_end, start_fp, end_fp)| {
+            // Skip folds without fingerprints (old data from before fingerprinting).
+            let sfp = start_fp?;
+            let efp = end_fp?;
+            let efp_len = efp.len();
+
+            // Fast path: fingerprints still present at the stored offsets (end_fp ends at fold end).
+            let start_matches = stored_start < snapshot_len
+                && snapshot.contains_str_at(MultiBufferOffset(stored_start), &sfp);
+            let efp_check_pos = stored_end.saturating_sub(efp_len);
+            let end_matches = efp_check_pos >= stored_start
+                && stored_end <= snapshot_len
+                && snapshot.contains_str_at(MultiBufferOffset(efp_check_pos), &efp);
+
+            let (new_start, new_end) = if start_matches && end_matches {
+                (stored_start, stored_end)
+            } else if sfp.len() + efp_len > stored_end - stored_start {
+                // Overlapping fingerprints (interior < start_fp + end_fp): can't search end_fp
+                // after start_fp, so anchor on start_fp and reconstruct end from stored length.
+                let new_start = find_fingerprint(&sfp, search_start)?;
+                let new_end = new_start + (stored_end - stored_start);
+                (new_start, new_end)
+            } else {
+                // Disjoint fingerprints: search end_fp after start_fp, validating end content.
+                let new_start = find_fingerprint(&sfp, search_start)?;
+                let efp_pos = find_fingerprint(&efp, new_start + sfp.len())?;
+                (new_start, efp_pos + efp_len)
+            };
+
+            search_start = new_end;
+
+            if new_end <= new_start {
+                return None;
+            }
+
+            Some(ReanchoredFold {
+                range: snapshot.clip_offset(MultiBufferOffset(new_start), Bias::Left)
+                    ..snapshot.clip_offset(MultiBufferOffset(new_end), Bias::Right),
+                start: new_start,
+                end: new_end,
+                start_fingerprint: sfp,
+                end_fingerprint: efp,
+            })
+        })
+        .collect()
 }
