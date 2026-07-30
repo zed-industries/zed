@@ -2278,12 +2278,7 @@ extern "C" fn make_first_responder(this: &Object, _: Sel, responder: id) -> BOOL
         let window_state = get_window_state(this);
         let mut state = window_state.lock();
         let native_view = state.native_view.as_ptr() as id;
-        let is_view: BOOL = msg_send![responder, isKindOfClass: class!(NSView)];
-        let belongs_to_gpui = responder == native_view
-            || (is_view == YES && {
-                let is_descendant: BOOL = msg_send![responder, isDescendantOf: native_view];
-                is_descendant == YES
-            });
+        let belongs_to_gpui = responder == native_view;
 
         if !belongs_to_gpui && let Some(callback) = state.native_view_focus_callback.as_mut() {
             callback();
@@ -2310,14 +2305,13 @@ extern "C" fn send_event(this: &Object, _: Sel, event: id) {
                 let window_state = get_window_state(this);
                 let mut state = window_state.lock();
                 let native_view = state.native_view.as_ptr() as id;
-                let in_gpui_view: BOOL = msg_send![hit_view, isDescendantOf: native_view];
                 let in_overlay_view = state.overlay_view.is_some_and(|overlay_view| {
                     let in_overlay: BOOL =
                         msg_send![hit_view, isDescendantOf: overlay_view.as_ptr()];
                     in_overlay == YES
                 });
 
-                if in_gpui_view == NO
+                if hit_view != native_view
                     && !in_overlay_view
                     && let Some(callback) = state.native_view_focus_callback.as_mut()
                 {
