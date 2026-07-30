@@ -96,7 +96,7 @@ pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Zed uses separate selections for the Python [toolchain](./configuring-languages#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python?highlight=toolchain#selecting-a-toolchain).
+> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Zed uses separate selections for the Python [toolchain](./configuring-languages.md#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python.md#selecting-a-toolchain).
 
 ### R (Ark Kernel) {#r-ark}
 
