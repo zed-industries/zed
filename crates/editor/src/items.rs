@@ -24,7 +24,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
+use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -1653,6 +1653,39 @@ impl Editor {
     }
 }
 
+/// The text of the line(s) a search hit spans. Replacements are expanded against the whole line
+/// because search matches a line at a time, so lookaround assertions in the pattern read text
+/// outside of the hit itself. The text is cached because a single line commonly holds many hits.
+#[derive(Default)]
+struct SearchHitLines {
+    rows: Option<Range<u32>>,
+    start: MultiBufferOffset,
+    text: String,
+}
+
+impl SearchHitLines {
+    /// Returns the line(s) `hit` spans and the byte range of `hit` within them.
+    fn for_hit(
+        &mut self,
+        snapshot: &MultiBufferSnapshot,
+        hit: &Range<Anchor>,
+    ) -> (&str, Range<usize>) {
+        let start = hit.start.to_point(snapshot);
+        let end = hit.end.to_point(snapshot);
+        if self.rows != Some(start.row..end.row) {
+            let first = Point::new(start.row, 0);
+            let last = Point::new(end.row, snapshot.line_len(MultiBufferRow(end.row)));
+            self.rows = Some(start.row..end.row);
+            self.start = snapshot.point_to_offset(first);
+            self.text.clear();
+            self.text.extend(snapshot.text_for_range(first..last));
+        }
+        let range = snapshot.point_to_offset(start) - self.start
+            ..snapshot.point_to_offset(end) - self.start;
+        (&self.text, range)
+    }
+}
+
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
@@ -1838,17 +1871,11 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
-        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
-        let text: Cow<_> = if text.len() == 1 {
-            text.first().cloned().unwrap().into()
-        } else {
-            let joined_chunks = text.concat();
-            joined_chunks.into()
-        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut lines = SearchHitLines::default();
+        let (line, hit) = lines.for_hit(&snapshot, identifier);
 
-        if let Some(replacement) = query.replacement_for(&text) {
+        if let Some(replacement) = query.replacement_for(line, hit) {
             self.transact(window, cx, |this, _, cx| {
                 this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
             });
@@ -1862,26 +1889,18 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut edits = vec![];
 
         // A regex might have replacement variables so we cannot apply
         // the same replacement to all matches
         if query.is_regex() {
+            let mut lines = SearchHitLines::default();
             edits = matches
                 .filter_map(|m| {
-                    let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-                    let text: Cow<_> = if text.len() == 1 {
-                        text.first().cloned().unwrap().into()
-                    } else {
-                        let joined_chunks = text.concat();
-                        joined_chunks.into()
-                    };
-
+                    let (line, hit) = lines.for_hit(&snapshot, m);
                     query
-                        .replacement_for(&text)
+                        .replacement_for(line, hit)
                         .map(|replacement| (m.clone(), Arc::from(&*replacement)))
                 })
                 .collect();

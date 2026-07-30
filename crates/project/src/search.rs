@@ -471,8 +471,11 @@ impl SearchQuery {
             }
         }
     }
-    /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
-    pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
+    /// Replaces search hits if replacement is set. `line` is the text of the line(s) the hit was
+    /// found on, and `hit` is the hit's byte range within `line`. The surrounding text is required
+    /// because lookaround assertions match text outside of the hit itself, so a hit taken in
+    /// isolation may no longer match the pattern that produced it.
+    pub fn replacement_for<'a>(&self, line: &'a str, hit: Range<usize>) -> Option<Cow<'a, str>> {
         match self {
             SearchQuery::Text { replacement, .. }
             | SearchQuery::Regex {
@@ -498,7 +501,20 @@ impl SearchQuery {
                         x => unreachable!("Unexpected escape sequence: {}", x),
                     },
                 );
-                Some(regex.replace(text, replacement))
+                let captures = regex
+                    .captures_from_pos(line, hit.start)
+                    .ok()
+                    .flatten()
+                    .filter(|captures| captures.get(0).is_some_and(|m| m.range() == hit));
+                let Some(captures) = captures else {
+                    // The pattern is not guaranteed to match the whole line, for instance when
+                    // searching within a selection that starts or ends mid-line, so fall back to
+                    // matching the hit on its own.
+                    return Some(regex.replace(line.get(hit)?, replacement));
+                };
+                let mut replaced = String::new();
+                captures.expand(&replacement, &mut replaced);
+                Some(Cow::Owned(replaced))
             }
 
             SearchQuery::Regex {
