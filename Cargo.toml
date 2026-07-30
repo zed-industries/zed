@@ -227,6 +227,7 @@ members = [
     "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
+    "crates/websocket_client",
     "crates/which_key",
     "crates/workspace",
     "crates/worktree",
@@ -493,6 +494,7 @@ which_key = { path = "crates/which_key" }
 watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
+websocket_client = { path = "crates/websocket_client" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
@@ -618,6 +620,7 @@ foreign-types = "0.5"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
+futures-rustls = "0.26"
 futures-util = "0.3.32"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 

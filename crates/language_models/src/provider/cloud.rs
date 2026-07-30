@@ -20,12 +20,14 @@ use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
+use http_client::HttpClient as _;
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{TintColor, prelude::*};
+use websocket_client::NativeWebSocketClient;
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
@@ -125,11 +127,15 @@ impl State {
         });
 
         let provider = cx.new(|cx| {
+            let http_client = client.http_client();
+            let websocket_client =
+                Arc::new(NativeWebSocketClient::new(http_client.proxy().cloned()));
             CloudModelProvider::new(
                 token_provider.clone(),
-                client.http_client(),
+                http_client,
                 Some(AppVersion::global(cx)),
             )
+            .with_websocket_client(websocket_client)
         });
 
         let cloud_reconnect_task = cx.spawn({

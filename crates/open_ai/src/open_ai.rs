@@ -1,6 +1,7 @@
 pub mod batches;
 pub mod completion;
 pub mod responses;
+pub mod responses_websocket;
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};

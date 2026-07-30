@@ -21,13 +21,16 @@ collections.workspace = true
 futures.workspace = true
 http_client.workspace = true
 language_model_core.workspace = true
+parking_lot.workspace = true
 rand.workspace = true
 schemars = { workspace = true, optional = true }
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 strum.workspace = true
 thiserror.workspace = true
+websocket_client.workspace = true
 
 [dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }

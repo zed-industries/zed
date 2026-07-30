@@ -27,6 +27,7 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+websocket_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

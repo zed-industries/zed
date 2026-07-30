@@ -1,9 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
-use http_client::{CustomHeaders, HttpClient};
+use http_client::{
+    CustomHeaders, HttpClient,
+    http::{HeaderMap, HeaderValue},
+};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
     FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -18,12 +21,16 @@ use open_ai::{
         CompactRequest, CompactedResponse, Request as ResponseRequest,
         StreamEvent as ResponsesStreamEvent, compact_response, stream_response,
     },
+    responses_websocket::{self, SharedWebSocketChains, WebSocketChains},
     stream_completion,
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
+use websocket_client::{
+    AuthRequired, NativeWebSocketClient, WebSocketClient, websocket_url_from_http,
+};
 
 use open_ai::completion::token_usage_from_response_usage;
 pub use open_ai::completion::{
@@ -37,6 +44,14 @@ const PROVIDER_NAME: LanguageModelProviderName = OPEN_AI_PROVIDER_NAME;
 const API_KEY_ENV_VAR_NAME: &str = "OPENAI_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
+/// Setting this environment variable (to any value) disables the WebSocket
+/// transport for the Responses API, forcing HTTP/SSE.
+const DISABLE_WEBSOCKET_ENV_VAR_NAME: &str = "ZED_DISABLE_OPENAI_WEBSOCKET";
+
+fn websocket_streaming_disabled() -> bool {
+    std::env::var_os(DISABLE_WEBSOCKET_ENV_VAR_NAME).is_some()
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
     pub api_url: String,
@@ -47,11 +62,16 @@ pub struct OpenAiSettings {
 pub struct OpenAiLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    websocket_client: Arc<dyn WebSocketClient>,
+    websocket_chains: SharedWebSocketChains,
 }
 
 pub struct State {
     api_key_state: ApiKeyState,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    /// Cleared when the API key changes so continuations never mix
+    /// credentials.
+    websocket_chains: SharedWebSocketChains,
 }
 
 impl State {
@@ -62,6 +82,7 @@ impl State {
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenAiLanguageModelProvider::api_url(cx);
+        self.websocket_chains.lock().clear();
         self.api_key_state.store(
             api_url,
             api_key,
@@ -89,10 +110,12 @@ impl OpenAiLanguageModelProvider {
         credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Self {
+        let websocket_chains = WebSocketChains::new_shared();
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let credentials_provider = this.credentials_provider.clone();
                 let api_url = Self::api_url(cx);
+                this.websocket_chains.lock().clear();
                 this.api_key_state.handle_url_change(
                     api_url,
                     |this| &mut this.api_key_state,
@@ -105,10 +128,18 @@ impl OpenAiLanguageModelProvider {
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 credentials_provider,
+                websocket_chains: websocket_chains.clone(),
             }
         });
 
-        Self { http_client, state }
+        let websocket_client: Arc<dyn WebSocketClient> =
+            Arc::new(NativeWebSocketClient::new(http_client.proxy().cloned()));
+        Self {
+            http_client,
+            state,
+            websocket_client,
+            websocket_chains,
+        }
     }
 
     fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
@@ -118,6 +149,8 @@ impl OpenAiLanguageModelProvider {
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
+            websocket_client: self.websocket_client.clone(),
+            websocket_chains: self.websocket_chains.clone(),
         })
     }
 
@@ -355,6 +388,8 @@ pub struct OpenAiLanguageModel {
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
+    websocket_client: Arc<dyn WebSocketClient>,
+    websocket_chains: SharedWebSocketChains,
 }
 
 impl OpenAiLanguageModel {
@@ -398,8 +433,13 @@ impl OpenAiLanguageModel {
         &self,
         request: ResponseRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
@@ -411,23 +451,22 @@ impl OpenAiLanguageModel {
         });
 
         let provider = PROVIDER_NAME;
-        let future = self.request_limiter.stream(async move {
+        async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_response(
+            let response = stream_response(
                 http_client.as_ref(),
                 provider.0.as_str(),
                 &api_url,
                 &api_key,
                 request,
                 &extra_headers,
-            );
-            let response = request.await?;
+            )
+            .await?;
             Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+        }
+        .boxed()
     }
 
     fn compact_response(
@@ -463,6 +502,75 @@ impl OpenAiLanguageModel {
 
         future.boxed()
     }
+
+    fn stream_response_websocket(
+        &self,
+        request: ResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+        let websocket_client = self.websocket_client.clone();
+        let websocket_chains = self.websocket_chains.clone();
+        let executor = cx.background_executor().clone();
+
+        async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let websocket_url =
+                websocket_responses_url(&api_url).map_err(LanguageModelCompletionError::Other)?;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                http_client::http::header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
+                    .context("invalid OpenAI authorization header")?,
+            );
+            for (name, value) in extra_headers.iter() {
+                headers.insert(name.clone(), value.clone());
+            }
+            let connection_scope = format!("{websocket_url}\0{}\0{headers:?}", api_key.trim());
+            responses_websocket::stream_websocket_response(
+                &request,
+                connection_scope.as_bytes(),
+                websocket_chains,
+                websocket_client.connect(&websocket_url, headers),
+                responses_websocket::response_create_envelope,
+                |future| executor.spawn(future).detach(),
+            )
+            .await
+            .map_err(|error| match error.downcast::<AuthRequired>() {
+                Ok(error) => LanguageModelCompletionError::AuthenticationError {
+                    provider: PROVIDER_NAME,
+                    message: error.to_string(),
+                },
+                Err(error) => LanguageModelCompletionError::Other(error),
+            })
+        }
+        .boxed()
+    }
+}
+
+/// The WebSocket endpoint corresponding to an HTTP Responses API base URL,
+/// e.g. `https://api.openai.com/v1` becomes `wss://api.openai.com/v1/responses`.
+fn websocket_responses_url(api_url: &str) -> Result<String> {
+    let url = url::Url::parse(api_url)
+        .with_context(|| format!("failed to parse OpenAI API URL {api_url}"))?;
+    let url = websocket_url_from_http(url)?;
+    Ok(format!("{}/responses", url.as_str().trim_end_matches('/')))
 }
 
 impl LanguageModel for OpenAiLanguageModel {
@@ -623,27 +731,56 @@ impl LanguageModel for OpenAiLanguageModel {
         }
         if self.model.uses_responses_api() {
             normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-            let request = match into_open_ai_response(
-                request,
-                self.model.id(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                default_thinking_reasoning_effort(&self.model),
-                self.model
-                    .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
-                &OPEN_AI_PROVIDER_ID,
-            ) {
+            let response_request = |request: LanguageModelRequest| {
+                into_open_ai_response(
+                    request,
+                    self.model.id(),
+                    self.model.supports_parallel_tool_calls(),
+                    self.model.supports_prompt_cache_key(),
+                    self.max_output_tokens(),
+                    default_thinking_reasoning_effort(&self.model),
+                    self.model
+                        .supported_reasoning_efforts()
+                        .contains(&open_ai::ReasoningEffort::None),
+                    &OPEN_AI_PROVIDER_ID,
+                )
+            };
+            let fallback_language_request = request.clone();
+            let request = match response_request(request) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-            let completions = self.stream_response(request, cx);
-            async move {
-                let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
-                Ok(mapper.map_stream(completions.await?).boxed())
-            }
-            .boxed()
+            let completions = if websocket_streaming_disabled() {
+                log::debug!(
+                    "OpenAI Responses transport: HTTP/SSE because {} is set",
+                    DISABLE_WEBSOCKET_ENV_VAR_NAME
+                );
+                self.stream_response(request, cx)
+            } else {
+                let fallback_request = match response_request(fallback_language_request) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
+                let websocket = self.stream_response_websocket(request, cx);
+                let fallback = self.stream_response(fallback_request, cx);
+                async move {
+                    match websocket.await {
+                        Err(LanguageModelCompletionError::Other(error)) => {
+                            log::info!(
+                                "OpenAI Responses transport: falling back to HTTP/SSE; WebSocket request failed: {error:#}"
+                            );
+                            fallback.await
+                        }
+                        result => result,
+                    }
+                }
+                .boxed()
+            };
+            let stream = self.request_limiter.stream(async move {
+                let response = completions.await?;
+                Ok(OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID).map_stream(response))
+            });
+            async move { Ok(stream.await?.boxed()) }.boxed()
         } else {
             let request = match into_open_ai(
                 request,

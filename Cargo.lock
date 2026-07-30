@@ -7120,6 +7120,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-rustls"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8f2f12607f92c69b12ed746fabf9ca4f5c482cba46679c1a75b874ed7c26adb"
+dependencies = [
+ "futures-io",
+ "rustls 0.23.40",
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9908,7 +9919,9 @@ dependencies = [
  "tokio",
  "ui",
  "ui_input",
+ "url",
  "util",
+ "websocket_client",
  "x_ai",
 ]
 
@@ -9931,6 +9944,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "websocket_client",
 ]
 
 [[package]]
@@ -12417,13 +12431,16 @@ dependencies = [
  "http_client",
  "language_model_core",
  "log",
+ "parking_lot",
  "pretty_assertions",
  "rand 0.9.4",
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.27.2",
  "thiserror 2.0.17",
+ "websocket_client",
 ]
 
 [[package]]
@@ -21253,6 +21270,22 @@ dependencies = [
  "scratch",
  "semver",
  "zip",
+]
+
+[[package]]
+name = "websocket_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-tungstenite",
+ "futures 0.3.32",
+ "futures-rustls",
+ "http_client",
+ "http_client_tls",
+ "log",
+ "rustls 0.23.40",
+ "smol",
+ "url",
 ]
 
 [[package]]

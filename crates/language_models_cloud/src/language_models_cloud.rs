@@ -13,7 +13,7 @@ use futures::{
     stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
-use gpui::{AppContext, AsyncApp, Context, Task};
+use gpui::{AppContext, AsyncApp, BackgroundExecutor, Context, Task};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
@@ -45,9 +45,19 @@ use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response, token_usage_from_response_usage,
 };
+use open_ai::responses_websocket::{self, SharedWebSocketChains, WebSocketChains};
+use websocket_client::{AuthRequired, WebSocketClient, websocket_url_from_http};
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
+
+/// Setting this environment variable (to any value) disables the WebSocket
+/// transport for cloud completions, forcing the HTTP `/completions` endpoint.
+const DISABLE_WEBSOCKET_ENV_VAR_NAME: &str = "ZED_DISABLE_CLOUD_WEBSOCKET";
+
+fn websocket_streaming_disabled() -> bool {
+    std::env::var_os(DISABLE_WEBSOCKET_ENV_VAR_NAME).is_some()
+}
 
 /// Trait for acquiring and refreshing LLM authentication tokens.
 pub trait CloudLlmTokenProvider: Send + Sync {
@@ -110,6 +120,11 @@ pub struct CloudLanguageModel<TP: CloudLlmTokenProvider> {
     pub http_client: Arc<HttpClientWithUrl>,
     pub app_version: Option<Version>,
     pub request_limiter: RateLimiter,
+    /// When present, OpenAI completions are streamed over a WebSocket
+    /// session to the `/completions/session` endpoint, with the HTTP
+    /// `/completions` endpoint as a fallback.
+    pub websocket_client: Option<Arc<dyn WebSocketClient>>,
+    pub websocket_chains: SharedWebSocketChains,
 }
 
 pub struct PerformLlmCompletionResponse {
@@ -232,6 +247,80 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         }
         .into())
     }
+
+    /// Runs one OpenAI completion turn over a WebSocket session with the
+    /// `/completions/session` endpoint, which forwards native Responses API
+    /// events. The session machinery sends only new input items plus
+    /// `previous_response_id` when a cached connection covers a prefix of
+    /// the request.
+    async fn stream_open_ai_websocket_completion(
+        websocket_client: Arc<dyn WebSocketClient>,
+        http_client: &HttpClientWithUrl,
+        token_provider: &TP,
+        auth_context: TP::AuthContext,
+        app_version: Option<Version>,
+        websocket_chains: SharedWebSocketChains,
+        executor: BackgroundExecutor,
+        thread_id: Option<String>,
+        prompt_id: Option<String>,
+        request: &open_ai::responses::Request,
+    ) -> Result<BoxStream<'static, Result<open_ai::responses::StreamEvent>>> {
+        let mut url =
+            websocket_url_from_http(http_client.build_zed_llm_url("/completions/session", &[])?)?;
+        // `build_zed_llm_url` leaves an empty query (a trailing `?`); drop
+        // it so the upgrade request has a clean path.
+        if url.query() == Some("") {
+            url.set_query(None);
+        }
+        let token = token_provider.cached_token(auth_context.clone()).await?;
+        let connection_scope = format!("{}\0{token}", url.as_str());
+        let connect = async move {
+            let headers = websocket_headers(&token, app_version.as_ref())?;
+            match websocket_client.connect(url.as_str(), headers).await {
+                Err(error) if error.downcast_ref::<AuthRequired>().is_some() => {
+                    log::info!("LLM token rejected; refreshing and retrying WebSocket connection");
+                    let token = token_provider.refresh_token(auth_context.clone()).await?;
+                    let headers = websocket_headers(&token, app_version.as_ref())?;
+                    websocket_client.connect(url.as_str(), headers).await
+                }
+                result => result,
+            }
+        };
+        let model = request.model.clone();
+        let envelope_turn = move |provider_request: serde_json::Map<String, serde_json::Value>| {
+            Ok(serde_json::to_string(&CompletionBody {
+                thread_id: thread_id.clone(),
+                prompt_id: prompt_id.clone(),
+                provider: cloud_llm_client::LanguageModelProvider::OpenAi,
+                model: model.clone(),
+                provider_request: serde_json::Value::Object(provider_request),
+            })?)
+        };
+        responses_websocket::stream_websocket_response(
+            request,
+            connection_scope.as_bytes(),
+            websocket_chains,
+            connect,
+            envelope_turn,
+            move |future| executor.spawn(future).detach(),
+        )
+        .await
+    }
+}
+
+fn websocket_headers(token: &str, app_version: Option<&Version>) -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http_client::http::header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}"))?,
+    );
+    if let Some(app_version) = app_version {
+        headers.insert(
+            ZED_VERSION_HEADER_NAME,
+            HeaderValue::from_str(&app_version.to_string())?,
+        );
+    }
+    Ok(headers)
 }
 
 fn needs_llm_token_refresh(response: &Response<AsyncBody>) -> bool {
@@ -710,7 +799,59 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 }
 
                 let auth_context = token_provider.auth_context(cx);
+                let websocket_client = if websocket_streaming_disabled() {
+                    log::debug!(
+                        "Cloud OpenAI transport: HTTP because {} is set",
+                        DISABLE_WEBSOCKET_ENV_VAR_NAME
+                    );
+                    None
+                } else {
+                    self.websocket_client.clone()
+                };
+                let websocket_chains = self.websocket_chains.clone();
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
+                    // A WebSocket attempt that fails before streaming begins
+                    // is retried over the HTTP endpoint, which also covers
+                    // servers that don't expose `/completions/session` yet.
+                    // Rejected credentials are surfaced directly since the
+                    // fallback would fail the same way.
+                    if let Some(websocket_client) = websocket_client {
+                        match Self::stream_open_ai_websocket_completion(
+                            websocket_client,
+                            &http_client,
+                            &*token_provider,
+                            auth_context.clone(),
+                            app_version.clone(),
+                            websocket_chains,
+                            executor,
+                            thread_id.clone(),
+                            prompt_id.clone(),
+                            &request,
+                        )
+                        .await
+                        {
+                            Ok(events) => {
+                                let mapper =
+                                    OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+                                return Ok(mapper.map_stream(events).boxed());
+                            }
+                            Err(error) => {
+                                if error.downcast_ref::<AuthRequired>().is_some() {
+                                    return Err(
+                                        LanguageModelCompletionError::AuthenticationError {
+                                            provider: provider_name.clone(),
+                                            message: error.to_string(),
+                                        },
+                                    );
+                                }
+                                log::info!(
+                                    "Cloud OpenAI transport: falling back to HTTP; WebSocket request failed: {error:#}"
+                                );
+                            }
+                        }
+                    }
+
                     let PerformLlmCompletionResponse {
                         response,
                         includes_status_messages,
@@ -844,6 +985,8 @@ pub struct CloudModelProvider<TP: CloudLlmTokenProvider> {
     token_provider: Arc<TP>,
     http_client: Arc<HttpClientWithUrl>,
     app_version: Option<Version>,
+    websocket_client: Option<Arc<dyn WebSocketClient>>,
+    websocket_chains: SharedWebSocketChains,
     models: Vec<Arc<cloud_llm_client::LanguageModel>>,
     default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
     default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
@@ -860,11 +1003,21 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             token_provider,
             http_client,
             app_version,
+            websocket_client: None,
+            websocket_chains: WebSocketChains::new_shared(),
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
             recommended_models: Vec::new(),
         }
+    }
+
+    /// Enables the WebSocket transport for providers that support it (see
+    /// [`CloudLanguageModel::websocket_client`]). Without this, all
+    /// completions use the HTTP endpoints.
+    pub fn with_websocket_client(mut self, websocket_client: Arc<dyn WebSocketClient>) -> Self {
+        self.websocket_client = Some(websocket_client);
+        self
     }
 
     pub fn refresh_models(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -961,6 +1114,8 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             http_client: self.http_client.clone(),
             app_version: self.app_version.clone(),
             request_limiter: RateLimiter::new(4),
+            websocket_client: self.websocket_client.clone(),
+            websocket_chains: self.websocket_chains.clone(),
         })
     }
 
@@ -1282,6 +1437,324 @@ mod tests {
         assert!(error.to_string().contains("compaction item"));
     }
 
+    use futures::future;
+    use gpui::TestAppContext;
+    use websocket_client::{WebSocketConnection, WebSocketMessage};
+
+    #[gpui::test]
+    async fn websocket_turns_send_completion_bodies_and_continue_incrementally(
+        cx: &mut TestAppContext,
+    ) {
+        let http_client = FakeHttpClient::with_404_response();
+        let sent_frames = Arc::new(Mutex::new(Vec::new()));
+        let connects = Arc::new(Mutex::new(Vec::new()));
+        let websocket_client = Arc::new(FakeWebSocketClient {
+            connects: connects.clone(),
+            connect_results: Mutex::new(vec![Ok(Box::new(ScriptedConnection {
+                sent: sent_frames.clone(),
+                incoming: vec![
+                    text_event(r#"{"type":"response.created","response":{"id":"resp_1"}}"#),
+                    text_event(
+                        r#"{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"Hello.","annotations":[]}]}]}}"#,
+                    ),
+                    text_event(r#"{"type":"response.created","response":{"id":"resp_2"}}"#),
+                    text_event(
+                        r#"{"type":"response.completed","response":{"id":"resp_2","output":[]}}"#,
+                    ),
+                ],
+            }) as Box<dyn WebSocketConnection>)]),
+        });
+        let token_provider = FakeTokenProvider::default();
+        let websocket_chains = WebSocketChains::new_shared();
+
+        let events = CloudLanguageModel::<FakeTokenProvider>::stream_open_ai_websocket_completion(
+            websocket_client.clone(),
+            &http_client,
+            &token_provider,
+            (),
+            None,
+            websocket_chains.clone(),
+            cx.executor().clone(),
+            Some("thread-1".to_string()),
+            None,
+            &test_responses_request(vec![user_message("Find fizz_buzz")]),
+        )
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[1],
+            Ok(open_ai::responses::StreamEvent::Completed { ref response })
+                if response.id.as_deref() == Some("resp_1")
+        ));
+        {
+            let connects = connects.lock().unwrap();
+            assert_eq!(
+                connects.as_slice(),
+                &[(
+                    "ws://test.example/completions/session".to_string(),
+                    Some("cached-token".to_string())
+                )]
+            );
+        }
+        let first_frame: CompletionBody = {
+            let sent_frames = sent_frames.lock().unwrap();
+            assert_eq!(sent_frames.len(), 1);
+            serde_json::from_str(&sent_frames[0]).unwrap()
+        };
+        assert_eq!(first_frame.thread_id.as_deref(), Some("thread-1"));
+        assert_eq!(
+            first_frame.provider,
+            cloud_llm_client::LanguageModelProvider::OpenAi
+        );
+        assert_eq!(first_frame.model, "gpt-test");
+        assert!(first_frame.provider_request.get("stream").is_none());
+        assert!(first_frame.provider_request.get("type").is_none());
+        assert!(
+            first_frame
+                .provider_request
+                .get("previous_response_id")
+                .is_none()
+        );
+        assert_eq!(
+            first_frame.provider_request["input"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // The next turn extends the conversation with the previous
+        // response's replayed output and a new user message; only the new
+        // message is sent, chained via `previous_response_id`, over the
+        // cached connection.
+        let events = CloudLanguageModel::<FakeTokenProvider>::stream_open_ai_websocket_completion(
+            websocket_client,
+            &http_client,
+            &token_provider,
+            (),
+            None,
+            websocket_chains,
+            cx.executor().clone(),
+            Some("thread-1".to_string()),
+            None,
+            &test_responses_request(vec![
+                user_message("Find fizz_buzz"),
+                assistant_message("Hello."),
+                user_message("Now optimize it."),
+            ]),
+        )
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[1],
+            Ok(open_ai::responses::StreamEvent::Completed { ref response })
+                if response.id.as_deref() == Some("resp_2")
+        ));
+        assert_eq!(
+            connects.lock().unwrap().len(),
+            1,
+            "expected connection reuse"
+        );
+        let second_frame: CompletionBody = {
+            let sent_frames = sent_frames.lock().unwrap();
+            assert_eq!(sent_frames.len(), 2);
+            serde_json::from_str(&sent_frames[1]).unwrap()
+        };
+        assert_eq!(
+            second_frame.provider_request["previous_response_id"],
+            "resp_1"
+        );
+        let input = second_frame.provider_request["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["content"][0]["text"], "Now optimize it.");
+    }
+
+    #[gpui::test]
+    async fn websocket_connect_refreshes_a_rejected_llm_token_once(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::with_404_response();
+        let connects = Arc::new(Mutex::new(Vec::new()));
+        let websocket_client = Arc::new(FakeWebSocketClient {
+            connects: connects.clone(),
+            connect_results: Mutex::new(vec![
+                Err(anyhow::anyhow!(websocket_client::AuthRequired)),
+                Ok(Box::new(ScriptedConnection {
+                    sent: Arc::default(),
+                    incoming: vec![text_event(
+                        r#"{"type":"response.completed","response":{"id":"resp_1","output":[]}}"#,
+                    )],
+                }) as Box<dyn WebSocketConnection>),
+            ]),
+        });
+        let token_provider = FakeTokenProvider::default();
+
+        let events = CloudLanguageModel::<FakeTokenProvider>::stream_open_ai_websocket_completion(
+            websocket_client,
+            &http_client,
+            &token_provider,
+            (),
+            None,
+            WebSocketChains::new_shared(),
+            cx.executor().clone(),
+            None,
+            None,
+            &test_responses_request(vec![user_message("hi")]),
+        )
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+
+        assert_eq!(events.len(), 1);
+        let connects = connects.lock().unwrap();
+        assert_eq!(connects.len(), 2);
+        assert_eq!(connects[0].1.as_deref(), Some("cached-token"));
+        assert_eq!(connects[1].1.as_deref(), Some("refreshed-token"));
+        assert_eq!(*token_provider.refresh_count.lock().unwrap(), 1);
+    }
+
+    fn text_event(json: &str) -> anyhow::Result<WebSocketMessage> {
+        Ok(WebSocketMessage::Text(json.to_string()))
+    }
+
+    fn user_message(text: &str) -> open_ai::responses::ResponseInputItem {
+        open_ai::responses::ResponseInputItem::Message(open_ai::responses::ResponseMessageItem {
+            role: open_ai::Role::User,
+            content: vec![open_ai::responses::ResponseInputContent::Text {
+                text: text.to_string(),
+            }],
+            phase: None,
+        })
+    }
+
+    fn assistant_message(text: &str) -> open_ai::responses::ResponseInputItem {
+        open_ai::responses::ResponseInputItem::Message(open_ai::responses::ResponseMessageItem {
+            role: open_ai::Role::Assistant,
+            content: vec![open_ai::responses::ResponseInputContent::OutputText {
+                text: text.to_string(),
+                annotations: Vec::new(),
+            }],
+            phase: None,
+        })
+    }
+
+    fn test_responses_request(
+        input: Vec<open_ai::responses::ResponseInputItem>,
+    ) -> open_ai::responses::Request {
+        open_ai::responses::Request {
+            model: "gpt-test".to_string(),
+            instructions: None,
+            input: open_ai::responses::ResponseInput::new(Vec::new(), input),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: Some(false),
+            service_tier: None,
+            context_management: None,
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeTokenProvider {
+        refresh_count: Arc<Mutex<usize>>,
+    }
+
+    impl CloudLlmTokenProvider for FakeTokenProvider {
+        type AuthContext = ();
+
+        fn auth_context(&self, _cx: &impl AppContext) -> Self::AuthContext {}
+
+        fn cached_token(&self, _: ()) -> BoxFuture<'static, Result<String>> {
+            future::ready(Ok("cached-token".to_string())).boxed()
+        }
+
+        fn refresh_token(&self, _: ()) -> BoxFuture<'static, Result<String>> {
+            *self.refresh_count.lock().unwrap() += 1;
+            future::ready(Ok("refreshed-token".to_string())).boxed()
+        }
+
+        fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
+            true
+        }
+    }
+
+    /// A [`WebSocketClient`] that records connection attempts and hands out
+    /// scripted connections.
+    struct FakeWebSocketClient {
+        connects: Arc<Mutex<Vec<(String, Option<String>)>>>,
+        connect_results: Mutex<Vec<Result<Box<dyn WebSocketConnection>>>>,
+    }
+
+    impl WebSocketClient for FakeWebSocketClient {
+        fn connect(
+            &self,
+            url: &str,
+            headers: HeaderMap,
+        ) -> futures::future::BoxFuture<'static, Result<Box<dyn WebSocketConnection>>> {
+            let auth_token = headers
+                .get(http_client::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.strip_prefix("Bearer "))
+                .map(str::to_string);
+            self.connects
+                .lock()
+                .unwrap()
+                .push((url.to_string(), auth_token));
+            let result = {
+                let mut connect_results = self.connect_results.lock().unwrap();
+                if connect_results.is_empty() {
+                    Err(anyhow::anyhow!("no scripted connection left"))
+                } else {
+                    connect_results.remove(0)
+                }
+            };
+            future::ready(result).boxed()
+        }
+    }
+
+    /// A [`WebSocketConnection`] that records sent text frames and replays a
+    /// fixed sequence of incoming messages, reporting closure once they run
+    /// out.
+    struct ScriptedConnection {
+        sent: Arc<Mutex<Vec<String>>>,
+        incoming: Vec<Result<WebSocketMessage>>,
+    }
+
+    impl WebSocketConnection for ScriptedConnection {
+        fn send(
+            &mut self,
+            message: WebSocketMessage,
+        ) -> futures::future::BoxFuture<'_, Result<()>> {
+            if let WebSocketMessage::Text(text) = message {
+                self.sent.lock().unwrap().push(text);
+            }
+            future::ready(Ok(())).boxed()
+        }
+
+        fn receive(&mut self) -> futures::future::BoxFuture<'_, Option<Result<WebSocketMessage>>> {
+            let message = if self.incoming.is_empty() {
+                None
+            } else {
+                Some(self.incoming.remove(0))
+            };
+            future::ready(message).boxed()
+        }
+    }
+
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
         // upstream_http_error with 503 status should become ServerOverloaded
@@ -1498,6 +1971,8 @@ mod tests {
             http_client,
             app_version: None,
             request_limiter: RateLimiter::new(4),
+            websocket_client: None,
+            websocket_chains: WebSocketChains::new_shared(),
         }
     }
 
