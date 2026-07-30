@@ -107,8 +107,6 @@ fn find_next_valid_duplicate_space(
                         DisplayPoint::new(candidate.end.row(), candidate.end.column()),
                         1,
                     );
-                // *candidate.start.row_mut() += 1;
-                // *candidate.end.row_mut() += 1;
             }
             Direction::Above => {
                 if candidate.start.row() == DisplayPoint::zero().row() {
@@ -123,8 +121,6 @@ fn find_next_valid_duplicate_space(
                         DisplayPoint::new(candidate.end.row(), candidate.start.column()),
                         -1,
                     );
-                // *candidate.start.row_mut() = candidate.start.row().0.saturating_sub(1);
-                // *candidate.end.row_mut() = candidate.end.row().0.saturating_sub(1);
             }
         }
 
@@ -455,7 +451,7 @@ let y: i32 = 2;",
             Mode::HelixNormal,
         );
 
-        cx.simulate_keystrokes("3 C");
+        cx.simulate_keystrokes("8 C");
 
         cx.assert_state(
             indoc! {"
