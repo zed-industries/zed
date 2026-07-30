@@ -135,6 +135,7 @@ use anyhow::{Context, Result, anyhow};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
 use gpui::{AppContext, AsyncApp, IntoElement, SharedString, Styled, Task, WeakEntity};
+use i18n::t;
 use markdown::{Markdown, MarkdownElement};
 use project::Project;
 use project::{ProjectPath, WorktreeId};
@@ -313,13 +314,13 @@ enum UndoMessage {
 }
 
 impl UndoMessage {
-    fn error_title(&self) -> &'static str {
+    fn error_title(&self) -> SharedString {
         match self {
-            UndoMessage::Changed(_) => {
-                "this is a bug in the manage_undo_and_redo task please report"
-            }
-            UndoMessage::Undo => "Undo Failed",
-            UndoMessage::Redo => "Redo Failed",
+            UndoMessage::Changed(_) => SharedString::new_static(
+                "this is a bug in the manage_undo_and_redo task please report",
+            ),
+            UndoMessage::Undo => t!("Undo Failed").into(),
+            UndoMessage::Redo => t!("Redo Failed").into(),
         }
     }
 }

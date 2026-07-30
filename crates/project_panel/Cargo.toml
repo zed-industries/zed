@@ -25,6 +25,7 @@ futures.workspace = true
 git_ui.workspace = true
 git.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 itertools.workspace = true
 menu.workspace = true
 pretty_assertions.workspace = true
