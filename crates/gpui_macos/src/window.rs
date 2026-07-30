@@ -435,6 +435,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             yes as extern "C" fn(&Object, Sel) -> BOOL,
         );
         decl.add_method(
+            sel!(makeFirstResponder:),
+            make_first_responder as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
+        decl.add_method(
             sel!(windowDidResize:),
             window_did_resize as extern "C" fn(&Object, Sel, id),
         );
@@ -575,6 +579,7 @@ struct MacWindowState {
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
+    native_view_focus_callback: Option<Box<dyn FnMut()>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
@@ -981,6 +986,7 @@ impl MacWindow {
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
+                native_view_focus_callback: None,
                 resize_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
@@ -1741,6 +1747,10 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().activate_callback = Some(callback);
     }
 
+    fn on_native_view_focus(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().native_view_focus_callback = Some(callback);
+    }
+
     fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
@@ -2250,6 +2260,32 @@ extern "C" fn dealloc_window(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
+    }
+}
+
+extern "C" fn make_first_responder(this: &Object, _: Sel, responder: id) -> BOOL {
+    unsafe {
+        let accepted: BOOL =
+            msg_send![super(this, class!(NSWindow)), makeFirstResponder: responder];
+        if accepted == NO || responder == nil {
+            return accepted;
+        }
+
+        let window_state = get_window_state(this);
+        let mut state = window_state.lock();
+        let native_view = state.native_view.as_ptr() as id;
+        let is_view: BOOL = msg_send![responder, isKindOfClass: class!(NSView)];
+        let belongs_to_gpui = responder == native_view
+            || (is_view == YES && {
+                let is_descendant: BOOL = msg_send![responder, isDescendantOf: native_view];
+                is_descendant == YES
+            });
+
+        if !belongs_to_gpui && let Some(callback) = state.native_view_focus_callback.as_mut() {
+            callback();
+        }
+
+        accepted
     }
 }
 

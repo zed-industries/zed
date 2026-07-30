@@ -837,6 +837,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    /// Registers a callback for when a native child view outside GPUI's view
+    /// hierarchy acquires keyboard focus.
+    ///
+    /// Native surface hosts use this to keep GPUI's logical focus tree in sync
+    /// with the platform responder chain.
+    fn on_native_view_focus(&self, _callback: Box<dyn FnMut()>) {}
     fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
