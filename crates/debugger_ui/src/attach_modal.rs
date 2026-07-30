@@ -3,6 +3,7 @@ use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, TaskExt};
 use gpui::{Subscription, WeakEntity};
+use i18n::t;
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use rpc::proto;
@@ -51,7 +52,11 @@ impl AttachModalDelegate {
             intent,
             selected_index: 0,
             matches: Vec::default(),
-            placeholder_text: Arc::from("Select the process you want to attach the debugger to"),
+            placeholder_text: Arc::from(
+                t!("Select the process you want to attach the debugger to")
+                    .resolve()
+                    .as_ref(),
+            ),
         }
     }
 }

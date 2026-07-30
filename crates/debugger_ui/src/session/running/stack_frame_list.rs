@@ -10,6 +10,7 @@ use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
     Subscription, Task, TaskExt, WeakEntity, list,
 };
+use i18n::t;
 use util::{
     debug_panic,
     paths::{PathStyle, is_absolute},
@@ -658,7 +659,7 @@ impl StackFrameList {
                                     }
                                 }))
                                 .tooltip(move |window, cx| {
-                                    Tooltip::text("Restart Stack Frame")(window, cx)
+                                    Tooltip::text(t!("Restart Stack Frame"))(window, cx)
                                 }),
                             ),
                     )
@@ -723,8 +724,8 @@ impl StackFrameList {
                     .truncate()
                     .text_color(cx.theme().colors().text_muted)
                     .child(format!(
-                        "Show {} more{}",
-                        stack_frames.len(),
+                        "{}{}",
+                        t!("Show {$count} more", count = stack_frames.len()),
                         first_stack_frame
                             .source
                             .as_ref()
@@ -906,8 +907,8 @@ impl StackFrameList {
 
     pub(crate) fn render_control_strip(&self) -> AnyElement {
         let tooltip_title = match self.list_filter {
-            StackFrameFilter::All => "Show stack frames from your project",
-            StackFrameFilter::OnlyUserFrames => "Show all stack frames",
+            StackFrameFilter::All => t!("Show stack frames from your project"),
+            StackFrameFilter::OnlyUserFrames => t!("Show all stack frames"),
         };
 
         h_flex()
@@ -917,7 +918,7 @@ impl StackFrameList {
                     IconName::Filter,
                 )
                 .tooltip(move |_window, cx| {
-                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, cx)
+                    Tooltip::for_action(tooltip_title.clone(), &ToggleUserFrames, cx)
                 })
                 .toggle_state(self.list_filter == StackFrameFilter::OnlyUserFrames)
                 .icon_size(IconSize::Small)

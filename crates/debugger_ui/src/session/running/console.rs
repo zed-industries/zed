@@ -14,6 +14,7 @@ use gpui::{
     Action as _, AppContext, Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render,
     Subscription, Task, TextStyle, WeakEntity, actions,
 };
+use i18n::t;
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
@@ -363,7 +364,7 @@ impl Console {
                                 .when_some(keybinding_target.clone(), |el, keybinding_target| {
                                     el.context(keybinding_target)
                                 })
-                                .action("Watch Expression", WatchExpression.boxed_clone())
+                                .action(t!("Watch Expression"), WatchExpression.boxed_clone())
                         }))
                     })
                 },
@@ -476,13 +477,13 @@ impl Render for Console {
                             })
                             .layer(ui::ElevationIndex::ModalSurface)
                             .size(ui::ButtonSize::Compact)
-                            .child(Label::new("Evaluate"))
+                            .child(Label::new(t!("Evaluate")))
                             .tooltip({
                                 let query_focus_handle = query_focus_handle.clone();
 
                                 move |_window, cx| {
                                     Tooltip::for_action_in(
-                                        "Evaluate",
+                                        t!("Evaluate"),
                                         &Confirm,
                                         &query_focus_handle,
                                         cx,

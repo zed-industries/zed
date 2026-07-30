@@ -3,6 +3,7 @@ use collections::HashMap;
 use dap::{Capabilities, adapters::DebugAdapterName};
 use db::kvp::KeyValueStore;
 use gpui::{Axis, Context, Entity, EntityId, Focusable, Subscription, WeakEntity, Window};
+use i18n::t;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use ui::{App, SharedString};
@@ -57,38 +58,42 @@ impl DebuggerPaneItem {
 
     pub(crate) fn to_shared_string(self) -> SharedString {
         match self {
-            DebuggerPaneItem::Console => SharedString::new_static("Console"),
-            DebuggerPaneItem::Variables => SharedString::new_static("Variables"),
-            DebuggerPaneItem::BreakpointList => SharedString::new_static("Breakpoints"),
-            DebuggerPaneItem::Frames => SharedString::new_static("Frames"),
-            DebuggerPaneItem::Modules => SharedString::new_static("Modules"),
-            DebuggerPaneItem::LoadedSources => SharedString::new_static("Sources"),
-            DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
-            DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
+            DebuggerPaneItem::Console => t!("Console").into(),
+            DebuggerPaneItem::Variables => t!("Variables").into(),
+            DebuggerPaneItem::BreakpointList => t!("Breakpoints").into(),
+            DebuggerPaneItem::Frames => t!("Frames").into(),
+            DebuggerPaneItem::Modules => t!("Modules").into(),
+            DebuggerPaneItem::LoadedSources => t!("Sources").into(),
+            DebuggerPaneItem::Terminal => t!("Terminal").into(),
+            DebuggerPaneItem::MemoryView => t!("Memory View").into(),
         }
     }
     pub(crate) fn tab_tooltip(self) -> SharedString {
         let tooltip = match self {
             DebuggerPaneItem::Console => {
-                "Displays program output and allows manual input of debugger commands"
+                t!("Displays program output and allows manual input of debugger commands")
             }
             DebuggerPaneItem::Variables => {
-                "Shows current values of local and global variables in the current stack frame"
+                t!("Shows current values of local and global variables in the current stack frame")
             }
-            DebuggerPaneItem::BreakpointList => "Lists all active breakpoints set in the code",
+            DebuggerPaneItem::BreakpointList => {
+                t!("Lists all active breakpoints set in the code")
+            }
             DebuggerPaneItem::Frames => {
-                "Displays the call stack, letting you navigate between function calls"
+                t!("Displays the call stack, letting you navigate between function calls")
             }
-            DebuggerPaneItem::Modules => "Shows all modules or libraries loaded by the program",
+            DebuggerPaneItem::Modules => {
+                t!("Shows all modules or libraries loaded by the program")
+            }
             DebuggerPaneItem::LoadedSources => {
-                "Lists all source files currently loaded and used by the debugger"
+                t!("Lists all source files currently loaded and used by the debugger")
             }
             DebuggerPaneItem::Terminal => {
-                "Provides an interactive terminal session within the debugging environment"
+                t!("Provides an interactive terminal session within the debugging environment")
             }
-            DebuggerPaneItem::MemoryView => "Allows inspection of memory contents",
+            DebuggerPaneItem::MemoryView => t!("Allows inspection of memory contents"),
         };
-        SharedString::new_static(tooltip)
+        tooltip.into()
     }
 }
 

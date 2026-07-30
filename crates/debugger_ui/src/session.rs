@@ -3,6 +3,7 @@ pub mod running;
 use crate::{persistence::SerializedLayout, session::running::DebugTerminal};
 use dap::client::SessionId;
 use gpui::{App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
+use i18n::t;
 use project::debugger::session::Session;
 
 use project::{Project, debugger::session::SessionQuirks};
@@ -101,7 +102,7 @@ impl Focusable for DebugSession {
 impl Item for DebugSession {
     type Event = ();
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Debugger".into()
+        t!("Debugger").into()
     }
 }
 

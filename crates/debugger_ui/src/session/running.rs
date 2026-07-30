@@ -35,6 +35,7 @@ use gpui::{
     Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
 };
+use i18n::t;
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -595,7 +596,7 @@ fn render_debugger_tab_bar(
                     .tooltip({
                         let focus_handle = focus_handle.clone();
                         move |_window, cx| {
-                            let zoomed_text = if zoomed { "Minimize" } else { "Expand" };
+                            let zoomed_text = if zoomed { t!("Minimize") } else { t!("Expand") };
                             Tooltip::for_action_in(
                                 zoomed_text,
                                 &ToggleExpandItem,

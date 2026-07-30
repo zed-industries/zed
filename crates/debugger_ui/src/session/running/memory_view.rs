@@ -14,6 +14,7 @@ use gpui::{
     Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, uniform_list,
 };
+use i18n::t;
 use notifications::status_toast::StatusToast;
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
 use settings::Settings;
@@ -473,8 +474,9 @@ impl MemoryView {
                         // We cannot write memory with this adapter.
                         _ = self.workspace.update(cx, |this, cx| {
                             this.toggle_status_toast(
-                                StatusToast::new(format!(
-                                    "Debug Adapter `{adapter_name}` does not support writing to memory"
+                                StatusToast::new(t!(
+                                    "Debug Adapter `{$adapter_name}` does not support writing to memory",
+                                    adapter_name = adapter_name.0.clone()
                                 ), cx, |this, cx| {
                                     cx.spawn(async move |this, cx| {
                                         cx.background_executor().timer(Duration::from_secs(2)).await;
@@ -850,11 +852,11 @@ fn render_single_memory_view_line(
 impl Render for MemoryView {
     fn render(&mut self, window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         let (icon, tooltip_text) = if self.is_writing_memory {
-            (IconName::Pencil, "Edit Memory at a Selected Address")
+            (IconName::Pencil, t!("Edit Memory at a Selected Address"))
         } else {
             (
                 IconName::LocationEdit,
-                "Change Address of Currently Viewed Memory",
+                t!("Change Address of Currently Viewed Memory"),
             )
         };
 

@@ -12,6 +12,7 @@ use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
     Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
+use i18n::t;
 use itertools::Itertools;
 use language::Point;
 use project::{
@@ -585,21 +586,21 @@ impl BreakpointList {
         let focus_handle = self.focus_handle.clone();
 
         let remove_breakpoint_tooltip = selection_kind.map(|(kind, _)| match kind {
-            SelectedBreakpointKind::Source => "Remove breakpoint from a breakpoint list",
+            SelectedBreakpointKind::Source => t!("Remove breakpoint from a breakpoint list"),
             SelectedBreakpointKind::Exception => {
-                "Exception Breakpoints cannot be removed from the breakpoint list"
+                t!("Exception Breakpoints cannot be removed from the breakpoint list")
             }
-            SelectedBreakpointKind::Data => "Remove data breakpoint from a breakpoint list",
+            SelectedBreakpointKind::Data => t!("Remove data breakpoint from a breakpoint list"),
         });
 
         let toggle_label = selection_kind.map(|(_, is_enabled)| {
             if is_enabled {
                 (
-                    "Disable Breakpoint",
-                    "Disable a breakpoint without removing it from the list",
+                    t!("Disable Breakpoint"),
+                    t!("Disable a breakpoint without removing it from the list"),
                 )
             } else {
-                ("Enable Breakpoint", "Re-enable a breakpoint")
+                (t!("Enable Breakpoint"), t!("Re-enable a breakpoint"))
             }
         });
 
@@ -615,9 +616,9 @@ impl BreakpointList {
                         let focus_handle = focus_handle.clone();
                         move |_window, cx| {
                             Tooltip::with_meta_in(
-                                label,
+                                label.clone(),
                                 Some(&ToggleEnableBreakpoint),
-                                meta,
+                                meta.clone(),
                                 &focus_handle,
                                 cx,
                             )
@@ -641,9 +642,9 @@ impl BreakpointList {
                             let focus_handle = focus_handle.clone();
                             move |_window, cx| {
                                 Tooltip::with_meta_in(
-                                    "Remove Breakpoint",
+                                    t!("Remove Breakpoint"),
                                     Some(&UnsetBreakpoint),
-                                    tooltip,
+                                    tooltip.clone(),
                                     &focus_handle,
                                     cx,
                                 )
@@ -853,9 +854,9 @@ impl LineBreakpoint {
                 move |_window, cx| {
                     Tooltip::for_action_in(
                         if is_enabled {
-                            "Disable Breakpoint"
+                            t!("Disable Breakpoint")
                         } else {
-                            "Enable Breakpoint"
+                            t!("Enable Breakpoint")
                         },
                         &ToggleEnableBreakpoint,
                         &focus_handle,
@@ -943,8 +944,9 @@ impl LineBreakpoint {
                             )
                         }))
                         .when_some(self.dir.as_ref(), |this, parent_dir| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Worktree parent path: {parent_dir}"
+                            this.tooltip(Tooltip::text(t!(
+                                "Worktree parent path: {$path}",
+                                path = parent_dir.clone()
                             )))
                         }),
                 )
@@ -1013,9 +1015,9 @@ impl DataBreakpoint {
                     move |_window, cx| {
                         Tooltip::for_action_in(
                             if is_enabled {
-                                "Disable Data Breakpoint"
+                                t!("Disable Data Breakpoint")
                             } else {
-                                "Enable Data Breakpoint"
+                                t!("Enable Data Breakpoint")
                             },
                             &ToggleEnableBreakpoint,
                             &focus_handle,
@@ -1117,9 +1119,9 @@ impl ExceptionBreakpoint {
                     move |_window, cx| {
                         Tooltip::for_action_in(
                             if is_enabled {
-                                "Disable Exception Breakpoint"
+                                t!("Disable Exception Breakpoint")
                             } else {
-                                "Enable Exception Breakpoint"
+                                t!("Enable Exception Breakpoint")
                             },
                             &ToggleEnableBreakpoint,
                             &focus_handle,
@@ -1433,9 +1435,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::Log))
                         .tooltip(|_window, cx|  {
                             Tooltip::with_meta(
-                                "Set Log Message",
+                                t!("Set Log Message"),
                                 None,
-                                "Set log message to display (instead of stopping) when a breakpoint is hit.",
+                                t!("Set log message to display (instead of stopping) when a breakpoint is hit."),
                                 cx,
                             )
                         }),
@@ -1469,9 +1471,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                             .on_click(self.on_click_callback(ActiveBreakpointStripMode::Condition))
                             .tooltip(|_window, cx|  {
                                 Tooltip::with_meta(
-                                    "Set Condition",
+                                    t!("Set Condition"),
                                     None,
-                                    "Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met.",
+                                    t!("Set condition to evaluate when a breakpoint is hit. Program execution will stop only when the condition is met."),
                                     cx,
                                 )
                             }),
@@ -1504,9 +1506,9 @@ impl RenderOnce for BreakpointOptionsStrip {
                         .on_click(self.on_click_callback(ActiveBreakpointStripMode::HitCondition))
                         .tooltip(|_window, cx|  {
                             Tooltip::with_meta(
-                                "Set Hit Condition",
+                                t!("Set Hit Condition"),
                                 None,
-                                "Set expression that controls how many hits of the breakpoint are ignored.",
+                                t!("Set expression that controls how many hits of the breakpoint are ignored."),
                                 cx,
                             )
                         }),

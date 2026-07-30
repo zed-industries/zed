@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use collections::HashMap;
 use gpui::{Anchor, Entity, WeakEntity};
+use i18n::t;
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, Indicator, Tooltip, prelude::*};
 use util::{maybe, truncate_and_trailoff};
@@ -23,15 +24,16 @@ impl SessionListEntry {
         let mut label = String::new();
         for ancestor in &self.ancestors {
             label.push_str(&ancestor.update(cx, |ancestor, cx| {
-                ancestor.label(cx).unwrap_or("(child)".into())
+                ancestor
+                    .label(cx)
+                    .unwrap_or_else(|| format!("({})", t!("child")).into())
             }));
             label.push_str(" » ");
         }
-        label.push_str(
-            &self
-                .leaf
-                .update(cx, |leaf, cx| leaf.label(cx).unwrap_or("(child)".into())),
-        );
+        label.push_str(&self.leaf.update(cx, |leaf, cx| {
+            leaf.label(cx)
+                .unwrap_or_else(|| format!("({})", t!("child")).into())
+        }));
         let label = truncate_and_trailoff(&label, MAX_LABEL_CHARS);
 
         let is_terminated = self
@@ -121,7 +123,7 @@ impl DebugPanel {
                 active_session.label(cx).unwrap_or("(child)".into())
             })
         } else {
-            SharedString::new_static("Unknown Session")
+            t!("Unknown Session").into()
         };
         let running_state = running_state.read(cx);
 
@@ -212,7 +214,7 @@ impl DebugPanel {
         )
         .attach(Anchor::BottomLeft)
         .handle(self.session_picker_menu_handle.clone())
-        .trigger_tooltip(Tooltip::text("Select a Debug Session"));
+        .trigger_tooltip(Tooltip::text(t!("Select a Debug Session")));
 
         Some(menu)
     }
@@ -292,7 +294,7 @@ impl DebugPanel {
                 thread
                     .name
                     .is_empty()
-                    .then(|| format!("Tid: {}", thread.id))
+                    .then(|| t!("Tid: {$id}", id = thread.id).into())
                     .unwrap_or_else(|| thread.name.clone())
             });
 
@@ -309,7 +311,7 @@ impl DebugPanel {
                             let entry_name = thread
                                 .name
                                 .is_empty()
-                                .then(|| format!("Tid: {}", thread.id))
+                                .then(|| t!("Tid: {$id}", id = thread.id).into())
                                 .unwrap_or_else(|| thread.name);
                             let entry_name = truncate_and_trailoff(&entry_name, MAX_LABEL_CHARS);
 
