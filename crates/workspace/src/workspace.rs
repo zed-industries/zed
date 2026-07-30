@@ -7446,9 +7446,6 @@ impl Workspace {
     pub fn key_context(&self, cx: &App) -> KeyContext {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
-        if !self.notifications.is_empty() {
-            context.add("WorkspaceNotification");
-        }
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
         if let Some(status) = self
             .debugger_provider
