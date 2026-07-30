@@ -2,6 +2,7 @@ use gpui::{
     Animation, AnimationExt, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
     KeybindingKeystroke, Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
 };
+use i18n::t;
 use ui::{
     ActiveTheme as _, Color, IconButton, IconButtonShape, IconName, IconSize, Label, LabelSize,
     ParentElement as _, Render, Styled as _, Tooltip, Window, prelude::*,
@@ -520,7 +521,7 @@ impl Render for KeystrokeInput {
             .rounded_sm()
             .child(recording_pulse(Color::Accent))
             .child(
-                Label::new("SEARCH")
+                Label::new(t!(key = "search-keystroke-label", "SEARCH"))
                     .size(LabelSize::XSmall)
                     .weight(FontWeight::SEMIBOLD)
                     .color(Color::Accent),
@@ -610,9 +611,9 @@ impl Render for KeystrokeInput {
                                     .map(|this| {
                                         this.tooltip(Tooltip::for_action_title(
                                             if self.search {
-                                                "Stop Searching"
+                                                t!("Stop Searching")
                                             } else {
-                                                "Stop Recording"
+                                                t!("Stop Recording")
                                             },
                                             &StopRecording,
                                         ))
@@ -629,9 +630,9 @@ impl Render for KeystrokeInput {
                                     .map(|this| {
                                         this.tooltip(Tooltip::for_action_title(
                                             if self.search {
-                                                "Start Searching"
+                                                t!("Start Searching")
                                             } else {
-                                                "Start Recording"
+                                                t!("Start Recording")
                                             },
                                             &StartRecording,
                                         ))
@@ -650,9 +651,9 @@ impl Render for KeystrokeInput {
                                 .shape(IconButtonShape::Square)
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Clear Keystrokes",
+                                        t!("Clear Keystrokes"),
                                         Some(&ClearKeystrokes),
-                                        "Hit it three times to execute",
+                                        t!("Hit it three times to execute"),
                                         cx,
                                     )
                                 })

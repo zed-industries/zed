@@ -21,6 +21,7 @@ editor.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 itertools.workspace = true
 json_schema_store.workspace = true
 language.workspace = true
