@@ -69,6 +69,7 @@ pub struct ImageView {
     last_mouse_position: Option<Point<Pixels>>,
     container_bounds: Option<Bounds<Pixels>>,
     image_size: Option<(u32, u32)>,
+    pending_image: Option<Arc<gpui::Image>>,
     displayed_image: Option<DisplayedImage>,
 }
 
@@ -100,7 +101,16 @@ impl ImageView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if let Some(pending_image) = self.pending_image.take() {
+            if pending_image.id() != image.id() {
+                pending_image.remove_asset(cx);
+            } else if render_image.is_none() {
+                self.pending_image = Some(pending_image);
+            }
+        }
+
         let Some(render_image) = render_image else {
+            self.pending_image.get_or_insert_with(|| image.clone());
             return;
         };
 
@@ -134,12 +144,14 @@ impl ImageView {
     ) -> Self {
         // Start loading the image to render in the background to prevent the view
         // from flickering in most cases.
-        let _ = image_item.update(cx, |image, cx| {
-            image.image.clone().get_render_image(window, cx)
-        });
+        let pending_image = image_item.read(cx).image.clone();
+        let _render_image = pending_image.clone().get_render_image(window, cx);
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
         cx.on_release_in(window, |this, window, cx| {
+            if let Some(pending_image) = this.pending_image.take() {
+                pending_image.remove_asset(cx);
+            }
             if let Some(displayed_image) = this.displayed_image.take() {
                 displayed_image.release(window, cx);
             }
@@ -161,6 +173,7 @@ impl ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size,
+            pending_image: Some(pending_image),
             displayed_image: None,
         }
     }
@@ -634,6 +647,7 @@ impl Item for ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size: self.image_size,
+            pending_image: None,
             displayed_image: None,
         })))
     }
@@ -1060,6 +1074,176 @@ impl ToolbarItemView for ImageViewToolbarControls {
 pub fn init(cx: &mut App) {
     workspace::register_project_item::<ImageView>(cx);
     workspace::register_serializable_item::<ImageView>(cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use gpui::{TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
+    use util::rel_path::rel_path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    fn test_image(red: u8) -> Arc<gpui::Image> {
+        let bytes = format!("P3\n1 1\n255\n{red} 0 0\n").into_bytes();
+        Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Pnm, bytes))
+    }
+
+    async fn open_test_image(cx: &mut TestAppContext) -> (Entity<Project>, Entity<ImageItem>) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/root"))
+            .await
+            .expect("test root should be created");
+        fs.insert_file("/root/image.ppm", test_image(0).bytes.clone())
+            .await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+        let image_item = project
+            .update(cx, |project, cx| {
+                project.open_image(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("image.ppm").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("test image should open");
+
+        (project, image_item)
+    }
+
+    fn draw_window(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        });
+    }
+
+    fn displayed_source_id(image_view: &Entity<ImageView>, cx: &VisualTestContext) -> Option<u64> {
+        cx.read(|cx| {
+            image_view
+                .read(cx)
+                .displayed_image
+                .as_ref()
+                .map(|displayed_image| displayed_image.source_image.id())
+        })
+    }
+
+    fn replace_image(
+        image_item: &Entity<ImageItem>,
+        image: Arc<gpui::Image>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|_window, cx| {
+            image_item.update(cx, |image_item, cx| {
+                image_item.image = image;
+                cx.emit(ImageItemEvent::Reloaded);
+            });
+        });
+    }
+
+    fn replace_image_and_draw(
+        image_item: &Entity<ImageItem>,
+        image: Arc<gpui::Image>,
+        cx: &mut VisualTestContext,
+    ) {
+        replace_image(image_item, image, cx);
+        draw_window(cx);
+    }
+
+    fn image_is_cached(image: &Arc<gpui::Image>, cx: &mut VisualTestContext) -> bool {
+        // A cache miss starts a new decode, so callers must capture the result before pumping tasks.
+        cx.update(|window, cx| image.clone().get_render_image(window, cx).is_some())
+    }
+
+    #[gpui::test]
+    async fn test_superseded_in_flight_image_is_removed_from_asset_cache(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+
+        let (image_view, cx) = cx
+            .add_window_view(|window, cx| ImageView::new(image_item.clone(), project, window, cx));
+
+        let superseded_image = test_image(1);
+        replace_image_and_draw(&image_item, superseded_image.clone(), cx);
+        assert_ne!(
+            displayed_source_id(&image_view, cx),
+            Some(superseded_image.id()),
+            "the superseded image should still be decoding"
+        );
+
+        let current_image = test_image(2);
+        replace_image_and_draw(&image_item, current_image.clone(), cx);
+        assert_ne!(
+            displayed_source_id(&image_view, cx),
+            Some(current_image.id()),
+            "the current image should start decoding before the superseded decode completes"
+        );
+
+        cx.run_until_parked();
+        draw_window(cx);
+
+        assert_eq!(
+            displayed_source_id(&image_view, cx),
+            Some(current_image.id()),
+            "the current image should finish decoding"
+        );
+        let superseded_image_is_cached = image_is_cached(&superseded_image, cx);
+        cx.run_until_parked();
+
+        assert!(
+            !superseded_image_is_cached,
+            "the superseded image remained in GPUI's asset cache"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_superseded_constructor_prefetch_is_removed_from_asset_cache(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (project, image_item) = open_test_image(cx).await;
+        let prefetched_image = cx.read(|cx| image_item.read(cx).image.clone());
+
+        let cx = cx.add_empty_window();
+        let image_view = cx.update(|window, cx| {
+            cx.new(|cx| ImageView::new(image_item.clone(), project, window, cx))
+        });
+
+        let current_image = test_image(1);
+        replace_image(&image_item, current_image, cx);
+        cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
+            image_view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+
+        let prefetched_image_is_cached = image_is_cached(&prefetched_image, cx);
+        cx.run_until_parked();
+
+        assert!(
+            !prefetched_image_is_cached,
+            "the superseded constructor prefetch remained in GPUI's asset cache"
+        );
+    }
 }
 
 mod persistence {
