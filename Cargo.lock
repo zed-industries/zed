@@ -15506,6 +15506,7 @@ dependencies = [
  "gpui",
  "html_to_markdown",
  "http_client",
+ "i18n",
  "image",
  "indoc",
  "jupyter-protocol",

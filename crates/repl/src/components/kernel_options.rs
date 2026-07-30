@@ -3,6 +3,7 @@ use crate::kernels::KernelSpecification;
 use crate::repl_store::ReplStore;
 
 use gpui::{AnyView, DismissEvent, FontWeight, SharedString, Task};
+use i18n::t;
 use picker::{Picker, PickerDelegate};
 use project::WorktreeId;
 use std::sync::Arc;
@@ -92,33 +93,37 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
 
     // Recommended section
     if let Some(rec) = recommended_entry {
-        entries.push(KernelPickerEntry::SectionHeader("Recommended".into()));
+        entries.push(KernelPickerEntry::SectionHeader(t!("Recommended").into()));
         entries.push(rec);
     }
 
     // Python Environments section
     if !python_envs.is_empty() {
         entries.push(KernelPickerEntry::SectionHeader(
-            "Python Environments".into(),
+            t!("Python Environments").into(),
         ));
         entries.extend(python_envs);
     }
 
     // Jupyter Kernels section
     if !jupyter_kernels.is_empty() {
-        entries.push(KernelPickerEntry::SectionHeader("Jupyter Kernels".into()));
+        entries.push(KernelPickerEntry::SectionHeader(
+            t!("Jupyter Kernels").into(),
+        ));
         entries.extend(jupyter_kernels);
     }
 
     // WSL Kernels section
     if !wsl_kernels.is_empty() {
-        entries.push(KernelPickerEntry::SectionHeader("WSL Kernels".into()));
+        entries.push(KernelPickerEntry::SectionHeader(t!("WSL Kernels").into()));
         entries.extend(wsl_kernels);
     }
 
     // Remote section
     if !remote_kernels.is_empty() {
-        entries.push(KernelPickerEntry::SectionHeader("Remote Servers".into()));
+        entries.push(KernelPickerEntry::SectionHeader(
+            t!("Remote Servers").into(),
+        ));
         entries.extend(remote_kernels);
     }
 
@@ -242,7 +247,7 @@ impl PickerDelegate for KernelPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a kernel...".into()
+        t!("Select a kernel...").resolve().as_ref().into()
     }
 
     fn update_matches(
@@ -385,14 +390,14 @@ impl PickerDelegate for KernelPickerDelegate {
                                                 )
                                                 .when(*is_recommended, |flex| {
                                                     flex.child(
-                                                        Label::new("Recommended")
+                                                        Label::new(t!("Recommended"))
                                                             .size(LabelSize::XSmall)
                                                             .color(Color::Accent),
                                                     )
                                                 })
                                                 .when(!has_ipykernel, |flex| {
                                                     flex.child(
-                                                        Label::new("ipykernel not installed")
+                                                        Label::new(t!("ipykernel not installed"))
                                                             .size(LabelSize::XSmall)
                                                             .color(Color::Warning),
                                                     )
@@ -434,7 +439,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .child(
-                    Button::new("kernel-docs", "Kernel Docs")
+                    Button::new("kernel-docs", t!("Kernel Docs"))
                         .end_icon(
                             Icon::new(IconName::ArrowUpRight)
                                 .size(IconSize::Small)

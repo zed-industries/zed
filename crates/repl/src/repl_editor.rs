@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
+use i18n::t;
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 use workspace::{Workspace, notifications::NotificationId};
@@ -99,7 +100,10 @@ pub fn install_ipykernel_and_assign(
             workspace.show_toast(
                 workspace::Toast::new(
                     notification_id.clone(),
-                    format!("Installing ipykernel in {}...", env_name),
+                    String::from(t!(
+                        "Installing ipykernel in {$env}...",
+                        env = env_name.clone()
+                    )),
                 ),
                 cx,
             );
@@ -150,7 +154,10 @@ pub fn install_ipykernel_and_assign(
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!("ipykernel installed in {}", env_name),
+                                    String::from(t!(
+                                        "ipykernel installed in {$env}",
+                                        env = env_name
+                                    )),
                                 )
                                 .autohide(),
                                 cx,
@@ -183,10 +190,11 @@ pub fn install_ipykernel_and_assign(
                             workspace.show_toast(
                                 workspace::Toast::new(
                                     notification_id.clone(),
-                                    format!(
-                                        "Failed to install ipykernel in {}: {}",
-                                        env_name, error
-                                    ),
+                                    String::from(t!(
+                                        "Failed to install ipykernel in {$env}: {$error}",
+                                        env = env_name,
+                                        error = error.to_string()
+                                    )),
                                 ),
                                 cx,
                             );
