@@ -22,7 +22,7 @@ use editor::{
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
-    Action, AnyElement, App, AsyncApp, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyElement, App, AsyncApp, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
     Render, SharedString, Styled, Subscription, Task, TaskExt, UpdateGlobal, WeakEntity, Window,
     actions, div,
@@ -1768,7 +1768,7 @@ impl ProjectSearchView {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
-                    editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
+                    editor.scroll(Point::default(), window, cx);
                 }
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
@@ -5037,12 +5037,7 @@ pub mod tests {
                     assert_eq!(results_editor.scroll_position(cx), Point::default());
 
                     // Scroll results all the way down
-                    results_editor.scroll(
-                        Point::new(0., f64::MAX),
-                        Some(Axis::Vertical),
-                        window,
-                        cx,
-                    );
+                    results_editor.scroll(Point::new(0., f64::MAX), window, cx);
                 });
             })
             .expect("unable to update search view");
