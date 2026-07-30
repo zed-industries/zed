@@ -552,7 +552,7 @@ impl WaylandWindowState {
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
-        let renderer = {
+        let renderer = util::fd::with_new_fds_close_on_exec(|| {
             let raw_window = RawWindow {
                 window: surface.id().as_ptr().cast::<c_void>(),
                 display: surface
@@ -571,8 +571,8 @@ impl WaylandWindowState {
                 // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
-        };
+            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)
+        })?;
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
@@ -1273,7 +1273,9 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
-            state.renderer.update_drawable_size(device_bounds.size);
+            util::fd::with_new_fds_close_on_exec(|| {
+                state.renderer.update_drawable_size(device_bounds.size);
+            });
             (state.bounds.size, state.scale)
         };
 
@@ -1718,7 +1720,7 @@ impl PlatformWindow for WaylandWindow {
                     .display_ptr()
                     .cast::<std::ffi::c_void>(),
             };
-            match state.renderer.recover(&raw_window) {
+            match util::fd::with_new_fds_close_on_exec(|| state.renderer.recover(&raw_window)) {
                 Ok(()) => {}
                 Err(err) => {
                     log::warn!("GPU recovery failed, will retry on next frame: {err}");
@@ -1729,7 +1731,8 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
 
-        state.renderer_presented = state.renderer.draw(scene);
+        state.renderer_presented =
+            util::fd::with_new_fds_close_on_exec(|| state.renderer.draw(scene));
 
         if state.renderer.needs_redraw() {
             state.force_render_after_recovery = true;

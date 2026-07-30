@@ -1,6 +1,7 @@
 pub mod archive;
 pub mod command;
 pub mod disambiguate;
+pub mod fd;
 pub mod fs;
 pub mod markdown;
 pub mod path_list;

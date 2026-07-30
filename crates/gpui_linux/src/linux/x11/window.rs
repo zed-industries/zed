@@ -710,7 +710,7 @@ impl X11WindowState {
 
             xcb_flush(xcb);
 
-            let mut renderer = {
+            let mut renderer = util::fd::with_new_fds_close_on_exec(|| {
                 let raw_window = RawWindow {
                     connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                         xcb,
@@ -730,8 +730,8 @@ impl X11WindowState {
                     transparent: false,
                     preferred_present_mode: None,
                 };
-                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
-            };
+                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)
+            })?;
 
             renderer.set_subpixel_layout(is_bgr);
 
@@ -1256,7 +1256,9 @@ impl X11WindowStatePtr {
             }
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
-            state.renderer.update_drawable_size(gpu_size);
+            util::fd::with_new_fds_close_on_exec(|| {
+                state.renderer.update_drawable_size(gpu_size);
+            });
             let result = (is_resize, state.content_size(), state.scale_factor);
             if let Some(value) = state.last_sync_counter.take() {
                 check_reply(
@@ -1712,7 +1714,7 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            match inner.renderer.recover(&raw_window) {
+            match util::fd::with_new_fds_close_on_exec(|| inner.renderer.recover(&raw_window)) {
                 Ok(()) => {}
                 Err(err) => {
                     log::warn!("GPU recovery failed, will retry on next frame: {err}");
@@ -1723,7 +1725,7 @@ impl PlatformWindow for X11Window {
             return;
         }
 
-        inner.renderer.draw(scene);
+        util::fd::with_new_fds_close_on_exec(|| inner.renderer.draw(scene));
 
         if inner.renderer.needs_redraw() {
             inner.force_render_after_recovery = true;

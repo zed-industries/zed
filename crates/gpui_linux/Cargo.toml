@@ -73,6 +73,7 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 url.workspace = true
+util.workspace = true
 uuid.workspace = true
 
 # Always used
