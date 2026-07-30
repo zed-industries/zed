@@ -7114,5 +7114,4 @@ mod tests {
             .unwrap();
         assert_eq!(b_focus_count.get(), 1);
     }
-
 }
