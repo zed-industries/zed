@@ -135,7 +135,7 @@ fn find_next_valid_duplicate_space(
                 return candidate;
             }
 
-            // FIXME: This byte-column fallback can misalign tabs before the endpoint.
+            // NOTE: This byte-column fallback can misalign tabs before the endpoint.
             let mut target_buffer_point = candidate_buffer_point;
             target_buffer_point.column = origin_buffer_point.column.min(
                 map.buffer_snapshot()
