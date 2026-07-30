@@ -1371,7 +1371,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let registry_id = self.registry_id.clone();
-        let package = bounded_npm_package_spec(&self.package);
+        let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
@@ -1384,34 +1384,39 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let prefix_dir = paths::external_agents_dir()
+            let install_dir = paths::external_agents_dir()
                 .join("registry")
                 .join("npx")
                 .join(sanitize_path_component(&registry_id));
-            fs.create_dir(&prefix_dir).await?;
+            fs.create_dir(&install_dir).await?;
 
-            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
-            exec_args.extend(args);
-
-            let npm_command = node_runtime
-                .npm_command(
-                    Some(&prefix_dir),
-                    "exec",
-                    &exec_args.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+            let (package_name, package_spec) = bounded_npm_package_spec(&package);
+            node_runtime
+                .run_npm_subcommand(
+                    Some(&install_dir),
+                    "install",
+                    &[package_spec.as_str(), "--save-exact"],
                 )
                 .await?;
+            let executable = node_runtime::read_package_executable(
+                install_dir.join("node_modules"),
+                package_name,
+            )
+            .await?;
 
-            env.extend(npm_command.env);
+            let node_binary = node_runtime.binary_path().await?;
+            env.extend(node_runtime::npm_command_env(&node_binary));
             env.extend(distribution_env);
             env.extend(extra_env);
             env.extend(settings_env);
 
-            let mut args = npm_command.args;
-            args.extend(extra_args);
+            let mut command_args = vec![executable.to_string_lossy().into_owned()];
+            command_args.extend(args);
+            command_args.extend(extra_args);
 
             let command = AgentServerCommand {
-                path: npm_command.path,
-                args,
+                path: node_binary,
+                args: command_args,
                 env: Some(env),
             };
 
@@ -1448,15 +1453,18 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 /// strips during parsing. PS only re-adds CRT-style transport quotes around native command args
 /// containing whitespace, so `package@<=0.25.3` reaches cmd.exe bare and the unquoted `<` is
 /// interpreted as input redirection. See zed-industries/zed#55921.
-fn bounded_npm_package_spec(package_spec: &str) -> String {
+fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     let Some((package_name, version)) = package_spec.rsplit_once('@') else {
-        return package_spec.to_string();
+        return (package_spec, package_spec.to_string());
     };
-    if package_name.is_empty() || Version::parse(version).is_err() {
-        return package_spec.to_string();
+    if package_name.is_empty() {
+        return (package_spec, package_spec.to_string());
+    }
+    if Version::parse(version).is_err() {
+        return (package_name, package_spec.to_string());
     }
 
-    format!("{package_name}@0.0.0 - {version}")
+    (package_name, format!("{package_name}@0.0.0 - {version}"))
 }
 
 struct LocalCustomAgent {
@@ -1830,19 +1838,22 @@ mod tests {
     fn builds_bounded_npm_package_specs() {
         assert_eq!(
             bounded_npm_package_spec("agent-package@1.2.3"),
-            "agent-package@0.0.0 - 1.2.3"
+            ("agent-package", "agent-package@0.0.0 - 1.2.3".to_string())
         );
         assert_eq!(
             bounded_npm_package_spec("@scope/agent-package@1.2.3-beta.1"),
-            "@scope/agent-package@0.0.0 - 1.2.3-beta.1"
+            (
+                "@scope/agent-package",
+                "@scope/agent-package@0.0.0 - 1.2.3-beta.1".to_string()
+            )
         );
         assert_eq!(
             bounded_npm_package_spec("@scope/agent-package"),
-            "@scope/agent-package"
+            ("@scope/agent-package", "@scope/agent-package".to_string())
         );
         assert_eq!(
             bounded_npm_package_spec("agent-package@latest"),
-            "agent-package@latest"
+            ("agent-package", "agent-package@latest".to_string())
         );
     }
 

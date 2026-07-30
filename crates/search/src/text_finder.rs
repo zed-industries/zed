@@ -474,10 +474,8 @@ impl ModalView for TextFinder {
     ) -> DismissDecision {
         let picker = self.picker.read(cx);
         let query = picker.query(cx);
-        if !query.is_empty() {
-            let options = picker.delegate.search_options;
-            store_last_search(self.workspace_id, query, options, cx);
-        }
+        let options = picker.delegate.search_options;
+        store_last_search(self.workspace_id, query, options, cx);
         DismissDecision::Dismiss(true)
     }
 }
@@ -515,6 +513,7 @@ mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            cx.set_global(db::AppDatabase::test_new());
 
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
@@ -543,10 +542,6 @@ mod tests {
             .unwrap();
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
-        // Seed a query: the last-search persistence in `on_before_dismiss` (the
-        // code path that read the workspace entity) only runs when the query is
-        // non-empty, which is the common case in practice since the finder seeds
-        // the previous query on open.
         let seed_query = SearchSeed {
             query: "ONE".to_string(),
             options: None,
@@ -568,5 +563,75 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.active_modal::<TextFinder>(cx).is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_clearing_query_does_not_restore_previous_query(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+            .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let persistence_task = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization(window, cx)
+        });
+        persistence_task.await;
+
+        let initial_query = "unique_search_query";
+        let seed_query = SearchSeed {
+            query: initial_query.to_string(),
+            options: None,
+        };
+        workspace
+            .update_in(cx, |_, window, cx| {
+                TextFinder::open(Some(seed_query), window, cx)
+            })
+            .await;
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.hide_modal(window, cx));
+        });
+        cx.run_until_parked();
+
+        let seed_query = workspace.update_in(cx, |workspace, window, cx| {
+            TextFinder::seed_query(workspace, window, cx)
+        });
+        assert_eq!(
+            seed_query.as_ref().map(|seed| seed.query.as_str()),
+            Some(initial_query)
+        );
+        workspace
+            .update_in(cx, |_, window, cx| TextFinder::open(seed_query, window, cx))
+            .await;
+
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TextFinder>(cx)
+                .expect("Text Finder should be open")
+                .read(cx)
+                .picker
+                .clone()
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.hide_modal(window, cx));
+        });
+        cx.run_until_parked();
+
+        let seed_query = workspace.update_in(cx, |workspace, window, cx| {
+            TextFinder::seed_query(workspace, window, cx)
+        });
+        assert!(seed_query.is_none());
     }
 }

@@ -23,8 +23,7 @@ use crate::{SharedString, TasksIncluded, WindowId};
 #[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
-    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskTimings::collect(&global_thread_timings, included)
+    ThreadTaskTimings::collect(upgraded_thread_timings(), included)
 }
 
 #[cfg(feature = "profiler")]
@@ -36,8 +35,7 @@ pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTi
 #[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
-    let global_timings = GLOBAL_THREAD_TIMINGS.lock();
-    ThreadTaskStatistics::collect_and_reset(&global_timings, included)
+    ThreadTaskStatistics::collect_and_reset(upgraded_thread_timings(), included)
 }
 
 #[cfg(not(feature = "profiler"))]
@@ -128,14 +126,13 @@ pub struct ThreadTaskTimings {
 }
 
 impl ThreadTaskTimings {
-    /// Convert global thread timings into their structured format.
-    pub fn collect(timings: &[GlobalThreadTimings], included: TasksIncluded) -> Vec<Self> {
+    /// Convert upgraded per-thread timings into their structured format.
+    pub fn collect(
+        timings: Vec<(ThreadId, Arc<GuardedTaskTimings>)>,
+        included: TasksIncluded,
+    ) -> Vec<Self> {
         timings
-            .iter()
-            .filter_map(|t| match t.timings.upgrade() {
-                Some(timings) => Some((t.thread_id, timings)),
-                _ => None,
-            })
+            .into_iter()
             .map(|(thread_id, timings)| {
                 let timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
@@ -179,15 +176,11 @@ pub struct ThreadTaskStatistics {
 
 impl ThreadTaskStatistics {
     pub fn collect_and_reset(
-        timings: &[GlobalThreadTimings],
+        timings: Vec<(ThreadId, Arc<GuardedTaskTimings>)>,
         include_running: TasksIncluded,
     ) -> Vec<Self> {
         timings
-            .iter()
-            .filter_map(|t| match t.timings.upgrade() {
-                Some(timings) => Some((t.thread_id, timings)),
-                _ => None,
-            })
+            .into_iter()
             .map(|(thread_id, timings)| {
                 let mut timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
@@ -511,6 +504,23 @@ impl TaskStatistics {
 pub static GLOBAL_THREAD_TIMINGS: spin::Mutex<Vec<GlobalThreadTimings>> =
     spin::Mutex::new(Vec::new());
 
+/// Upgrades all live per-thread timing handles, holding the global registry
+/// lock only for the duration of the upgrades.
+///
+/// The upgraded `Arc`s must never be dropped while `GLOBAL_THREAD_TIMINGS` is
+/// locked: dropping the last strong reference runs [`ThreadTimings::drop`],
+/// which locks `GLOBAL_THREAD_TIMINGS` again and would deadlock the
+/// non-reentrant spinlock. A thread exiting concurrently can hand off its last
+/// reference to us at any time, so callers of this function process (lock,
+/// read, drop) the returned handles only after the global lock is released.
+fn upgraded_thread_timings() -> Vec<(ThreadId, Arc<GuardedTaskTimings>)> {
+    let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
+    global_thread_timings
+        .iter()
+        .filter_map(|t| Some((t.thread_id, t.timings.upgrade()?)))
+        .collect()
+}
+
 thread_local! {
     #[doc(hidden)]
     pub static THREAD_TIMINGS: LazyCell<Arc<GuardedTaskTimings>> = LazyCell::new(|| {
@@ -679,13 +689,11 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
     }
 
     if !enabled {
-        for global in GLOBAL_THREAD_TIMINGS.lock().iter() {
-            if let Some(timings) = global.timings.upgrade() {
-                let mut timings = timings.lock();
-                timings.timings.clear();
-                timings.timings.shrink_to_fit();
-                timings.total_pushed = 0;
-            }
+        for (_, timings) in upgraded_thread_timings() {
+            let mut timings = timings.lock();
+            timings.timings.clear();
+            timings.timings.shrink_to_fit();
+            timings.total_pushed = 0;
         }
     }
     true

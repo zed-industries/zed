@@ -5,6 +5,9 @@
 name: Notify Slack on community automation failure
 
 on:
+  # zizmor: ignore[dangerous-triggers]
+  # The job validates that the completed run came from this repository, was
+  # started by an expected event, and failed before exposing the Slack secret.
   workflow_run:
     workflows:
       - "Comment on potential duplicate bug/crash reports"
@@ -24,7 +27,9 @@ permissions:
 jobs:
   notify-slack:
     if: >-
-      github.repository_owner == 'zed-industries'
+      github.repository == 'zed-industries/zed'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && contains(fromJSON('["issues","issue_comment","pull_request","pull_request_target","schedule","workflow_dispatch"]'), github.event.workflow_run.event)
       && github.event.workflow_run.conclusion == 'failure'
     runs-on: namespace-profile-2x4-ubuntu-2404
 

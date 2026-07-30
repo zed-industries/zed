@@ -117,6 +117,13 @@ mod imp {
         fs: FsMode,
         #[serde(default)]
         writable_paths: Vec<String>,
+        /// Regular files to create before the policy is built. Used to set up a
+        /// single-file-worktree fixture: a protected path like
+        /// `<file>/settings.json/.git` then routes through a real file, so
+        /// capturing it reports `NotADirectory` — the case production must skip
+        /// rather than fail on (the `settings.json/.git` regression).
+        #[serde(default)]
+        seed_files: Vec<String>,
         #[serde(default)]
         network_access: NetMode,
         #[serde(default)]
@@ -193,13 +200,12 @@ mod imp {
             FsMode::Restricted => {
                 let mut writable_paths = Vec::new();
                 for path in &check.writable_paths {
-                    // Mirror production (`acp_thread::SandboxWrap::to_policy`):
-                    // the directory must exist before its inode can be pinned, so
-                    // create it up front, then capture it.
+                    // A granted directory must exist before its inode can be
+                    // pinned, so create it up front, then capture it.
                     std::fs::create_dir_all(path)
                         .with_context(|| format!("failed to create writable path {path}"))?;
                     writable_paths.push(
-                        HostFilesystemLocation::new(path)
+                        HostFilesystemLocation::capture(path)
                             .with_context(|| format!("failed to capture writable path {path}"))?,
                     );
                 }
@@ -220,15 +226,18 @@ mod imp {
         Ok(SandboxPolicy { fs, network })
     }
 
-    /// Capture each already-existing protected path, mirroring production's
-    /// fail-closed `filter_map(HostFilesystemLocation::new(..).ok())`: a path
-    /// that does not yet exist can't be pinned and is simply skipped. Unlike
-    /// writable paths, these are never created here — whether one exists is
-    /// exactly what several checks turn on.
+    /// Capture protected paths best-effort, mirroring production
+    /// (`SandboxWrap::to_policy`): protect only the ones that exist right now
+    /// (`capture` succeeding is the existence check) and silently drop the rest.
+    /// A protection can't be materialized, and `.git` protection has an inherent
+    /// accepted loophole (`git init` in a non-git dir), so a currently-absent or
+    /// otherwise-uncapturable protected path is dropped rather than fatal. These
+    /// are never created here; whether one exists is exactly what several checks
+    /// turn on.
     fn capture_protected_paths(paths: &[String]) -> Vec<HostFilesystemLocation> {
         paths
             .iter()
-            .filter_map(|path| HostFilesystemLocation::new(path).ok())
+            .filter_map(|path| HostFilesystemLocation::capture(path).ok())
             .collect()
     }
 
@@ -241,8 +250,13 @@ mod imp {
         } else {
             format!(",protected_paths={:?}", check.protected_paths)
         };
+        let seed = if check.seed_files.is_empty() {
+            String::new()
+        } else {
+            format!(",seed_files={:?}", check.seed_files)
+        };
         let policy = format!(
-            "fs={:?},net={:?}{protected}",
+            "fs={:?},net={:?}{protected}{seed}",
             check.fs, check.network_access
         );
         let op = if let Some(path) = &check.read {
@@ -284,6 +298,20 @@ mod imp {
         let succeeds = check
             .succeeds
             .with_context(|| format!("check {label:?} has an operation but no `succeeds`"))?;
+
+        // Create any regular-file fixtures before the policy is built, so a
+        // protected path routed through one (e.g. `<file>/.git`) reports
+        // `NotADirectory` at capture time.
+        for path in &check.seed_files {
+            let path = Path::new(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create parent of seed file {}", path.display())
+                })?;
+            }
+            std::fs::write(path, b"seed\n")
+                .with_context(|| format!("failed to create seed file {}", path.display()))?;
+        }
 
         let actual = if let Some(path) = &check.read {
             run_read(check, path)?

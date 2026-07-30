@@ -519,7 +519,7 @@ mod imp {
                     // the real capture happens WSL-side in the helper.
                     writable_paths: writable_paths
                         .iter()
-                        .filter_map(|path| HostFilesystemLocation::new(path).ok())
+                        .filter_map(|path| HostFilesystemLocation::capture(path).ok())
                         .collect(),
                     protected_paths: Vec::new(),
                 }

@@ -59,7 +59,21 @@ pub enum LanguageModelCompletionEvent {
     },
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
-    Compaction(CompactionContent),
+    Compaction(CompactionUpdate),
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum CompactionUpdate {
+    /// A streamed response has started producing replacement context.
+    Started,
+    /// A chunk of a natural-language summary, suitable for incremental display.
+    SummaryDelta(Arc<str>),
+    /// The complete context to persist and use in subsequent requests.
+    Finished(CompactedContext),
+    /// The provider abandoned the compaction without producing replacement
+    /// context. This is a documented outcome, not a protocol error: the
+    /// conversation simply continues on the uncompacted transcript.
+    Failed,
 }
 
 impl LanguageModelCompletionEvent {

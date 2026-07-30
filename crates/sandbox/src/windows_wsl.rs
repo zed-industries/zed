@@ -43,6 +43,11 @@ pub(crate) struct SandboxPermissions {
     pub(crate) allow_fs_write: bool,
 }
 
+pub(crate) struct WritablePath {
+    pub(crate) requested: PathBuf,
+    pub(crate) canonical: PathBuf,
+}
+
 /// Exit code the environment probe script uses to signal that `bwrap` is not
 /// installed, distinguishing that from WSL itself failing to start a shell.
 /// Chosen to be unlikely to collide with `wsl.exe`'s own failure codes.
@@ -233,6 +238,168 @@ impl PathMapping {
     }
 }
 
+/// The result of resolving a write grant inside WSL: its canonical target, plus
+/// whether that target lives on a Windows-hosted (DrvFs) filesystem whose
+/// sandbox-integrity guarantees are weaker than the distro's native filesystem.
+pub struct ResolvedGrant {
+    pub canonical: PathBuf,
+    pub on_windows_fs: bool,
+}
+
+/// Whether `path` names a location on a Windows drive (reached inside WSL via
+/// DrvFs), as opposed to a WSL-native (ext4) path. This is a cheap *structural*
+/// classification of the path shape (a drive-letter/verbatim path maps to a
+/// `NativeDrive`; WSL UNC and Linux-absolute paths are distro-native). It is
+/// used to decide whether to warn about the weaker DrvFs sandbox guarantees for
+/// default project paths without a WSL round-trip. For explicit grants the
+/// authoritative filesystem class comes from the in-WSL resolver instead (see
+/// [`resolve_canonical_for_grant`]).
+pub fn path_is_on_windows_drive(path: &Path) -> bool {
+    matches!(
+        path_to_wsl_allowing_missing(path),
+        Ok(PathMapping::NativeDrive { .. })
+    )
+}
+
+/// Resolve a requested write grant to the path we persist for it, in
+/// **platform-native** form: a Windows drive path stays `C:\...` (NTFS) and a
+/// WSL path stays a Linux-absolute `/...`. In both cases the path is resolved to
+/// its symlink/junction-free canonical target (so a granted junction or symlink
+/// is followed and shown/stored as its real target), and its backing filesystem
+/// is classified.
+///
+/// Crucially, *each side canonicalizes what it is authoritative about*:
+///
+/// * A **Windows drive path** is canonicalized on the **Windows host**. A
+///   junction (or symlink) on a Windows drive is a Windows filesystem object;
+///   WSL's DrvFs surfaces it as a plain symlink but cannot reliably resolve it
+///   (the `/proc/self/fd` readback that follows an ext4 symlink to its real
+///   target does not follow a DrvFs junction). Resolving it WSL-side would
+///   therefore store the junction unresolved and then reject it at enforcement,
+///   where [`crate::util::CanonicalPathBuf::from_canonical`] refuses a symlink
+///   leaf. `std::fs::canonicalize` follows the junction/symlink chain and
+///   confirms the target exists.
+/// * A **WSL path** is canonicalized inside **WSL** via the in-distro helper —
+///   Windows can't follow ext4 symlinks.
+///
+/// Either way the persisted canonical is re-verified in the enforcement
+/// namespace by `from_canonical` (which opens it `O_NOFOLLOW` and pins the
+/// inode), so a component swapped for a symlink/junction after approval still
+/// fails closed.
+///
+/// A local project (the only kind that is sandboxed) has NTFS files, so grants
+/// are either those `C:\...` paths or WSL-native scratch locations named with
+/// `/...`; `\\wsl.localhost\...` and other shapes are rejected. There is no
+/// distro to pin — a sandboxed command runs in exactly one distro (the project's
+/// or WSL's default), so a bare Linux path is unambiguous.
+pub async fn resolve_canonical_for_grant(
+    requested: PathBuf,
+    wsl_zed_release: (String, String),
+) -> Result<ResolvedGrant> {
+    let path_string = requested.to_string_lossy();
+
+    // A Windows drive grant (NTFS) is resolved on the Windows host, which is
+    // authoritative about junctions and symlinks (see the doc comment above).
+    if parse_native_drive_path(&path_string).is_ok() {
+        let canonical = smol::fs::canonicalize(&requested).await.with_context(|| {
+            format!(
+                "failed to resolve writable path `{}` on the Windows host",
+                requested.display()
+            )
+        })?;
+        // `canonicalize` yields a `\\?\` verbatim path; store the plain native
+        // spelling so a non-junction grant compares equal to what was requested.
+        // A junction resolving off the local drives (onto a UNC/WSL path) is
+        // rejected — only a Windows drive path maps to a DrvFs bind.
+        let canonical = strip_windows_verbatim_prefix(canonical);
+        ensure!(
+            parse_native_drive_path(&canonical.to_string_lossy()).is_ok(),
+            "cannot grant sandbox write access to `{}`: it resolves to `{}`, \
+             which is not a Windows drive path",
+            requested.display(),
+            canonical.display()
+        );
+        // A Windows drive is reached inside WSL via DrvFs (weaker guarantees), so
+        // a native-drive grant is on a Windows filesystem by definition.
+        return Ok(ResolvedGrant {
+            canonical,
+            on_windows_fs: true,
+        });
+    }
+
+    // Otherwise the grant must be a Linux-absolute WSL path, which only WSL can
+    // canonicalize. `\\wsl.localhost\...` and other shapes are rejected.
+    let wsl_path = parse_wsl_absolute_path(&path_string).map_err(|_| {
+        anyhow::anyhow!(
+            "cannot grant sandbox write access to `{}`: only Windows drive paths \
+             (`C:\\...`) and WSL absolute paths (`/...`) are supported",
+            requested.display()
+        )
+    })?;
+    let mapping = PathMapping::Wsl(wsl_path);
+
+    let wsl_exe = wsl_exe_path();
+    if !wsl_exe.is_file() {
+        return Err(unavailable(format!(
+            "WSL (`wsl.exe`) was not found at `{}`",
+            wsl_exe.display()
+        )));
+    }
+
+    // Translate + existence-check the path inside WSL, then resolve its
+    // symlink-free canonical (and classify its filesystem) via the helper. No
+    // distro is pinned — a sandboxed command runs in one distro.
+    let translated = resolve_paths(&wsl_exe, None, &[(mapping, "writable path", true)])
+        .await?
+        .into_iter()
+        .next()
+        .context("bug: missing resolved writable path")?
+        .context("bug: required writable path resolved as missing")?;
+    let (channel, version) = wsl_zed_release;
+    let helper = ensure_wsl_zed_helper(&wsl_exe, None, &channel, &version).await?;
+    let output = run_wsl_command(
+        &wsl_exe,
+        None,
+        [
+            "--exec",
+            helper.as_str(),
+            crate::WSL_SANDBOX_RESOLVE_FLAG,
+            translated.as_str(),
+        ],
+        "resolve a sandbox write grant",
+    )
+    .await?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "failed to resolve writable path `{}`{}",
+            requested.display(),
+            command_failure_details(output.status.code(), &output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .context("WSL sandbox helper returned a non-UTF-8 canonical path")?;
+    parse_canonical_grant_output(&stdout)
+}
+
+/// Strip the `\\?\` verbatim prefix that `std::fs::canonicalize` prepends to a
+/// Windows drive path, leaving `\\?\UNC\...` untouched (it is not a drive path,
+/// and is rejected by the caller). We persist and display the plain `C:\...`
+/// spelling so a non-junction grant compares equal to the requested path.
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// `on_windows_fs` word emitted by the resolver for a Windows-hosted (DrvFs)
+/// canonical target.
+const RESOLVE_WINDOWS_FS: &str = "windows-fs";
+/// `on_windows_fs` word emitted by the resolver for a distro-native canonical
+/// target.
+const RESOLVE_NATIVE_FS: &str = "native-fs";
+
 /// Wrap a Linux process invocation so it runs under Bubblewrap inside WSL.
 ///
 /// `program` and `args` must name a Linux executable and Linux argv, not a
@@ -270,7 +437,7 @@ impl PathMapping {
 pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     program: String,
     args: Vec<String>,
-    writable_paths: Vec<PathBuf>,
+    writable_paths: Vec<WritablePath>,
     protected_paths: Vec<PathBuf>,
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
@@ -294,11 +461,25 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             None => None,
         };
 
+    let writable_requested_mappings = writable_paths
+        .iter()
+        .map(|path| {
+            path_to_wsl(&path.requested).with_context(|| {
+                format!(
+                    "failed to map writable path `{}` into WSL",
+                    path.requested.display()
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let writable_mappings = writable_paths
         .iter()
         .map(|path| {
-            path_to_wsl(path).with_context(|| {
-                format!("failed to map writable path `{}` into WSL", path.display())
+            path_to_wsl(&path.canonical).with_context(|| {
+                format!(
+                    "failed to map canonical writable path `{}` into WSL",
+                    path.canonical.display()
+                )
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -313,7 +494,10 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
 
     let distro = select_distro(
         cwd_mapping.as_ref(),
-        writable_mappings.iter().chain(protected_mappings.iter()),
+        writable_requested_mappings
+            .iter()
+            .chain(writable_mappings.iter())
+            .chain(protected_mappings.iter()),
     )?;
     let wsl_exe = wsl_exe_path();
     if !wsl_exe.is_file() {
@@ -370,8 +554,8 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
 
     match wsl_zed_release {
         // Preferred path: run the in-WSL `zed` as the sandbox helper, which
-        // captures the writable binds' inodes WSL-side and validates them after
-        // bwrap's mounts (the same in-sandbox check native Linux performs).
+        // verifies and pins the persisted canonical writable paths WSL-side,
+        // then validates them again after bwrap's mounts.
         Some((channel, version)) => {
             let helper =
                 ensure_wsl_zed_helper(&wsl_exe, distro.as_deref(), &channel, &version).await?;
@@ -401,6 +585,41 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     }
 
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
+}
+
+fn parse_canonical_grant_output(stdout: &str) -> Result<ResolvedGrant> {
+    let mut lines = stdout.lines();
+    let distro = lines
+        .next()
+        .context("WSL sandbox helper omitted the distro name")?;
+    let canonical = lines
+        .next()
+        .context("WSL sandbox helper omitted the canonical path")?;
+    let fs_class = lines
+        .next()
+        .context("WSL sandbox helper omitted the filesystem class")?;
+    let on_windows_fs = match fs_class {
+        RESOLVE_WINDOWS_FS => true,
+        RESOLVE_NATIVE_FS => false,
+        _ => bail!("WSL sandbox helper returned an invalid filesystem class: {fs_class:?}"),
+    };
+    ensure!(
+        lines.next().is_none()
+            && !distro.is_empty()
+            && !distro.contains(['/', '\\'])
+            && canonical.starts_with('/'),
+        "WSL sandbox helper returned invalid canonical-path output: {stdout:?}"
+    );
+    // Store the canonical as the Linux path bwrap actually binds. The distro is
+    // pinned at enforcement from the *requested* path (see `wrap_invocation`),
+    // so it is not re-encoded here: spelling the canonical as
+    // `\\wsl.localhost\<distro>\...` would resurface the Windows-style path we
+    // avoid and, because it names the same object as the request, show as a
+    // spurious redirect in the approval UI.
+    Ok(ResolvedGrant {
+        canonical: PathBuf::from(canonical),
+        on_windows_fs,
+    })
 }
 
 fn split_resolved_paths(
@@ -620,6 +839,18 @@ async fn ensure_wsl_zed_helper(
     channel: &str,
     version: &str,
 ) -> Result<String> {
+    // TODO: Remove this development override once WSL canonical-path handling is released.
+    if let Some(helper) = std::env::var_os("ZED_WSL_SANDBOX_HELPER") {
+        let helper = helper
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("ZED_WSL_SANDBOX_HELPER is not valid UTF-8"))?;
+        ensure!(
+            helper.starts_with('/'),
+            "ZED_WSL_SANDBOX_HELPER must be an absolute path inside WSL"
+        );
+        return Ok(helper);
+    }
+
     type HelperCache = HashMap<(Option<String>, String, String), String>;
     static CACHE: OnceLock<Mutex<HelperCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -1426,6 +1657,37 @@ mod tests {
     }
 
     #[test]
+    fn canonical_grant_output_returns_the_linux_canonical_path() {
+        let resolved =
+            parse_canonical_grant_output("Ubuntu-24.04\n/home/me/real target\nnative-fs\n")
+                .expect("valid helper output");
+        // The bare Linux path, not a `\\wsl.localhost\...` spelling.
+        assert_eq!(resolved.canonical, PathBuf::from("/home/me/real target"));
+        assert!(!resolved.on_windows_fs);
+
+        let resolved = parse_canonical_grant_output("Ubuntu\n/mnt/c/Users/me/proj\nwindows-fs\n")
+            .expect("valid helper output");
+        assert_eq!(resolved.canonical, PathBuf::from("/mnt/c/Users/me/proj"));
+        assert!(resolved.on_windows_fs);
+    }
+
+    #[test]
+    fn canonical_grant_output_rejects_malformed_protocol() {
+        // Missing filesystem-class line.
+        assert!(parse_canonical_grant_output("Ubuntu\n/home/me/project\n").is_err());
+        // Non-absolute canonical path.
+        assert!(parse_canonical_grant_output("Ubuntu\nrelative\nnative-fs\n").is_err());
+        // Distro name containing a separator.
+        assert!(parse_canonical_grant_output("Ubuntu/bad\n/home/me/project\nnative-fs\n").is_err());
+        // Unknown filesystem class.
+        assert!(parse_canonical_grant_output("Ubuntu\n/home/me/project\nmaybe-fs\n").is_err());
+        // Trailing junk after the filesystem class.
+        assert!(
+            parse_canonical_grant_output("Ubuntu\n/home/me/project\nnative-fs\nnoise\n").is_err()
+        );
+    }
+
+    #[test]
     fn split_resolved_paths_keeps_existing_protected_paths_and_skips_missing_ones() {
         let (cwd, writable_paths, protected_paths) = split_resolved_paths(
             true,
@@ -1881,6 +2143,26 @@ mod tests {
                     path: "/mnt/c/Users/me/project".to_string(),
                 },
             }
+        );
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_only_strips_drive_paths() {
+        // `canonicalize` yields `\\?\C:\...`; the plain native spelling is stored.
+        assert_eq!(
+            strip_windows_verbatim_prefix(PathBuf::from(r"\\?\C:\Users\me\dir")),
+            PathBuf::from(r"C:\Users\me\dir")
+        );
+        // A `\\?\UNC\...` path is not a drive path and is left intact (the caller
+        // rejects it).
+        assert_eq!(
+            strip_windows_verbatim_prefix(PathBuf::from(r"\\?\UNC\wsl.localhost\Ubuntu\home")),
+            PathBuf::from(r"\\?\UNC\wsl.localhost\Ubuntu\home")
+        );
+        // A path without the prefix is unchanged.
+        assert_eq!(
+            strip_windows_verbatim_prefix(PathBuf::from(r"C:\already\plain")),
+            PathBuf::from(r"C:\already\plain")
         );
     }
 

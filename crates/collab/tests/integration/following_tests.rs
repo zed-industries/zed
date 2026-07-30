@@ -1,12 +1,13 @@
 #![allow(clippy::reversed_empty_ranges)]
 use crate::TestServer;
-use call::ActiveCall;
+use call::{ActiveCall, Room};
 use client::ChannelId;
 use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
 use editor::{Editor, MultiBuffer, MultiBufferOffset, PathKey, SelectionEffects};
+use gpui::proptest::prelude::*;
 use gpui::{
     Action, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
     TestAppContext, VisualContext, VisualTestContext, point,
@@ -2159,6 +2160,442 @@ async fn share_workspace(
     cx.read(ActiveCall::global)
         .update(cx, |call, cx| call.share_project(project, cx))
         .await
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LocationProject {
+    First,
+    Second,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LocationWindow {
+    First,
+    Second,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ParticipantLocationAction {
+    ActivateWorkspace {
+        window: LocationWindow,
+        project: LocationProject,
+    },
+    ActivateWindow(LocationWindow),
+    DeactivateActiveWindow,
+    ShareProject(LocationProject),
+    UnshareProject(LocationProject),
+}
+
+fn location_project() -> impl Strategy<Value = LocationProject> {
+    prop_oneof![Just(LocationProject::First), Just(LocationProject::Second),]
+}
+
+fn location_window() -> impl Strategy<Value = LocationWindow> {
+    prop_oneof![Just(LocationWindow::First), Just(LocationWindow::Second),]
+}
+
+fn participant_location_actions() -> impl Strategy<Value = Vec<ParticipantLocationAction>> {
+    gpui::proptest::collection::vec(
+        prop_oneof![
+            3 => (location_window(), location_project()).prop_map(|(window, project)| {
+                ParticipantLocationAction::ActivateWorkspace { window, project }
+            }),
+            2 => location_window().prop_map(ParticipantLocationAction::ActivateWindow),
+            1 => Just(ParticipantLocationAction::DeactivateActiveWindow),
+            2 => location_project().prop_map(ParticipantLocationAction::ShareProject),
+            2 => location_project().prop_map(ParticipantLocationAction::UnshareProject),
+        ],
+        0..8,
+    )
+    .prop_map(|actions| {
+        let mut scenario = vec![
+            ParticipantLocationAction::DeactivateActiveWindow,
+            ParticipantLocationAction::ActivateWindow(LocationWindow::First),
+            ParticipantLocationAction::ActivateWorkspace {
+                window: LocationWindow::Second,
+                project: LocationProject::Second,
+            },
+        ];
+        scenario.extend(actions);
+        scenario
+    })
+}
+
+fn participant_location(
+    room: &Entity<Room>,
+    user_id: u64,
+    cx: &TestAppContext,
+) -> ParticipantLocation {
+    room.read_with(cx, |room, _| {
+        room.remote_participants()
+            .get(&user_id)
+            .expect("participant should be present")
+            .location
+    })
+}
+
+#[gpui::property_test(config = ProptestConfig {
+    cases: 8,
+    ..Default::default()
+})]
+async fn test_active_multi_workspace_determines_participant_location(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    #[strategy = participant_location_actions()] actions: Vec<ParticipantLocationAction>,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    cx_a.update(title_bar::init);
+
+    client_a.fs().insert_tree(path!("/first"), json!({})).await;
+    client_a.fs().insert_tree(path!("/second"), json!({})).await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    let user_id_a = client_a.id();
+
+    let (first_project, _) = client_a.build_local_project(path!("/first"), cx_a).await;
+    let (second_project, _) = client_a.build_local_project(path!("/second"), cx_a).await;
+    let first_shared_project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(first_project.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let mut first_project_id = Some(first_shared_project_id);
+    let mut second_project_id = None;
+
+    let mut second_window_context = cx_a.clone();
+    let (first_window_first_workspace, cx_a) = client_a.build_workspace(&first_project, cx_a);
+    let first_multi_workspace = cx_a
+        .window_handle()
+        .downcast::<MultiWorkspace>()
+        .expect("window should contain a multi-workspace");
+    let app_state = client_a.app_state.clone();
+    let first_window_second_workspace = first_multi_workspace
+        .update(cx_a, |multi_workspace, window, cx| {
+            let workspace =
+                cx.new(|cx| Workspace::new(None, second_project.clone(), app_state, window, cx));
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+            workspace
+        })
+        .unwrap();
+    first_multi_workspace
+        .update(cx_a, |multi_workspace, window, cx| {
+            multi_workspace.activate(first_window_first_workspace.clone(), None, window, cx)
+        })
+        .unwrap();
+
+    let (second_window_first_workspace, cx_a_second) =
+        client_a.build_workspace(&first_project, &mut second_window_context);
+    let second_multi_workspace = cx_a_second
+        .window_handle()
+        .downcast::<MultiWorkspace>()
+        .expect("window should contain a multi-workspace");
+    let app_state = client_a.app_state.clone();
+    let second_window_second_workspace = second_multi_workspace
+        .update(cx_a_second, |multi_workspace, window, cx| {
+            let workspace =
+                cx.new(|cx| Workspace::new(None, second_project.clone(), app_state, window, cx));
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+            workspace
+        })
+        .unwrap();
+    second_multi_workspace
+        .update(cx_a_second, |multi_workspace, window, cx| {
+            multi_workspace.activate(second_window_first_workspace.clone(), None, window, cx)
+        })
+        .unwrap();
+
+    cx_a.update(|window, _| window.activate_window());
+    executor.run_until_parked();
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&first_project), cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        participant_location(&room_b, user_id_a, cx_b),
+        ParticipantLocation::SharedProject {
+            project_id: first_shared_project_id,
+        },
+        "test should start in the first window's first workspace"
+    );
+
+    let mut active_window = Some(LocationWindow::First);
+    let mut first_window_active_project = LocationProject::First;
+    let mut second_window_active_project = LocationProject::First;
+    let scenario = actions.clone();
+    for action in actions {
+        match action {
+            ParticipantLocationAction::ActivateWorkspace { window, project } => match window {
+                LocationWindow::First => {
+                    let workspace = match project {
+                        LocationProject::First => first_window_first_workspace.clone(),
+                        LocationProject::Second => first_window_second_workspace.clone(),
+                    };
+                    first_multi_workspace
+                        .update(cx_a, |multi_workspace, window, cx| {
+                            multi_workspace.activate(workspace, None, window, cx)
+                        })
+                        .unwrap();
+                    first_window_active_project = project;
+                }
+                LocationWindow::Second => {
+                    let workspace = match project {
+                        LocationProject::First => second_window_first_workspace.clone(),
+                        LocationProject::Second => second_window_second_workspace.clone(),
+                    };
+                    second_multi_workspace
+                        .update(cx_a_second, |multi_workspace, window, cx| {
+                            multi_workspace.activate(workspace, None, window, cx)
+                        })
+                        .unwrap();
+                    second_window_active_project = project;
+                }
+            },
+            ParticipantLocationAction::ActivateWindow(window) => {
+                match window {
+                    LocationWindow::First => {
+                        cx_a.update(|window, _| window.activate_window());
+                    }
+                    LocationWindow::Second => {
+                        cx_a_second.update(|window, _| window.activate_window());
+                    }
+                }
+                active_window = Some(window);
+            }
+            ParticipantLocationAction::DeactivateActiveWindow => {
+                if let Some(window) = active_window {
+                    match window {
+                        LocationWindow::First => cx_a.deactivate_window(),
+                        LocationWindow::Second => cx_a_second.deactivate_window(),
+                    }
+                    active_window = None;
+                }
+            }
+            ParticipantLocationAction::ShareProject(project) => {
+                let is_shared = match project {
+                    LocationProject::First => first_project_id.is_some(),
+                    LocationProject::Second => second_project_id.is_some(),
+                };
+                if !is_shared {
+                    let project_entity = match project {
+                        LocationProject::First => first_project.clone(),
+                        LocationProject::Second => second_project.clone(),
+                    };
+                    let project_id = active_call_a
+                        .update(cx_a, |call, cx| call.share_project(project_entity, cx))
+                        .await
+                        .unwrap();
+                    match project {
+                        LocationProject::First => first_project_id = Some(project_id),
+                        LocationProject::Second => second_project_id = Some(project_id),
+                    }
+                }
+            }
+            ParticipantLocationAction::UnshareProject(project) => {
+                let is_shared = match project {
+                    LocationProject::First => first_project_id.is_some(),
+                    LocationProject::Second => second_project_id.is_some(),
+                };
+                if is_shared {
+                    let project_entity = match project {
+                        LocationProject::First => first_project.clone(),
+                        LocationProject::Second => second_project.clone(),
+                    };
+                    active_call_a.update(cx_a, |call, cx| {
+                        call.unshare_project(project_entity, cx).unwrap()
+                    });
+                    match project {
+                        LocationProject::First => first_project_id = None,
+                        LocationProject::Second => second_project_id = None,
+                    }
+                }
+            }
+        }
+
+        executor.run_until_parked();
+        let expected_location = match active_window {
+            Some(active_window) => {
+                let active_project = match active_window {
+                    LocationWindow::First => first_window_active_project,
+                    LocationWindow::Second => second_window_active_project,
+                };
+                let active_project_id = match active_project {
+                    LocationProject::First => first_project_id,
+                    LocationProject::Second => second_project_id,
+                };
+                match active_project_id {
+                    Some(project_id) => ParticipantLocation::SharedProject { project_id },
+                    None => ParticipantLocation::UnsharedProject,
+                }
+            }
+            None => ParticipantLocation::External,
+        };
+        assert_eq!(
+            participant_location(&room_b, user_id_a, cx_b),
+            expected_location,
+            "participant location should match the active window's active workspace after {action:?}; scenario: {scenario:?}"
+        );
+    }
+}
+
+#[gpui::property_test(config = ProptestConfig {
+    cases: 8,
+    ..Default::default()
+})]
+async fn test_active_multi_workspace_determines_follower_view(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "first.txt": "first",
+                "second.txt": "second",
+            }),
+        )
+        .await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (first_workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    first_workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("first.txt")), None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let peer_id_a = client_a.peer_id().unwrap();
+    workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.start_following(peer_id_a, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should have an active item");
+        assert_eq!(active_item.tab_content_text(0, cx), "first.txt");
+    });
+
+    let multi_workspace_a = cx_a
+        .window_handle()
+        .downcast::<MultiWorkspace>()
+        .expect("window should contain a multi-workspace");
+    let app_state = client_a.app_state.clone();
+    let second_workspace_a = multi_workspace_a
+        .update(cx_a, |multi_workspace, window, cx| {
+            let workspace =
+                cx.new(|cx| Workspace::new(None, project_a.clone(), app_state, window, cx));
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+            workspace
+        })
+        .unwrap();
+    second_workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("second.txt")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should have an active item");
+        assert_eq!(active_item.tab_content_text(0, cx), "second.txt");
+    });
+    multi_workspace_a
+        .read_with(cx_a, |multi_workspace, _| {
+            assert!(multi_workspace.is_workspace_retained(&first_workspace_a));
+            assert!(multi_workspace.is_workspace_retained(&second_workspace_a));
+        })
+        .unwrap();
+
+    cx_a.deactivate_window();
+    multi_workspace_a
+        .update(cx_a, |multi_workspace, window, cx| {
+            multi_workspace.activate(first_workspace_a.clone(), None, window, cx)
+        })
+        .unwrap();
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should retain its active item while the host is inactive");
+        assert_eq!(active_item.tab_content_text(0, cx), "second.txt");
+    });
+
+    cx_a.update(|window, _| window.activate_window());
+    executor.run_until_parked();
+    workspace_b.update(cx_b, |workspace, cx| {
+        assert!(workspace.is_being_followed(peer_id_a));
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(peer_id_a.into())
+        );
+        let active_item = workspace
+            .active_item(cx)
+            .expect("follower should have the active workspace's item");
+        assert_eq!(active_item.tab_content_text(0, cx), "first.txt");
+    });
+
+    workspace_b.update_in(cx_b, |workspace, window, cx| {
+        workspace.unfollow(peer_id_a, window, cx).unwrap();
+        workspace.close_all_items_and_panes(&Default::default(), window, cx);
+    });
+    first_workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.close_all_items_and_panes(&Default::default(), window, cx)
+    });
+    second_workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.close_all_items_and_panes(&Default::default(), window, cx)
+    });
+    executor.run_until_parked();
 }
 
 #[gpui::test]

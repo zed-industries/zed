@@ -1,21 +1,26 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeSeq as _};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
+use language_model_core::{
+    CompactedContext, LanguageModelProviderId, ProviderCompactionState, SharedString,
+};
+
+pub const COMPACTION_STATE_FORMAT: &str = "openai.responses.input-items.v1";
 
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "ResponseInput::is_empty")]
+    pub input: ResponseInput,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -42,6 +47,158 @@ pub struct Request {
     pub service_tier: Option<ServiceTier>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_management: Option<Vec<ContextManagement>>,
+}
+
+impl Request {
+    pub fn into_compact_request(self) -> CompactRequest {
+        CompactRequest {
+            model: self.model,
+            instructions: self.instructions,
+            input: self.input,
+            prompt_cache_key: self.prompt_cache_key,
+            service_tier: self.service_tier,
+        }
+    }
+}
+
+#[derive(Serialize, Debug)]
+pub struct CompactRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    pub input: ResponseInput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct CompactedResponse {
+    pub id: String,
+    pub created_at: u64,
+    pub object: String,
+    pub output: Vec<Value>,
+    pub usage: ResponseUsage,
+}
+
+impl CompactedResponse {
+    pub fn into_compacted_context(
+        self,
+        owner: LanguageModelProviderId,
+    ) -> Result<CompactedContext> {
+        Ok(CompactedContext::ProviderState(
+            provider_compaction_state_from_items(owner, self.output)?,
+        ))
+    }
+}
+
+/// Packages a canonical replacement window into opaque provider state owned by
+/// `owner`.
+///
+/// Several backends speak the OpenAI Responses protocol (OpenAI itself, Zed
+/// Cloud's OpenAI models, OpenAI-compatible endpoints, and others), but their
+/// encrypted compaction items are not interchangeable: only the backend that
+/// produced an item can decrypt it. The owner recorded here is what
+/// [`provider_compaction_items`] later compares against, so it must identify
+/// the backend whose infrastructure produced the items, not merely the wire
+/// protocol.
+pub fn provider_compaction_state_from_items(
+    owner: LanguageModelProviderId,
+    items: Vec<Value>,
+) -> Result<ProviderCompactionState> {
+    validate_compaction_items(&items)?;
+    Ok(ProviderCompactionState::new(
+        owner,
+        SharedString::new_static(COMPACTION_STATE_FORMAT),
+        serde_json::to_string(&items)?,
+    ))
+}
+
+/// Recovers the canonical replacement window from `state` if it is owned by
+/// `owner`, or `None` when the state belongs to a different backend and the
+/// caller should fall back to replaying the full transcript.
+pub fn provider_compaction_items(
+    state: &ProviderCompactionState,
+    owner: &LanguageModelProviderId,
+) -> Result<Option<Vec<Value>>> {
+    if state.provider_id() != owner {
+        return Ok(None);
+    }
+    if state.format() != COMPACTION_STATE_FORMAT {
+        return Err(anyhow!(
+            "unsupported OpenAI compaction state format: {}",
+            state.format()
+        ));
+    }
+
+    let items = serde_json::from_str::<Vec<Value>>(state.payload())
+        .context("malformed OpenAI compaction state payload")?;
+    validate_compaction_items(&items)?;
+    Ok(Some(items))
+}
+
+fn validate_compaction_items(items: &[Value]) -> Result<()> {
+    if items.is_empty() {
+        return Err(anyhow!("OpenAI returned an empty compaction output"));
+    }
+    if !items.iter().any(|item| {
+        item.get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|item_type| item_type == "compaction")
+    }) {
+        return Err(anyhow!(
+            "OpenAI compaction output did not contain a compaction item"
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default)]
+pub struct ResponseInput {
+    provider_items: Vec<Value>,
+    generated_items: Vec<ResponseInputItem>,
+}
+
+impl ResponseInput {
+    pub fn new(provider_items: Vec<Value>, generated_items: Vec<ResponseInputItem>) -> Self {
+        Self {
+            provider_items,
+            generated_items,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.provider_items.is_empty() && self.generated_items.is_empty()
+    }
+
+    /// Filters only the items this crate generated from the request.
+    ///
+    /// Provider items are a canonical replacement window that must be replayed
+    /// verbatim, so they are exempt from filtering. Callers that rewrite the
+    /// input to satisfy backend-specific requirements (and therefore can't
+    /// tolerate arbitrary items inside a replayed window) should not accept
+    /// provider-native compaction state in the first place.
+    pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
+        self.generated_items.retain(predicate);
+    }
+}
+
+impl Serialize for ResponseInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut sequence = serializer
+            .serialize_seq(Some(self.provider_items.len() + self.generated_items.len()))?;
+        for item in &self.provider_items {
+            sequence.serialize_element(item)?;
+        }
+        for item in &self.generated_items {
+            sequence.serialize_element(item)?;
+        }
+        sequence.end()
+    }
 }
 
 /// Server-side context management configuration.
@@ -546,6 +703,45 @@ pub struct ResponseCustomToolCall {
     pub input: String,
 }
 
+pub async fn compact_response(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: CompactRequest,
+    extra_headers: &CustomHeaders,
+) -> Result<CompactedResponse, RequestError> {
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(format!("{api_url}/responses/compact"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|error| RequestError::Other(error.into()))?,
+        ))
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    if response.status().is_success() {
+        serde_json::from_str(&body).map_err(|error| RequestError::Other(error.into()))
+    } else {
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
 pub async fn stream_response(
     client: &dyn HttpClient,
     provider_name: &str,
@@ -730,5 +926,339 @@ pub async fn stream_response(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+    use http_client::FakeHttpClient;
+    use language_model_core::OPEN_AI_PROVIDER_ID;
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn compact_response_posts_supported_request_fields() {
+        let captured_request = Arc::new(Mutex::new(None));
+        let captured_request_for_handler = captured_request.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            let captured_request = captured_request_for_handler.clone();
+            async move {
+                let method = request.method().clone();
+                let uri = request.uri().to_string();
+                let authorization = request
+                    .headers()
+                    .get("Authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let mut body = request.into_body();
+                let mut body_text = String::new();
+                body.read_to_string(&mut body_text).await?;
+                *captured_request.lock().unwrap() = Some((method, uri, authorization, body_text));
+
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(
+                        json!({
+                            "id": "resp_compact",
+                            "created_at": 1_700_000_000,
+                            "object": "response.compaction",
+                            "output": [{
+                                "type": "compaction",
+                                "id": "cmp_manual",
+                                "encrypted_content": "opaque-state"
+                            }],
+                            "usage": {
+                                "input_tokens": 100,
+                                "input_tokens_details": {"cached_tokens": 20},
+                                "output_tokens": 10,
+                                "output_tokens_details": {"reasoning_tokens": 5},
+                                "total_tokens": 110
+                            }
+                        })
+                        .to_string(),
+                    ))?)
+            }
+        });
+        let response = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            provider_compaction_items(
+                &match response
+                    .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                    .unwrap()
+                {
+                    CompactedContext::ProviderState(state) => state,
+                    CompactedContext::Summary { .. } => panic!("expected provider state"),
+                },
+                &OPEN_AI_PROVIDER_ID
+            )
+            .unwrap(),
+            Some(vec![json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            })])
+        );
+        let (method, uri, authorization, body) = captured_request.lock().unwrap().take().unwrap();
+        assert_eq!(method, Method::POST);
+        assert_eq!(uri, "https://api.openai.com/v1/responses/compact");
+        assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap(),
+            json!({
+                "model": "gpt-5.4",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "Retain this context."
+                    }]
+                }],
+                "prompt_cache_key": "thread-123",
+                "service_tier": "priority"
+            })
+        );
+    }
+
+    #[test]
+    fn compact_response_reports_http_and_deserialization_errors() {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(429)
+                .header("retry-after", "5")
+                .body(AsyncBody::from("rate limited"))?)
+        });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap_err();
+
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                assert_eq!(provider, "OpenAI");
+                assert_eq!(status_code, 429);
+                assert_eq!(body, "rate limited");
+                assert_eq!(headers["retry-after"], "5");
+            }
+            error => panic!("expected an HTTP response error, got {error:?}"),
+        }
+
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(AsyncBody::from("not valid JSON"))?)
+        });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(error, RequestError::Other(_)),
+            "expected malformed JSON to produce a request error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn compacted_response_preserves_canonical_output_items() {
+        let output = vec![
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context.",
+                "provider_extension": {"preserve": true}
+            }),
+            json!({
+                "type": "compaction",
+                "id": "cmp_manual",
+                "encrypted_content": "opaque-state"
+            }),
+        ];
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": &output,
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        let CompactedContext::ProviderState(state) = response
+            .into_compacted_context(OPEN_AI_PROVIDER_ID)
+            .unwrap()
+        else {
+            panic!("expected provider state");
+        };
+        assert_eq!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            Some(output)
+        );
+    }
+
+    #[test]
+    fn compacted_response_rejects_output_without_compaction_item() {
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": [{
+                "type": "message",
+                "role": "user",
+                "content": "Retained user context."
+            }],
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert!(
+            response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap_err()
+                .to_string()
+                .contains("compaction item")
+        );
+    }
+
+    #[test]
+    fn compacted_response_rejects_empty_output() {
+        let response: CompactedResponse = serde_json::from_value(json!({
+            "id": "resp_compact",
+            "created_at": 1_700_000_000,
+            "object": "response.compaction",
+            "output": [],
+            "usage": {
+                "input_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 20},
+                "output_tokens": 10,
+                "output_tokens_details": {"reasoning_tokens": 5},
+                "total_tokens": 110
+            }
+        }))
+        .unwrap();
+
+        assert!(
+            response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap_err()
+                .to_string()
+                .contains("empty")
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_ignores_state_owned_by_another_provider() {
+        let items = vec![json!({
+            "type": "compaction",
+            "id": "cmp_manual",
+            "encrypted_content": "opaque-state"
+        })];
+        let state =
+            provider_compaction_state_from_items(OPEN_AI_PROVIDER_ID, items.clone()).unwrap();
+
+        assert_eq!(
+            provider_compaction_items(&state, &LanguageModelProviderId::new("anthropic")).unwrap(),
+            None
+        );
+
+        // The same window stamped for a different OpenAI-protocol backend is
+        // opaque to OpenAI proper: encrypted compaction items are only
+        // decryptable by the infrastructure that produced them.
+        let compatible_backend = LanguageModelProviderId::new("my-compatible-endpoint");
+        let state =
+            provider_compaction_state_from_items(compatible_backend.clone(), items).unwrap();
+        assert_eq!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+            None
+        );
+        assert!(
+            provider_compaction_items(&state, &compatible_backend)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_rejects_unknown_open_ai_format() {
+        let state = ProviderCompactionState::new(
+            OPEN_AI_PROVIDER_ID,
+            "openai.responses.input-items.v2",
+            "[]",
+        );
+        assert!(
+            provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported OpenAI compaction state format")
+        );
+    }
+
+    #[test]
+    fn provider_compaction_items_rejects_malformed_open_ai_state() {
+        let state = ProviderCompactionState::new(
+            OPEN_AI_PROVIDER_ID,
+            COMPACTION_STATE_FORMAT,
+            "not valid JSON",
+        );
+
+        assert!(provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).is_err());
+    }
+
+    fn compact_test_request() -> CompactRequest {
+        CompactRequest {
+            model: "gpt-5.4".to_string(),
+            instructions: None,
+            input: ResponseInput::new(
+                Vec::new(),
+                vec![ResponseInputItem::Message(ResponseMessageItem {
+                    role: Role::User,
+                    content: vec![ResponseInputContent::Text {
+                        text: "Retain this context.".to_string(),
+                    }],
+                    phase: None,
+                })],
+            ),
+            prompt_cache_key: Some("thread-123".to_string()),
+            service_tier: Some(ServiceTier::Priority),
+        }
     }
 }

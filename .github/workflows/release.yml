@@ -33,8 +33,11 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
@@ -82,8 +85,11 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
+      uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9
+      with:
+        tool: nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
@@ -128,6 +134,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
@@ -254,13 +261,6 @@ jobs:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
       run: ./script/shellcheck-scripts error
-    - id: get_actionlint
-      name: run_tests::check_scripts::download_actionlint
-      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-    - name: run_tests::check_scripts::run_actionlint
-      run: '"$ACTIONLINT_BIN" -color'
-      env:
-        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
@@ -274,6 +274,19 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
+    - id: get_actionlint
+      name: run_tests::check_scripts::download_actionlint
+      run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+    - name: run_tests::check_scripts::run_actionlint
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: run_tests::check_scripts::run_zizmor
+      uses: zizmorcore/zizmor-action@6599ee8b7a49aef6a770f63d261d214911a7ce02
+      with:
+        advanced-security: false
+        min-severity: high
+        version: latest
     timeout-minutes: 60
   create_draft_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -285,6 +298,8 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
         permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -545,6 +560,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -596,6 +612,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -845,6 +862,9 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:

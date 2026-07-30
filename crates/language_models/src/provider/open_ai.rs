@@ -5,16 +5,19 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg,
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderSettingsView, RateLimiter, env_var,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, CompactionResult, EnvVar,
+    FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, ProviderSettingsView, RateLimiter, env_var,
 };
 use open_ai::{
     ResponseStreamEvent,
-    responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
+    responses::{
+        CompactRequest, CompactedResponse, Request as ResponseRequest,
+        StreamEvent as ResponsesStreamEvent, compact_response, stream_response,
+    },
     stream_completion,
 };
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
@@ -22,6 +25,7 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 
+use open_ai::completion::token_usage_from_response_usage;
 pub use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
@@ -425,6 +429,40 @@ impl OpenAiLanguageModel {
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
+
+    fn compact_response(
+        &self,
+        request: CompactRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactedResponse, LanguageModelCompletionError>> {
+        let http_client = self.http_client.clone();
+
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = OpenAiLanguageModelProvider::api_url(cx);
+            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
+        });
+
+        let provider = PROVIDER_NAME;
+        let future = self.request_limiter.run(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            Ok(compact_response(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            )
+            .await?)
+        });
+
+        future.boxed()
+    }
 }
 
 impl LanguageModel for OpenAiLanguageModel {
@@ -499,6 +537,53 @@ impl LanguageModel for OpenAiLanguageModel {
         self.model.supports_compaction()
     }
 
+    fn supports_explicit_compaction(&self) -> bool {
+        self.model.supports_compaction()
+    }
+
+    fn compact(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        if !self.supports_explicit_compaction() {
+            return async {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "this OpenAI model does not support explicit compaction"
+                )))
+            }
+            .boxed();
+        }
+
+        normalize_open_ai_response_thinking_effort(&mut request, &self.model);
+        let request = match into_open_ai_response(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
+            self.max_output_tokens(),
+            default_thinking_reasoning_effort(&self.model),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&open_ai::ReasoningEffort::None),
+            &OPEN_AI_PROVIDER_ID,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let request = request.into_compact_request();
+        let response = self.compact_response(request, cx);
+        async move {
+            let response = response.await?;
+            let usage = token_usage_from_response_usage(&response.usage);
+            let context = response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .map_err(LanguageModelCompletionError::Other)?;
+            Ok(CompactionResult { context, usage })
+        }
+        .boxed()
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         supported_thinking_effort_levels(&self.model)
     }
@@ -538,7 +623,7 @@ impl LanguageModel for OpenAiLanguageModel {
         }
         if self.model.uses_responses_api() {
             normalize_open_ai_response_thinking_effort(&mut request, &self.model);
-            let request = into_open_ai_response(
+            let request = match into_open_ai_response(
                 request,
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
@@ -548,10 +633,14 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model
                     .supported_reasoning_efforts()
                     .contains(&open_ai::ReasoningEffort::None),
-            );
+                &OPEN_AI_PROVIDER_ID,
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_response(request, cx);
             async move {
-                let mapper = OpenAiResponseEventMapper::new();
+                let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()

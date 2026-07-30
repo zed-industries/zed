@@ -29,6 +29,7 @@ profiling.workspace = true
 raw-window-handle.workspace = true
 smallvec.workspace = true
 swash.workspace = true
+unicode-bidi.workspace = true
 unicode-segmentation.workspace = true
 gpui_util.workspace = true
 wgpu.workspace = true
@@ -42,9 +43,9 @@ pollster.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen.workspace = true
-wasm-bindgen-futures = "0.4"
+wasm-bindgen-futures.workspace = true
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
-js-sys = "0.3"
+js-sys.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

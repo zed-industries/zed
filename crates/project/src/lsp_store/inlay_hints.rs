@@ -58,6 +58,7 @@ pub struct BufferInlayHints {
     hints_by_id: HashMap<InlayId, HintForId>,
     pending_refreshes: HashSet<LanguageServerId>,
     work_end_refreshes: HashSet<LanguageServerId>,
+    pub(super) fetched_servers: HashSet<LanguageServerId>,
     pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
 }
 
@@ -90,6 +91,7 @@ impl BufferInlayHints {
             fetches_by_chunks: vec![None; chunks.len()],
             pending_refreshes: HashSet::default(),
             work_end_refreshes: HashSet::default(),
+            fetched_servers: HashSet::default(),
             hints_by_id: HashMap::default(),
             hint_resolves: HashMap::default(),
             chunks,
@@ -137,6 +139,7 @@ impl BufferInlayHints {
         }
         self.pending_refreshes.remove(&for_server);
         self.work_end_refreshes.remove(&for_server);
+        self.fetched_servers.remove(&for_server);
     }
 
     fn mark_refresh_pending(&mut self, server_id: LanguageServerId) {
@@ -165,6 +168,7 @@ impl BufferInlayHints {
         self.hint_resolves.clear();
         self.pending_refreshes.clear();
         self.work_end_refreshes.clear();
+        self.fetched_servers.clear();
     }
 
     pub fn insert_new_hints(
@@ -173,26 +177,28 @@ impl BufferInlayHints {
         server_id: LanguageServerId,
         new_hints: Vec<(InlayId, InlayHint)>,
     ) {
-        let existing_hints = self.hints_by_chunks[chunk.id]
-            .get_or_insert_default()
-            .entry(server_id)
-            .or_insert_with(Vec::new);
-        let existing_count = existing_hints.len();
-        existing_hints.extend(new_hints.into_iter().enumerate().filter_map(
-            |(i, (id, new_hint))| {
-                let new_hint_for_id = HintForId {
+        let chunk_hints = self.hints_by_chunks[chunk.id].get_or_insert_default();
+
+        // A response always covers the entire chunk, so it supersedes the server's previously
+        // cached hints for this chunk: a concurrent fetch for the same chunk and server
+        // (e.g. a server refresh arriving mid-fetch) would otherwise append the same hints
+        // again under fresh ids, duplicating them.
+        for (stale_id, _) in chunk_hints.remove(&server_id).into_iter().flatten() {
+            self.hints_by_id.remove(&stale_id);
+            self.hint_resolves.remove(&stale_id);
+        }
+        let mut inserted_hints = Vec::with_capacity(new_hints.len());
+        for (id, new_hint) in new_hints {
+            if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
+                vacant_entry.insert(HintForId {
                     chunk_id: chunk.id,
                     server_id,
-                    position: existing_count + i,
-                };
-                if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
-                    vacant_entry.insert(new_hint_for_id);
-                    Some((id, new_hint))
-                } else {
-                    None
-                }
-            },
-        ));
+                    position: inserted_hints.len(),
+                });
+                inserted_hints.push((id, new_hint));
+            }
+        }
+        chunk_hints.insert(server_id, inserted_hints);
         *self.fetched_hints(&chunk) = None;
     }
 
@@ -228,6 +234,7 @@ impl BufferInlayHints {
                 self.fetches_by_chunks[chunk_id] = None;
             }
         }
+        self.fetched_servers.remove(&for_server);
 
         true
     }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Disclosure, IconButtonShape, prelude::*};
+use crate::{Disclosure, DockSide, IconButtonShape, prelude::*};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
 use theme::UiDensity;
@@ -23,6 +23,8 @@ pub struct ListHeader {
     inset: bool,
     selected: bool,
     height: Option<DefiniteLength>,
+    focused: Option<bool>,
+    dock: Option<DockSide>,
 }
 
 impl ListHeader {
@@ -38,6 +40,8 @@ impl ListHeader {
             on_toggle: None,
             selected: false,
             height: None,
+            focused: None,
+            dock: None,
         }
     }
 
@@ -84,6 +88,16 @@ impl ListHeader {
         self.inset = inset;
         self
     }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = Some(focused);
+        self
+    }
+
+    pub fn dock(mut self, dock: impl Into<Option<DockSide>>) -> Self {
+        self.dock = dock.into();
+        self
+    }
 }
 
 impl Toggleable for ListHeader {
@@ -114,6 +128,16 @@ impl RenderOnce for ListHeader {
                     .when(self.inset, |this| this.px_2())
                     .when(self.selected, |this| {
                         this.bg(cx.theme().colors().ghost_element_selected)
+                    })
+                    .when_some(self.focused, |this, focused| {
+                        this.border_1()
+                            .when_some(self.dock, |this, dock| match dock {
+                                DockSide::Left => this.border_l_2(),
+                                DockSide::Right => this.border_r_2(),
+                            })
+                            .when(focused, |this| {
+                                this.border_color(cx.theme().colors().border_focused)
+                            })
                     })
                     .flex()
                     .flex_1()

@@ -36,7 +36,7 @@ use crate::{
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtendingVec, ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent,
+        ExtendingSet, ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent,
         RootUserSettings, SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
@@ -1203,7 +1203,7 @@ impl SettingsStore {
             });
 
             let file_type_patterns_ref =
-                generator.subschema_for::<ExtendingVec<String>>().to_value();
+                generator.subschema_for::<ExtendingSet<String>>().to_value();
             replace_subschema::<FileTypeMap>(generator, || {
                 json_schema!({
                     "type": "object",
@@ -2611,6 +2611,32 @@ mod tests {
                 "show": "always"
               },
               "format_on_save": "off"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // re-importing a file association that is already present should be
+        // idempotent rather than appending a duplicate extension (#56536)
+        check_vscode_import(
+            &mut store,
+            r#"{
+              "file_types": {
+                "c": ["*.keymap"]
+              }
+            }
+            "#
+            .unindent(),
+            r#"{ "files.associations": { "*.keymap": "c" } }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "file_types": {
+                "c": ["*.keymap"]
+              }
             }
             "#
             .unindent(),

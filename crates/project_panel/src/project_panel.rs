@@ -22,12 +22,13 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, ParentElement, PathPromptOptions, Pixels, Point,
-    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
-    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+    ExternalDragPayload, ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
+    PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -778,7 +779,7 @@ impl ProjectPanel {
                     EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
-                    EditorEvent::Blurred => {
+                    EditorEvent::Blurred if window.is_window_active() => {
                         if project_panel
                             .state
                             .edit_state
@@ -1092,7 +1093,11 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
-            let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
+            let is_markdown = !is_dir
+                && MarkdownPreviewView::is_markdown_path(
+                    entry.path.as_std_path(),
+                    project.languages(),
+                );
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1783,7 +1788,12 @@ impl ProjectPanel {
         let Some((worktree, entry)) = self.selected_entry(cx) else {
             return;
         };
-        if !entry.is_file() || !MarkdownPreviewView::is_markdown_path(&*entry.path) {
+        if !entry.is_file()
+            || !MarkdownPreviewView::is_markdown_path(
+                entry.path.as_std_path(),
+                self.project.read(cx).languages(),
+            )
+        {
             return;
         }
         let project_path = ProjectPath {
@@ -4751,6 +4761,43 @@ impl ProjectPanel {
             || cfg!(not(target_os = "macos")) && modifiers.control
     }
 
+    fn file_drag_paths_for_selections(
+        project: &Entity<Project>,
+        selections: impl IntoIterator<Item = SelectedEntry>,
+        cx: &App,
+    ) -> Option<FileDragPaths> {
+        let project = project.read(cx);
+        let paths = selections
+            .into_iter()
+            .filter_map(|selection| {
+                let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                if !worktree.is_local() {
+                    return None;
+                }
+                let entry = worktree.entry_for_id(selection.entry_id)?;
+                Some((worktree.absolutize(&entry.path), entry.is_dir()))
+            })
+            .collect::<SmallVec<[_; 2]>>();
+
+        (!paths.is_empty()).then(|| FileDragPaths::new(paths))
+    }
+
+    fn external_paths_for_dragged_selection(
+        &self,
+        selections: &DraggedSelection,
+        cx: &App,
+    ) -> Option<FileDragPaths> {
+        let resolved_selections = selections
+            .items()
+            .map(|selection| SelectedEntry {
+                worktree_id: selection.worktree_id,
+                entry_id: self.resolve_entry(selection.entry_id),
+            })
+            .collect::<BTreeSet<SelectedEntry>>();
+        let entries = self.disjoint_entries(resolved_selections, cx);
+        Self::file_drag_paths_for_selections(&self.project, entries, cx)
+    }
+
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
@@ -4822,18 +4869,20 @@ impl ProjectPanel {
                     }
                     // update selection
                     if let Some(entry_id) = last_succeed {
-                        project_panel.update_in(cx, |project_panel, window, cx| {
-                            project_panel.selection = Some(SelectedEntry {
-                                worktree_id,
-                                entry_id,
-                            });
-                            // if only one entry was dragged and it was disambiguated, open the rename editor
-                            if item_count == 1 && disambiguation_range.is_some() {
-                                project_panel.rename_impl(disambiguation_range, window, cx);
-                            }
+                        project_panel
+                            .update_in(cx, |project_panel, window, cx| {
+                                project_panel.selection = Some(SelectedEntry {
+                                    worktree_id,
+                                    entry_id,
+                                });
+                                // if only one entry was dragged and it was disambiguated, open the rename editor
+                                if item_count == 1 && disambiguation_range.is_some() {
+                                    project_panel.rename_impl(disambiguation_range, window, cx);
+                                }
 
-                            project_panel.undo_manager.record(changes)
-                        })??;
+                                project_panel.undo_manager.record(changes)
+                            })?
+                            .log_err();
                     }
 
                     std::result::Result::Ok::<(), anyhow::Error>(())
@@ -5931,6 +5980,15 @@ impl ProjectPanel {
                                 selection: selection.active_selection,
                                 selections: selection.marked_selections.clone(),
                             })
+                        }
+                    })
+                    .external_drag_payload({
+                        let project_panel = cx.entity();
+                        move |selection: &DraggedSelection, _window, cx| {
+                            project_panel
+                                .read(cx)
+                                .external_paths_for_dragged_selection(selection, cx)
+                                .map(ExternalDragPayload::Files)
                         }
                     })
                     .on_drop(cx.listener(

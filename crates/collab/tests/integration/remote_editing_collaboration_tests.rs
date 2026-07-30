@@ -686,10 +686,11 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     let ts_lang = Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..LanguageMatcher::default()
-            },
+            })
+            .into(),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),

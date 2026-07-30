@@ -11,19 +11,52 @@ actions!(
     ]
 );
 
-/// Generates a formatted text report of the input-to-frame latency histogram
-/// for the given window. If a previous report was generated (tracked via a
-/// global on the `App`), includes a delta section showing changes since that
-/// report.
-pub fn format_input_latency_report(window: &Window, cx: &mut App) -> String {
+/// The data needed to format an input-latency report, captured synchronously
+/// by [`snapshot_input_latency_report`]. Formatting via
+/// [`format_input_latency_report`] is pure computation and can happen on a
+/// background thread.
+pub struct InputLatencyReportData {
+    snapshot: InputLatencySnapshot,
+    previous_snapshot: Option<InputLatencySnapshot>,
+    previous_timestamp: Option<chrono::DateTime<chrono::Local>>,
+    timestamp: chrono::DateTime<chrono::Local>,
+    /// The collab username of the user whose machine produced the data.
+    /// Set when the report will be placed in a buffer visible to other
+    /// collaborators, so it's clear whose latency was measured.
+    reported_by: Option<String>,
+}
+
+/// Captures the input-to-frame latency histogram for the given window, along
+/// with the previous report's baseline (tracked via a global on the `App`) for
+/// delta computation. Advances the baseline to this snapshot.
+pub fn snapshot_input_latency_report(
+    window: &Window,
+    reported_by: Option<String>,
+    cx: &mut App,
+) -> InputLatencyReportData {
     let snapshot = window.input_latency_snapshot();
+    let timestamp = chrono::Local::now();
     let state = cx.default_global::<ReporterState>();
-    let report = format_report(&snapshot, state);
+
+    let data = InputLatencyReportData {
+        snapshot: snapshot.clone(),
+        previous_snapshot: state.previous_snapshot.take(),
+        previous_timestamp: state.previous_timestamp.take(),
+        timestamp,
+        reported_by,
+    };
 
     state.previous_snapshot = Some(snapshot);
-    state.previous_timestamp = Some(chrono::Local::now());
+    state.previous_timestamp = Some(timestamp);
 
-    report
+    data
+}
+
+/// Generates a formatted text report from a previously captured
+/// [`InputLatencyReportData`]. If the capture included a previous snapshot,
+/// includes a delta section showing changes since that report.
+pub fn format_input_latency_report(data: &InputLatencyReportData) -> String {
+    format_report(data)
 }
 
 #[derive(Default)]
@@ -138,7 +171,8 @@ fn count_frames_in_range(histogram: &Histogram<u64>, low_ns: u64, high_ns: u64) 
         .sum()
 }
 
-fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> String {
+fn format_report(data: &InputLatencyReportData) -> String {
+    let snapshot = &data.snapshot;
     let histogram = &snapshot.latency_histogram;
     let total = histogram.len();
 
@@ -157,7 +191,7 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
         ("max  ", 1.0),
     ];
 
-    let now = chrono::Local::now();
+    let now = data.timestamp;
 
     let mut report = String::new();
     report.push_str("Input Latency Histogram\n");
@@ -165,6 +199,9 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
 
     let timestamp = now.format("%Y-%m-%d %H:%M:%S %Z");
     report.push_str(&format!("Timestamp: {timestamp}\n"));
+    if let Some(reported_by) = &data.reported_by {
+        report.push_str(&format!("Reported from {reported_by}'s machine\n"));
+    }
     report.push_str(&format!("Samples: {total}\n"));
     if snapshot.mid_draw_events_dropped > 0 {
         report.push_str(&format!(
@@ -217,7 +254,7 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
 
     // Delta section: compare against the previous report's snapshot.
     if let (Some(prev_snapshot), Some(prev_timestamp)) =
-        (&previous.previous_snapshot, &previous.previous_timestamp)
+        (&data.previous_snapshot, &data.previous_timestamp)
     {
         let prev_latency = &prev_snapshot.latency_histogram;
         let prev_total = prev_latency.len();

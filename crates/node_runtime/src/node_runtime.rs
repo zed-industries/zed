@@ -717,6 +717,8 @@ impl ManagedNodeRuntime {
             log::info!("Extracted Node.js to {}", node_containing_dir.display())
         }
 
+        _ = fs::remove_dir_all(node_dir.join("cache")).await;
+
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
         _ = fs::create_dir(node_dir.join("cache")).await;
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
@@ -828,7 +830,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             subcommand,
             args,
         );
-        let command_env = npm_command_env(Some(&node_binary));
+        let command_env = npm_command_env(&node_binary);
 
         Ok(NpmCommand {
             path: node_binary,
@@ -881,6 +883,7 @@ impl SystemNodeRuntime {
 
         let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
+        _ = fs::remove_dir_all(scratch_dir.join("cache")).await;
         fs::create_dir(scratch_dir.join("cache")).await.ok();
 
         Ok(Self {
@@ -966,7 +969,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             subcommand,
             args,
         );
-        let command_env = npm_command_env(Some(&self.node));
+        let command_env = npm_command_env(&self.node);
 
         Ok(NpmCommand {
             path: self.npm.clone(),
@@ -1011,6 +1014,53 @@ pub async fn read_package_installed_version(
     file.read_to_string(&mut contents).await?;
     let package_json: PackageJson = serde_json::from_str(&contents)?;
     Ok(Some(package_json.version))
+}
+
+pub async fn read_package_executable(
+    node_module_directory: PathBuf,
+    name: &str,
+) -> Result<PathBuf> {
+    let package_directory = node_module_directory.join(name);
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Bin {
+        Path(String),
+        Named(HashMap<String, String>),
+    }
+
+    #[derive(Deserialize)]
+    struct PackageJson {
+        bin: Option<Bin>,
+    }
+
+    let package_json_path = package_directory.join("package.json");
+    let mut file = fs::File::open(&package_json_path)
+        .await
+        .with_context(|| format!("opening {}", package_json_path.display()))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).await?;
+    let package_json: PackageJson = serde_json::from_str(&contents)
+        .with_context(|| format!("parsing {}", package_json_path.display()))?;
+
+    let relative_path = match package_json.bin {
+        Some(Bin::Path(path)) => path,
+        Some(Bin::Named(bins)) => {
+            let unscoped_name = name.rsplit('/').next().unwrap_or(name);
+            let path = if bins.len() == 1 {
+                bins.values().next()
+            } else {
+                bins.get(unscoped_name)
+            };
+            path.with_context(|| {
+                format!("npm package {name} declares no executable named {unscoped_name}")
+            })?
+            .clone()
+        }
+        None => bail!("npm package {name} declares no executable"),
+    };
+
+    Ok(package_directory.join(relative_path))
 }
 
 #[derive(Clone)]
@@ -1107,12 +1157,10 @@ fn build_npm_command_args(
     command_args
 }
 
-fn npm_command_env(node_binary: Option<&Path>) -> HashMap<String, String> {
+pub fn npm_command_env(node_binary: &Path) -> HashMap<String, String> {
     let mut command_env = HashMap::new();
-    if let Some(node_binary) = node_binary {
-        let env_path = path_with_node_binary_prepended(node_binary).unwrap_or_default();
-        command_env.insert("PATH".into(), env_path.to_string_lossy().into_owned());
-    }
+    let env_path = path_with_node_binary_prepended(node_binary).unwrap_or_default();
+    command_env.insert("PATH".into(), env_path.to_string_lossy().into_owned());
 
     if let Ok(node_ca_certs) = env::var(NODE_CA_CERTS_ENV_VAR) {
         if !node_ca_certs.is_empty() {

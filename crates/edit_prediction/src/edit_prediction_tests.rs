@@ -4127,12 +4127,21 @@ async fn test_edit_prediction_settled_drops_future_events_when_their_oss_status_
 }
 
 #[gpui::test]
-fn test_buffer_path_with_id_fallback_for_untitled_buffers(cx: &mut TestAppContext) {
+fn test_buffer_path_with_id_fallback(cx: &mut TestAppContext) {
     let buffer_1 = cx.new(|cx| Buffer::local("one", cx));
     let buffer_2 = cx.new(|cx| Buffer::local("two", cx));
 
     let snapshot_1 = buffer_1.read_with(cx, |buffer, _| buffer.text_snapshot());
     let snapshot_2 = buffer_2.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let windows_file: Arc<dyn language::File> = Arc::new(language::TestFile {
+        path: util::rel_path::rel_path("src/main.rs").into(),
+        root_name: "workspace".into(),
+        local_root: None,
+    });
+    let windows_path =
+        cx.read(|cx| buffer_path_with_id_fallback(Some(&windows_file), &snapshot_1, cx));
+    assert_eq!(windows_path.to_string_lossy(), "workspace/src/main.rs");
 
     let path_1 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_1, cx));
     let path_2 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_2, cx));

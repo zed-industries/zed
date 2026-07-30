@@ -739,7 +739,6 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .mt(rems(1.))
             .mb_0(),
         table_columns_min_size: true,
-        soft_break_as_hard_break: true,
         ..Default::default()
     }
 }
@@ -1291,43 +1290,53 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_hover_markdown_preserves_soft_breaks(cx: &mut gpui::TestAppContext) {
+    fn test_hover_markdown_soft_breaks_reflow_per_commonmark(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
         let cx = cx.add_empty_window();
-        let text = concat!(
-            "class super(object)\n",
-            "|  super(type) -> unbound super object\n",
-            "|  super(type, obj) -> bound super object"
-        );
+        // JSDoc / Rust doc comment / Go doc style: single newlines inside a
+        // paragraph. Per CommonMark §6.7 these are soft breaks and must render
+        // as spaces, producing one reflowing paragraph. See issue #60777.
+        let text = concat!("This is a test\n", "for tooltip\n", "reflow");
         let markdown = cx.new(|cx| Markdown::new(text.into(), None, None, cx));
         cx.run_until_parked();
 
         let rendered = MarkdownElement::rendered_text(markdown, cx, hover_markdown_style);
 
-        // The two soft breaks must render as real newline characters rather
-        // than being collapsed into spaces.
+        // No hard line breaks should appear: the two soft breaks collapse to spaces.
+        assert_eq!(
+            rendered.matches('\n').count(),
+            0,
+            "expected no hard line breaks, got {rendered:?}"
+        );
+        // The whole paragraph reflows onto a single line.
+        assert_eq!(rendered, "This is a test for tooltip reflow");
+    }
+
+    #[gpui::test]
+    fn test_hover_markdown_explicit_hard_breaks_preserved(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let cx = cx.add_empty_window();
+        // The spec-correct way for an LSP server to request line preservation
+        // is to emit CommonMark hard breaks. PR #54165 also maps `<br>` tags to
+        // hard breaks. Both must continue to render as forced line breaks under
+        // the default hover style.
+        let text = "first line  \nsecond line\\\nthird line";
+        let markdown = cx.new(|cx| Markdown::new(text.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let rendered = MarkdownElement::rendered_text(markdown, cx, hover_markdown_style);
+
+        // Two explicit hard breaks (two trailing spaces, and a trailing `\`)
+        // must render as two newline characters.
         assert_eq!(
             rendered.matches('\n').count(),
             2,
             "expected two hard line breaks, got {rendered:?}"
         );
         let lines: Vec<&str> = rendered.split('\n').collect();
-        assert_eq!(
-            lines,
-            [
-                "class super(object)",
-                "|  super(type) -> unbound super object",
-                "|  super(type, obj) -> bound super object",
-            ]
-        );
-        // The two spaces after each `|` continuation marker are preserved verbatim.
-        assert!(lines[1].starts_with("|  super"));
-        assert!(lines[2].starts_with("|  super"));
-        // No tabs are introduced anywhere in the rendered output.
-        assert!(!rendered.contains('\t'));
-        // And the full rendering matches the source exactly.
-        assert_eq!(rendered, text);
+        assert_eq!(lines, ["first line", "second line", "third line"]);
     }
 
     impl InfoPopover {

@@ -30,4 +30,5 @@ strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+http_client = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true

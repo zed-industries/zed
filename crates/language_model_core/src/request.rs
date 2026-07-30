@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::role::Role;
 use crate::{
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, SharedString,
+    LanguageModelProviderId, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelToolUseInput, SharedString,
 };
 
 /// Dimensions of a `LanguageModelImage`
@@ -262,19 +263,58 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
-    Compaction(CompactionContent),
+    Compaction(CompactedContext),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub enum CompactionContent {
-    Pending,
+pub enum CompactedContext {
     Summary {
-        content: Option<Arc<str>>,
+        content: Arc<str>,
+        /// Opaque state the producing backend needs round-tripped alongside
+        /// the summary (e.g. Anthropic's `encrypted_content`). `None` when the
+        /// summary stands alone.
+        #[serde(default)]
+        provider_state: Option<ProviderCompactionState>,
     },
-    Encrypted {
-        id: Option<Arc<str>>,
-        encrypted_content: Arc<str>,
-    },
+    ProviderState(ProviderCompactionState),
+}
+
+/// Opaque context produced by a provider's native compaction mechanism.
+///
+/// Only the provider identified by `provider_id` may interpret `payload`.
+/// `format` lets that provider evolve its representation without exposing it
+/// through the shared language model API.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct ProviderCompactionState {
+    provider_id: LanguageModelProviderId,
+    format: SharedString,
+    payload: Arc<str>,
+}
+
+impl ProviderCompactionState {
+    pub fn new(
+        provider_id: LanguageModelProviderId,
+        format: impl Into<SharedString>,
+        payload: impl Into<Arc<str>>,
+    ) -> Self {
+        Self {
+            provider_id,
+            format: format.into(),
+            payload: payload.into(),
+        }
+    }
+
+    pub fn provider_id(&self) -> &LanguageModelProviderId {
+        &self.provider_id
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    pub fn payload(&self) -> &str {
+        &self.payload
+    }
 }
 
 impl MessageContent {

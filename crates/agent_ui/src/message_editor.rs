@@ -1599,6 +1599,7 @@ impl MessageEditor {
                 anchor..anchor,
                 self.editor.downgrade(),
                 self.mention_set.downgrade(),
+                self.workspace.clone(),
                 Some(selection),
             )
         else {
@@ -2018,7 +2019,7 @@ impl Render for MessageEditor {
 
                 let text_style = TextStyle {
                     color: cx.theme().colors().text,
-                    font_family: settings.buffer_font.family.clone(),
+                    font_family: settings.agent_buffer_font_family().clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: settings.agent_buffer_font_size(cx).into(),
@@ -3468,10 +3469,11 @@ mod tests {
         let plain_text_language = Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "Plain Text".into(),
-                matcher: language::LanguageMatcher {
+                matcher: (language::LanguageMatcher {
                     path_suffixes: vec!["txt".to_string()],
                     ..Default::default()
-                },
+                })
+                .into(),
                 ..Default::default()
             },
             None,

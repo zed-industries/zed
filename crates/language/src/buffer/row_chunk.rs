@@ -1,9 +1,11 @@
 //! A row chunk is an exclusive range of rows, [`BufferRow`] within a buffer of a certain version, [`Global`].
 //! All but the last chunk are of a constant, given size.
 
-use std::{ops::Range, sync::Arc};
+use std::{collections::BTreeSet, ops::Range};
 
-use text::{Anchor, OffsetRangeExt as _, Point};
+use collections::HashMap;
+use parking_lot::Mutex;
+use text::{Anchor, Point};
 use util::RangeExt;
 
 use crate::BufferRow;
@@ -16,86 +18,96 @@ use crate::BufferRow;
 /// Together, chunks form entire document at a particular version [`Global`].
 /// Each chunk is queried for inlays as `(start_row, 0)..(end_exclusive, 0)` via
 /// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
-#[derive(Clone)]
+///
+/// Chunk boundaries are derived arithmetically from the buffer's last row.
+/// Each chunk's anchors are computed when the chunk is first queried and memoized:
+/// resolving an anchor requires sum tree seeks, which gets expensive if done for
+/// all chunks of a large buffer at once.
 pub struct RowChunks {
-    chunks: Arc<[RowChunk]>,
-    version: clock::Global,
+    buffer_snapshot: text::BufferSnapshot,
+    last_row: BufferRow,
+    max_rows_per_chunk: u32,
+    computed_chunks: Mutex<HashMap<usize, RowChunk>>,
 }
 
 impl std::fmt::Debug for RowChunks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RowChunks")
-            .field("chunks", &self.chunks)
+            .field("len", &self.len())
+            .field("max_rows_per_chunk", &self.max_rows_per_chunk)
+            .field("computed_chunks", &self.computed_chunks.lock().len())
             .finish()
     }
 }
 
 impl RowChunks {
     pub fn new(snapshot: &text::BufferSnapshot, max_rows_per_chunk: u32) -> Self {
-        let buffer_point_range = (0..snapshot.len()).to_point(&snapshot);
-        let last_row = buffer_point_range.end.row;
-        let chunks = (buffer_point_range.start.row..=last_row)
-            .step_by(max_rows_per_chunk as usize)
-            .collect::<Vec<_>>();
-        let last_chunk_id = chunks.len() - 1;
-        let chunks = chunks
-            .into_iter()
-            .enumerate()
-            .map(|(id, chunk_start)| {
-                let start = Point::new(chunk_start, 0);
-                let end_exclusive = (chunk_start + max_rows_per_chunk).min(last_row);
-                let end = if id == last_chunk_id {
-                    Point::new(end_exclusive, snapshot.line_len(end_exclusive))
-                } else {
-                    Point::new(end_exclusive, 0)
-                };
-                RowChunk {
-                    id,
-                    start: chunk_start,
-                    end_exclusive,
-                    start_anchor: snapshot.anchor_before(start),
-                    end_anchor: snapshot.anchor_after(end),
-                }
-            })
-            .collect::<Vec<_>>();
         Self {
-            chunks: Arc::from(chunks),
-            version: snapshot.version().clone(),
+            last_row: snapshot.max_point().row,
+            buffer_snapshot: snapshot.clone(),
+            max_rows_per_chunk,
+            computed_chunks: Mutex::new(HashMap::default()),
         }
     }
 
     pub fn version(&self) -> &clock::Global {
-        &self.version
+        self.buffer_snapshot.version()
     }
 
     pub fn len(&self) -> usize {
-        self.chunks.len()
+        (self.last_row / self.max_rows_per_chunk) as usize + 1
     }
 
     pub fn applicable_chunks(&self, ranges: &[Range<Point>]) -> impl Iterator<Item = RowChunk> {
-        let row_ranges = ranges
-            .iter()
+        let last_chunk_id = self.len() - 1;
+        let mut chunk_ids = BTreeSet::new();
+        for point_range in ranges {
             // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
             // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
-            .map(|point_range| point_range.start.row..point_range.end.row + 1)
-            .collect::<Vec<_>>();
-        self.chunks
-            .iter()
-            .filter(move |chunk| -> bool {
-                let chunk_range = chunk.row_range().to_inclusive();
-                row_ranges
-                    .iter()
-                    .any(|row_range| chunk_range.overlaps(&row_range))
-            })
-            .copied()
+            let row_range = point_range.start.row..point_range.end.row + 1;
+            let first_id = (point_range.start.row.div_ceil(self.max_rows_per_chunk) as usize)
+                .saturating_sub(1);
+            let last_id =
+                ((point_range.end.row / self.max_rows_per_chunk) as usize).min(last_chunk_id);
+            for id in first_id..=last_id {
+                if self.chunk_row_range(id).to_inclusive().overlaps(&row_range) {
+                    chunk_ids.insert(id);
+                }
+            }
+        }
+        chunk_ids.into_iter().map(|id| self.chunk(id))
     }
 
     pub fn previous_chunk(&self, chunk: RowChunk) -> Option<RowChunk> {
-        if chunk.id == 0 {
+        if chunk.id == 0 || chunk.id > self.len() {
             None
         } else {
-            self.chunks.get(chunk.id - 1).copied()
+            Some(self.chunk(chunk.id - 1))
         }
+    }
+
+    fn chunk_row_range(&self, id: usize) -> Range<BufferRow> {
+        let start = id as u32 * self.max_rows_per_chunk;
+        start..(start + self.max_rows_per_chunk).min(self.last_row)
+    }
+
+    fn chunk(&self, id: usize) -> RowChunk {
+        *self.computed_chunks.lock().entry(id).or_insert_with(|| {
+            let row_range = self.chunk_row_range(id);
+            let start = Point::new(row_range.start, 0);
+            let end = if id == self.len() - 1 {
+                Point::new(row_range.end, self.buffer_snapshot.line_len(row_range.end))
+            } else {
+                Point::new(row_range.end, 0)
+            };
+            RowChunk {
+                id,
+                start: row_range.start,
+                end_exclusive: row_range.end,
+                start_anchor: self.buffer_snapshot.anchor_before(start),
+                end_anchor: self.buffer_snapshot.anchor_after(end),
+            }
+        })
     }
 }
 

@@ -35,13 +35,37 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             return;
         };
 
-        let active_call_handle = active_call_handle.clone();
-        cx.subscribe_in(
-            &cx.entity(),
-            window,
+        cx.observe_window_activation(window, {
+            let active_call_handle = active_call_handle.clone();
+            move |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.update_active_view_for_followers(window, cx)
+                });
+
+                if window.is_window_active() {
+                    let project = workspace.read(cx).project().clone();
+                    if let Ok(task) = active_call_handle.update(cx, |active_call, cx| {
+                        active_call.set_location(Some(&project), cx)
+                    }) {
+                        task.detach_and_log_err(cx);
+                    }
+                } else if cx.active_window().is_none() {
+                    if let Ok(task) = active_call_handle
+                        .update(cx, |active_call, cx| active_call.set_location(None, cx))
+                    {
+                        task.detach_and_log_err(cx);
+                    }
+                }
+            }
+        })
+        .detach();
+
+        cx.subscribe_in(&cx.entity(), window, {
+            let active_call_handle = active_call_handle.clone();
             move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
-                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
-                    && window.is_window_active()
+                if !(matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
+                    && window.is_window_active())
                 {
                     return;
                 }
@@ -52,8 +76,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 }) {
                     task.detach_and_log_err(cx);
                 }
-            },
-        )
+            }
+        })
         .detach();
     })
     .detach();
@@ -367,6 +391,7 @@ pub struct IncomingCall {
 /// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
     room: Option<(Entity<Room>, Vec<Subscription>)>,
+    last_call_diagnostics: Option<Entity<diagnostics::CallDiagnostics>>,
     pending_room_creation: Option<Shared<Task<Result<Entity<Room>, Arc<anyhow::Error>>>>>,
     location: Option<WeakEntity<Project>>,
     _join_debouncer: OneAtATime,
@@ -386,6 +411,7 @@ impl ActiveCall {
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         Self {
             room: None,
+            last_call_diagnostics: None,
             pending_room_creation: None,
             location: None,
             pending_invites: Default::default(),
@@ -666,6 +692,7 @@ impl ActiveCall {
         Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
+        self.retain_room_diagnostics(cx);
         if let Some((room, _)) = self.room.take() {
             cx.emit(Event::RoomLeft { channel_id });
             room.update(cx, |room, cx| room.leave(cx))
@@ -720,6 +747,7 @@ impl ActiveCall {
             Task::ready(Ok(()))
         } else {
             cx.notify();
+            self.retain_room_diagnostics(cx);
             if let Some(room) = room {
                 if room.read(cx).status().is_offline() {
                     self.room = None;
@@ -753,6 +781,23 @@ impl ActiveCall {
 
     pub fn room(&self) -> Option<&Entity<Room>> {
         self.room.as_ref().map(|(room, _)| room)
+    }
+
+    pub fn call_diagnostics(&self, cx: &App) -> Option<Entity<diagnostics::CallDiagnostics>> {
+        self.room()
+            .and_then(|room| room.read(cx).diagnostics())
+            .cloned()
+            .or_else(|| self.last_call_diagnostics.clone())
+    }
+
+    fn retain_room_diagnostics(&mut self, cx: &App) {
+        if let Some(diagnostics) = self
+            .room()
+            .and_then(|room| room.read(cx).diagnostics())
+            .cloned()
+        {
+            self.last_call_diagnostics = Some(diagnostics);
+        }
     }
 
     pub fn client(&self) -> Arc<Client> {

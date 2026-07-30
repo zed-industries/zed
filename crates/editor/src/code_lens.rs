@@ -1709,10 +1709,11 @@ mod tests {
         language_registry.add(Arc::new(language::Language::new(
             language::LanguageConfig {
                 name: "TypeScript".into(),
-                matcher: language::LanguageMatcher {
+                matcher: (language::LanguageMatcher {
                     path_suffixes: vec!["ts".to_string()],
                     ..language::LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..language::LanguageConfig::default()
             },
             Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),

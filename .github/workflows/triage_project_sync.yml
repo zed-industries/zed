@@ -91,6 +91,7 @@ jobs:
           # mutations. Without `owner:`, the default token is repo-scoped and
           # cannot write to org projects.
           owner: zed-industries
+          repositories: zed
           # Scope the token down to the minimum needed for this workflow.
           # Even though the App may have broader permissions for other
           # automations (e.g., Issues:Write for the dupe-bot), this token

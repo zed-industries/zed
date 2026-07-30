@@ -67,7 +67,7 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
                     .filter(repo => !repo.archived)
                     .map(repo => repo.name);
 
-                const filterInput = `{filter_repos_input}`.trim();
+                const filterInput = process.env.FILTER_REPOS.trim();
                 if (filterInput.length > 0) {{
                     const allowedNames = filterInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
                     filteredRepos = filteredRepos.filter(name => allowedNames.includes(name));
@@ -80,6 +80,7 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
             .result_encoding(ResultEncoding::Json)
             .custom_name("get_repositories")
             .id("list-repos")
+            .env("FILTER_REPOS", filter_repos_input.to_string())
             .into();
 
         let filtered_repos = StepOutput::new(&step, "result");

@@ -144,25 +144,21 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Mutex<Vec<Option<Vec<BracketMatch<usize>>>>>,
+    brackets_by_chunks: Mutex<HashMap<usize, Vec<BracketMatch<usize>>>>,
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
-        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
+        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
-        self.brackets_by_chunks
-            .get_mut()
-            .resize(self.chunks.len(), None);
     }
 
     fn new(snapshot: &text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
-            brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
-            chunks,
+            chunks: RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK),
+            brackets_by_chunks: Mutex::new(HashMap::default()),
         }
     }
 
@@ -4824,6 +4820,13 @@ impl BufferSnapshot {
         known_chunks: Option<&HashSet<Range<BufferRow>>>,
     ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
         let mut all_bracket_matches = HashMap::default();
+        if self
+            .language
+            .as_ref()
+            .is_none_or(|language| language.grammar().is_none())
+        {
+            return all_bracket_matches;
+        }
 
         for chunk in self
             .tree_sitter_data
@@ -4836,8 +4839,11 @@ impl BufferSnapshot {
             let chunk_range = chunk.anchor_range();
             let chunk_range = chunk_range.to_offset(&self);
 
-            if let Some(cached_brackets) =
-                &self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
+            if let Some(cached_brackets) = self
+                .tree_sitter_data
+                .brackets_by_chunks
+                .lock()
+                .get(&chunk.id)
             {
                 all_bracket_matches.insert(chunk.row_range(), cached_brackets.clone());
                 continue;
@@ -5101,11 +5107,11 @@ impl BufferSnapshot {
                 (bracket_match.open_range.start, bracket_match.open_range.end)
             });
 
-            if let empty_slot @ None =
-                &mut self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                *empty_slot = Some(all_brackets.clone());
-            }
+            self.tree_sitter_data
+                .brackets_by_chunks
+                .lock()
+                .entry(chunk.id)
+                .or_insert_with(|| all_brackets.clone());
             all_bracket_matches.insert(chunk.row_range(), all_brackets);
         }
 

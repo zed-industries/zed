@@ -18,7 +18,7 @@ use language::{Language, LanguageRegistry};
 use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
-use ui::{CommonAnimationExt, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -1278,6 +1278,44 @@ impl NotebookEditor {
         .size_full()
     }
 
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(Label::new("This notebook is empty.").color(Color::Muted))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("empty-state-add-code", "Add code cell")
+                            .start_icon(Icon::new(IconName::Code))
+                            .key_binding(KeyBinding::for_action_in(
+                                &AddCodeBlock,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_code_block(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("empty-state-add-markdown", "Add markdown cell")
+                            .style(ButtonStyle::Subtle)
+                            .start_icon(Icon::new(IconName::FileMarkdown))
+                            .key_binding(KeyBinding::for_action_in(
+                                &AddMarkdownBlock,
+                                &self.focus_handle,
+                                cx,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.add_markdown_block(window, cx)
+                            })),
+                    ),
+            )
+    }
+
     fn cell_position(&self, index: usize) -> CellPosition {
         match index {
             0 => CellPosition::First,
@@ -1477,7 +1515,16 @@ impl Render for NotebookEditor {
                     .w_full()
                     .h_full()
                     .gap_2()
-                    .child(div().flex_1().h_full().child(self.cell_list(window, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .child(if self.cell_order.is_empty() {
+                                self.render_empty_state(cx).into_any_element()
+                            } else {
+                                self.cell_list(window, cx).into_any_element()
+                            }),
+                    )
                     .child(self.render_notebook_controls(window, cx)),
             )
             .child(self.render_kernel_status_bar(window, cx))

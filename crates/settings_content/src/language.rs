@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{DocumentFoldingRanges, DocumentSymbols, ExtendingVec, SemanticTokens, merge_from};
+use crate::{DocumentFoldingRanges, DocumentSymbols, ExtendingSet, SemanticTokens, merge_from};
 
 /// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -55,36 +55,10 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
         // A user's global settings override the default global settings and
         // all default language-specific settings.
         self.defaults.merge_from(&other.defaults);
-        let globally_disabled_servers = other.defaults.language_servers.as_ref().map(|servers| {
-            servers
-                .iter()
-                .filter(|entry| entry.disabled)
-                .cloned()
-                .collect::<Vec<_>>()
-        });
         for language_settings in self.languages.0.values_mut() {
-            let language_server_overrides = language_settings.language_servers.clone();
+            let language_servers = language_settings.language_servers.take();
             language_settings.merge_from(&other.defaults);
-            if let Some(mut language_server_overrides) = language_server_overrides {
-                if let Some(disabled) = &globally_disabled_servers {
-                    for disabled_server in disabled {
-                        language_server_overrides
-                            .retain(|entry| entry.disabled || entry.name != disabled_server.name);
-                    }
-
-                    let insert_before = language_server_overrides
-                        .iter()
-                        .position(|entry| entry.name.as_ref() == REST_OF_LANGUAGE_SERVERS)
-                        .unwrap_or(language_server_overrides.len());
-                    for disabled_server in disabled {
-                        if !language_server_overrides.contains(disabled_server) {
-                            language_server_overrides
-                                .insert(insert_before, disabled_server.clone());
-                        }
-                    }
-                }
-                language_settings.language_servers = Some(language_server_overrides);
-            }
+            language_settings.language_servers = language_servers;
         }
 
         // A user's language-specific settings override default language-specific settings.
@@ -93,6 +67,7 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
                 existing.merge_from(&user_language_settings);
             } else {
                 let mut new_settings = self.defaults.clone();
+                new_settings.language_servers = None;
                 new_settings.merge_from(&user_language_settings);
 
                 self.languages.0.insert(language_name.clone(), new_settings);
@@ -1203,11 +1178,11 @@ pub struct LanguageToSettingsMap(pub HashMap<String, LanguageSettingsContent>);
 /// Map from language name to file patterns.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct FileTypeMap(pub HashMap<Arc<str>, ExtendingVec<String>>);
+pub struct FileTypeMap(pub HashMap<Arc<str>, ExtendingSet<String>>);
 
 impl<'a> IntoIterator for &'a FileTypeMap {
-    type Item = (&'a Arc<str>, &'a ExtendingVec<String>);
-    type IntoIter = std::collections::hash_map::Iter<'a, Arc<str>, ExtendingVec<String>>;
+    type Item = (&'a Arc<str>, &'a ExtendingSet<String>);
+    type IntoIter = std::collections::hash_map::Iter<'a, Arc<str>, ExtendingSet<String>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -1364,7 +1339,12 @@ mod test {
     }
 
     #[test]
-    fn test_language_servers_merge_preserves_per_language_config() {
+    fn test_language_servers_merge_keeps_per_language_lists_pure() {
+        let default_typescript_servers = vec![
+            ConfiguredLanguageServer::new_disabled("typescript-language-server"),
+            ConfiguredLanguageServer::new("vtsls"),
+            ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+        ];
         let mut base = AllLanguageSettingsContent {
             defaults: LanguageSettingsContent {
                 language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
@@ -1374,76 +1354,7 @@ mod test {
                 [(
                     "TypeScript".into(),
                     LanguageSettingsContent {
-                        language_servers: Some(vec![
-                            "!typescript-language-server".into(),
-                            "vtsls".into(),
-                            REST_OF_LANGUAGE_SERVERS.into(),
-                        ]),
-                        ..LanguageSettingsContent::default()
-                    },
-                )]
-                .into_iter()
-                .collect(),
-            ),
-            ..AllLanguageSettingsContent::default()
-        };
-
-        let user = AllLanguageSettingsContent {
-            defaults: LanguageSettingsContent {
-                language_servers: Some(vec![
-                    "!tailwindcss-language-server".into(),
-                    "!eslint".into(),
-                    REST_OF_LANGUAGE_SERVERS.into(),
-                ]),
-                ..LanguageSettingsContent::default()
-            },
-            ..AllLanguageSettingsContent::default()
-        };
-
-        base.merge_from(&user);
-
-        let ts_servers = base.languages.0["TypeScript"]
-            .language_servers
-            .as_ref()
-            .unwrap();
-        assert_eq!(
-            ts_servers,
-            &vec![
-                ConfiguredLanguageServer::new_disabled("typescript-language-server"),
-                ConfiguredLanguageServer::new("vtsls"),
-                ConfiguredLanguageServer::new_disabled("eslint"),
-                ConfiguredLanguageServer::new_disabled("tailwindcss-language-server"),
-                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
-            ]
-        );
-
-        let default_servers = base.defaults.language_servers.as_ref().unwrap();
-        assert_eq!(
-            default_servers,
-            &vec![
-                ConfiguredLanguageServer::new_disabled("tailwindcss-language-server"),
-                ConfiguredLanguageServer::new_disabled("eslint"),
-                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_global_language_server_disable_overrides_per_language_enable() {
-        let mut base = AllLanguageSettingsContent {
-            defaults: LanguageSettingsContent {
-                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
-                ..LanguageSettingsContent::default()
-            },
-            languages: LanguageToSettingsMap(
-                [(
-                    "TypeScript".into(),
-                    LanguageSettingsContent {
-                        language_servers: Some(vec![
-                            "!typescript-language-server".into(),
-                            "vtsls".into(),
-                            REST_OF_LANGUAGE_SERVERS.into(),
-                        ]),
+                        language_servers: Some(default_typescript_servers.clone()),
                         ..LanguageSettingsContent::default()
                     },
                 )]
@@ -1460,25 +1371,50 @@ mod test {
             },
             ..AllLanguageSettingsContent::default()
         };
-
         base.merge_from(&user);
-
-        let expected = vec![
-            ConfiguredLanguageServer::new_disabled("typescript-language-server"),
-            ConfiguredLanguageServer::new_disabled("vtsls"),
-            ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
-        ];
         assert_eq!(
-            base.languages
-                .0
-                .get("TypeScript")
-                .and_then(|settings| settings.language_servers.as_deref()),
-            Some(expected.as_slice()),
+            base.languages.0["TypeScript"].language_servers.as_ref(),
+            Some(&default_typescript_servers),
+            "a global list must not rewrite per-language lists"
+        );
+        assert_eq!(
+            base.defaults.language_servers.as_ref(),
+            Some(&vec![
+                ConfiguredLanguageServer::new_disabled("vtsls"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ])
+        );
+
+        let project = AllLanguageSettingsContent {
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+        base.merge_from(&project);
+        assert_eq!(
+            base.languages.0["TypeScript"].language_servers.as_ref(),
+            Some(&vec![
+                ConfiguredLanguageServer::new("vtsls"),
+                ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
+            ]),
+            "a per-language list must replace the older one wholesale"
         );
     }
 
     #[test]
-    fn test_language_servers_merge_no_per_language_config_uses_global() {
+    fn test_language_servers_merge_no_per_language_config_stays_unset() {
         let mut base = AllLanguageSettingsContent {
             defaults: LanguageSettingsContent {
                 language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
@@ -1508,13 +1444,16 @@ mod test {
 
         base.merge_from(&user);
 
-        let rust_servers = base.languages.0["Rust"].language_servers.as_ref().unwrap();
         assert_eq!(
-            rust_servers,
-            &vec![
+            base.languages.0["Rust"].language_servers, None,
+            "languages without their own list must not get a stale copy of the global one"
+        );
+        assert_eq!(
+            base.defaults.language_servers.as_ref(),
+            Some(&vec![
                 ConfiguredLanguageServer::new_disabled("eslint"),
                 ConfiguredLanguageServer::new(REST_OF_LANGUAGE_SERVERS),
-            ]
+            ])
         );
     }
 

@@ -81,6 +81,10 @@ jobs:
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: write
+        permission-pull-requests: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -170,6 +174,9 @@ jobs:
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -222,6 +229,10 @@ jobs:
         private-key: ${{ secrets.app-secret }}
         owner: zed-industries
         repositories: extensions
+        permission-contents: write
+        permission-issues: write
+        permission-members: read
+        permission-pull-requests: write
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
