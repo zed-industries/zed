@@ -98,15 +98,33 @@ fn find_next_valid_duplicate_space(
                 if candidate.end.row() >= map.max_point().row() {
                     return None;
                 }
-                *candidate.start.row_mut() += 1;
-                *candidate.end.row_mut() += 1;
+
+                candidate = map.start_of_relative_buffer_row(
+                    DisplayPoint::new(candidate.start.row(), candidate.start.column()),
+                    1,
+                )
+                    ..map.start_of_relative_buffer_row(
+                        DisplayPoint::new(candidate.end.row(), candidate.end.column()),
+                        1,
+                    );
+                // *candidate.start.row_mut() += 1;
+                // *candidate.end.row_mut() += 1;
             }
             Direction::Above => {
                 if candidate.start.row() == DisplayPoint::zero().row() {
                     return None;
                 }
-                *candidate.start.row_mut() = candidate.start.row().0.saturating_sub(1);
-                *candidate.end.row_mut() = candidate.end.row().0.saturating_sub(1);
+
+                candidate = map.start_of_relative_buffer_row(
+                    DisplayPoint::new(candidate.start.row(), candidate.start.column()),
+                    -1,
+                )
+                    ..map.start_of_relative_buffer_row(
+                        DisplayPoint::new(candidate.end.row(), candidate.start.column()),
+                        -1,
+                    );
+                // *candidate.start.row_mut() = candidate.start.row().0.saturating_sub(1);
+                // *candidate.end.row_mut() = candidate.end.row().0.saturating_sub(1);
             }
         }
 
@@ -429,16 +447,22 @@ let y: i32 = 2;",
 
         cx.set_state(
             indoc! {"
-                «1ˇ»234567890121
+                «1ˇ»2345678901234567890
+                12345678901234567890
+                12345678901234567890
+                12345678901234567890
             "},
             Mode::HelixNormal,
         );
 
-        cx.simulate_keystrokes("C");
+        cx.simulate_keystrokes("3 C");
 
         cx.assert_state(
             indoc! {"
-                «1ˇ»23456789012«1ˇ»
+                «1ˇ»2345678901234567890
+                «1ˇ»2345678901234567890
+                «1ˇ»2345678901234567890
+                «1ˇ»2345678901234567890
             "},
             Mode::HelixNormal,
         );
