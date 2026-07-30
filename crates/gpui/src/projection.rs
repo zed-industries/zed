@@ -441,25 +441,32 @@ impl Window {
     }
 }
 
-/// Use a read-write projection of an entity field, writing both lenses from a
-/// single field path. Must be called during render.
+/// Use a projection of an entity field, writing the lenses from a single field
+/// path. Must be called during render.
+///
+/// Read-only by default; prefix the path with `mut` for a writable projection.
 ///
 /// ```ignore
-/// let name: ProjectionMut<String> = project!(window, cx, &person, name);
-/// let city: ProjectionMut<String> = project!(window, cx, &person, address.city);
+/// let name: Projection<String> = project!(window, cx, &person, name);
+/// let name: ProjectionMut<String> = project!(window, cx, &person, mut name);
+/// let city: ProjectionMut<String> = project!(window, cx, &person, mut address.city);
 /// ```
 ///
-/// Expands to [`Window::use_projection_mut`] with `|state| &state.<path>` and
-/// `|state| &mut state.<path>` as the lenses.
+/// Expands to [`Window::use_projection`] with `|state| &state.<path>`, or, with
+/// `mut`, to [`Window::use_projection_mut`] with `|state| &mut state.<path>` as
+/// the second lens.
 #[macro_export]
 macro_rules! project {
-    ($window:expr, $cx:expr, $entity:expr, $($field:ident).+) => {
+    ($window:expr, $cx:expr, $entity:expr, mut $($field:ident).+) => {
         $window.use_projection_mut(
             $cx,
             $entity,
             |state| &state.$($field).+,
             |state| &mut state.$($field).+,
         )
+    };
+    ($window:expr, $cx:expr, $entity:expr, $($field:ident).+) => {
+        $window.use_projection($cx, $entity, |state| &state.$($field).+)
     };
 }
 
@@ -493,7 +500,7 @@ impl<P: ?Sized + 'static> From<ProjectionMut<P>> for Projection<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppContext as _, TestAppContext};
+    use crate::{AppContext as _, IntoElement, Render, TestAppContext, WindowHandle, div};
     use std::{
         cell::{Cell, RefCell},
         rc::Rc,
@@ -504,33 +511,73 @@ mod tests {
         age: u32,
     }
 
-    fn projection<E: 'static, P: ?Sized + 'static>(
-        cx: &mut TestAppContext,
-        source: &Entity<E>,
-        lens: for<'a> fn(&'a E) -> &'a P,
-    ) -> Projection<P> {
-        let state = cx.update(|cx| cx.new(|cx| ReadProjectionState::new(source, lens, cx)));
-        Projection {
-            entity: state.into_any(),
-            read: read_projection::<E, P>,
+    /// Runs `hook` during render so tests build projections the way callers do,
+    /// through the `use_projection` hooks, and records what each frame produced.
+    ///
+    /// `source` and `enabled` are fields rather than captures so tests can swap
+    /// the projected entity or stop rendering the hook between frames.
+    struct HookView<H: 'static> {
+        source: Entity<Person>,
+        hook: fn(&mut Window, &mut Context<Self>, &Entity<Person>) -> H,
+        enabled: bool,
+        frames: Rc<RefCell<Vec<H>>>,
+    }
+
+    impl<H: 'static> Render for HookView<H> {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            if self.enabled {
+                let produced = (self.hook)(window, cx, &self.source);
+                self.frames.borrow_mut().push(produced);
+            }
+            div()
         }
     }
 
-    fn projection_mut<E: 'static, P: ?Sized + 'static>(
+    /// Opens a window around [`HookView`] and draws one frame.
+    fn hook_window<H: 'static>(
         cx: &mut TestAppContext,
-        source: &Entity<E>,
-        read: for<'a> fn(&'a E) -> &'a P,
-        write: for<'a> fn(&'a mut E) -> &'a mut P,
-    ) -> ProjectionMut<P> {
-        let state =
-            cx.update(|cx| cx.new(|cx| MutableProjectionState::new(source, read, write, cx)));
-        ProjectionMut {
-            read: Projection {
-                entity: state.into_any(),
-                read: read_mutable_projection::<E, P>,
-            },
-            write: write_projection::<E, P>,
-        }
+        source: &Entity<Person>,
+        hook: fn(&mut Window, &mut Context<HookView<H>>, &Entity<Person>) -> H,
+    ) -> (WindowHandle<HookView<H>>, Rc<RefCell<Vec<H>>>) {
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let source = source.clone();
+            let frames = frames.clone();
+            move |_, _| HookView {
+                source,
+                hook,
+                enabled: true,
+                frames,
+            }
+        });
+        draw(cx, window);
+        (window, frames)
+    }
+
+    fn draw<H: 'static>(cx: &mut TestAppContext, window: WindowHandle<HookView<H>>) {
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    }
+
+    /// Takes the most recent frame's output and forgets the rest.
+    ///
+    /// The recording holds strong handles, so tests that assert something gets
+    /// dropped must clear anything later frames record as well.
+    fn take_output<H>(frames: &Rc<RefCell<Vec<H>>>) -> H {
+        let mut frames = frames.borrow_mut();
+        let last = frames.pop().expect("the hook ran during render");
+        frames.clear();
+        last
+    }
+
+    /// Draws one frame and returns the projection the hook created.
+    fn render_projection<H: 'static>(
+        cx: &mut TestAppContext,
+        source: &Entity<Person>,
+        hook: fn(&mut Window, &mut Context<HookView<H>>, &Entity<Person>) -> H,
+    ) -> H {
+        let (_window, frames) = hook_window(cx, source, hook);
+        take_output(&frames)
     }
 
     #[test]
@@ -543,12 +590,9 @@ mod tests {
             })
         });
 
-        let name = projection_mut(
-            &mut cx,
-            &person,
-            |person| &person.name,
-            |person| &mut person.name,
-        );
+        let name = render_projection(&mut cx, &person, |window, cx, person| {
+            crate::project!(window, cx, person, mut name)
+        });
 
         cx.update(|cx| {
             assert_eq!(name.read(cx), "Ada");
@@ -568,12 +612,9 @@ mod tests {
                 age: 36,
             })
         });
-        let age = projection_mut(
-            &mut cx,
-            &person,
-            |person| &person.age,
-            |person| &mut person.age,
-        );
+        let age = render_projection(&mut cx, &person, |window, cx, person| {
+            crate::project!(window, cx, person, mut age)
+        });
 
         let notified = Rc::new(Cell::new(0));
         let _subscription = cx.update(|cx| {
@@ -616,12 +657,9 @@ mod tests {
             })
         });
 
-        let name = projection_mut(
-            &mut cx,
-            &person,
-            |person| &person.name,
-            |person| &mut person.name,
-        );
+        let name = render_projection(&mut cx, &person, |window, cx, person| {
+            crate::project!(window, cx, person, mut name)
+        });
         let name_clone = name.clone();
 
         cx.update(|cx| {
@@ -640,48 +678,15 @@ mod tests {
             })
         });
 
-        let name: Projection<str> = projection(&mut cx, &person, |person| person.name.as_str());
+        let name: Projection<str> = render_projection(&mut cx, &person, |window, cx, person| {
+            window.use_projection(cx, person, |person| person.name.as_str())
+        });
 
         cx.update(|cx| assert_eq!(name.read(cx), "Ada"));
     }
 
     #[test]
     fn use_projection_assigns_stable_distinct_identities() {
-        use crate::{AnyWindowHandle, Context, IntoElement, Render, Window, div};
-        use std::cell::RefCell;
-
-        #[derive(Default)]
-        struct Recorded {
-            identities: Vec<(EntityId, EntityId)>,
-            names: Vec<String>,
-            name_projection: Option<ProjectionMut<String>>,
-        }
-
-        struct HookView {
-            person: Entity<Person>,
-            recorded: Rc<RefCell<Recorded>>,
-        }
-
-        impl Render for HookView {
-            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                let name = crate::project!(window, cx, &self.person, name);
-                let age = window.use_projection_mut(
-                    cx,
-                    &self.person,
-                    |person| &person.age,
-                    |person| &mut person.age,
-                );
-
-                let mut recorded = self.recorded.borrow_mut();
-                recorded
-                    .identities
-                    .push((name.entity_id(), age.entity_id()));
-                recorded.names.push(name.read(cx).clone());
-                recorded.name_projection = Some(name);
-                div()
-            }
-        }
-
         let mut cx = TestAppContext::single();
         let person = cx.update(|cx| {
             cx.new(|_| Person {
@@ -690,75 +695,46 @@ mod tests {
             })
         });
         let person_id = person.entity_id();
-        let recorded = Rc::new(RefCell::new(Recorded::default()));
 
-        let window: AnyWindowHandle = cx
-            .add_window({
-                let recorded = recorded.clone();
-                move |_, _| HookView { person, recorded }
-            })
-            .into();
+        // Each frame records both projections plus what they read during that
+        // render, so later assertions can check identity stability and that
+        // writes are visible to subsequent frames.
+        let (window, frames) = hook_window(&mut cx, &person, |window, cx, person| {
+            let name = crate::project!(window, cx, person, mut name);
+            let age = crate::project!(window, cx, person, age);
+            let read = (name.read(cx).clone(), *age.read(cx));
+            (name, age, read)
+        });
+        draw(&mut cx, window);
 
-        cx.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
-            window.draw(cx).clear();
-        })
-        .unwrap();
-
-        let name_projection = recorded
-            .borrow_mut()
-            .name_projection
-            .take()
-            .expect("render ran");
+        let name_projection = frames.borrow().last().expect("render ran").0.clone();
         cx.update(|cx| name_projection.update(cx, |name| name.push_str(" Lovelace")));
+        draw(&mut cx, window);
 
-        cx.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
-        })
-        .unwrap();
-
-        let recorded = recorded.borrow();
-        assert!(recorded.identities.len() >= 3);
-        let first = recorded.identities[0];
+        let frames = frames.borrow();
+        assert!(frames.len() >= 3);
+        let identities: Vec<_> = frames
+            .iter()
+            .map(|(name, age, _)| (name.entity_id(), age.entity_id()))
+            .collect();
+        let first = identities[0];
         assert!(
-            recorded.identities.iter().all(|frame| *frame == first),
-            "identities must be stable across frames: {:?}",
-            recorded.identities
+            identities.iter().all(|frame| *frame == first),
+            "identities must be stable across frames: {identities:?}"
         );
         let (name_id, age_id) = first;
         assert_ne!(name_id, age_id, "call sites must have distinct identities");
         assert_ne!(name_id, person_id, "identity must differ from the source");
         assert_ne!(age_id, person_id, "identity must differ from the source");
         assert_eq!(
-            recorded.names.last().map(String::as_str),
-            Some("Ada Lovelace"),
+            frames.last().map(|(_, _, read)| (read.0.as_str(), read.1)),
+            Some(("Ada Lovelace", 36)),
             "writes through the projection must be visible to later renders"
         );
     }
 
     #[test]
     fn keyed_projection_updates_escaped_handles() {
-        use crate::{Context, IntoElement, Render, Window, div};
-
-        struct HookView {
-            source: Entity<Person>,
-            projection: Rc<RefCell<Option<ProjectionMut<String>>>>,
-        }
-
-        impl Render for HookView {
-            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                let projection = window.use_keyed_projection_mut(
-                    "name",
-                    cx,
-                    &self.source,
-                    |person| &person.name,
-                    |person| &mut person.name,
-                );
-                *self.projection.borrow_mut() = Some(projection);
-                div()
-            }
-        }
-
         let mut cx = TestAppContext::single();
         let first = cx.update(|cx| {
             cx.new(|_| Person {
@@ -772,23 +748,16 @@ mod tests {
                 age: 37,
             })
         });
-        let projection = Rc::new(RefCell::new(None));
-        let window = cx.add_window({
-            let first = first.clone();
-            let projection = projection.clone();
-            move |_, _| HookView {
-                source: first,
-                projection,
-            }
+        let (window, frames) = hook_window(&mut cx, &first, |window, cx, person| {
+            window.use_keyed_projection_mut(
+                "name",
+                cx,
+                person,
+                |person| &person.name,
+                |person| &mut person.name,
+            )
         });
-
-        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
-        let escaped = projection
-            .borrow()
-            .as_ref()
-            .expect("render created a projection")
-            .clone();
+        let escaped = take_output(&frames);
         let identity = escaped.entity_id();
 
         window
@@ -797,8 +766,7 @@ mod tests {
                 cx.notify();
             })
             .unwrap();
-        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
+        draw(&mut cx, window);
 
         cx.update(|cx| {
             assert_eq!(escaped.entity_id(), identity);
@@ -878,24 +846,6 @@ mod tests {
 
     #[test]
     fn escaped_projection_keeps_its_backing_state_alive() {
-        use crate::{Context, IntoElement, Render, Window, div};
-
-        struct HookView {
-            source: Entity<Person>,
-            show_projection: bool,
-            projection: Rc<RefCell<Option<ProjectionMut<String>>>>,
-        }
-
-        impl Render for HookView {
-            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                if self.show_projection {
-                    *self.projection.borrow_mut() =
-                        Some(crate::project!(window, cx, &self.source, name));
-                }
-                div()
-            }
-        }
-
         let mut cx = TestAppContext::single();
         let source = cx.update(|cx| {
             cx.new(|_| Person {
@@ -903,32 +853,18 @@ mod tests {
                 age: 36,
             })
         });
-        let projection = Rc::new(RefCell::new(None));
-        let window = cx.add_window({
-            let source = source.clone();
-            let projection = projection.clone();
-            move |_, _| HookView {
-                source,
-                show_projection: true,
-                projection,
-            }
+        let (window, frames) = hook_window(&mut cx, &source, |window, cx, person| {
+            crate::project!(window, cx, person, mut name)
         });
-
-        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
-        let escaped = projection
-            .borrow_mut()
-            .take()
-            .expect("render created a projection");
+        let escaped = take_output(&frames);
 
         window
             .update(&mut cx, |view, _, cx| {
-                view.show_projection = false;
+                view.enabled = false;
                 cx.notify();
             })
             .unwrap();
-        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
+        draw(&mut cx, window);
         drop(source);
         cx.update(|_| {});
 
@@ -948,12 +884,10 @@ mod tests {
             })
         });
 
-        let name = projection_mut(
-            &mut cx,
-            &person,
-            |person| &person.name,
-            |person| &mut person.name,
-        );
+        let (window, frames) = hook_window(&mut cx, &person, |window, cx, person| {
+            crate::project!(window, cx, person, mut name)
+        });
+        let name = take_output(&frames);
         let weak_name = name.downgrade();
         let weak_read_only = name.read_only().downgrade();
 
@@ -965,6 +899,16 @@ mod tests {
             });
         }
 
+        // The write above invalidated the window, so let any re-render settle
+        // before dropping the strong handles it recorded. The window's element
+        // state holds the backing state entity as well, so the window has to go
+        // too before the weak handles can dangle.
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        frames.borrow_mut().clear();
         drop(person);
         drop(name);
         cx.update(|_| {});
