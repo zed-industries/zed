@@ -701,6 +701,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
     });
+    let project_settings = project::project_settings::ProjectSettings::get_global(cx);
     MarkdownStyle {
         base_text_style,
         code_block: StyleRefinement::default()
@@ -708,6 +709,9 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .font_buffer(cx)
             .font_features(buffer_font_features.clone())
             .font_weight(buffer_font_weight),
+        code_block_overflow_x_scroll: project_settings
+            .global_lsp_settings
+            .code_block_horizontal_scroll,
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),
