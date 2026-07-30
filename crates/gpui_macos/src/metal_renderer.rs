@@ -53,6 +53,10 @@ pub(crate) unsafe fn new_renderer(
     MetalRenderer::new(context, transparent)
 }
 
+pub(crate) fn new_overlay_renderer(context: self::Context, base: &Renderer) -> Renderer {
+    base.new_sharing_atlas(context, true)
+}
+
 pub(crate) struct InstanceBufferPool {
     buffer_size: usize,
     buffers: Vec<metal::Buffer>,
@@ -148,18 +152,12 @@ pub struct PathRasterizationVertex {
 }
 
 impl MetalRenderer {
-    /// Creates a new MetalRenderer with a CAMetalLayer for window-based rendering.
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, transparent: bool) -> Self {
-        let device = Self::create_device();
-
+    fn new_layer(device: &metal::Device, transparent: bool) -> metal::MetalLayer {
         let layer = metal::MetalLayer::new();
-        layer.set_device(&device);
+        layer.set_device(device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
-        // Support direct-to-display rendering if the window is not transparent
-        // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
         layer.set_maximum_drawable_count(3);
-        // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
         #[cfg(any(test, feature = "test-support"))]
         layer.set_framebuffer_only(false);
         unsafe {
@@ -171,8 +169,39 @@ impl MetalRenderer {
                     | AutoresizingMask::HEIGHT_SIZABLE
             ];
         }
+        layer
+    }
 
-        Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
+    /// Creates a new MetalRenderer with a CAMetalLayer for window-based rendering.
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, transparent: bool) -> Self {
+        let device = Self::create_device();
+        // Support direct-to-display rendering if the window is not transparent
+        // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
+        let layer = Self::new_layer(&device, transparent);
+
+        Self::new_internal(
+            device,
+            Some(layer),
+            !transparent,
+            instance_buffer_pool,
+            None,
+        )
+    }
+
+    fn new_sharing_atlas(
+        &self,
+        instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+        transparent: bool,
+    ) -> Self {
+        let device = self.device.clone();
+        let layer = Self::new_layer(&device, transparent);
+        Self::new_internal(
+            device,
+            Some(layer),
+            !transparent,
+            instance_buffer_pool,
+            Some(self.sprite_atlas.clone()),
+        )
     }
 
     /// Creates a new headless MetalRenderer for offscreen rendering without a window.
@@ -182,7 +211,7 @@ impl MetalRenderer {
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
         let device = Self::create_device();
-        Self::new_internal(device, None, true, instance_buffer_pool)
+        Self::new_internal(device, None, true, instance_buffer_pool, None)
     }
 
     fn create_device() -> metal::Device {
@@ -212,6 +241,7 @@ impl MetalRenderer {
         layer: Option<metal::MetalLayer>,
         opaque: bool,
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+        shared_sprite_atlas: Option<Arc<MetalAtlas>>,
     ) -> Self {
         #[cfg(feature = "runtime_shaders")]
         let library = device
@@ -324,7 +354,8 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
+        let sprite_atlas = shared_sprite_atlas
+            .unwrap_or_else(|| Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu)));
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 

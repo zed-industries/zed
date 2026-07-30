@@ -72,6 +72,22 @@ impl Scene {
         self.paint_operations.len()
     }
 
+    /// Returns whether the scene contains no drawable primitives.
+    ///
+    /// A scene may have paint operations that only open and close empty layers,
+    /// so `len() == 0` is not equivalent to having no visible/input-relevant
+    /// overlay content.
+    pub fn is_empty(&self) -> bool {
+        self.shadows.is_empty()
+            && self.quads.is_empty()
+            && self.paths.is_empty()
+            && self.underlines.is_empty()
+            && self.monochrome_sprites.is_empty()
+            && self.subpixel_sprites.is_empty()
+            && self.polychrome_sprites.is_empty()
+            && self.surfaces.is_empty()
+    }
+
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
@@ -188,6 +204,68 @@ impl Scene {
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_layers_do_not_make_a_scene_drawable() {
+        let mut scene = Scene::default();
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: ScaledPixels::from(100.),
+                height: ScaledPixels::from(100.),
+            },
+        };
+
+        scene.push_layer(bounds);
+        scene.pop_layer();
+
+        assert_ne!(scene.len(), 0);
+        assert!(scene.is_empty());
+    }
+
+    #[test]
+    fn drawable_primitives_make_a_scene_non_empty() {
+        let mut scene = Scene::default();
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: ScaledPixels::from(100.),
+                height: ScaledPixels::from(100.),
+            },
+        };
+
+        scene.insert_primitive(Quad {
+            bounds,
+            content_mask: ContentMask { bounds },
+            ..Default::default()
+        });
+
+        assert!(!scene.is_empty());
+    }
+
+    #[test]
+    fn replay_preserves_scene_emptiness() {
+        let mut source = Scene::default();
+        let bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: ScaledPixels::from(100.),
+                height: ScaledPixels::from(100.),
+            },
+        };
+        source.push_layer(bounds);
+        source.pop_layer();
+
+        let mut replayed = Scene::default();
+        replayed.replay(0..source.len(), &source);
+
+        assert!(replayed.is_empty());
     }
 }
 

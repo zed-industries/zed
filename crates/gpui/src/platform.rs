@@ -846,6 +846,21 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Draws a scene with primitives at and after `overlay_start` on a platform
+    /// overlay surface when one has been enabled.
+    ///
+    /// Platforms without layered scene support fall back to drawing the complete
+    /// scene on their primary surface.
+    fn draw_layered(&self, scene: &Scene, _overlay_start: usize) {
+        self.draw(scene);
+    }
+    /// Enables a transparent GPUI surface above native child views.
+    ///
+    /// This is currently an experimental capability for embedding native
+    /// surfaces between GPUI's base and deferred-overlay paint planes.
+    fn enable_scene_overlay(&self) -> anyhow::Result<()> {
+        anyhow::bail!("layered GPUI scenes are not supported on this platform")
+    }
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
