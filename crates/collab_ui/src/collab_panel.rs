@@ -6,7 +6,7 @@ use crate::{CollaborationPanelSettings, channel_view::ChannelView};
 use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
-use client::{ChannelId, Client, Contact, Notification, User, UserStore};
+use client::{ChannelId, Client, Contact, Notification, Status, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KeyValueStore;
@@ -35,9 +35,9 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton,
-    DecoratedIcon, Disclosure, Facepile, HighlightedLabel, IconButtonShape, IconDecoration,
-    IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem, ScrollAxes, Scrollbars,
-    Tab, TintColor, Tooltip, WithScrollbar, prelude::*, tooltip_container,
+    DecoratedIcon, Disclosure, DockSide, Facepile, HighlightedLabel, IconButtonShape,
+    IconDecoration, IconDecorationKind, IndentGuideColors, Indicator, ListHeader, ListItem,
+    ScrollAxes, Scrollbars, Tab, TintColor, Tooltip, WithScrollbar, prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
@@ -54,6 +54,10 @@ const FILTER_OCCUPIED_CHANNELS_KEY: &str = "filter_occupied_channels";
 const FAVORITE_CHANNELS_KEY: &str = "favorite_channels";
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 const TOAST_DURATION: Duration = Duration::from_secs(5);
+
+fn panel_row_height() -> Rems {
+    rems_from_px(26.)
+}
 
 actions!(
     collab_panel,
@@ -346,6 +350,17 @@ enum ListEntry {
 }
 
 impl CollabPanel {
+    fn is_collaboration_disabled_by_organization(&self, cx: &App) -> bool {
+        self.user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_some_and(|config| !config.is_collaboration_enabled)
+    }
+
+    fn is_signed_in_view_visible(status: Status, is_collaboration_disabled: bool) -> bool {
+        !is_collaboration_disabled && status.is_or_was_connected() && !status.is_signing_in()
+    }
+
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -381,7 +396,9 @@ impl CollabPanel {
                 &channel_name_editor,
                 window,
                 |this: &mut Self, _, event, window, cx| {
-                    if let editor::EditorEvent::Blurred = event {
+                    if let editor::EditorEvent::Blurred = event
+                        && window.is_window_active()
+                    {
                         if let Some(state) = &this.channel_editing_state
                             && state.pending_name().is_some()
                         {
@@ -1147,6 +1164,13 @@ impl CollabPanel {
         ))
     }
 
+    fn dock_side(&self, cx: &App) -> DockSide {
+        match CollaborationPanelSettings::get_global(cx).dock {
+            DockPosition::Right => DockSide::Right,
+            _ => DockSide::Left,
+        }
+    }
+
     fn render_call_participant(
         &self,
         user: &Arc<User>,
@@ -1190,7 +1214,8 @@ impl CollabPanel {
         ListItem::new(user.username.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(render_participant_name_and_handle(user))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .end_slot(end_slot)
             .tooltip(Tooltip::text("Click to Follow"))
             .when_some(peer_id, |el, peer_id| {
@@ -1237,8 +1262,9 @@ impl CollabPanel {
         .into();
 
         ListItem::new(project_id as usize)
-            .height(rems_from_px(24.))
-            .toggle_state(is_selected)
+            .height(panel_row_height())
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| {
@@ -1278,8 +1304,9 @@ impl CollabPanel {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
-            .height(rems_from_px(24.))
-            .toggle_state(is_selected)
+            .height(panel_row_height())
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .start_slot(
                 h_flex()
                     .gap_1p5()
@@ -1325,8 +1352,9 @@ impl CollabPanel {
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
 
         ListItem::new("channel-notes")
-            .height(rems_from_px(24.))
-            .toggle_state(is_selected)
+            .height(panel_row_height())
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_channel_notes(channel_id, window, cx);
             }))
@@ -1482,7 +1510,7 @@ impl CollabPanel {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
                     context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -1666,7 +1694,7 @@ impl CollabPanel {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
                     context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 cx.notify();
@@ -1734,7 +1762,7 @@ impl CollabPanel {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
                     context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self(window);
+                    this.activation_focus_handle(cx).focus(window, cx);
                 }
                 this.context_menu.take();
                 this.contact_context_menu.take();
@@ -1968,7 +1996,7 @@ impl CollabPanel {
                     cx.notify();
                 }
             }
-            cx.focus_self(window);
+            self.activation_focus_handle(cx).focus(window, cx);
             true
         } else {
             false
@@ -2035,7 +2063,7 @@ impl CollabPanel {
         self.serialize(cx);
         self.update_entries(true, cx);
         cx.notify();
-        cx.focus_self(window);
+        self.activation_focus_handle(cx).focus(window, cx);
     }
 
     fn is_channel_collapsed(&self, channel_id: ChannelId) -> bool {
@@ -2104,9 +2132,7 @@ impl CollabPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut finder = ContactFinder::new(self.user_store.clone(), window, cx);
-                    finder.set_query(self.filter_editor.read(cx).text(cx), window, cx);
-                    finder
+                    ContactFinder::new(self.user_store.clone(), window, cx)
                 });
             });
         }
@@ -2545,8 +2571,10 @@ impl CollabPanel {
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
                         .notify_workspace_async_err(workspace, &mut cx);
-                    this.update_in(cx, |_, window, cx| cx.focus_self(window))
-                        .ok();
+                    this.update_in(cx, |this, window, cx| {
+                        this.activation_focus_handle(cx).focus(window, cx);
+                    })
+                    .ok();
                 }
                 anyhow::Ok(())
             })
@@ -2738,7 +2766,9 @@ impl CollabPanel {
     ) -> AnyElement {
         let entry = self.entries[ix].clone();
 
-        let is_selected = self.selection == Some(ix);
+        let is_selected =
+            self.selection == Some(ix) && self.focus_handle.contains_focused(window, cx);
+
         match entry {
             ListEntry::Header(section) => {
                 let is_collapsed = self.collapsed_sections.contains(&section);
@@ -3072,6 +3102,7 @@ impl CollabPanel {
 
         h_flex().group("section-header").w_full().child(
             ListHeader::new(text)
+                .height(panel_row_height())
                 .when(can_collapse, |header| {
                     header
                         .toggle(Some(!is_collapsed))
@@ -3082,7 +3113,8 @@ impl CollabPanel {
                 })
                 .inset(true)
                 .end_slot::<AnyElement>(button)
-                .toggle_state(is_selected),
+                .focused(is_selected)
+                .dock(self.dock_side(cx)),
         )
     }
 
@@ -3109,7 +3141,9 @@ impl CollabPanel {
         let item = ListItem::new(username.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .toggle_state(is_selected || context_menu_open_via_row)
+            .toggle_state(context_menu_open_via_row)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -3247,7 +3281,8 @@ impl CollabPanel {
         ListItem::new(username.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -3291,7 +3326,8 @@ impl CollabPanel {
         ];
 
         ListItem::new(("channel-invite", channel.id.0 as usize))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -3310,7 +3346,8 @@ impl CollabPanel {
         ListItem::new("contact-placeholder")
             .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
-            .toggle_state(is_selected)
+            .focused(is_selected)
+            .dock(self.dock_side(cx))
             .on_click(cx.listener(|this, _, window, cx| this.toggle_contact_finder(window, cx)))
     }
 
@@ -3392,7 +3429,7 @@ impl CollabPanel {
             (IconName::Star, Color::Default, "Add to Favorites")
         };
 
-        let height = rems_from_px(24.);
+        let height = panel_row_height();
 
         let icon_name = if is_public {
             IconName::Hash
@@ -3446,7 +3483,6 @@ impl CollabPanel {
 
         let panel_bg = cx.theme().colors().panel_background;
         let hover_bg = panel_bg.blend(cx.theme().colors().ghost_element_hover);
-        let active_bg = panel_bg.blend(cx.theme().colors().ghost_element_active);
 
         h_flex()
             .id(ix)
@@ -3493,7 +3529,9 @@ impl CollabPanel {
                     .height(height)
                     .indent_level(depth)
                     .indent_step_size(px(20.))
-                    .toggle_state(is_selected || is_active)
+                    .toggle_state(is_active)
+                    .focused(is_selected)
+                    .dock(self.dock_side(cx))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if is_active {
                             this.open_channel_notes(channel_id, window, cx)
@@ -3553,13 +3591,14 @@ impl CollabPanel {
                     .absolute()
                     .right_0()
                     .pl_1()
-                    .pr_1p5()
+                    .pr_2()
                     .gap_px()
                     .bg(hover_bg)
-                    .group_active("", |s| s.bg(active_bg))
+                    .rounded_l_md()
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
+                            .layer(ui::ElevationIndex::ModalSurface)
                             .icon_size(IconSize::Small)
                             .icon_color(favorite_color)
                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -3577,6 +3616,7 @@ impl CollabPanel {
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_notes", IconName::Reader)
+                            .layer(ui::ElevationIndex::ModalSurface)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_channel_notes(channel_id, window, cx)
@@ -3800,7 +3840,6 @@ fn render_tree_branch(
     cx: &mut App,
 ) -> impl IntoElement {
     let rem_size = window.rem_size();
-    let line_height = window.text_style().line_height_in_pixels(rem_size);
     let thickness = px(1.);
     let color = cx.theme().colors().icon_disabled;
 
@@ -3833,7 +3872,7 @@ fn render_tree_branch(
         },
     )
     .w(rem_size)
-    .h(line_height - px(2.))
+    .h(panel_row_height())
 }
 
 fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
@@ -3848,11 +3887,9 @@ impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = *self.client.status().borrow();
 
-        let is_collaboration_disabled = self
-            .user_store
-            .read(cx)
-            .current_organization_configuration()
-            .is_some_and(|config| !config.is_collaboration_enabled);
+        let is_collaboration_disabled = self.is_collaboration_disabled_by_organization(cx);
+        let is_signed_in_view_visible =
+            Self::is_signed_in_view_visible(status, is_collaboration_disabled);
 
         v_flex()
             .key_context(self.dispatch_context(window, cx))
@@ -3875,10 +3912,10 @@ impl Render for CollabPanel {
             .size_full()
             .child(if is_collaboration_disabled {
                 self.render_disabled_by_organization(cx)
-            } else if !status.is_or_was_connected() || status.is_signing_in() {
-                self.render_signed_out(cx)
-            } else {
+            } else if is_signed_in_view_visible {
                 self.render_signed_in(window, cx)
+            } else {
+                self.render_signed_out(cx)
             })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
@@ -3895,6 +3932,17 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        let status = *self.client.status().borrow();
+        let is_collaboration_disabled = self.is_collaboration_disabled_by_organization(cx);
+
+        if Self::is_signed_in_view_visible(status, is_collaboration_disabled) {
+            self.filter_editor.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
@@ -3967,8 +4015,8 @@ impl Panel for CollabPanel {
 }
 
 impl Focusable for CollabPanel {
-    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        self.filter_editor.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 

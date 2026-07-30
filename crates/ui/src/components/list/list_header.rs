@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Disclosure, IconButtonShape, prelude::*};
+use crate::{Disclosure, DockSide, IconButtonShape, prelude::*};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
 use theme::UiDensity;
@@ -22,6 +22,9 @@ pub struct ListHeader {
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     inset: bool,
     selected: bool,
+    height: Option<DefiniteLength>,
+    focused: Option<bool>,
+    dock: Option<DockSide>,
 }
 
 impl ListHeader {
@@ -36,7 +39,15 @@ impl ListHeader {
             disclosure_shape: None,
             on_toggle: None,
             selected: false,
+            height: None,
+            focused: None,
+            dock: None,
         }
+    }
+
+    pub fn height(mut self, height: impl Into<DefiniteLength>) -> Self {
+        self.height = Some(height.into());
+        self
     }
 
     pub fn toggle(mut self, toggle: impl Into<Option<bool>>) -> Self {
@@ -77,6 +88,16 @@ impl ListHeader {
         self.inset = inset;
         self
     }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = Some(focused);
+        self
+    }
+
+    pub fn dock(mut self, dock: impl Into<Option<DockSide>>) -> Self {
+        self.dock = dock.into();
+        self
+    }
 }
 
 impl Toggleable for ListHeader {
@@ -97,13 +118,26 @@ impl RenderOnce for ListHeader {
             .group("list_header")
             .child(
                 div()
-                    .map(|this| match ui_density {
-                        UiDensity::Comfortable => this.h_5(),
-                        _ => this.h_7(),
+                    .map(|this| match self.height {
+                        Some(height) => this.h(height),
+                        None => match ui_density {
+                            UiDensity::Comfortable => this.h_5(),
+                            _ => this.h_7(),
+                        },
                     })
                     .when(self.inset, |this| this.px_2())
                     .when(self.selected, |this| {
                         this.bg(cx.theme().colors().ghost_element_selected)
+                    })
+                    .when_some(self.focused, |this, focused| {
+                        this.border_1()
+                            .when_some(self.dock, |this, dock| match dock {
+                                DockSide::Left => this.border_l_2(),
+                                DockSide::Right => this.border_r_2(),
+                            })
+                            .when(focused, |this| {
+                                this.border_color(cx.theme().colors().border_focused)
+                            })
                     })
                     .flex()
                     .flex_1()
