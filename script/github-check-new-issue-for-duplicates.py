@@ -922,7 +922,112 @@ found."""
     }
 
 
-CRITIQUE_SYSTEM_PROMPT = """You are evaluating ONE recently closed GitHub issue to decide whether a triager looking
+PROPOSED_MATCH_CRITIQUE_SYSTEM_PROMPT = """You evaluate one proposed match for a new GitHub issue.
+
+The proposer classified the candidate as likely or possible and supplied an explanation.
+For issue candidates it also supplied a shared root cause. Verify the proposal against the
+actual text of both reports. False positives are much worse than false negatives.
+
+For an issue candidate, keep the match only when both reports plausibly describe the SAME
+BUG. Shared symptoms, product area, or terminology are insufficient. The proposed shared
+root cause and every concrete claim in the explanation must be supported by the provided
+text. Omit matches that rely on invented mechanisms, contradictory triggers, different
+errors, configurations, or platforms without evidence tying them together.
+
+Some reports framed as bugs are actually requests for behavior Zed does not support. Zed
+tracks feature requests and open-ended proposals in Discussions. For a discussion candidate,
+keep the match when the report's desired behavior is substantially the SAME request or topic.
+A shared area or superficially similar wording is insufficient.
+
+Verdicts:
+- "keep": the proposed confidence and justification are supported as written.
+- "downgrade": only for a proposed likely match whose relationship is plausible but not
+  strong enough to show as likely. The proposed justification must still be supported.
+- "omit": the relationship or its justification is not sufficiently supported. Use this
+  for a proposed possible match that does not meet the bar; never downgrade a possible match.
+
+Report the verdict with one concise rationale grounded in the provided text."""
+
+
+PROPOSED_MATCH_CRITIQUE_VERDICT_TOOL = {
+    "name": "report_proposed_match_critique_verdict",
+    "description": "Report whether the proposed candidate match is supported.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "rationale": {
+                "type": "string",
+                "description": "One concise sentence explaining whether the proposed match is supported.",
+                "maxLength": 400,
+            },
+            "verdict": {"type": "string", "enum": ["keep", "downgrade", "omit"]},
+        },
+        "required": ["rationale", "verdict"],
+    },
+}
+
+
+def critique_proposed_matches(anthropic_key, issue, likely_matches, possible_matches):
+    proposed = [("likely", match) for match in likely_matches]
+    proposed.extend(("possible", match) for match in possible_matches)
+    if not proposed:
+        log("  Match critique: proposer surfaced 0 candidates; skipping")
+        return {"likely_matches": [], "possible_matches": []}
+
+    kept_likely = []
+    kept_possible = []
+    for confidence, match in proposed:
+        candidate = match["candidate"]
+        key = candidate["key"]
+        shared_root_cause = match.get("shared_root_cause") or "Not applicable"
+        user_content = f"""## New Issue #{issue['number']}
+**Title:** {issue['title']}
+
+**Body:**
+{issue['body'][:6000]}
+
+## Candidate {key}
+**Kind:** {candidate['kind']}
+**Title:** {candidate['title']}
+
+**Body preview:**
+{candidate['body_preview']}
+
+## Proposed Match
+**Confidence:** {confidence}
+**Shared root cause:** {shared_root_cause}
+**Explanation:** {match['explanation']}"""
+
+        log(f"  Match critique: evaluating {confidence} match {key}")
+        try:
+            verdict_data = call_claude_tool(
+                anthropic_key,
+                PROPOSED_MATCH_CRITIQUE_SYSTEM_PROMPT,
+                user_content,
+                PROPOSED_MATCH_CRITIQUE_VERDICT_TOOL,
+                max_tokens=600,
+            )
+        except (requests.RequestException, ValueError) as e:
+            log(f"  Match critique: verdict call failed for {key} ({e}); omitting candidate")
+            continue
+
+        verdict = verdict_data.get("verdict")
+        rationale = verdict_data.get("rationale", "")
+        if verdict == "keep":
+            destination = kept_likely if confidence == "likely" else kept_possible
+            destination.append(match)
+            log(f"  Match critique: keeping {confidence} match {key} — {rationale}")
+        elif verdict == "downgrade" and confidence == "likely":
+            kept_possible.append(match)
+            log(f"  Match critique: downgrading {key} to possible — {rationale}")
+        else:
+            log(f"  Match critique: omitting {key} — {rationale}")
+
+    log(f"  Match critique: kept {len(kept_likely)} likely and {len(kept_possible)} possible matches")
+    return {"likely_matches": kept_likely, "possible_matches": kept_possible}
+
+
+RELATED_CLOSED_CANDIDATE_CRITIQUE_SYSTEM_PROMPT = """You are evaluating ONE recently closed GitHub issue to decide whether a triager looking
 at a brand-new bug report would find it useful to be told about that closed issue.
 
 There is no slate to fill. There is no quota. You will be shown exactly one candidate.
@@ -972,7 +1077,7 @@ null. When "verdict" is "omit", set "rule_violated" to the most relevant rule nu
 null if the candidate is simply too unrelated for any rule to specifically apply."""
 
 
-CRITIQUE_VERDICT_TOOL = {
+RELATED_CLOSED_CANDIDATE_CRITIQUE_VERDICT_TOOL = {
     "name": "report_critique_verdict",
     "description": "Report whether the closed candidate is worth surfacing to a triager.",
     "input_schema": {
@@ -994,13 +1099,13 @@ CRITIQUE_VERDICT_TOOL = {
 }
 
 
-def critique_closed_candidates(anthropic_key, issue, proposed):
+def critique_related_closed_candidates(anthropic_key, issue, proposed):
     """Run a strict per-candidate critique pass over the proposer's closed candidates."""
     if not proposed:
-        log("  Critique: proposer surfaced 0 closed candidates; skipping")
+        log("  Related candidate critique: proposer surfaced 0 candidates; skipping")
         return []
 
-    log(f"  Critique: proposer surfaced {len(proposed)} closed candidate(s): "
+    log(f"  Related candidate critique: proposer surfaced {len(proposed)} candidate(s): "
         f"{[m['candidate_key'] for m in proposed]}")
 
     kept = []
@@ -1021,13 +1126,17 @@ def critique_closed_candidates(anthropic_key, issue, proposed):
 **Body preview:**
 {candidate.get('body_preview', '')}"""
 
-        log(f"  Critique: evaluating {key}")
+        log(f"  Related candidate critique: evaluating {key}")
         try:
             verdict_data = call_claude_tool(
-                anthropic_key, CRITIQUE_SYSTEM_PROMPT, user_content, CRITIQUE_VERDICT_TOOL, max_tokens=600
+                anthropic_key,
+                RELATED_CLOSED_CANDIDATE_CRITIQUE_SYSTEM_PROMPT,
+                user_content,
+                RELATED_CLOSED_CANDIDATE_CRITIQUE_VERDICT_TOOL,
+                max_tokens=600,
             )
         except (requests.RequestException, ValueError) as e:
-            log(f"  Critique: verdict call failed for {key} ({e}); omitting candidate")
+            log(f"  Related candidate critique: verdict call failed for {key} ({e}); omitting candidate")
             continue
 
         verdict = verdict_data.get("verdict")
@@ -1035,13 +1144,13 @@ def critique_closed_candidates(anthropic_key, issue, proposed):
         rationale = verdict_data.get("rationale", "")
 
         if verdict == "include":
-            log(f"  Critique: keeping {key} — {rationale}")
+            log(f"  Related candidate critique: keeping {key} — {rationale}")
             kept.append(match)
         else:
             rule_str = f"rule {rule}" if rule else "no specific rule"
-            log(f"  Critique: omitting {key} ({rule_str}) — {rationale}")
+            log(f"  Related candidate critique: omitting {key} ({rule_str}) — {rationale}")
 
-    log(f"  Critique: kept {len(kept)} of {len(proposed)} closed candidates")
+    log(f"  Related candidate critique: kept {len(kept)} of {len(proposed)} candidates")
     return kept
 
 
@@ -1085,9 +1194,12 @@ if __name__ == "__main__":
     candidates = magnet_candidates + search_results + discussion_results
 
     analysis = analyze_duplicates(anthropic_key, issue, candidates)
-    likely_matches = analysis["likely_matches"]
-    possible_matches = analysis["possible_matches"]
-    related_closed_candidates = critique_closed_candidates(
+    critiqued_matches = critique_proposed_matches(
+        anthropic_key, issue, analysis["likely_matches"], analysis["possible_matches"]
+    )
+    likely_matches = critiqued_matches["likely_matches"]
+    possible_matches = critiqued_matches["possible_matches"]
+    related_closed_candidates = critique_related_closed_candidates(
         anthropic_key, issue, analysis["related_closed_candidates"]
     )
 
