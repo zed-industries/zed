@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Subscription, Task};
+use i18n::t;
 use picker::Picker;
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use ui::{
@@ -98,7 +99,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from("Enter WSL distro name")
+        Arc::from(t!("Enter WSL distro name").resolve().as_str())
     }
 
     fn update_matches(

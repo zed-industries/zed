@@ -1,6 +1,7 @@
 use db::kvp::KeyValueStore;
 use dev_container::find_configs_in_snapshot;
 use gpui::{App, SharedString, Window};
+use i18n::t;
 use project::{Project, WorktreeId};
 use std::path::Path;
 use std::sync::LazyLock;
@@ -154,10 +155,10 @@ pub fn suggest_on_worktree_updated(
 
         workspace.show_notification(notification_id, cx, |cx| {
             cx.new(move |cx| {
-                let message: SharedString = format!(
-                    "{worktree_name} contains a Dev Container configuration file. Would you like to re-open it in a container?"
-                )
-                .into();
+                let message = t!(
+                    "{$name} contains a Dev Container configuration file. Would you like to re-open it in a container?",
+                    name = worktree_name
+                );
                 let tooltip_text: SharedString = project_path.clone().into();
                 MessageNotification::new_from_builder(cx, move |_window, _cx| {
                     div()
@@ -166,7 +167,7 @@ pub fn suggest_on_worktree_updated(
                         .tooltip(Tooltip::text(tooltip_text.clone()))
                         .into_any_element()
                 })
-                .primary_message("Yes, Open in Container")
+                .primary_message(t!("Yes, Open in Container"))
                 .primary_icon(IconName::Check)
                 .primary_icon_color(Color::Success)
                 .primary_on_click({
@@ -174,7 +175,7 @@ pub fn suggest_on_worktree_updated(
                         window.dispatch_action(Box::new(zed_actions::OpenDevContainer), cx);
                     }
                 })
-                .secondary_message("Don't Show Again")
+                .secondary_message(t!("Don't Show Again"))
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
                 .secondary_on_click({

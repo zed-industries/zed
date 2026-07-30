@@ -8,7 +8,8 @@ use askpass::EncryptedPassword;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
+use gpui::{AppContext, AsyncApp, PromptButton, PromptLevel, SharedString, WindowHandle};
+use i18n::t;
 
 use project::trusted_worktrees;
 use remote::{
@@ -124,6 +125,17 @@ impl Settings for RemoteSettings {
             read_ssh_config: remote.read_ssh_config.unwrap(),
         }
     }
+}
+
+fn connection_failure_message(connection_options: &RemoteConnectionOptions) -> SharedString {
+    match connection_options {
+        RemoteConnectionOptions::Ssh(_) => t!("Failed to connect over SSH"),
+        RemoteConnectionOptions::Wsl(_) => t!("Failed to connect to WSL"),
+        RemoteConnectionOptions::Docker(_) => t!("Failed to connect to Dev Container"),
+        #[cfg(any(test, feature = "test-support"))]
+        RemoteConnectionOptions::Mock(_) => t!("Failed to connect to mock server"),
+    }
+    .resolve()
 }
 
 pub async fn open_remote_project(
@@ -310,23 +322,17 @@ pub async fn open_remote_project(
                     }
                 });
                 log::error!("Failed to open project: {e:#}");
+                let message = connection_failure_message(&connection_options);
                 let response = window
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
+                            &message,
                             Some(&format!("{e:#}")),
-                            &["Retry", "Cancel"],
+                            &[
+                                PromptButton::new(t!("Retry")),
+                                PromptButton::cancel(t!("Cancel")),
+                            ],
                             cx,
                         )
                     })?
@@ -371,23 +377,17 @@ pub async fn open_remote_project(
         match opened_items {
             Err(e) => {
                 log::error!("Failed to open project: {e:#}");
+                let message = connection_failure_message(&connection_options);
                 let response = window
                     .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Critical,
-                            match connection_options {
-                                RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
-                                RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
-                                RemoteConnectionOptions::Docker(_) => {
-                                    "Failed to connect to Dev Container"
-                                }
-                                #[cfg(any(test, feature = "test-support"))]
-                                RemoteConnectionOptions::Mock(_) => {
-                                    "Failed to connect to mock server"
-                                }
-                            },
+                            &message,
                             Some(&format!("{e:#}")),
-                            &["Retry", "Cancel"],
+                            &[
+                                PromptButton::new(t!("Retry")),
+                                PromptButton::cancel(t!("Cancel")),
+                            ],
                             cx,
                         )
                     })?

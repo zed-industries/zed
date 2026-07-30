@@ -1,4 +1,5 @@
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakEntity};
+use i18n::t;
 use project::project_settings::ProjectSettings;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
@@ -133,7 +134,12 @@ impl DisconnectedOverlay {
             .await?;
             Ok(())
         })
-        .detach_and_prompt_err("Failed to reconnect", window, cx, |_, _, _| None);
+        .detach_and_prompt_err(
+            &t!("Failed to reconnect").resolve(),
+            window,
+            cx,
+            |_, _, _| None,
+        );
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -148,26 +154,30 @@ impl Render for DisconnectedOverlay {
 
         let message = match &self.host {
             Host::CollabGuestProject => {
-                "Your connection to the remote project has been lost.".to_string()
+                String::from(t!("Your connection to the remote project has been lost."))
             }
             Host::RemoteServerProject(options, server_not_running) => {
-                let autosave = if ProjectSettings::get_global(cx)
+                // The reason is baked into each sentence rather than substituted in,
+                // because Chinese word order puts it before the subject.
+                let mut message = if *server_not_running {
+                    String::from(t!(
+                        "Your connection to {$host} has been lost due to the server process exiting unexpectedly.",
+                        host = options.display_name()
+                    ))
+                } else {
+                    String::from(t!(
+                        "Your connection to {$host} has been lost due to the server not responding.",
+                        host = options.display_name()
+                    ))
+                };
+                if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
                 {
-                    "\nUnsaved changes are stored locally."
-                } else {
-                    ""
-                };
-                let reason = if *server_not_running {
-                    "process exiting unexpectedly"
-                } else {
-                    "not responding"
-                };
-                format!(
-                    "Your connection to {} has been lost due to the server {reason}.{autosave}",
-                    options.display_name(),
-                )
+                    message.push('\n');
+                    message.push_str(&t!("Unsaved changes are stored locally.").resolve());
+                }
+                message
             }
         };
 
@@ -183,7 +193,7 @@ impl Render for DisconnectedOverlay {
                     .header(
                         ModalHeader::new()
                             .show_dismiss_button(true)
-                            .child(Headline::new("Disconnected").size(HeadlineSize::Small)),
+                            .child(Headline::new(t!("Disconnected")).size(HeadlineSize::Small)),
                     )
                     .section(Section::new().child(Label::new(message)))
                     .footer(
@@ -191,7 +201,7 @@ impl Render for DisconnectedOverlay {
                             h_flex()
                                 .gap_2()
                                 .child(
-                                    Button::new("close-window", "Close Window")
+                                    Button::new("close-window", t!("Close Window"))
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
                                         .on_click(cx.listener(move |_, _, window, _| {
@@ -200,7 +210,7 @@ impl Render for DisconnectedOverlay {
                                 )
                                 .when(can_reconnect, |el| {
                                     el.child(
-                                        Button::new("reconnect", "Reconnect")
+                                        Button::new("reconnect", t!("Reconnect"))
                                             .style(ButtonStyle::Filled)
                                             .layer(ElevationIndex::ModalSurface)
                                             .start_icon(Icon::new(IconName::ArrowCircle))

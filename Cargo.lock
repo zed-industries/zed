@@ -15162,6 +15162,7 @@ dependencies = [
  "fuzzy_nucleo",
  "gpui",
  "http_client",
+ "i18n",
  "indoc",
  "language",
  "log",
