@@ -512,6 +512,29 @@ def filter_magnets_by_areas(magnets, detected_areas):
     return list(filter(matches, magnets))
 
 
+def filter_author_referenced_candidates(issue, candidates):
+    text = f"{issue['title']}\n{issue['body']}"
+    discussion_shorthand_pattern = r"\bdiscussion\s+#(\d+)\b"
+    discussion_numbers = re.findall(discussion_shorthand_pattern, text, re.IGNORECASE)
+    text_without_discussion_shorthand = re.sub(
+        discussion_shorthand_pattern, "", text, flags=re.IGNORECASE
+    )
+    referenced_keys = {
+        f"issue:{number}" for number in re.findall(r"#(\d+)\b", text_without_discussion_shorthand)
+    }
+    referenced_keys.update(f"discussion:{number}" for number in discussion_numbers)
+
+    resource_pattern = rf"https?://github\.com/{REPO_OWNER}/{REPO_NAME}/(issues|discussions)/(\d+)\b"
+    for resource, number in re.findall(resource_pattern, text, re.IGNORECASE):
+        kind = "issue" if resource.lower() == "issues" else "discussion"
+        referenced_keys.add(f"{kind}:{number}")
+
+    omitted = [candidate["key"] for candidate in candidates if candidate["key"] in referenced_keys]
+    if omitted:
+        log(f"  Omitted candidates already referenced by the author: {omitted}")
+    return [candidate for candidate in candidates if candidate["key"] not in referenced_keys]
+
+
 def rank_search_candidates(candidates):
     def rank(candidate):
         matched_searches = candidate["matched_searches"]
@@ -1192,6 +1215,7 @@ if __name__ == "__main__":
     search_results = search_for_similar_issues(issue, detected_areas)
     discussion_results = search_discussions(issue, detected_areas)
     candidates = magnet_candidates + search_results + discussion_results
+    candidates = filter_author_referenced_candidates(issue, candidates)
 
     analysis = analyze_duplicates(anthropic_key, issue, candidates)
     critiqued_matches = critique_proposed_matches(
