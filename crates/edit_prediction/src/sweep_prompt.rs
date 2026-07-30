@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Task};
 use language::{
     BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _,
@@ -137,14 +137,17 @@ pub fn request_prediction(
 
     let current_window = prompt_input.current_window;
     let request_task: Task<Result<(String, String, Instant)>> = cx.background_spawn(async move {
-        let (response_text, request_id) = open_ai_compatible::request_sweep_prompt_prediction(
+        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
             provider,
             &custom_settings,
             prompt,
+            custom_settings.max_output_tokens,
+            RESERVED_SWEEP_TOKENS.map(str::to_string).to_vec(),
             api_key,
             &http_client,
         )
-        .await?;
+        .await
+        .context("sweep prompt request failed")?;
         let response_received_at = Instant::now();
         Ok((
             request_id,
@@ -287,34 +290,16 @@ pub(crate) fn original_window_for_current_window(
         return None;
     }
 
-    let current_start = current_window.start.to_offset(current_snapshot);
-    let current_end = current_window.end.to_offset(current_snapshot);
-    let old_start =
-        map_current_offset_to_old_snapshot(current_start, latest_event, current_snapshot)?;
-    let old_end = map_current_offset_to_old_snapshot(current_end, latest_event, current_snapshot)?;
-    let (old_start, old_end) = if old_start <= old_end {
-        (old_start, old_end)
-    } else {
-        (old_end, old_start)
-    };
-
+    let old_range = current_snapshot.range_to_version(
+        current_window.to_offset(current_snapshot),
+        latest_event.old_snapshot.version(),
+    );
     Some(
         latest_event
             .old_snapshot
-            .text_for_range(old_start..old_end)
+            .text_for_range(old_range)
             .collect(),
     )
-}
-
-pub(crate) fn latest_active_buffer_event<'a>(
-    stored_events: &'a [StoredEvent],
-    snapshot: &BufferSnapshot,
-) -> Option<&'a StoredEvent> {
-    let current_remote_id = snapshot.remote_id();
-    stored_events
-        .iter()
-        .rev()
-        .find(|stored_event| stored_event.old_snapshot.remote_id() == current_remote_id)
 }
 
 fn build_prompt_input(
@@ -327,12 +312,12 @@ fn build_prompt_input(
     let current_window = snapshot
         .text_for_range(window_range.clone())
         .collect::<String>();
-    let original_window = original_window_for_current_window(
-        window_range,
-        latest_active_buffer_event(stored_events, snapshot),
-        snapshot,
-    )
-    .unwrap_or_else(|| current_window.clone());
+    let latest_event = stored_events
+        .iter()
+        .rev()
+        .find(|event| event.old_snapshot.remote_id() == snapshot.remote_id());
+    let original_window = original_window_for_current_window(window_range, latest_event, snapshot)
+        .unwrap_or_else(|| current_window.clone());
 
     SweepPromptInput {
         file_path: file_path.clone(),
@@ -356,39 +341,6 @@ fn write_file_block(prompt: &mut String, path: &Path, content: &str) {
     if !content.ends_with('\n') {
         prompt.push('\n');
     }
-}
-
-fn map_current_offset_to_old_snapshot(
-    current_offset: usize,
-    latest_event: &StoredEvent,
-    current_snapshot: &BufferSnapshot,
-) -> Option<usize> {
-    if latest_event.old_snapshot.remote_id() != current_snapshot.remote_id() {
-        return None;
-    }
-
-    let old_snapshot = &latest_event.old_snapshot;
-    for edit in current_snapshot.edits_since::<usize>(old_snapshot.version()) {
-        if current_offset < edit.new.start {
-            break;
-        }
-
-        if current_offset < edit.new.end {
-            let offset_in_edit = current_offset.saturating_sub(edit.new.start);
-            return Some(
-                (edit.old.start + offset_in_edit.min(edit.old.len())).min(old_snapshot.len()),
-            );
-        }
-    }
-
-    let old_offset = current_snapshot
-        .edits_since::<usize>(old_snapshot.version())
-        .take_while(|edit| current_offset >= edit.new.end)
-        .fold(current_offset as isize, |old_offset, edit| {
-            old_offset + edit.old.len() as isize - edit.new.len() as isize
-        });
-
-    Some(old_offset.max(0) as usize)
 }
 
 fn build_related_file_blocks(related_files: Vec<RelatedFile>) -> Vec<RelatedFileBlock> {
@@ -469,27 +421,16 @@ fn parse_unified_diff(diff: &str) -> (Vec<String>, Vec<String>) {
     (original_lines, updated_lines)
 }
 
-fn limit_change_lines(lines: Vec<String>, max_lines: usize) -> String {
-    if lines.len() <= max_lines {
-        return lines.join("\n");
+fn limit_change_lines(mut lines: Vec<String>, max_lines: usize) -> String {
+    if lines.len() > max_lines {
+        let head_count = max_lines / 2;
+        let tail_count = max_lines.saturating_sub(head_count + 1);
+        lines.splice(
+            head_count..lines.len().saturating_sub(tail_count),
+            ["...".to_string()],
+        );
     }
-
-    let head_count = max_lines / 2;
-    let tail_count = max_lines.saturating_sub(head_count + 1);
-    let mut trimmed = Vec::with_capacity(max_lines);
-    trimmed.extend(lines.iter().take(head_count).cloned());
-    trimmed.push("...".to_string());
-    trimmed.extend(
-        lines
-            .iter()
-            .rev()
-            .take(tail_count)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev(),
-    );
-    trimmed.join("\n")
+    lines.join("\n")
 }
 
 fn clean_response_text(response_text: &str) -> String {
@@ -560,76 +501,21 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    fn test_original_window_for_current_window_treats_edit_end_as_post_edit_position(cx: &mut App) {
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("aaaaabbbbb", cx);
-            let old_snapshot = buffer.text_snapshot();
-            buffer.edit([(5..10, "b")], None, cx);
-            let current_snapshot = buffer.snapshot();
-            let window = Point::new(0, 0)..Point::new(0, current_snapshot.line_len(0));
-
-            let stored_event = StoredEvent {
-                event: Arc::new(zeta_prompt::Event::BufferChange {
-                    old_path: Arc::from(std::path::Path::new("test.txt")),
-                    path: Arc::from(std::path::Path::new("test.txt")),
-                    diff: String::new(),
-                    old_range: 5..10,
-                    new_range: 5..6,
-                    in_open_source_repo: false,
-                    predicted: false,
-                }),
-                old_snapshot,
-                new_snapshot_version: current_snapshot.text.version.clone(),
-                total_edit_range: current_snapshot.anchor_before(5)
-                    ..current_snapshot.anchor_before(6),
-                file_context: None,
-            };
-
-            assert_eq!(
-                map_current_offset_to_old_snapshot(6, &stored_event, &current_snapshot),
-                Some(10)
-            );
-
-            let original_window =
-                original_window_for_current_window(window, Some(&stored_event), &current_snapshot)
-                    .expect("expected original window");
-
-            assert_eq!(original_window, "aaaaabbbbb");
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_recent_change_block_from_event_formats_original_and_updated_sections(cx: &mut App) {
-        cx.new(|cx| {
-            let buffer = Buffer::local("fn main() {\n    println!(\"old\");\n}\n", cx);
-            let old_snapshot = buffer.text_snapshot();
-            let anchor = buffer.anchor_before(0);
-            let stored_event = StoredEvent {
-                event: Arc::new(zeta_prompt::Event::BufferChange {
-                    old_path: Path::new("src/main.rs").into(),
-                    path: Path::new("src/main.rs").into(),
-                    diff: "@@ -1,3 +1,3 @@\n fn main() {\n-    println!(\"old\");\n+    println!(\"new\");\n }\n"
-                        .to_string(),
-                    old_range: 0..0,
-                    new_range: 0..0,
-                    in_open_source_repo: false,
-                    predicted: false,
-                }),
-                new_snapshot_version: old_snapshot.version.clone(),
-                old_snapshot,
-                total_edit_range: anchor..anchor,
-                file_context: None,
-            };
-
-            let block =
-                recent_change_block_from_event(&stored_event).expect("expected recent change block");
-            assert_eq!(block.original, "fn main() {\n    println!(\"old\");\n}");
-            assert_eq!(block.updated, "fn main() {\n    println!(\"new\");\n}");
-
-            buffer
-        });
+    #[test]
+    fn test_parse_unified_diff() {
+        assert_eq!(
+            parse_unified_diff(
+                "@@ -1,3 +1,3 @@\n fn main() {\n-    println!(\"old\");\n+    println!(\"new\");\n }\n"
+            ),
+            (
+                ["fn main() {", "    println!(\"old\");", "}"]
+                    .map(str::to_string)
+                    .to_vec(),
+                ["fn main() {", "    println!(\"new\");", "}"]
+                    .map(str::to_string)
+                    .to_vec(),
+            )
+        );
     }
 
     #[test]

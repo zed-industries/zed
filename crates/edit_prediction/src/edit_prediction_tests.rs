@@ -3206,7 +3206,10 @@ async fn apply_edit_prediction(
     let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
     let (ep_store, response) = make_test_ep_store(&project, cx).await;
     *response.lock() = completion_response.to_string();
-    let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, cx).await;
+    let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
+        .await
+        .expect("expected an edit prediction")
+        .prediction;
     buffer.update(cx, |buffer, cx| {
         buffer.edit(edit_prediction.edits.iter().cloned(), None, cx)
     });
@@ -3217,9 +3220,10 @@ async fn run_edit_prediction(
     buffer: &Entity<Buffer>,
     project: &Entity<Project>,
     ep_store: &Entity<EditPredictionStore>,
+    cursor: Point,
     cx: &mut TestAppContext,
-) -> EditPrediction {
-    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
+) -> Option<EditPredictionResult> {
+    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(cursor));
     ep_store.update(cx, |ep_store, cx| {
         ep_store.register_buffer(buffer, &project, cx)
     });
@@ -3233,31 +3237,7 @@ async fn run_edit_prediction(
             cx,
         )
     });
-    prediction_task.await.unwrap().unwrap().prediction
-}
-
-async fn request_edit_prediction(
-    buffer: &Entity<Buffer>,
-    project: &Entity<Project>,
-    ep_store: &Entity<EditPredictionStore>,
-    cursor: Point,
-    cx: &mut TestAppContext,
-) -> Result<Option<EditPredictionResult>, anyhow::Error> {
-    let anchor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(cursor));
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_buffer(buffer, &project, cx)
-    });
-    cx.background_executor.run_until_parked();
-    let prediction_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.request_prediction(
-            &project,
-            buffer,
-            anchor,
-            PredictEditsRequestTrigger::Other,
-            cx,
-        )
-    });
-    prediction_task.await
+    prediction_task.await.unwrap()
 }
 
 async fn make_test_ep_store(
@@ -3623,9 +3603,8 @@ async fn test_sweep_prompt_request_prediction_diffs_rewritten_window_into_anchor
         make_sweep_prompt_test_ep_store(&project, cx).await;
     *completion_response.lock() = "line 0\nline 1 updated\nline 2\n".to_string();
 
-    let result = request_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
+    let result = run_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
         .await
-        .unwrap()
         .expect("expected a sweep prompt prediction");
     let prediction = result.prediction;
 
@@ -3680,9 +3659,7 @@ async fn test_sweep_prompt_request_prediction_returns_none_for_identical_rewrite
         make_sweep_prompt_test_ep_store(&project, cx).await;
     *completion_response.lock() = "line 0\nline 1\nline 2\n".to_string();
 
-    let result = request_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
-        .await
-        .unwrap();
+    let result = run_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx).await;
 
     assert!(
         result.is_none(),
