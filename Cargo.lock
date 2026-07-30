@@ -3911,6 +3911,7 @@ dependencies = [
  "copilot",
  "copilot_chat",
  "gpui",
+ "i18n",
  "language",
  "log",
  "lsp",
