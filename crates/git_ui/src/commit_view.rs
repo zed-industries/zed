@@ -35,7 +35,7 @@ use std::{
 use theme::ActiveTheme;
 use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
-use workspace::item::TabTooltipContent;
+use workspace::item::{PreviewTabsSettings, TabTooltipContent};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
@@ -206,6 +206,10 @@ impl CommitView {
                             )
                         });
 
+                        let preview_settings = PreviewTabsSettings::get_global(cx);
+                        let allow_preview =
+                            preview_settings.enabled && preview_settings.enable_preview_from_git;
+
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
                             let ix = pane.items().position(|item| {
@@ -219,8 +223,11 @@ impl CommitView {
                                     .filter_map(|item| item.downcast::<CommitView>())
                                     .find(|view| view.read(cx).commit.sha == commit_sha)
                                     .unwrap();
+                                let was_preview =
+                                    pane.preview_item_id() == Some(existing.item_id());
 
                                 pane.remove_item(existing.item_id(), false, false, window, cx);
+                                let new_id = commit_view.entity_id();
                                 pane.add_item(
                                     Box::new(commit_view),
                                     true,
@@ -229,8 +236,27 @@ impl CommitView {
                                     window,
                                     cx,
                                 );
+                                if allow_preview && was_preview {
+                                    pane.replace_preview_item_id(new_id, window, cx);
+                                }
                             } else {
-                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
+                                let destination = if allow_preview {
+                                    pane.close_current_preview_item(window, cx)
+                                } else {
+                                    None
+                                };
+                                let new_id = commit_view.entity_id();
+                                pane.add_item(
+                                    Box::new(commit_view),
+                                    true,
+                                    true,
+                                    destination,
+                                    window,
+                                    cx,
+                                );
+                                if allow_preview {
+                                    pane.replace_preview_item_id(new_id, window, cx);
+                                }
                             }
                         })
                     })
