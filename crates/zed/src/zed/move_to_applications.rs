@@ -4,6 +4,7 @@ use gpui::{
     App, AsyncWindowContext, Context, DismissEvent, EventEmitter, FocusHandle, Focusable,
     PromptButton, PromptLevel, Render, WeakEntity, Window,
 };
+use i18n::t;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -70,17 +71,20 @@ impl MoveToApplicationsRequest {
         workspace: WeakEntity<MultiWorkspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
+        let message = t!("Move Zed to Applications?").resolve();
+        let detail = t!(
+            "Zed is running from a temporary location. Move it to Applications to finish installing it."
+        )
+        .resolve();
         let response = cx
             .prompt(
                 PromptLevel::Info,
-                "Move Zed to Applications?",
-                Some(
-                    "Zed is running from a temporary location. Move it to Applications to finish installing it.",
-                ),
+                &message,
+                Some(&detail),
                 &[
-                    PromptButton::ok("Yes"),
-                    PromptButton::cancel("No"),
-                    PromptButton::new("Don't ask me again"),
+                    PromptButton::ok(t!("Yes")),
+                    PromptButton::cancel(t!("No")),
+                    PromptButton::new(t!("Don't ask me again")),
                 ],
             )
             .await?;
@@ -103,9 +107,9 @@ impl MoveToApplicationsRequest {
                         .ok();
                     cx.prompt(
                         PromptLevel::Critical,
-                        "Failed to move Zed to Applications",
+                        &t!("Failed to move Zed to Applications").resolve(),
                         Some(&error.to_string()),
-                        &["OK"],
+                        &[PromptButton::ok(t!("OK"))],
                     )
                     .await
                     .log_err();

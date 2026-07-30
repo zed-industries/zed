@@ -155,3 +155,10 @@ documentation = 文档
 zed-repository = Zed 代码仓库
 zed-twitter = Zed 的 Twitter
 join-the-team = 加入团队
+
+## Move to Applications
+
+move-zed-to-applications = 将 Zed 移动到「应用程序」？
+zed-is-running-from-a-temporary-location-move-it-to-applications-to-finish-installing-it = Zed 正在从临时位置运行。将它移动到「应用程序」以完成安装。
+don-t-ask-me-again = 不再询问
+failed-to-move-zed-to-applications = 将 Zed 移动到「应用程序」失败
