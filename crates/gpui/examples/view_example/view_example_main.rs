@@ -32,8 +32,9 @@ use example_input::Input;
 use example_text_area::TextArea;
 
 use gpui::{
-    App, Bounds, Context, Div, Entity, IntoElement, KeyBinding, Projection, Render, SharedString,
-    Window, WindowBounds, WindowOptions, actions, div, hsla, prelude::*, project, px, rgb, size,
+    App, Bounds, Context, Div, Entity, EntityId, IntoElement, KeyBinding, Projection,
+    ProjectionMut, Render, SharedString, Window, WindowBounds, WindowOptions, actions, div, hsla,
+    prelude::*, project, px, rgb, size,
 };
 use gpui_platform::application;
 
@@ -46,9 +47,47 @@ actions!(
 /// get [`Projection`]s of individual fields, so a component that edits a name
 /// works the same whether the name is a field here or a standalone entity.
 struct Profile {
+    primary: Person,
+    emergency_contact: Person,
+    bio: String,
+}
+
+struct Person {
     name: String,
     email: String,
-    bio: String,
+}
+
+/// A subform over *a* person, wherever that person lives. It projects `name` and
+/// `email` out of a `ProjectionMut<Person>`, so the projections it builds are
+/// two lenses deep — `Profile` to `Person` to `String` — without this component
+/// knowing that, and without copying anything along the way.
+#[derive(IntoElement)]
+struct PersonForm {
+    person: ProjectionMut<Person>,
+}
+
+impl gpui::View for PersonForm {
+    fn entity_id(&self) -> Option<EntityId> {
+        // Deliberately *not* the projection's id. A view's identity becomes the
+        // notify target for state allocated inside it, so identifying a view by
+        // a projection it also reads from feeds that state's notifications back
+        // into the projection graph and spins forever. Positional identity is
+        // enough here: the two subforms sit at different places in the tree.
+        None
+    }
+
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(Input::new(project!(window, cx, &self.person, mut name)).width(px(280.)))
+            .child(
+                Input::new(project!(window, cx, &self.person, mut email))
+                    .width(px(280.))
+                    .color(hsla(0., 0., 0.3, 1.)),
+            )
+    }
 }
 
 /// A stateless readout of a projected string, rendered far from the input that
@@ -105,8 +144,14 @@ impl Render for ViewExample {
         // The data plane: one entity for the whole form. Fields are handed out
         // below as projections, built inline where they're used.
         let profile = window.use_state(cx, |_, _| Profile {
-            name: String::new(),
-            email: String::from("me@example.com"),
+            primary: Person {
+                name: String::new(),
+                email: String::from("me@example.com"),
+            },
+            emergency_contact: Person {
+                name: String::new(),
+                email: String::new(),
+            },
             bio: String::new(),
         });
         // Editors that own their own string internally — no extra wiring up top.
@@ -120,27 +165,34 @@ impl Render for ViewExample {
             .bg(rgb(0xf0f0f0))
             .p(px(24.))
             .gap(px(24.))
+            // One component, two people, one entity. Each subform is handed a
+            // projected `Person` and projects further from there.
             .child(
-                section("Inputs — each one a projected field of a single entity")
-                    .child(Input::new(project!(window, cx, &profile, mut name)).width(px(320.)))
-                    .child(
-                        Input::new(project!(window, cx, &profile, mut email))
-                            .width(px(320.))
-                            .color(hsla(0., 0., 0.3, 1.)),
-                    ),
+                section("Subforms — the same component over two projected people").child(
+                    div()
+                        .flex()
+                        .gap(px(16.))
+                        .child(PersonForm {
+                            person: project!(window, cx, &profile, mut primary),
+                        })
+                        .child(PersonForm {
+                            person: project!(window, cx, &profile, mut emergency_contact),
+                        }),
+                ),
             )
-            // Read-only projections of the very same fields. Type above and
-            // these update, because a projection read during render subscribes
-            // the reader to its source.
+            // Read-only projections of the very same fields, reached by path
+            // from the root instead of through the subform. Type above and these
+            // update, because a projection read during render subscribes the
+            // reader to its source.
             .child(
                 section("Read-only projections — the same fields, somewhere else")
                     .child(FieldReadout {
                         label: "name",
-                        value: project!(window, cx, &profile, name),
+                        value: project!(window, cx, &profile, primary.name),
                     })
                     .child(FieldReadout {
-                        label: "email",
-                        value: project!(window, cx, &profile, email),
+                        label: "contact",
+                        value: project!(window, cx, &profile, emergency_contact.name),
                     }),
             )
             .child(

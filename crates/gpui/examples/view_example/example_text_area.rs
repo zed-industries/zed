@@ -48,10 +48,12 @@ impl TextArea {
 
 impl gpui::View for TextArea {
     fn entity_id(&self) -> Option<EntityId> {
-        Some(match &self.source {
-            Source::Value(value) => value.entity_id(),
-            Source::Editor(editor) => editor.entity_id(),
-        })
+        match &self.source {
+            // See `Input::entity_id`: identifying this view by the value it
+            // allocates an editor over would feed back and spin forever.
+            Source::Value(_) => None,
+            Source::Editor(editor) => Some(editor.entity_id()),
+        }
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {

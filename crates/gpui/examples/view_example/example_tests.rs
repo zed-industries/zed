@@ -6,7 +6,10 @@
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, Entity, KeyBinding, ProjectionMut, TestAppContext, Window, prelude::*};
+    use gpui::{
+        Context, Entity, IntoElement, KeyBinding, ProjectionMut, TestAppContext, Window,
+        prelude::*, project,
+    };
 
     use crate::example_editor::Editor;
     use crate::example_input::Input;
@@ -128,5 +131,79 @@ mod tests {
 
         cx.simulate_keystrokes("left left");
         cx.read_entity(&editor, |editor, _| assert_eq!(editor.cursor, 1));
+    }
+
+    /// Guards a feedback loop: a view's identity is the notify target for state
+    /// allocated inside it, so a subform identified by the projection it also
+    /// projects from will notify itself forever. This test hangs if that
+    /// regresses.
+    #[gpui::test]
+    fn nested_subforms_do_not_feed_back(cx: &mut TestAppContext) {
+        let (root, cx) = cx.add_window_view(|_, cx| SubformHarness {
+            profile: cx.new(|_| Profile {
+                primary: Person::default(),
+                secondary: Person::default(),
+            }),
+        });
+
+        let profile = cx.read_entity(&root, |root, _| root.profile.clone());
+
+        // Writing the source notifies the projections the subforms read, which
+        // in turn notify the editors allocated inside them. If any of those
+        // notifications routes back into the projection graph, this never
+        // settles.
+        cx.update(|_, cx| {
+            profile.update(cx, |profile, cx| {
+                profile.primary.name = "hi".to_string();
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+
+        cx.read_entity(&profile, |profile, _| {
+            assert_eq!(profile.primary.name, "hi");
+            assert_eq!(profile.secondary.name, "", "subforms must stay isolated");
+        });
+    }
+
+    #[derive(Default)]
+    struct Person {
+        name: String,
+    }
+
+    struct Profile {
+        primary: Person,
+        secondary: Person,
+    }
+
+    /// Two instances of one subform over two projected people, mirroring the
+    /// example's `PersonForm`.
+    struct SubformHarness {
+        profile: Entity<Profile>,
+    }
+
+    impl Render for SubformHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let primary = project!(window, cx, &self.profile, mut primary);
+            let secondary = project!(window, cx, &self.profile, mut secondary);
+            gpui::div()
+                .child(Subform { person: primary })
+                .child(Subform { person: secondary })
+        }
+    }
+
+    #[derive(IntoElement)]
+    struct Subform {
+        person: ProjectionMut<Person>,
+    }
+
+    impl gpui::View for Subform {
+        fn entity_id(&self) -> Option<gpui::EntityId> {
+            None
+        }
+
+        fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+            Input::new(project!(window, cx, &self.person, mut name))
+        }
     }
 }

@@ -8,9 +8,7 @@
 //!   * `Input::editor(editor: Entity<Editor>)` — you hold the editor; cursor/selection
 //!     are now yours to read and drive too.
 //!
-//! Either way the chrome is identical. Because the projection (or editor) is the
-//! input's *identity*, the internal `use_state(Editor)` is collision-safe across
-//! any number of inputs.
+//! Either way the chrome is identical.
 
 use gpui::{
     App, BoxShadow, CursorStyle, Entity, EntityId, Hsla, IntoElement, Pixels, ProjectionMut,
@@ -63,10 +61,17 @@ impl Input {
 
 impl gpui::View for Input {
     fn entity_id(&self) -> Option<EntityId> {
-        Some(match &self.source {
-            Source::Value(value) => value.entity_id(),
-            Source::Editor(editor) => editor.entity_id(),
-        })
+        match &self.source {
+            // A view's identity is the notify target for state allocated inside
+            // it. The editor below is allocated here and observes the value, so
+            // identifying this view by the value would route the editor's
+            // notifications back into the thing it observes and spin forever.
+            // Positional identity is correct here.
+            Source::Value(_) => None,
+            // Nothing is allocated in this branch, so the editor we were handed
+            // is a safe identity and survives moving around the tree.
+            Source::Editor(editor) => Some(editor.entity_id()),
+        }
     }
 
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {

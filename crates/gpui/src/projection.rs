@@ -20,37 +20,89 @@ fn write_entity<P: 'static>(entity: &AnyEntity, cx: &mut App, update: &mut dyn F
     });
 }
 
+/// Something a projection can be built from: an entity, or another projection.
+///
+/// Projecting from a projection composes paths rather than copying values, so
+/// `Profile -> Person -> String` stores one string and walks two lenses to
+/// reach it. A component handed a `ProjectionMut<Person>` can project its
+/// fields without knowing whether the person is a whole entity or a field of
+/// something larger.
+pub trait ProjectionSource<E: 'static> {
+    /// A read-only handle to the source value.
+    fn to_projection(&self) -> Projection<E>;
+}
+
+/// A [`ProjectionSource`] that can also be written through. Read-only sources
+/// deliberately don't implement this: you can't derive a writable projection
+/// from a value you may only read.
+pub trait ProjectionSourceMut<E: 'static>: ProjectionSource<E> {
+    /// A writable handle to the source value.
+    fn to_projection_mut(&self) -> ProjectionMut<E>;
+}
+
+impl<E: 'static> ProjectionSource<E> for Entity<E> {
+    fn to_projection(&self) -> Projection<E> {
+        self.clone().into()
+    }
+}
+
+impl<E: 'static> ProjectionSourceMut<E> for Entity<E> {
+    fn to_projection_mut(&self) -> ProjectionMut<E> {
+        self.clone().into()
+    }
+}
+
+impl<E: 'static> ProjectionSource<E> for Projection<E> {
+    fn to_projection(&self) -> Projection<E> {
+        self.clone()
+    }
+}
+
+impl<E: 'static> ProjectionSource<E> for ProjectionMut<E> {
+    fn to_projection(&self) -> Projection<E> {
+        self.read_only()
+    }
+}
+
+impl<E: 'static> ProjectionSourceMut<E> for ProjectionMut<E> {
+    fn to_projection_mut(&self) -> ProjectionMut<E> {
+        self.clone()
+    }
+}
+
 struct ReadProjectionState<E: 'static, P: ?Sized + 'static> {
-    source: Entity<E>,
+    source: Projection<E>,
     lens: for<'a> fn(&'a E) -> &'a P,
     _subscription: Subscription,
 }
 
 impl<E: 'static, P: ?Sized + 'static> ReadProjectionState<E, P> {
     fn new<T: 'static>(
-        source: &Entity<E>,
+        source: &impl ProjectionSource<E>,
         lens: for<'a> fn(&'a E) -> &'a P,
         cx: &mut Context<T>,
     ) -> Self {
+        let source = source.to_projection();
         Self {
-            source: source.clone(),
+            _subscription: source.observe(cx, |_, _, cx| cx.notify()),
+            source,
             lens,
-            _subscription: cx.observe(source, |_, _, cx| cx.notify()),
         }
     }
 
     fn update_source<T: 'static>(
         &mut self,
-        source: &Entity<E>,
+        source: &impl ProjectionSource<E>,
         lens: for<'a> fn(&'a E) -> &'a P,
         cx: &mut Context<T>,
     ) {
-        if self.source != *source {
-            self.source = source.clone();
-            self._subscription = cx.observe(source, |_, _, cx| cx.notify());
-            // The projected value is now read from a different entity, so
-            // views that read this projection last frame must re-render even
-            // though neither the old nor the new source notified.
+        let source = source.to_projection();
+        if self.source.entity_id() != source.entity_id() {
+            self._subscription = source.observe(cx, |_, _, cx| cx.notify());
+            self.source = source;
+            // The projected value is now read from a different source, so views
+            // that read this projection last frame must re-render even though
+            // neither the old nor the new source notified.
             cx.notify();
         }
         self.lens = lens;
@@ -69,30 +121,35 @@ fn read_projection<'a, E: 'static, P: ?Sized + 'static>(entity: &AnyEntity, cx: 
 
 struct MutableProjectionState<E: 'static, P: ?Sized + 'static> {
     read: ReadProjectionState<E, P>,
+    /// The same source as `read.source`, kept separately because writing needs
+    /// the writable handle. Both are replaced together in `update_source`.
+    source: ProjectionMut<E>,
     write: for<'a> fn(&'a mut E) -> &'a mut P,
 }
 
 impl<E: 'static, P: ?Sized + 'static> MutableProjectionState<E, P> {
     fn new<T: 'static>(
-        source: &Entity<E>,
+        source: &impl ProjectionSourceMut<E>,
         read: for<'a> fn(&'a E) -> &'a P,
         write: for<'a> fn(&'a mut E) -> &'a mut P,
         cx: &mut Context<T>,
     ) -> Self {
         Self {
             read: ReadProjectionState::new(source, read, cx),
+            source: source.to_projection_mut(),
             write,
         }
     }
 
     fn update_source<T: 'static>(
         &mut self,
-        source: &Entity<E>,
+        source: &impl ProjectionSourceMut<E>,
         read: for<'a> fn(&'a E) -> &'a P,
         write: for<'a> fn(&'a mut E) -> &'a mut P,
         cx: &mut Context<T>,
     ) {
         self.read.update_source(source, read, cx);
+        self.source = source.to_projection_mut();
         self.write = write;
     }
 }
@@ -114,12 +171,11 @@ fn write_projection<E: 'static, P: ?Sized + 'static>(
 ) {
     let (source, write) = {
         let state = cx.entities.read_any::<MutableProjectionState<E, P>>(entity);
-        (state.read.source.clone(), state.write)
+        (state.source.clone(), state.write)
     };
-    source.update(cx, |state, cx| {
-        update(write(state));
-        cx.notify();
-    });
+    // Writes walk the path down to the entity that actually owns the value,
+    // which is the only place the data lives and the only thing notified.
+    source.update(cx, |value| update(write(value)));
 }
 
 /// A read-only handle to a value `P` projected out of an entity.
@@ -403,7 +459,7 @@ impl Window {
     pub fn use_projection<E: 'static, P: ?Sized + 'static>(
         &mut self,
         cx: &mut App,
-        source: &Entity<E>,
+        source: &impl ProjectionSource<E>,
         lens: for<'a> fn(&'a E) -> &'a P,
     ) -> Projection<P> {
         self.use_keyed_projection(
@@ -420,7 +476,7 @@ impl Window {
         &mut self,
         key: impl Into<ElementId>,
         cx: &mut App,
-        source: &Entity<E>,
+        source: &impl ProjectionSource<E>,
         lens: for<'a> fn(&'a E) -> &'a P,
     ) -> Projection<P> {
         let state =
@@ -442,7 +498,7 @@ impl Window {
     pub fn use_projection_mut<E: 'static, P: ?Sized + 'static>(
         &mut self,
         cx: &mut App,
-        source: &Entity<E>,
+        source: &impl ProjectionSourceMut<E>,
         read: for<'a> fn(&'a E) -> &'a P,
         write: for<'a> fn(&'a mut E) -> &'a mut P,
     ) -> ProjectionMut<P> {
@@ -461,7 +517,7 @@ impl Window {
         &mut self,
         key: impl Into<ElementId>,
         cx: &mut App,
-        source: &Entity<E>,
+        source: &impl ProjectionSourceMut<E>,
         read: for<'a> fn(&'a E) -> &'a P,
         write: for<'a> fn(&'a mut E) -> &'a mut P,
     ) -> ProjectionMut<P> {
@@ -549,19 +605,23 @@ mod tests {
         age: u32,
     }
 
+    struct Company {
+        owner: Person,
+    }
+
     /// Runs `hook` during render so tests build projections the way callers do,
     /// through the `use_projection` hooks, and records what each frame produced.
     ///
     /// `source` and `enabled` are fields rather than captures so tests can swap
     /// the projected entity or stop rendering the hook between frames.
-    struct HookView<H: 'static> {
-        source: Entity<Person>,
-        hook: fn(&mut Window, &mut Context<Self>, &Entity<Person>) -> H,
+    struct HookView<S: 'static, H: 'static> {
+        source: Entity<S>,
+        hook: fn(&mut Window, &mut Context<Self>, &Entity<S>) -> H,
         enabled: bool,
         frames: Rc<RefCell<Vec<H>>>,
     }
 
-    impl<H: 'static> Render for HookView<H> {
+    impl<S: 'static, H: 'static> Render for HookView<S, H> {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             if self.enabled {
                 let produced = (self.hook)(window, cx, &self.source);
@@ -572,11 +632,11 @@ mod tests {
     }
 
     /// Opens a window around [`HookView`] and draws one frame.
-    fn hook_window<H: 'static>(
+    fn hook_window<S: 'static, H: 'static>(
         cx: &mut TestAppContext,
-        source: &Entity<Person>,
-        hook: fn(&mut Window, &mut Context<HookView<H>>, &Entity<Person>) -> H,
-    ) -> (WindowHandle<HookView<H>>, Rc<RefCell<Vec<H>>>) {
+        source: &Entity<S>,
+        hook: fn(&mut Window, &mut Context<HookView<S, H>>, &Entity<S>) -> H,
+    ) -> (WindowHandle<HookView<S, H>>, Rc<RefCell<Vec<H>>>) {
         let frames = Rc::new(RefCell::new(Vec::new()));
         let window = cx.add_window({
             let source = source.clone();
@@ -592,7 +652,7 @@ mod tests {
         (window, frames)
     }
 
-    fn draw<H: 'static>(cx: &mut TestAppContext, window: WindowHandle<HookView<H>>) {
+    fn draw<S: 'static, H: 'static>(cx: &mut TestAppContext, window: WindowHandle<HookView<S, H>>) {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
     }
@@ -609,10 +669,10 @@ mod tests {
     }
 
     /// Draws one frame and returns the projection the hook created.
-    fn render_projection<H: 'static>(
+    fn render_projection<S: 'static, H: 'static>(
         cx: &mut TestAppContext,
-        source: &Entity<Person>,
-        hook: fn(&mut Window, &mut Context<HookView<H>>, &Entity<Person>) -> H,
+        source: &Entity<S>,
+        hook: fn(&mut Window, &mut Context<HookView<S, H>>, &Entity<S>) -> H,
     ) -> H {
         let (_window, frames) = hook_window(cx, source, hook);
         take_output(&frames)
@@ -909,6 +969,66 @@ mod tests {
         cx.update(|cx| {
             escaped.update(cx, |name| name.push_str(" Lovelace"));
             assert_eq!(escaped.read(cx), "Ada Lovelace");
+        });
+    }
+
+    #[test]
+    fn projections_compose_through_a_projected_source() {
+        struct Watcher {
+            notifications: usize,
+            _subscription: Option<Subscription>,
+        }
+
+        let mut cx = TestAppContext::single();
+        let company = cx.update(|cx| {
+            cx.new(|_| Company {
+                owner: Person {
+                    name: "Ada".to_string(),
+                    age: 36,
+                },
+            })
+        });
+
+        // Two lenses deep: the second projection's source is the first
+        // projection, not an entity.
+        let name = render_projection(&mut cx, &company, |window, cx, company| {
+            let owner = crate::project!(window, cx, company, mut owner);
+            crate::project!(window, cx, &owner, mut name)
+        });
+
+        let watcher = cx.update(|cx| {
+            cx.new(|cx| Watcher {
+                notifications: 0,
+                _subscription: Some(
+                    name.observe(cx, |watcher: &mut Watcher, _, _| watcher.notifications += 1),
+                ),
+            })
+        });
+
+        cx.update(|cx| {
+            assert_eq!(name.read(cx), "Ada");
+            // The write walks both lenses down to the root entity; there is no
+            // copy of the string at either intermediate level.
+            name.update(cx, |name| name.push_str(" Lovelace"));
+            assert_eq!(company.read(cx).owner.name, "Ada Lovelace");
+        });
+
+        // A write straight to the root has to climb back up through both
+        // levels to reach anything observing the leaf.
+        cx.update(|cx| {
+            company.update(cx, |company, cx| {
+                company.owner.name = "Grace".to_string();
+                cx.notify();
+            })
+        });
+
+        cx.update(|cx| {
+            assert_eq!(name.read(cx), "Grace");
+            assert_eq!(
+                watcher.read(cx).notifications,
+                2,
+                "both the projected write and the root write must reach the leaf"
+            );
         });
     }
 
