@@ -1,6 +1,6 @@
 ---
 title: Use a Local Model - Zed
-description: Configure Ollama, LM Studio, local OpenAI-compatible servers, and local edit prediction in Zed.
+description: Configure llama.cpp, Ollama, LM Studio, local OpenAI-compatible servers, and local edit prediction in Zed.
 ---
 
 # Use a Local Model
@@ -9,10 +9,68 @@ Use local models when you run the model on your machine or on infrastructure you
 
 | Local path                        | Zed AI features      | External Agents | Terminal Threads | Notes                                              |
 | --------------------------------- | -------------------- | --------------- | ---------------- | -------------------------------------------------- |
-| Ollama                            | Yes                  | Separate config | Separate config  | Configure Ollama for Zed AI features               |
+| llama.cpp                         | Yes                  | Separate config | Separate config  | Configure a llama.cpp server for Zed AI features   |
 | LM Studio                         | Yes                  | Separate config | Separate config  | Configure LM Studio for Zed AI features            |
+| Ollama                            | Yes                  | Separate config | Separate config  | Configure Ollama for Zed AI features               |
 | Local OpenAI-compatible server    | Yes                  | Separate config | Separate config  | Configure base URL, model, and key if needed       |
 | Local/self-hosted edit prediction | Edit Prediction only | No              | No               | Uses [Edit Prediction](./edit-prediction.md) setup |
+
+## llama.cpp {#llama-cpp}
+
+Use [llama.cpp](https://llama.app) and its built-in server for local models with Zed Agent, Inline Assistant, and similar model-backed Zed AI features.
+
+1. Install llama.cpp from [llama.app](https://llama.app).
+2. Start the server in [router mode](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md):
+
+   ```sh
+   llama serve
+   ```
+
+   It loads models from the llama.cpp cache on demand. To download and run a specific model in one step, pass `-hf`:
+
+   ```sh
+   llama serve -hf unsloth/gemma-4-26B-A4B-it-GGUF:BF16
+   ```
+
+3. In Zed, select a llama.cpp model from the model dropdown.
+
+Zed automatically discovers the served models with their context length and tool/vision capabilities. In router mode these are refined once a model loads, via the server's `/models/sse` stream (which requires a recent llama.cpp build). To list models yourself instead, set `auto_discover` to `false`:
+
+```json [settings]
+{
+  "language_models": {
+    "llama.cpp": {
+      "api_url": "http://localhost:8080",
+      "auto_discover": false,
+      "available_models": [
+        {
+          "name": "gemma-4-12b-it-GGUF:BF16",
+          "display_name": "gemma-4-12b-it-GGUF:BF16",
+          "max_tokens": 32768,
+          "supports_tools": true,
+          "supports_images": false
+        }
+      ]
+    }
+  }
+}
+```
+
+### llama.cpp Context Length {#llama-cpp-context}
+
+Zed uses the context length the server reports (`/props`). Override it for all models with `context_window`, or per model with `max_tokens` in `available_models`:
+
+```json [settings]
+{
+  "language_models": {
+    "llama.cpp": {
+      "context_window": 8192
+    }
+  }
+}
+```
+
+If your llama.cpp server requires a key, enter it in the provider UI or set `LLAMACPP_API_KEY`. For a remote server, set the API URL to its endpoint and provide the key (set on the server with `--api-key`).
 
 ## Ollama {#ollama}
 

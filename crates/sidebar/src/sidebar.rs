@@ -3,7 +3,7 @@ mod thread_switcher;
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use agent_ui::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, terminal_title_prefix,
@@ -28,9 +28,9 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowBackgroundAppearance, WindowHandle, linear_color_stop,
+    Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent, Entity, EntityId,
+    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
+    TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle, linear_color_stop,
     linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
@@ -52,7 +52,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, CLIENT_SIDE_DECORATION_ROUNDING};
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
     HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
@@ -69,8 +69,9 @@ use workspace::{
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
-use zed_actions::OpenRecent;
+use git_ui::worktree_service::{RemoteBranchName, worktree_create_targets};
 use zed_actions::editor::{MoveDown, MoveUp};
+use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
 
 use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
 
@@ -626,7 +627,7 @@ impl WorkspaceMenuWorktreeLabel {
             })
             .child(Label::new(self.primary_name.clone()).truncate())
             .when_some(self.secondary_name.clone(), |this, secondary_name| {
-                this.child(Label::new(":").alpha(0.5))
+                this.child(Label::new("/").alpha(0.5))
                     .child(Label::new(secondary_name).truncate())
             })
     }
@@ -731,6 +732,35 @@ fn connect_remote(
     remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
+// Per-project-group cache of the remote default branch, used to populate the
+// "Create New Worktree" submenu without doing git I/O while the menu is open.
+enum DefaultBranchCache {
+    Pending,
+    Resolved(Option<RemoteBranchName>),
+}
+
+// Mirrors the behavior of the worktree picker's "Create new worktree" entries.
+fn create_worktree_in_workspace(
+    workspace: &Entity<Workspace>,
+    branch_target: NewWorktreeBranchTarget,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    workspace.update(cx, |workspace, cx| {
+        let focused_dock = workspace.focused_dock_position(window, cx);
+        git_ui::worktree_service::handle_create_worktree(
+            workspace,
+            &CreateWorktree {
+                worktree_name: None,
+                branch_target,
+            },
+            window,
+            focused_dock,
+            cx,
+        );
+    });
+}
+
 /// The sidebar re-derives its entire entry list from scratch on every
 /// change via `update_entries` → `rebuild_contents`. Avoid adding
 /// incremental or inter-event coordination state — if something can
@@ -780,6 +810,7 @@ pub struct Sidebar {
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
+    worktree_default_branches: HashMap<ProjectGroupKey, DefaultBranchCache>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     update_task: Option<Task<()>>,
@@ -917,6 +948,7 @@ impl Sidebar {
             project_header_menu_handles: HashMap::new(),
             project_header_new_thread_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
+            worktree_default_branches: HashMap::new(),
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             update_task: None,
@@ -1107,7 +1139,7 @@ impl Sidebar {
                     this.sync_active_entry_from_panel(agent_panel, cx);
                     this.schedule_update_entries(false, cx);
                 }
-                AgentPanelEvent::TerminalClosed { metadata } => {
+                AgentPanelEvent::TerminalCloseRequested { metadata } => {
                     if let Some(workspace) = workspace.upgrade() {
                         let workspace = ThreadEntryWorkspace::Open(workspace);
                         this.close_terminal(metadata, &workspace, window, cx);
@@ -2011,6 +2043,8 @@ impl Sidebar {
         // Preserve measurements for unchanged entries so sticky headers do not flicker.
         self.apply_list_state_diff(&previous_shapes, multi_workspace.read(cx));
 
+        self.prefetch_worktree_default_branches(cx);
+
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
                 cx.notify();
@@ -2508,7 +2542,7 @@ impl Sidebar {
             .and_then(|mw| mw.read(cx).workspaces_for_project_group(key, cx))
             .unwrap_or_default();
 
-        if open_workspaces.len() <= 1 {
+        if open_workspaces.is_empty() {
             let key = key.clone();
             return button
                 .tooltip(move |_, cx| {
@@ -2569,7 +2603,7 @@ impl Sidebar {
             Some(ContextMenu::build(
                 window,
                 cx,
-                move |mut menu, _window, _cx| {
+                move |mut menu, _window, cx| {
                     menu = menu.header("New Thread In…");
 
                     for (workspace, labels) in open_workspaces
@@ -2620,6 +2654,77 @@ impl Sidebar {
                         );
                     }
 
+                    let base_workspace = active_workspace
+                        .as_ref()
+                        .filter(|workspace| open_workspaces.contains(workspace))
+                        .cloned()
+                        .or_else(|| open_workspaces.first().cloned());
+
+                    // Only offer worktree creation when the base project can
+                    // actually create one; otherwise the submenu would expand to
+                    // nothing. Mirrors the picker's `creation_blocked_reason`.
+                    let creation_blocked = base_workspace.as_ref().is_none_or(|base_workspace| {
+                        let project = base_workspace.read(cx).project().read(cx);
+                        project.is_via_collab() || project.repositories(cx).is_empty()
+                    });
+
+                    if let Some(base_workspace) = base_workspace.filter(|_| !creation_blocked) {
+                        menu = menu.separator().submenu("Create New Worktree…", {
+                            let this = this.clone();
+                            move |mut submenu, _window, submenu_cx| {
+                                let project = base_workspace.read(submenu_cx).project().clone();
+                                let project_ref = project.read(submenu_cx);
+                                let has_multiple_repositories =
+                                    project_ref.repositories(submenu_cx).len() > 1;
+                                let current_branch =
+                                    project_ref.active_repository(submenu_cx).and_then(|repo| {
+                                        repo.read(submenu_cx)
+                                            .branch
+                                            .as_ref()
+                                            .map(|branch| branch.name().to_string())
+                                    });
+                                let default_branch = this
+                                    .read_with(submenu_cx, |sidebar, _| {
+                                        match sidebar.worktree_default_branches.get(&key) {
+                                            Some(DefaultBranchCache::Resolved(branch)) => {
+                                                branch.clone()
+                                            }
+                                            _ => None,
+                                        }
+                                    })
+                                    .ok()
+                                    .flatten();
+
+                                let targets = worktree_create_targets(
+                                    has_multiple_repositories,
+                                    default_branch,
+                                    current_branch.as_deref(),
+                                );
+                                for target in targets {
+                                    let label = format!(
+                                        "Based on {}",
+                                        target.branch_label(
+                                            has_multiple_repositories,
+                                            current_branch.as_deref(),
+                                        )
+                                    );
+                                    let branch_target = target.branch_target();
+                                    let workspace = base_workspace.clone();
+                                    submenu = submenu.entry(label, None, move |window, cx| {
+                                        create_worktree_in_workspace(
+                                            &workspace,
+                                            branch_target.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+
+                                submenu
+                            }
+                        });
+                    }
+
                     menu
                 },
             ))
@@ -2630,6 +2735,71 @@ impl Sidebar {
             y: px(1.),
         })
         .into_any_element()
+    }
+
+    // Warms `worktree_default_branches` for every project group with at least one
+    // open workspace. The git query runs off the menu path so the submenu can read
+    // the result synchronously when it opens. Worktrees of a repository share the
+    // same default branch, so any workspace in the group yields the same answer.
+    fn prefetch_worktree_default_branches(&mut self, cx: &mut Context<Self>) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let keys: Vec<ProjectGroupKey> = self
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        for key in keys {
+            if self.worktree_default_branches.contains_key(&key) {
+                continue;
+            }
+            let Some(base) = multi_workspace
+                .read(cx)
+                .workspaces_for_project_group(&key, cx)
+                .and_then(|workspaces| workspaces.first().cloned())
+            else {
+                continue;
+            };
+            self.prefetch_worktree_default_branch(&key, &base, cx);
+        }
+    }
+
+    fn prefetch_worktree_default_branch(
+        &mut self,
+        key: &ProjectGroupKey,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
+        // Presence of the key means the group is already pending or resolved. The
+        // no-repository case is deliberately not inserted so it retries on a
+        // later rebuild once the repository has finished loading.
+        if self.worktree_default_branches.contains_key(key) {
+            return;
+        }
+        let Some(repository) = workspace.read(cx).project().read(cx).active_repository(cx) else {
+            return;
+        };
+        let request = repository.update(cx, |repository, _| repository.default_branch(true));
+        self.worktree_default_branches
+            .insert(key.clone(), DefaultBranchCache::Pending);
+        let key = key.clone();
+        cx.spawn(async move |this, cx| {
+            let default_branch = request.await.ok().and_then(Result::ok).flatten();
+            let parsed = default_branch.as_deref().and_then(RemoteBranchName::parse);
+            this.update(cx, |sidebar, cx| {
+                sidebar
+                    .worktree_default_branches
+                    .insert(key, DefaultBranchCache::Resolved(parsed));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_project_header_ellipsis_menu(
@@ -3690,6 +3860,18 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    fn is_thread_active_in_workspace(
+        &self,
+        thread_id: &ThreadId,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) -> bool {
+        self.active_workspace(cx).as_ref() == Some(workspace)
+            && self.active_entry.as_ref().is_some_and(|entry| {
+                entry.is_active_thread(thread_id) && entry.workspace() == workspace
+            })
+    }
+
     fn activate_thread_locally(
         &mut self,
         metadata: &ThreadMetadata,
@@ -3701,6 +3883,13 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
+
+        if self.is_thread_active_in_workspace(&metadata.thread_id, workspace, cx) {
+            workspace.update(cx, |workspace, cx| {
+                workspace.focus_panel::<AgentPanel>(window, cx);
+            });
+            return;
+        }
 
         // Set active_entry eagerly so the sidebar highlight updates
         // immediately, rather than waiting for a deferred AgentPanel
@@ -5020,6 +5209,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let terminal_id = metadata.terminal_id;
+        let defer_draft_activation = activate_panel_draft && is_active && neighbor.is_some();
 
         // Closing from the sidebar must not steal focus, since the row's
         // workspace may not be the active workspace.
@@ -5027,10 +5217,10 @@ impl Sidebar {
             workspace.update(cx, |workspace, cx| {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
-                        if activate_panel_draft {
-                            panel.close_terminal(terminal_id, window, cx);
-                        } else {
+                        if defer_draft_activation || !activate_panel_draft {
                             panel.close_terminal_without_activating_draft(terminal_id, window, cx);
+                        } else {
+                            panel.close_terminal(terminal_id, window, cx);
                         }
                     });
                 }
@@ -5051,6 +5241,15 @@ impl Sidebar {
                 .is_some_and(|neighbor| self.activate_entry(neighbor, window, cx))
             {
                 return;
+            }
+            if defer_draft_activation && let ThreadEntryWorkspace::Open(workspace) = workspace {
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+                        });
+                    }
+                });
             }
             self.sync_active_entry_from_active_workspace(cx);
         }
@@ -6575,7 +6774,7 @@ impl Sidebar {
                 })
             })
             .trigger_with_tooltip(
-                IconButton::new("open-project", IconName::OpenFolder)
+                IconButton::new("open-project", IconName::FolderAdd)
                     .icon_size(IconSize::Small)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 |_window, cx| Tooltip::for_action("Add Project", &OpenRecent::default(), cx),
@@ -7887,8 +8086,48 @@ impl Render for Sidebar {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
             .font(ui_font)
-            .h_full()
-            .w(self.width)
+            .map(|el| {
+                let on_left = self.side(cx) == SidebarSide::Left;
+                match window.window_decorations() {
+                    Decorations::Server => el.h_full().w(self.width),
+                    // With client-side decorations the sidebar owns the window
+                    // corners on its side, so round them like the title bar and
+                    // status bar do. The sidebar is stretched 1px outwards over
+                    // the window border on untiled edges (with compensating
+                    // padding) so its rounded background lines up exactly with
+                    // the window shape, avoiding a transparent gap in the
+                    // rounded corners.
+                    Decorations::Client { tiling, .. } => el
+                        .absolute()
+                        .top(if tiling.top { px(0.) } else { px(-1.) })
+                        .bottom(if tiling.bottom { px(0.) } else { px(-1.) })
+                        .when(!tiling.top, |el| el.pt_px())
+                        .when(!tiling.bottom, |el| el.pb_px())
+                        .map(|el| {
+                            if on_left {
+                                el.right(px(0.))
+                                    .left(if tiling.left { px(0.) } else { px(-1.) })
+                                    .when(!tiling.left, |el| el.pl(px(1.)))
+                            } else {
+                                el.left(px(0.))
+                                    .right(if tiling.right { px(0.) } else { px(-1.) })
+                                    .when(!tiling.right, |el| el.pr(px(1.)))
+                            }
+                        })
+                        .when(on_left && !(tiling.top || tiling.left), |el| {
+                            el.rounded_tl(CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(on_left && !(tiling.bottom || tiling.left), |el| {
+                            el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!on_left && !(tiling.top || tiling.right), |el| {
+                            el.rounded_tr(CLIENT_SIDE_DECORATION_ROUNDING)
+                        })
+                        .when(!on_left && !(tiling.bottom || tiling.right), |el| {
+                            el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING)
+                        }),
+                }
+            })
             .bg(bg)
             .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
             .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())

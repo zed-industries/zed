@@ -63,6 +63,7 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+idna.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
@@ -90,7 +91,9 @@ release_channel.workspace = true
 remote.workspace = true
 remote_connection.workspace = true
 rope.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
@@ -105,7 +108,8 @@ theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true
 ui.workspace = true
-ui_input.workspace = true
+unicode-script.workspace = true
+unicode-segmentation.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -140,6 +144,7 @@ remote_server = { workspace = true, features = ["test-support"] }
 
 search = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+shlex.workspace = true
 reqwest_client.workspace = true
 tempfile.workspace = true
 vim.workspace = true

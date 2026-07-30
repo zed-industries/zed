@@ -743,7 +743,9 @@ pub(crate) fn render_mermaid_diagram(
 
 /// The horizontal scroll container wrapping a mermaid raster. The element id
 /// and the [`ScrollHandle`] identity are both stable per source offset so the
-/// scroll position survives raster swaps and re-rasters.
+/// scroll position survives raster swaps and re-rasters. Diagrams keep their
+/// natural (zoomed) size and scroll instead of being crushed via max_w_full
+/// (#61051).
 fn mermaid_scroll_container(
     markdown: Entity<Markdown>,
     source_offset: usize,
@@ -801,6 +803,17 @@ fn render_mermaid_tab_header(
     showing_code: bool,
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
+    let preview_id = ElementId::NamedChild(
+        Arc::new(ElementId::from((
+            "mermaid-tab-preview",
+            markdown.entity_id(),
+        ))),
+        source_offset.to_string().into(),
+    );
+    let code_id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("mermaid-tab-code", markdown.entity_id()))),
+        source_offset.to_string().into(),
+    );
     let preview_markdown = markdown.clone();
     let code_markdown = markdown;
 
@@ -808,38 +821,32 @@ fn render_mermaid_tab_header(
         .gap_0p5()
         .mb_2p5()
         .child(
-            Button::new(
-                ElementId::named_usize("mermaid-tab-preview", source_offset),
-                "Preview",
-            )
-            .label_size(LabelSize::Small)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(!showing_code)
-            .on_click(move |_event, _window, cx| {
-                preview_markdown.update(cx, |md, cx| {
-                    if md.is_mermaid_showing_code(source_offset) {
-                        md.toggle_mermaid_tab(source_offset);
-                        cx.notify();
-                    }
-                });
-            }),
+            Button::new(preview_id, "Preview")
+                .label_size(LabelSize::Small)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(!showing_code)
+                .on_click(move |_event, _window, cx| {
+                    preview_markdown.update(cx, |md, cx| {
+                        if md.is_mermaid_showing_code(source_offset) {
+                            md.toggle_mermaid_tab(source_offset);
+                            cx.notify();
+                        }
+                    });
+                }),
         )
         .child(
-            Button::new(
-                ElementId::named_usize("mermaid-tab-code", source_offset),
-                "Code",
-            )
-            .label_size(LabelSize::Small)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(showing_code)
-            .on_click(move |_event, _window, cx| {
-                code_markdown.update(cx, |md, cx| {
-                    if !md.is_mermaid_showing_code(source_offset) {
-                        md.toggle_mermaid_tab(source_offset);
-                        cx.notify();
-                    }
-                });
-            }),
+            Button::new(code_id, "Code")
+                .label_size(LabelSize::Small)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(showing_code)
+                .on_click(move |_event, _window, cx| {
+                    code_markdown.update(cx, |md, cx| {
+                        if !md.is_mermaid_showing_code(source_offset) {
+                            md.toggle_mermaid_tab(source_offset);
+                            cx.notify();
+                        }
+                    });
+                }),
         )
 }
 
@@ -913,7 +920,10 @@ fn render_mermaid_copy_button(
     code: String,
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
-    let id = ElementId::named_usize("copy-mermaid-code", source_offset);
+    let id = ElementId::NamedChild(
+        Arc::new(ElementId::from(("copy-mermaid-code", markdown.entity_id()))),
+        source_offset.to_string().into(),
+    );
 
     CopyButton::new(id.clone(), code.clone())
         .visible_on_hover("code_block")

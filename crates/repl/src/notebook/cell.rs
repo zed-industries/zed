@@ -14,6 +14,7 @@ use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
 use util::ResultExt;
+use zed_actions::notebook::InterruptKernel;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
@@ -31,6 +32,7 @@ pub enum CellPosition {
 pub enum CellControlType {
     RunCell,
     RerunCell,
+    StopCell,
     ClearCell,
     CellOptions,
     CollapseCell,
@@ -52,10 +54,22 @@ impl CellControlType {
         match self {
             CellControlType::RunCell => IconName::PlayFilled,
             CellControlType::RerunCell => IconName::ArrowCircle,
+            CellControlType::StopCell => IconName::Stop,
             CellControlType::ClearCell => IconName::ListX,
             CellControlType::CellOptions => IconName::Ellipsis,
             CellControlType::CollapseCell => IconName::ChevronDown,
             CellControlType::ExpandCell => IconName::ChevronRight,
+        }
+    }
+    fn id(&self) -> &'static str {
+        match self {
+            CellControlType::RunCell => "CellControlType::RunCell",
+            CellControlType::RerunCell => "CellControlType::RerunCell",
+            CellControlType::StopCell => "CellControlType::StopCell",
+            CellControlType::ClearCell => "CellControlType::ClearCell",
+            CellControlType::CellOptions => "CellControlType::CellOptions",
+            CellControlType::CollapseCell => "CellControlType::CollapseCelln",
+            CellControlType::ExpandCell => "CellControlType::ExpandCell",
         }
     }
 }
@@ -806,6 +820,25 @@ impl CodeCell {
         self.is_executing
     }
 
+    /// Displays a kernel-level failure (e.g. the kernel failed to launch because
+    /// Python is not installed) as an error output on this cell, so the user gets
+    /// feedback instead of a spinner that never resolves.
+    pub fn show_kernel_error(
+        &mut self,
+        error_message: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.outputs.push(Output::ErrorOutput(ErrorView {
+            ename: "Kernel Error".to_string(),
+            evalue: "cell could not be executed".to_string(),
+            traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
+        }));
+        self.execution_start_time = None;
+        self.is_executing = false;
+        cx.notify();
+    }
+
     pub fn execution_duration(&self) -> Option<Duration> {
         self.execution_duration
     }
@@ -927,23 +960,25 @@ impl RenderableCell for CodeCell {
     }
 
     fn control(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
-        let control_type = if self.has_outputs() {
+        let control_type = if self.is_executing {
+            CellControlType::StopCell
+        } else if self.has_outputs() {
             CellControlType::RerunCell
         } else {
             CellControlType::RunCell
         };
 
-        let cell_control = CellControl::new(
-            if self.has_outputs() {
-                "rerun-cell"
-            } else {
-                "run-cell"
-            },
-            control_type,
+        Some(
+            CellControl::new(control_type.id(), control_type).on_click(cx.listener(
+                move |this, _, window, cx| {
+                    if this.is_executing {
+                        window.dispatch_action(Box::new(InterruptKernel), cx);
+                    } else {
+                        this.run(window, cx);
+                    }
+                },
+            )),
         )
-        .on_click(cx.listener(move |this, _, window, cx| this.run(window, cx)));
-
-        Some(cell_control)
     }
 
     fn selected(&self) -> bool {

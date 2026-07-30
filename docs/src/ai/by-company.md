@@ -97,8 +97,9 @@ Paid DeepSeek usage is API access in Zed, not subscription sign-in.
 
 | Tool                              | Support level     | What you get                           | Account / billing | Setup                                                         |
 | --------------------------------- | ----------------- | -------------------------------------- | ----------------- | ------------------------------------------------------------- |
-| Ollama                            | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#ollama)            |
+| llama.cpp                         | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#llama-cpp)         |
 | LM Studio                         | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#lm-studio)         |
+| Ollama                            | Configured in Zed | Local models for Zed AI features       | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#ollama)            |
 | Local OpenAI-compatible server    | Configured in Zed | Local or self-hosted model endpoint    | Local/self-hosted | [Use a Local Model](./use-a-local-model.md#openai-compatible) |
 | Local/self-hosted edit prediction | Configured in Zed | Edit predictions from a local provider | Local/self-hosted | [Edit Prediction](./edit-prediction.md)                       |
 

@@ -12,6 +12,70 @@ kbd.keybinding {
   -webkit-text-stroke: 0.5px currentColor;
 }
 
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 28px;
+}
+
+.page-header h1 {
+  min-width: 0;
+  margin-block: 0;
+}
+
+.page-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.page-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--fg);
+  background: var(--media-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.page-action:hover {
+  color: var(--full-contrast);
+  border-color: var(--border-hover);
+}
+
+.page-action i {
+  width: 14px;
+  text-align: center;
+}
+
+.page-action-icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+@media (max-width: 720px) {
+  .page-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .page-actions {
+    flex-wrap: wrap;
+    margin-top: 0;
+  }
+}
+
 .copy-toast {
   position: fixed;
   top: 72px;

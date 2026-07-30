@@ -1202,7 +1202,7 @@ mod tests {
         let other_worktree = WorktreeId::from_usize(2);
         let kind = TaskSourceKind::Worktree {
             id: task_worktree,
-            directory_in_worktree: RelPath::empty().into_arc(),
+            directory_in_worktree: RelPath::empty_arc(),
             id_base: Cow::Borrowed("worktree"),
         };
 

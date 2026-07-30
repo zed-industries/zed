@@ -42,6 +42,15 @@ pub async fn stream_generate_content(
                 match line {
                     Ok(line) => {
                         if let Some(line) = line.strip_prefix("data: ") {
+                            // Some proxies and gateways append `data: [DONE]` as a
+                            // stream-termination sentinel (an OpenAI convention).
+                            // Google's streaming spec does not include this sentinel,
+                            // but we tolerate it here for the same reason as the
+                            // anthropic crate: proxies that inject it would otherwise
+                            // cause a spurious JSON deserialization error.
+                            if line.trim() == "[DONE]" {
+                                return None;
+                            }
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
                                 Err(error) => Some(Err(anyhow!(format!(
@@ -570,7 +579,7 @@ impl Model {
             Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini31FlashLite => "Gemini 3.1 Flash Lite",
+            Self::Gemini31FlashLite => "Gemini 3.1 Flash-Lite",
             Self::Gemini3Flash => "Gemini 3 Flash",
             Self::Gemini35Flash => "Gemini 3.5 Flash",
             Self::Gemini31Pro => "Gemini 3.1 Pro",
