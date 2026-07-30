@@ -3,6 +3,7 @@ use gpui::{
     KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription, Task,
     actions,
 };
+use i18n::t;
 use itertools::Itertools;
 use serde_json::json;
 use ui::{Button, ButtonStyle};
@@ -146,7 +147,7 @@ impl Item for KeyContextView {
     fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Keyboard Context".into()
+        t!("Keyboard Context").into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -200,19 +201,19 @@ impl Render for KeyContextView {
                     });
                 }),
             )
-            .child(Label::new("Keyboard Context").size(LabelSize::Large))
-            .child(Label::new("This view lets you determine the current context stack for creating custom key bindings in Zed. When a keyboard shortcut is triggered, it also shows all the possible contexts it could have triggered in, and which one matched."))
+            .child(Label::new(t!("Keyboard Context")).size(LabelSize::Large))
+            .child(Label::new(t!("This view lets you determine the current context stack for creating custom key bindings in Zed. When a keyboard shortcut is triggered, it also shows all the possible contexts it could have triggered in, and which one matched.")))
             .child(
                 h_flex()
                     .mt_4()
                     .gap_4()
                     .child(
-                        Button::new("open_documentation", "Open Documentation")
+                        Button::new("open_documentation", t!("Open Documentation"))
                             .style(ButtonStyle::Filled)
                             .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/key-bindings")),
                     )
                     .child(
-                        Button::new("view_default_keymap", "View Default Keymap")
+                        Button::new("view_default_keymap", t!("View Default Keymap"))
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(
                                 &zed_actions::OpenDefaultKeymap,
@@ -223,7 +224,7 @@ impl Render for KeyContextView {
                             }),
                     )
                     .child(
-                        Button::new("edit_your_keymap", "Edit Keymap File")
+                        Button::new("edit_your_keymap", t!("Edit Keymap File"))
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymapFile, cx))
                             .on_click(|_, window, cx| {
@@ -232,7 +233,7 @@ impl Render for KeyContextView {
                     ),
             )
             .child(
-                Label::new("Current Context Stack")
+                Label::new(t!("Current Context Stack"))
                     .size(LabelSize::Large)
                     .mt_8(),
             )
@@ -252,39 +253,39 @@ impl Render for KeyContextView {
                     Label::new(format!("{} {}", primary, secondary)).ml(px(12. * (i + 1) as f32))
                 })
             })
-            .child(Label::new("Last Keystroke").mt_4().size(LabelSize::Large))
+            .child(Label::new(t!("Last Keystroke")).mt_4().size(LabelSize::Large))
             .when_some(self.pending_keystrokes.as_ref(), |el, keystrokes| {
                 el.child(
-                    Label::new(format!(
-                        "Waiting for more input: {}",
-                        keystrokes.iter().map(|k| k.unparse()).join(" ")
+                    Label::new(t!(
+                        "Waiting for more input: {$keystrokes}",
+                        keystrokes = keystrokes.iter().map(|k| k.unparse()).join(" ")
                     ))
                     .ml(px(12.)),
                 )
             })
             .when_some(self.last_keystrokes.as_ref(), |el, keystrokes| {
-                el.child(Label::new(format!("Typed: {}", keystrokes)).ml_4())
+                el.child(Label::new(t!("Typed: {$keystrokes}", keystrokes = keystrokes.clone())).ml_4())
                     .children(
                         self.last_possibilities
                             .iter()
                             .map(|(name, predicate, state)| {
-                                let (text, color) = match state {
-                                    Some(true) => ("(match)", ui::Color::Success),
-                                    Some(false) => ("(low precedence)", ui::Color::Hint),
-                                    None => ("(no match)", ui::Color::Error),
+                                let (word, color) = match state {
+                                    Some(true) => (t!("match"), ui::Color::Success),
+                                    Some(false) => (t!("low precedence"), ui::Color::Hint),
+                                    None => (t!("no match"), ui::Color::Error),
                                 };
                                 h_flex()
                                     .gap_2()
                                     .ml_8()
                                     .child(div().min_w(px(200.)).child(Label::new(name.clone())))
                                     .child(Label::new(predicate.clone()))
-                                    .child(Label::new(text).color(color))
+                                    .child(Label::new(format!("({word})")).color(color))
                             }),
                     )
             })
             .when_some(key_equivalents, |el, key_equivalents| {
-                el.child(Label::new("Key Equivalents").mt_4().size(LabelSize::Large))
-                    .child(Label::new("Shortcuts defined using some characters have been remapped so that shortcuts can be typed without holding option."))
+                el.child(Label::new(t!("Key Equivalents")).mt_4().size(LabelSize::Large))
+                    .child(Label::new(t!("Shortcuts defined using some characters have been remapped so that shortcuts can be typed without holding option.")))
                     .children(
                         key_equivalents
                             .iter()

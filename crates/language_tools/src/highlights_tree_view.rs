@@ -8,6 +8,7 @@ use gpui::{
     MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
+use i18n::t;
 use language::{BufferId, Point, ToOffset};
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range, sync::Arc, time::Duration};
@@ -846,24 +847,24 @@ impl Render for HighlightsTreeView {
                             if self.editor.is_some() {
                                 let has_any = !self.cached_entries.is_empty();
                                 if has_any {
-                                    this.child(Label::new("All highlights are filtered out"))
+                                    this.child(Label::new(t!("All highlights are filtered out")))
                                         .child(
-                                            Label::new(
+                                            Label::new(t!(
                                                 "Enable text, syntax, or semantic highlights in the toolbar",
-                                            )
+                                            ))
                                             .size(LabelSize::Small),
                                         )
                                 } else {
-                                    this.child(Label::new("No highlights found")).child(
-                                        Label::new(
+                                    this.child(Label::new(t!("No highlights found"))).child(
+                                        Label::new(t!(
                                             "The editor has no text, syntax, or semantic token highlights",
-                                        )
+                                        ))
                                         .size(LabelSize::Small),
                                     )
                                 }
                             } else {
-                                this.child(Label::new("Not attached to an editor")).child(
-                                    Label::new("Focus an editor to show highlights")
+                                this.child(Label::new(t!("Not attached to an editor"))).child(
+                                    Label::new(t!("Focus an editor to show highlights"))
                                         .size(LabelSize::Small),
                                 )
                             }
@@ -893,7 +894,7 @@ impl Item for HighlightsTreeView {
     fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Highlights".into()
+        t!("Highlights").into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -956,9 +957,13 @@ impl HighlightsTreeToolbarItemView {
         let filtered = tree_view.entry_count();
 
         let label = if filtered == total {
-            format!("{} highlights", total)
+            t!("{$total} highlights", total = total)
         } else {
-            format!("{} / {} highlights", filtered, total)
+            t!(
+                "{$filtered} / {$total} highlights",
+                filtered = filtered,
+                total = total
+            )
         };
 
         Some(ButtonLike::new("highlights header").child(Label::new(label)))
@@ -985,7 +990,7 @@ impl HighlightsTreeToolbarItemView {
                 IconButton::new("toggle-highlights-settings-icon", IconName::Filter)
                     .icon_size(IconSize::Small)
                     .toggle_state(self.toggle_settings_handle.is_deployed()),
-                Tooltip::text("Highlights Settings"),
+                Tooltip::text(t!("Highlights Settings")),
             )
             .anchor(gpui::Anchor::TopRight)
             .with_handle(self.toggle_settings_handle.clone())
@@ -996,7 +1001,7 @@ impl HighlightsTreeToolbarItemView {
 
                 let menu = ContextMenu::build(window, cx, move |menu, _, _| {
                     menu.toggleable_entry(
-                        "Text Highlights",
+                        t!("Text Highlights"),
                         show_text,
                         IconPosition::Start,
                         Some(ToggleTextHighlights.boxed_clone()),
@@ -1020,7 +1025,7 @@ impl HighlightsTreeToolbarItemView {
                         },
                     )
                     .toggleable_entry(
-                        "Syntax Tokens",
+                        t!("Syntax Tokens"),
                         show_syntax,
                         IconPosition::Start,
                         Some(ToggleSyntaxTokens.boxed_clone()),
@@ -1044,7 +1049,7 @@ impl HighlightsTreeToolbarItemView {
                         },
                     )
                     .toggleable_entry(
-                        "Semantic Tokens",
+                        t!("Semantic Tokens"),
                         show_semantic,
                         IconPosition::Start,
                         Some(ToggleSemanticTokens.boxed_clone()),
