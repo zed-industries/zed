@@ -3,7 +3,8 @@
 
 Scans the Rust sources for `t!("…")` invocations, derives each one's catalog key
 the same way `i18n::derive_key` does, and compares that against the keys defined
-in `assets/i18n/<locale>/*.ftl`.
+in `assets/i18n/<locale>/*.ftl`. A call site written as `t!(key = "…", "…")` names
+its key instead of deriving one, and is taken at its word.
 
 Reports, per locale:
   * missing   — marked for localization but absent from the catalog (shows English)
@@ -31,6 +32,14 @@ CRATES_ROOT = REPO_ROOT / "crates"
 
 # Matches `t!("…")`, capturing the literal. Rust escapes are resolved separately.
 T_MACRO = re.compile(r'\bt!\s*\(\s*"((?:[^"\\]|\\.)*)"')
+
+# Matches `t!(key = "…", "…")`, capturing the explicit key and then the literal.
+# A call site names its key to break a collision, so the key is taken as given
+# rather than derived. The pattern above cannot match these, since it requires the
+# literal to follow the opening parenthesis directly.
+T_MACRO_KEYED = re.compile(
+    r'\bt!\s*\(\s*key\s*=\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"'
+)
 
 # A Fluent message definition at the start of a line: `key = value`.
 FTL_MESSAGE = re.compile(r"^([a-zA-Z][a-zA-Z0-9_-]*)\s*=", re.MULTILINE)
@@ -270,6 +279,12 @@ def collect_marked_strings() -> dict[str, list[str]]:
             if english not in by_key[derive_key(english)]:
                 by_key[derive_key(english)].append(english)
 
+        for match in T_MACRO_KEYED.finditer(contents):
+            key = match.group(1)
+            english = unescape_rust_literal(match.group(2))
+            if english not in by_key[key]:
+                by_key[key].append(english)
+
     return by_key
 
 
@@ -313,7 +328,8 @@ def main() -> int:
                 print(f"    <- {source!r}")
         print(
             "\n  Distinct strings deriving the same key would share one translation.\n"
-            "  Reword one of them, or give it a dedicated key."
+            "  Reword one of them so both spell it the same way, or give one a\n"
+            '  dedicated key with `t!(key = "…", "…")`.'
         )
 
     if not CATALOG_ROOT.is_dir():
