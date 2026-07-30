@@ -512,6 +512,51 @@ let xyz: i32 = 2;",
     }
 
     #[gpui::test]
+    async fn test_selection_duplication_with_tab_and_inlay_hint(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.hard_tabs = Some(true);
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+                \t12345«6ˇ»
+                \t\t56"},
+            Mode::HelixNormal,
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            let buffer = &editor.snapshot(window, cx).buffer;
+            editor.splice_inlays(
+                &[],
+                vec![
+                    Inlay::mock_hint(0, buffer.anchor_after(MultiBufferOffset(6)), ": foo"),
+                    Inlay::mock_hint(1, buffer.anchor_after(MultiBufferOffset(11)), ": foo"),
+                ],
+                cx,
+            );
+        });
+
+        assert_eq!(
+            cx.display_text(),
+            "    12345: foo6
+        5: foo6"
+        );
+
+        cx.simulate_keystrokes("C");
+
+        cx.assert_state(
+            indoc! {"
+                \t12345«6ˇ»
+                \t\t5«6ˇ»"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_selection_duplication_with_softwrap(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
