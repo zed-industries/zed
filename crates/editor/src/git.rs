@@ -298,6 +298,16 @@ pub(super) struct DiffHunkKey {
     pub(super) hunk_start_anchor: Anchor,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ReviewFeedback {
+    pub worktree_name: Option<String>,
+    pub file_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub excerpt: String,
+    pub comment: String,
+}
+
 /// A review comment stored locally before being sent to the Agent panel.
 #[derive(Clone)]
 pub(super) struct StoredReviewComment {
@@ -882,6 +892,59 @@ impl Editor {
             .iter()
             .map(|(_, v)| v.len())
             .sum()
+    }
+
+    pub fn review_feedback(&self, cx: &App) -> Vec<ReviewFeedback> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.stored_review_comments
+            .iter()
+            .flat_map(|(hunk, comments)| {
+                comments.iter().filter_map(|comment| {
+                    let start_point = comment.range.start.to_point(&snapshot);
+                    let end_point = comment.range.end.to_point(&snapshot);
+                    let buffer_ranges = snapshot.range_to_buffer_ranges(start_point..end_point);
+                    let (Some((first_buffer, first_range, _)), Some((last_buffer, last_range, _))) =
+                        (buffer_ranges.first(), buffer_ranges.last())
+                    else {
+                        log::debug!(
+                            "Skipping review comment {} for {} because its buffer range could not be resolved ({start_point:?}..{end_point:?})",
+                            comment.id,
+                            hunk.file_path.as_unix_str(),
+                        );
+                        return None;
+                    };
+                    let start_line = first_buffer.offset_to_point(first_range.start.0).row;
+                    let end_line = last_buffer.offset_to_point(last_range.end.0).row;
+                    let worktree_name = snapshot
+                        .file_at(start_point)
+                        .and_then(|file| {
+                            self.project
+                                .as_ref()?
+                                .read(cx)
+                                .worktree_for_id(file.worktree_id(cx), cx)
+                        })
+                        .map(|worktree| worktree.read(cx).root_name().as_unix_str().to_string());
+                    Some(ReviewFeedback {
+                        worktree_name,
+                        file_path: hunk.file_path.as_unix_str().to_string(),
+                        start_line: start_line.saturating_add(1),
+                        end_line: end_line.saturating_add(1),
+                        excerpt: snapshot
+                            .text_for_range(start_point..end_point)
+                            .collect::<String>(),
+                        comment: comment.comment.clone(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    pub fn clear_review_feedback(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_all_diff_review_overlays(cx);
+        self.stored_review_comments.clear();
+        self.next_review_comment_id = 0;
+        cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
+        cx.notify();
     }
 
     /// Adds a new review comment to a specific hunk.

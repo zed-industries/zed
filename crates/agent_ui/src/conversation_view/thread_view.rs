@@ -19,7 +19,7 @@ use agent::{
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
-use editor::actions::OpenExcerpts;
+use editor::{ReviewFeedback, actions::OpenExcerpts};
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
@@ -1550,6 +1550,39 @@ impl ThreadView {
 
         cx.emit(AcpThreadViewEvent::Interacted);
         self.send_impl(message_editor, window, cx)
+    }
+
+    pub fn send_review_feedback(
+        &mut self,
+        feedback: Vec<ReviewFeedback>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let payload = serde_json::to_string_pretty(&feedback)?;
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(format!(
+            "Address the following human-authored review feedback. Each item is anchored to a local diff and includes its worktree, file, one-based line range, and selected excerpt.\n\n```json\n{payload}\n```"
+        )))];
+        let can_send_immediately =
+            self.thread.read(cx).status() == ThreadStatus::Idle && !self.is_loading_contents;
+        if can_send_immediately && self.message_queue.is_empty() {
+            cx.emit(AcpThreadViewEvent::Interacted);
+            self.send_content(
+                Task::ready(Ok(Some((content, Vec::new())))),
+                false,
+                window,
+                cx,
+            );
+        } else {
+            self.add_to_queue(content, Vec::new(), window, cx);
+            if can_send_immediately {
+                if let Some(id) = self.message_queue.first_id() {
+                    self.send_queued_message_now(id, window, cx);
+                }
+            } else {
+                cx.emit(AcpThreadViewEvent::Interacted);
+            }
+        }
+        Ok(())
     }
 
     /// Sends a bare `/command` turn and queues everything the user typed after
