@@ -320,19 +320,6 @@ impl AnyEntity {
             Err(self)
         }
     }
-
-    /// Converts a reference to this entity handle into a strongly-typed reference,
-    /// without cloning the handle. Returns `None` if the entity is not of the
-    /// specified type.
-    pub fn downcast_ref<T: 'static>(&self) -> Option<&Entity<T>> {
-        if TypeId::of::<T>() == self.entity_type {
-            // SAFETY: `Entity<T>` is `repr(transparent)` over `AnyEntity`, and
-            // we just checked that `T` matches the entity's actual type.
-            Some(unsafe { &*(self as *const AnyEntity as *const Entity<T>) })
-        } else {
-            None
-        }
-    }
 }
 
 impl Clone for AnyEntity {
@@ -437,10 +424,7 @@ impl std::fmt::Debug for AnyEntity {
 
 /// A strong, well-typed reference to a struct which is managed
 /// by GPUI
-// repr(transparent) over `AnyEntity` so that `AnyEntity::downcast_ref` can
-// reinterpret a borrowed handle as a typed one.
 #[derive(Deref, DerefMut)]
-#[repr(transparent)]
 pub struct Entity<T> {
     #[deref]
     #[deref_mut]
@@ -1299,7 +1283,7 @@ impl<T: 'static> From<Entity<T>> for ReadEntity<T> {
 
 impl<T: 'static> From<ReadEntity<T>> for crate::Projection<T> {
     fn from(read_entity: ReadEntity<T>) -> Self {
-        read_entity.entity.project(|value| value)
+        read_entity.entity.into()
     }
 }
 

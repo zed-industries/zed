@@ -2,51 +2,122 @@ use crate::{
     AnyEntity, AnyWeakEntity, App, Context, ElementId, Entity, EntityId, Subscription, Window,
 };
 
-/// A lens is a plain function pointer rather than a closure so that
-/// projections are allocation-free: non-capturing closures coerce to function
-/// pointers automatically, and capturing closures are rejected at compile
-/// time. Projections are intentionally restricted to pure structural access —
-/// if locating the value requires runtime data, restructure the state so it
-/// doesn't (for example, by giving the value its own entity).
-///
-/// The erased pointer's true type is known only to the trampoline function
-/// stored alongside it, which is monomorphized together with it and is the
-/// only code that transmutes it back.
-#[derive(Copy, Clone)]
-struct ErasedLens(fn());
+type ReadFn<P> = for<'a> fn(&AnyEntity, &'a App) -> &'a P;
+type WriteFn<P> = fn(&AnyEntity, &mut App, &mut dyn FnMut(&mut P));
 
-type ReadFn<P> = for<'a> fn(ErasedLens, &AnyEntity, &'a App) -> &'a P;
-type WriteFn<P> = fn(ErasedLens, &AnyEntity, &mut App, &mut dyn FnMut(&mut P));
+fn read_entity<'a, P: 'static>(entity: &AnyEntity, cx: &'a App) -> &'a P {
+    cx.entities.read_any(entity)
+}
 
-fn read_trampoline<'a, E: 'static, P: ?Sized + 'static>(
-    lens: ErasedLens,
+fn write_entity<P: 'static>(entity: &AnyEntity, cx: &mut App, update: &mut dyn FnMut(&mut P)) {
+    let entity = match entity.clone().downcast::<P>() {
+        Ok(entity) => entity,
+        Err(_) => unreachable!("an identity projection always stores an entity of its value type"),
+    };
+    entity.update(cx, |state, cx| {
+        update(state);
+        cx.notify();
+    });
+}
+
+struct ReadProjectionState<E: 'static, P: ?Sized + 'static> {
+    source: Entity<E>,
+    lens: for<'a> fn(&'a E) -> &'a P,
+    _subscription: Subscription,
+}
+
+impl<E: 'static, P: ?Sized + 'static> ReadProjectionState<E, P> {
+    fn new<T: 'static>(
+        source: &Entity<E>,
+        lens: for<'a> fn(&'a E) -> &'a P,
+        cx: &mut Context<T>,
+    ) -> Self {
+        Self {
+            source: source.clone(),
+            lens,
+            _subscription: cx.observe(source, |_, _, cx| cx.notify()),
+        }
+    }
+
+    fn update_source<T: 'static>(
+        &mut self,
+        source: &Entity<E>,
+        lens: for<'a> fn(&'a E) -> &'a P,
+        cx: &mut Context<T>,
+    ) {
+        if self.source != *source {
+            self.source = source.clone();
+            self._subscription = cx.observe(source, |_, _, cx| cx.notify());
+            // The projected value is now read from a different entity, so
+            // views that read this projection last frame must re-render even
+            // though neither the old nor the new source notified.
+            cx.notify();
+        }
+        self.lens = lens;
+    }
+
+    fn get<'a>(&self, cx: &'a App) -> &'a P {
+        (self.lens)(self.source.read(cx))
+    }
+}
+
+fn read_projection<'a, E: 'static, P: ?Sized + 'static>(entity: &AnyEntity, cx: &'a App) -> &'a P {
+    cx.entities
+        .read_any::<ReadProjectionState<E, P>>(entity)
+        .get(cx)
+}
+
+struct MutableProjectionState<E: 'static, P: ?Sized + 'static> {
+    read: ReadProjectionState<E, P>,
+    write: for<'a> fn(&'a mut E) -> &'a mut P,
+}
+
+impl<E: 'static, P: ?Sized + 'static> MutableProjectionState<E, P> {
+    fn new<T: 'static>(
+        source: &Entity<E>,
+        read: for<'a> fn(&'a E) -> &'a P,
+        write: for<'a> fn(&'a mut E) -> &'a mut P,
+        cx: &mut Context<T>,
+    ) -> Self {
+        Self {
+            read: ReadProjectionState::new(source, read, cx),
+            write,
+        }
+    }
+
+    fn update_source<T: 'static>(
+        &mut self,
+        source: &Entity<E>,
+        read: for<'a> fn(&'a E) -> &'a P,
+        write: for<'a> fn(&'a mut E) -> &'a mut P,
+        cx: &mut Context<T>,
+    ) {
+        self.read.update_source(source, read, cx);
+        self.write = write;
+    }
+}
+
+fn read_mutable_projection<'a, E: 'static, P: ?Sized + 'static>(
     entity: &AnyEntity,
     cx: &'a App,
 ) -> &'a P {
-    // SAFETY: `lens` was erased from exactly this function pointer type in
-    // `Entity::<E>::project`/`project_mut`, which pairs it with this
-    // monomorphization of the trampoline. All function pointers have the same
-    // size and layout.
-    let lens = unsafe { std::mem::transmute::<fn(), for<'b> fn(&'b E) -> &'b P>(lens.0) };
-    lens(cx.entities.read_any::<E>(entity))
+    cx.entities
+        .read_any::<MutableProjectionState<E, P>>(entity)
+        .read
+        .get(cx)
 }
 
-fn write_trampoline<E: 'static, P: ?Sized + 'static>(
-    lens: ErasedLens,
+fn write_projection<E: 'static, P: ?Sized + 'static>(
     entity: &AnyEntity,
     cx: &mut App,
-    f: &mut dyn FnMut(&mut P),
+    update: &mut dyn FnMut(&mut P),
 ) {
-    // SAFETY: `lens` was erased from exactly this function pointer type in
-    // `Entity::<E>::project_mut`, which pairs it with this monomorphization of
-    // the trampoline. All function pointers have the same size and layout.
-    let lens = unsafe { std::mem::transmute::<fn(), for<'b> fn(&'b mut E) -> &'b mut P>(lens.0) };
-    let entity = match entity.downcast_ref::<E>() {
-        Some(entity) => entity,
-        None => unreachable!("a projection always stores the handle its lens was created for"),
+    let (source, write) = {
+        let state = cx.entities.read_any::<MutableProjectionState<E, P>>(entity);
+        (state.read.source.clone(), state.write)
     };
-    entity.update(cx, |state, cx| {
-        f(lens(state));
+    source.update(cx, |state, cx| {
+        update(write(state));
         cx.notify();
     });
 }
@@ -57,8 +128,7 @@ fn write_trampoline<E: 'static, P: ?Sized + 'static>(
 /// `Entity<String>` or by a lens into a field of some larger entity, and the
 /// holder can't tell the difference. This makes them the right parameter type
 /// for components that need to *read* state without dictating how the caller
-/// stores it. `P` may be unsized, so display-only components can accept e.g.
-/// `Projection<str>` and be backed by any string-shaped state.
+/// stores it.
 ///
 /// Projections are created during render, via [`Window::use_projection`] and
 /// friends (or by converting an [`Entity`] with `From`). There is no way to
@@ -68,8 +138,7 @@ fn write_trampoline<E: 'static, P: ?Sized + 'static>(
 ///
 /// Projections are strong handles: holding one keeps the source entity alive,
 /// so reads are infallible. Use [`Projection::downgrade`] where that would
-/// create a cycle. They are also allocation-free — the cost of constructing
-/// one is cloning the entity handle.
+/// create a cycle.
 ///
 /// Reads are access-tracked just like direct entity reads, so a view that
 /// reads a projection during render is re-rendered when the source entity
@@ -82,13 +151,6 @@ fn write_trampoline<E: 'static, P: ?Sized + 'static>(
 /// its own entity, and project from that.
 pub struct Projection<P: ?Sized + 'static> {
     entity: AnyEntity,
-    /// The id this projection reports as its identity. For projections
-    /// created through the `use_projection` hooks this is the relay entity
-    /// allocated for the call site, so sibling projections of different
-    /// fields of one entity don't collide; for identity conversions from
-    /// [`Entity`] it is the source entity itself.
-    identity: EntityId,
-    lens: ErasedLens,
     read: ReadFn<P>,
 }
 
@@ -96,8 +158,6 @@ impl<P: ?Sized + 'static> Clone for Projection<P> {
     fn clone(&self) -> Self {
         Self {
             entity: self.entity.clone(),
-            identity: self.identity,
-            lens: self.lens,
             read: self.read,
         }
     }
@@ -106,24 +166,22 @@ impl<P: ?Sized + 'static> Clone for Projection<P> {
 impl<P: ?Sized + 'static> Projection<P> {
     /// Read the projected value.
     pub fn read<'a>(&self, cx: &'a App) -> &'a P {
-        (self.read)(self.lens, &self.entity, cx)
+        (self.read)(&self.entity, cx)
     }
 
-    /// This projection's identity: the relay entity of the `use_projection`
-    /// call site that created it, or the source entity for identity
-    /// conversions from [`Entity`]. Notifications for the projected value are
-    /// delivered as notifications of this entity.
+    /// This projection's identity: the backing entity of the `use_projection`
+    /// call site that created it, or the source entity for identity conversions
+    /// from [`Entity`]. Notifications for the projected value are delivered as
+    /// notifications of this entity.
     pub fn entity_id(&self) -> EntityId {
-        self.identity
+        self.entity.entity_id()
     }
 
-    /// Convert this projection into a weak variant, which does not keep the
-    /// source entity alive.
+    /// Convert this projection into a weak variant, which does not keep its
+    /// backing state alive.
     pub fn downgrade(&self) -> WeakProjection<P> {
         WeakProjection {
             entity: self.entity.downgrade(),
-            identity: self.identity,
-            lens: self.lens,
             read: self.read,
         }
     }
@@ -132,7 +190,7 @@ impl<P: ?Sized + 'static> Projection<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for Projection<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Projection")
-            .field("entity_id", &self.identity)
+            .field("entity_id", &self.entity.entity_id())
             .finish_non_exhaustive()
     }
 }
@@ -143,7 +201,6 @@ impl<P: ?Sized + 'static> std::fmt::Debug for Projection<P> {
 /// the source entity, which is then notified. See [`Window::use_projection_mut`].
 pub struct ProjectionMut<P: ?Sized + 'static> {
     read: Projection<P>,
-    write_lens: ErasedLens,
     write: WriteFn<P>,
 }
 
@@ -151,7 +208,6 @@ impl<P: ?Sized + 'static> Clone for ProjectionMut<P> {
     fn clone(&self) -> Self {
         Self {
             read: self.read.clone(),
-            write_lens: self.write_lens,
             write: self.write,
         }
     }
@@ -163,7 +219,7 @@ impl<P: ?Sized + 'static> ProjectionMut<P> {
         self.read.read(cx)
     }
 
-    /// The id of the entity this projection reads from and writes to.
+    /// This projection's identity. See [`Projection::entity_id`].
     pub fn entity_id(&self) -> EntityId {
         self.read.entity_id()
     }
@@ -179,7 +235,7 @@ impl<P: ?Sized + 'static> ProjectionMut<P> {
     pub fn update<R>(&self, cx: &mut App, f: impl FnOnce(&mut P) -> R) -> R {
         let mut f = Some(f);
         let mut result = None;
-        (self.write)(self.write_lens, &self.read.entity, cx, &mut |value| {
+        (self.write)(&self.read.entity, cx, &mut |value| {
             if let Some(f) = f.take() {
                 result = Some(f(value));
             }
@@ -192,12 +248,11 @@ impl<P: ?Sized + 'static> ProjectionMut<P> {
         self.read.clone()
     }
 
-    /// Convert this projection into a weak variant, which does not keep the
-    /// source entity alive.
+    /// Convert this projection into a weak variant, which does not keep its
+    /// backing state alive.
     pub fn downgrade(&self) -> WeakProjectionMut<P> {
         WeakProjectionMut {
             read: self.read.downgrade(),
-            write_lens: self.write_lens,
             write: self.write,
         }
     }
@@ -206,17 +261,15 @@ impl<P: ?Sized + 'static> ProjectionMut<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for ProjectionMut<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProjectionMut")
-            .field("entity_id", &self.read.identity)
+            .field("entity_id", &self.read.entity.entity_id())
             .finish_non_exhaustive()
     }
 }
 
-/// A weak variant of [`Projection`] which does not keep the source entity
+/// A weak variant of [`Projection`] which does not keep its backing state
 /// alive. Upgrade it to read.
 pub struct WeakProjection<P: ?Sized + 'static> {
     entity: AnyWeakEntity,
-    identity: EntityId,
-    lens: ErasedLens,
     read: ReadFn<P>,
 }
 
@@ -224,8 +277,6 @@ impl<P: ?Sized + 'static> Clone for WeakProjection<P> {
     fn clone(&self) -> Self {
         Self {
             entity: self.entity.clone(),
-            identity: self.identity,
-            lens: self.lens,
             read: self.read,
         }
     }
@@ -234,16 +285,14 @@ impl<P: ?Sized + 'static> Clone for WeakProjection<P> {
 impl<P: ?Sized + 'static> WeakProjection<P> {
     /// This projection's identity. See [`Projection::entity_id`].
     pub fn entity_id(&self) -> EntityId {
-        self.identity
+        self.entity.entity_id()
     }
 
-    /// Upgrade to a strong projection. Returns `None` if the source entity has
+    /// Upgrade to a strong projection. Returns `None` if the backing state has
     /// been released.
     pub fn upgrade(&self) -> Option<Projection<P>> {
         Some(Projection {
             entity: self.entity.upgrade()?,
-            identity: self.identity,
-            lens: self.lens,
             read: self.read,
         })
     }
@@ -252,16 +301,15 @@ impl<P: ?Sized + 'static> WeakProjection<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for WeakProjection<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeakProjection")
-            .field("entity_id", &self.identity)
+            .field("entity_id", &self.entity.entity_id())
             .finish_non_exhaustive()
     }
 }
 
-/// A weak variant of [`ProjectionMut`] which does not keep the source entity
+/// A weak variant of [`ProjectionMut`] which does not keep its backing state
 /// alive. Upgrade it to read or write.
 pub struct WeakProjectionMut<P: ?Sized + 'static> {
     read: WeakProjection<P>,
-    write_lens: ErasedLens,
     write: WriteFn<P>,
 }
 
@@ -269,24 +317,22 @@ impl<P: ?Sized + 'static> Clone for WeakProjectionMut<P> {
     fn clone(&self) -> Self {
         Self {
             read: self.read.clone(),
-            write_lens: self.write_lens,
             write: self.write,
         }
     }
 }
 
 impl<P: ?Sized + 'static> WeakProjectionMut<P> {
-    /// The id of the entity this projection reads from and writes to.
+    /// This projection's identity. See [`Projection::entity_id`].
     pub fn entity_id(&self) -> EntityId {
         self.read.entity_id()
     }
 
-    /// Upgrade to a strong projection. Returns `None` if the source entity has
+    /// Upgrade to a strong projection. Returns `None` if the backing state has
     /// been released.
     pub fn upgrade(&self) -> Option<ProjectionMut<P>> {
         Some(ProjectionMut {
             read: self.read.upgrade()?,
-            write_lens: self.write_lens,
             write: self.write,
         })
     }
@@ -295,68 +341,8 @@ impl<P: ?Sized + 'static> WeakProjectionMut<P> {
 impl<P: ?Sized + 'static> std::fmt::Debug for WeakProjectionMut<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WeakProjectionMut")
-            .field("entity_id", &self.read.identity)
+            .field("entity_id", &self.read.entity.entity_id())
             .finish_non_exhaustive()
-    }
-}
-
-impl<E: 'static> Entity<E> {
-    /// Project a read-only view of part of this entity's state.
-    ///
-    /// Crate-private on purpose: a raw lens projection reports its *source*
-    /// entity as its identity, so two projections of different fields of one
-    /// entity would collide when used as view identities. Public construction
-    /// goes through [`Window::use_projection`], which allocates a per-call-site
-    /// relay entity as the identity, or through the identity `From<Entity<P>>`
-    /// conversions, which have the same identity semantics as the entity
-    /// itself.
-    pub(crate) fn project<P: ?Sized + 'static>(
-        &self,
-        lens: for<'a> fn(&'a E) -> &'a P,
-    ) -> Projection<P> {
-        Projection {
-            identity: self.entity_id(),
-            entity: self.clone().into_any(),
-            // SAFETY: erasing a function pointer's type; `read_trampoline::<E, P>`
-            // stored alongside it transmutes it back to exactly this type.
-            lens: ErasedLens(unsafe {
-                std::mem::transmute::<for<'a> fn(&'a E) -> &'a P, fn()>(lens)
-            }),
-            read: read_trampoline::<E, P>,
-        }
-    }
-
-    /// Project a read-write view of part of this entity's state. See
-    /// [`Entity::project`] for why this is crate-private.
-    pub(crate) fn project_mut<P: ?Sized + 'static>(
-        &self,
-        read: for<'a> fn(&'a E) -> &'a P,
-        write: for<'a> fn(&'a mut E) -> &'a mut P,
-    ) -> ProjectionMut<P> {
-        ProjectionMut {
-            read: self.project(read),
-            // SAFETY: erasing a function pointer's type; `write_trampoline::<E, P>`
-            // stored alongside it transmutes it back to exactly this type.
-            write_lens: ErasedLens(unsafe {
-                std::mem::transmute::<for<'a> fn(&'a mut E) -> &'a mut P, fn()>(write)
-            }),
-            write: write_trampoline::<E, P>,
-        }
-    }
-}
-
-/// The state behind a `use_projection` call site. It gives the projection a
-/// stable identity distinct from its source entity, and forwards the source's
-/// notifications so observation and caching keyed on the projection work.
-struct ProjectionRelay {
-    _source_subscription: Subscription,
-}
-
-impl ProjectionRelay {
-    fn new<E: 'static>(source: &Entity<E>, cx: &mut Context<Self>) -> Self {
-        ProjectionRelay {
-            _source_subscription: cx.observe(source, |_, _, cx| cx.notify()),
-        }
     }
 }
 
@@ -371,10 +357,10 @@ impl Window {
     /// let name: Projection<String> = window.use_projection(cx, &person, |person| &person.name);
     /// ```
     ///
-    /// The projection's identity is a relay entity memoized per call site,
-    /// like [`Window::use_state`], so sibling projections of different fields
-    /// of one entity don't collide. When rendering multiple projections from
-    /// the same location (e.g. in a loop), use [`Window::use_keyed_projection`].
+    /// The projection's backing state is memoized per call site, like
+    /// [`Window::use_state`], so sibling projections of different fields of one
+    /// entity don't collide. When rendering multiple projections from the same
+    /// location (e.g. in a loop), use [`Window::use_keyed_projection`].
     #[track_caller]
     pub fn use_projection<E: 'static, P: ?Sized + 'static>(
         &mut self,
@@ -399,10 +385,13 @@ impl Window {
         source: &Entity<E>,
         lens: for<'a> fn(&'a E) -> &'a P,
     ) -> Projection<P> {
-        let relay = self.use_keyed_state(key, cx, |_, cx| ProjectionRelay::new(source, cx));
-        let mut projection = source.project(lens);
-        projection.identity = relay.entity_id();
-        projection
+        let state =
+            self.use_keyed_state(key, cx, |_, cx| ReadProjectionState::new(source, lens, cx));
+        state.update(cx, |state, cx| state.update_source(source, lens, cx));
+        Projection {
+            entity: state.into_any(),
+            read: read_projection::<E, P>,
+        }
     }
 
     /// Use a read-write projection of part of an entity's state. Must be
@@ -438,10 +427,17 @@ impl Window {
         read: for<'a> fn(&'a E) -> &'a P,
         write: for<'a> fn(&'a mut E) -> &'a mut P,
     ) -> ProjectionMut<P> {
-        let relay = self.use_keyed_state(key, cx, |_, cx| ProjectionRelay::new(source, cx));
-        let mut projection = source.project_mut(read, write);
-        projection.read.identity = relay.entity_id();
-        projection
+        let state = self.use_keyed_state(key, cx, |_, cx| {
+            MutableProjectionState::new(source, read, write, cx)
+        });
+        state.update(cx, |state, cx| state.update_source(source, read, write, cx));
+        ProjectionMut {
+            read: Projection {
+                entity: state.into_any(),
+                read: read_mutable_projection::<E, P>,
+            },
+            write: write_projection::<E, P>,
+        }
     }
 }
 
@@ -469,13 +465,22 @@ macro_rules! project {
 
 impl<P: 'static> From<Entity<P>> for Projection<P> {
     fn from(entity: Entity<P>) -> Self {
-        entity.project(|value| value)
+        Self {
+            entity: entity.into_any(),
+            read: read_entity::<P>,
+        }
     }
 }
 
 impl<P: 'static> From<Entity<P>> for ProjectionMut<P> {
     fn from(entity: Entity<P>) -> Self {
-        entity.project_mut(|value| value, |value| value)
+        Self {
+            read: Projection {
+                entity: entity.into_any(),
+                read: read_entity::<P>,
+            },
+            write: write_entity::<P>,
+        }
     }
 }
 
@@ -489,11 +494,43 @@ impl<P: ?Sized + 'static> From<ProjectionMut<P>> for Projection<P> {
 mod tests {
     use super::*;
     use crate::{AppContext as _, TestAppContext};
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     struct Person {
         name: String,
         age: u32,
+    }
+
+    fn projection<E: 'static, P: ?Sized + 'static>(
+        cx: &mut TestAppContext,
+        source: &Entity<E>,
+        lens: for<'a> fn(&'a E) -> &'a P,
+    ) -> Projection<P> {
+        let state = cx.update(|cx| cx.new(|cx| ReadProjectionState::new(source, lens, cx)));
+        Projection {
+            entity: state.into_any(),
+            read: read_projection::<E, P>,
+        }
+    }
+
+    fn projection_mut<E: 'static, P: ?Sized + 'static>(
+        cx: &mut TestAppContext,
+        source: &Entity<E>,
+        read: for<'a> fn(&'a E) -> &'a P,
+        write: for<'a> fn(&'a mut E) -> &'a mut P,
+    ) -> ProjectionMut<P> {
+        let state =
+            cx.update(|cx| cx.new(|cx| MutableProjectionState::new(source, read, write, cx)));
+        ProjectionMut {
+            read: Projection {
+                entity: state.into_any(),
+                read: read_mutable_projection::<E, P>,
+            },
+            write: write_projection::<E, P>,
+        }
     }
 
     #[test]
@@ -506,7 +543,12 @@ mod tests {
             })
         });
 
-        let name = person.project_mut(|person| &person.name, |person| &mut person.name);
+        let name = projection_mut(
+            &mut cx,
+            &person,
+            |person| &person.name,
+            |person| &mut person.name,
+        );
 
         cx.update(|cx| {
             assert_eq!(name.read(cx), "Ada");
@@ -526,7 +568,12 @@ mod tests {
                 age: 36,
             })
         });
-        let age = person.project_mut(|person| &person.age, |person| &mut person.age);
+        let age = projection_mut(
+            &mut cx,
+            &person,
+            |person| &person.age,
+            |person| &mut person.age,
+        );
 
         let notified = Rc::new(Cell::new(0));
         let _subscription = cx.update(|cx| {
@@ -543,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn entities_convert_to_projections_with_an_identity_lens() {
+    fn entities_convert_to_projections() {
         let mut cx = TestAppContext::single();
         let value = cx.update(|cx| cx.new(|_| "hello".to_string()));
 
@@ -569,7 +616,12 @@ mod tests {
             })
         });
 
-        let name = person.project_mut(|person| &person.name, |person| &mut person.name);
+        let name = projection_mut(
+            &mut cx,
+            &person,
+            |person| &person.name,
+            |person| &mut person.name,
+        );
         let name_clone = name.clone();
 
         cx.update(|cx| {
@@ -588,7 +640,7 @@ mod tests {
             })
         });
 
-        let name: Projection<str> = person.project(|person| person.name.as_str());
+        let name: Projection<str> = projection(&mut cx, &person, |person| person.name.as_str());
 
         cx.update(|cx| assert_eq!(name.read(cx), "Ada"));
     }
@@ -685,6 +737,208 @@ mod tests {
     }
 
     #[test]
+    fn keyed_projection_updates_escaped_handles() {
+        use crate::{Context, IntoElement, Render, Window, div};
+
+        struct HookView {
+            source: Entity<Person>,
+            projection: Rc<RefCell<Option<ProjectionMut<String>>>>,
+        }
+
+        impl Render for HookView {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let projection = window.use_keyed_projection_mut(
+                    "name",
+                    cx,
+                    &self.source,
+                    |person| &person.name,
+                    |person| &mut person.name,
+                );
+                *self.projection.borrow_mut() = Some(projection);
+                div()
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let first = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Ada".to_string(),
+                age: 36,
+            })
+        });
+        let second = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Grace".to_string(),
+                age: 37,
+            })
+        });
+        let projection = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let first = first.clone();
+            let projection = projection.clone();
+            move |_, _| HookView {
+                source: first,
+                projection,
+            }
+        });
+
+        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        let escaped = projection
+            .borrow()
+            .as_ref()
+            .expect("render created a projection")
+            .clone();
+        let identity = escaped.entity_id();
+
+        window
+            .update(&mut cx, |view, _, cx| {
+                view.source = second.clone();
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+
+        cx.update(|cx| {
+            assert_eq!(escaped.entity_id(), identity);
+            assert_eq!(escaped.read(cx), "Grace");
+            escaped.update(cx, |name| name.push_str(" Hopper"));
+            assert_eq!(second.read(cx).name, "Grace Hopper");
+            assert_eq!(first.read(cx).name, "Ada");
+        });
+    }
+
+    #[test]
+    fn swapping_the_source_notifies_and_replaces_the_subscription() {
+        let mut cx = TestAppContext::single();
+        let first = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Ada".to_string(),
+                age: 36,
+            })
+        });
+        let second = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Grace".to_string(),
+                age: 37,
+            })
+        });
+        let state = cx.update(|cx| {
+            cx.new(|cx| {
+                MutableProjectionState::new(
+                    &first,
+                    |person| &person.name,
+                    |person| &mut person.name,
+                    cx,
+                )
+            })
+        });
+        let notifications = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.observe(&state, {
+                let notifications = notifications.clone();
+                move |_, _| notifications.set(notifications.get() + 1)
+            })
+        });
+
+        cx.update(|cx| {
+            state.update(cx, |state, cx| {
+                state.update_source(&first, |person| &person.name, |person| &mut person.name, cx)
+            });
+        });
+        assert_eq!(
+            notifications.get(),
+            0,
+            "an unchanged source should not notify"
+        );
+
+        cx.update(|cx| {
+            state.update(cx, |state, cx| {
+                state.update_source(
+                    &second,
+                    |person| &person.name,
+                    |person| &mut person.name,
+                    cx,
+                )
+            });
+        });
+        assert_eq!(notifications.get(), 1, "swapping the source should notify");
+
+        cx.update(|cx| first.update(cx, |_, cx| cx.notify()));
+        assert_eq!(
+            notifications.get(),
+            1,
+            "the old source's subscription should be dropped"
+        );
+
+        cx.update(|cx| second.update(cx, |_, cx| cx.notify()));
+        assert_eq!(notifications.get(), 2);
+    }
+
+    #[test]
+    fn escaped_projection_keeps_its_backing_state_alive() {
+        use crate::{Context, IntoElement, Render, Window, div};
+
+        struct HookView {
+            source: Entity<Person>,
+            show_projection: bool,
+            projection: Rc<RefCell<Option<ProjectionMut<String>>>>,
+        }
+
+        impl Render for HookView {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                if self.show_projection {
+                    *self.projection.borrow_mut() =
+                        Some(crate::project!(window, cx, &self.source, name));
+                }
+                div()
+            }
+        }
+
+        let mut cx = TestAppContext::single();
+        let source = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Ada".to_string(),
+                age: 36,
+            })
+        });
+        let projection = Rc::new(RefCell::new(None));
+        let window = cx.add_window({
+            let source = source.clone();
+            let projection = projection.clone();
+            move |_, _| HookView {
+                source,
+                show_projection: true,
+                projection,
+            }
+        });
+
+        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        let escaped = projection
+            .borrow_mut()
+            .take()
+            .expect("render created a projection");
+
+        window
+            .update(&mut cx, |view, _, cx| {
+                view.show_projection = false;
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(*window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        drop(source);
+        cx.update(|_| {});
+
+        cx.update(|cx| {
+            escaped.update(cx, |name| name.push_str(" Lovelace"));
+            assert_eq!(escaped.read(cx), "Ada Lovelace");
+        });
+    }
+
+    #[test]
     fn weak_projections_do_not_keep_the_source_alive() {
         let mut cx = TestAppContext::single();
         let person = cx.update(|cx| {
@@ -694,7 +948,12 @@ mod tests {
             })
         });
 
-        let name = person.project_mut(|person| &person.name, |person| &mut person.name);
+        let name = projection_mut(
+            &mut cx,
+            &person,
+            |person| &person.name,
+            |person| &mut person.name,
+        );
         let weak_name = name.downgrade();
         let weak_read_only = name.read_only().downgrade();
 
