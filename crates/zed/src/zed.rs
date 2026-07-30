@@ -434,6 +434,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 
     init_cursor_hide_mode(cx);
+    init_app_appearance(cx);
     init_reduce_motion(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
@@ -918,15 +919,45 @@ fn register_actions(
              _: &input_latency_ui::DumpInputLatencyHistogram,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
-                let report =
-                    input_latency_ui::format_input_latency_report(window, cx);
                 let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&report, None, true, cx)
-                });
-                let editor =
-                    cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
-                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                // In a collab session the report buffer is visible to other
+                // participants, so attribute the data to this user's machine.
+                let reported_by = if project.read(cx).is_shared()
+                    || project.read(cx).is_via_collab()
+                {
+                    workspace
+                        .user_store()
+                        .read(cx)
+                        .current_user()
+                        .map(|user| user.username.to_string())
+                } else {
+                    None
+                };
+                let report_data = input_latency_ui::snapshot_input_latency_report(
+                    window,
+                    reported_by,
+                    cx,
+                );
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let report = cx
+                        .background_spawn(async move {
+                            input_latency_ui::format_input_latency_report(&report_data)
+                        })
+                        .await;
+                    let buffer = project
+                        .update(cx, |project, cx| project.create_buffer(None, true, cx))
+                        .await?;
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(report, cx);
+                    });
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let editor = cx
+                            .new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                        workspace
+                            .add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    })
+                })
+                .detach_and_log_err(cx);
             },
         )
         .register_action(
@@ -936,39 +967,42 @@ fn register_actions(
              cx: &mut Context<Workspace>| {
                 let json = accessibility_tree_dump(window);
                 let language = workspace.app_state().languages.language_for_name("JSON");
+                let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
                     let language = language.await.log_err();
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer(&json, language, true, cx)
-                            });
-                            let title = "Accessibility Tree".to_string();
-                            let buffer = cx.new(|cx| {
-                                MultiBuffer::singleton(buffer, cx).with_title(title.clone())
-                            });
-                            let editor = cx.new(|cx| {
-                                let mut editor = Editor::for_multibuffer(
-                                    buffer,
-                                    Some(project),
-                                    window,
-                                    cx,
-                                );
-                                editor.set_breadcrumb_header(title);
-                                editor
-                            });
-                            workspace.add_item_to_active_pane(
-                                Box::new(editor),
-                                None,
-                                true,
+                    let buffer = project
+                        .update(cx, |project, cx| {
+                            project.create_buffer(language, true, cx)
+                        })
+                        .await?;
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(json, cx);
+                    });
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let title = "Accessibility Tree".to_string();
+                        let buffer = cx.new(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title(title.clone())
+                        });
+                        let editor = cx.new(|cx| {
+                            let mut editor = Editor::for_multibuffer(
+                                buffer,
+                                Some(project),
                                 window,
                                 cx,
                             );
-                        })
-                        .log_err();
+                            editor.set_breadcrumb_header(title);
+                            editor
+                        });
+                        workspace.add_item_to_active_pane(
+                            Box::new(editor),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
                 })
-                .detach();
+                .detach_and_log_err(cx);
             },
         )
         .register_action(
@@ -2014,6 +2048,24 @@ impl Settings for CursorHideModeSetting {
 
 fn init_cursor_hide_mode(cx: &mut App) {
     let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
+fn init_app_appearance(cx: &mut App) {
+    // Force the native window chrome (border + titlebar) to match the selected theme.
+    // `System` follows the OS (no override); any other theme forces its appearance, so a
+    // dark theme doesn't render a light window border when the system is in light mode.
+    let apply = |cx: &mut App| {
+        let appearance = match ThemeSettings::get_global(cx).theme.mode() {
+            Some(theme_settings::ThemeAppearanceMode::System) => None,
+            _ => Some(match cx.theme().appearance() {
+                theme::Appearance::Light => gpui::WindowAppearance::Light,
+                theme::Appearance::Dark => gpui::WindowAppearance::Dark,
+            }),
+        };
+        cx.set_window_appearance(appearance);
+    };
     apply(cx);
     cx.observe_global::<SettingsStore>(apply).detach();
 }
@@ -4539,7 +4591,7 @@ mod tests {
             .unwrap();
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         // mouse_wheel_zoom is disabled by default — zoom should not work.
@@ -4571,7 +4623,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_event(gpui::ScrollWheelEvent {
@@ -4590,7 +4642,7 @@ mod tests {
         );
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_event(gpui::ScrollWheelEvent {
@@ -4621,7 +4673,7 @@ mod tests {
             cx.update(|_, cx| ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32());
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_event(gpui::ScrollWheelEvent {
@@ -5184,6 +5236,94 @@ mod tests {
 
     actions!(test_only, [ActionA, ActionB]);
 
+    /// The actions the emacs keymap resolves for `keystroke` in `context`.
+    fn emacs_bindings_for(keystroke: &str, context: &str, cx: &mut TestAppContext) -> Vec<String> {
+        cx.update(|cx| {
+            let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-linux.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut bindings {
+                binding.set_meta(settings::KeybindSource::Default.meta());
+            }
+            let mut emacs_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/linux/emacs.json",
+                cx,
+            )
+            .unwrap();
+            for binding in &mut emacs_bindings {
+                binding.set_meta(settings::KeybindSource::Base.meta());
+            }
+            bindings.extend(emacs_bindings);
+
+            gpui::Keymap::new(bindings)
+                .bindings_for_input(
+                    &[gpui::Keystroke::parse(keystroke).unwrap()],
+                    &[gpui::KeyContext::parse(context).unwrap()],
+                )
+                .0
+                .iter()
+                .map(|binding| binding.action().name().to_string())
+                .collect()
+        })
+    }
+
+    /// `editor::MoveDown` and `editor::MoveUp` propagate when the cursor doesn't move, which at the
+    /// ends of a buffer let `ctrl-n` and `ctrl-p` fall through to the default bindings and open a
+    /// new file / the file finder.
+    #[gpui::test]
+    fn test_emacs_cursor_keys_do_not_fall_back_to_default_bindings(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        let ctrl_n = emacs_bindings_for("ctrl-n", "Workspace Editor", cx);
+        assert!(
+            ctrl_n.contains(&"editor::MoveDown".to_string()),
+            "ctrl-n should still move down, got {ctrl_n:?}"
+        );
+        assert!(
+            !ctrl_n.contains(&"workspace::NewFile".to_string()),
+            "ctrl-n should not fall through to workspace::NewFile, got {ctrl_n:?}"
+        );
+
+        let ctrl_p = emacs_bindings_for("ctrl-p", "Workspace Editor", cx);
+        assert!(
+            ctrl_p.contains(&"editor::MoveUp".to_string()),
+            "ctrl-p should still move up, got {ctrl_p:?}"
+        );
+        assert!(
+            !ctrl_p.contains(&"file_finder::Toggle".to_string()),
+            "ctrl-p should not fall through to file_finder::Toggle, got {ctrl_p:?}"
+        );
+    }
+
+    /// The unbind above only targets `workspace::NewFile` / `file_finder::Toggle`, so the narrower
+    /// `ctrl-n` and `ctrl-p` bindings still win where they apply.
+    #[gpui::test]
+    fn test_emacs_cursor_keys_keep_narrower_bindings(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        let completions = "Workspace Editor showing_completions";
+        assert_eq!(
+            emacs_bindings_for("ctrl-n", completions, cx).first(),
+            Some(&"editor::ContextMenuNext".to_string())
+        );
+        assert_eq!(
+            emacs_bindings_for("ctrl-p", completions, cx).first(),
+            Some(&"editor::ContextMenuPrevious".to_string())
+        );
+
+        let selection_mode = "Workspace Editor selection_mode";
+        assert_eq!(
+            emacs_bindings_for("ctrl-n", selection_mode, cx).first(),
+            Some(&"editor::SelectDown".to_string())
+        );
+        assert_eq!(
+            emacs_bindings_for("ctrl-p", selection_mode, cx).first(),
+            Some(&"editor::SelectUp".to_string())
+        );
+    }
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();
@@ -5199,6 +5339,8 @@ mod tests {
         use workspace::ActivatePreviousPane;
         // From the JetBrains keymap
         use workspace::ActivatePreviousItem;
+        // From the VSCode keymap
+        use debugger_ui::Start;
 
         app_state
             .fs
@@ -5289,6 +5431,36 @@ mod tests {
                 ("backspace", &ActionB),
                 ("{", &ActivatePreviousItem::default()),
             ],
+            line!(),
+        );
+
+        // Test the VSCode keymap overlay
+        app_state
+            .fs
+            .save(
+                paths::settings_file(),
+                &r#"{"base_keymap": "VSCode"}"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        executor.run_until_parked();
+
+        window
+            .update(cx, |_, _, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.register_action(|_, _: &Start, _window, _cx| {});
+                    cx.notify();
+                });
+            })
+            .unwrap();
+        executor.run_until_parked();
+
+        assert_key_bindings_for(
+            window.into(),
+            cx,
+            vec![("backspace", &ActionB), ("f5", &Start)],
             line!(),
         );
     }

@@ -1,9 +1,5 @@
-use std::{
-    any::Any,
-    fmt::Debug,
-    ops::Not,
-    time::{Duration, Instant},
-};
+use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
+use web_time::Instant;
 
 use gpui::{
     Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,

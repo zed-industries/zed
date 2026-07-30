@@ -2397,7 +2397,7 @@ impl NewlineConfig {
             _ => return false,
         };
         let pair = {
-            let mut result: Option<BracketMatch<usize>> = None;
+            let mut result: Option<BracketMatch> = None;
 
             for pair in buffer
                 .all_bracket_ranges(range.start.0..range.end.0)
