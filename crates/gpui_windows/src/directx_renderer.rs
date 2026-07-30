@@ -432,12 +432,16 @@ impl DirectXRenderer {
                 .as_ref()
                 .context("resources missing")?
                 .swap_chain
-                .Present(0, DXGI_PRESENT(0))?;
+                .Present(0, DXGI_PRESENT(0))
+                .ok()
+                .context("presenting base swap chain")?;
             self.overlay_resources
                 .as_ref()
                 .context("overlay resources missing")?
                 .swap_chain
-                .Present(0, DXGI_PRESENT(0))?;
+                .Present(0, DXGI_PRESENT(0))
+                .ok()
+                .context("presenting overlay swap chain")?;
         }
         Ok(())
     }
@@ -1141,7 +1145,11 @@ impl PlatformNativeSurface for DirectCompositionPortal {
     fn set_visible(&self, visible: bool) -> Result<()> {
         if self.visible.replace(visible) != visible {
             unsafe {
-                self.visual.SetOpacity2(if visible { 1.0 } else { 0.0 })?;
+                if visible {
+                    self.container.AddVisual(&self.visual, true, None)?;
+                } else {
+                    self.container.RemoveVisual(&self.visual)?;
+                }
                 self.comp_device.Commit()?;
             }
         }
