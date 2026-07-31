@@ -3,6 +3,7 @@ pub use buffer_search::BufferSearchBar;
 pub use editor::HighlightKey;
 use editor::SearchSettings;
 use gpui::{Action, App, ClickEvent, Entity, FocusHandle, IntoElement, actions};
+use i18n::{LocalizedString, t};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{IconButtonShape, Tooltip, prelude::*};
@@ -87,9 +88,17 @@ pub enum SearchOption {
     Backwards,
 }
 
-const REPLACE_PLACEHOLDER: &str = "Replace in project…";
-const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
-const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
+fn replace_placeholder() -> LocalizedString {
+    t!("Replace in project…")
+}
+
+fn include_placeholder() -> LocalizedString {
+    t!("Include: e.g. src/**/*.rs")
+}
+
+fn exclude_placeholder() -> LocalizedString {
+    t!("Exclude: e.g. vendor/*, *.lock")
+}
 
 pub enum SearchSource<'a, 'b> {
     Buffer,
@@ -101,6 +110,8 @@ impl SearchOption {
         SearchOptions::from_bits(1 << *self as u8).unwrap()
     }
 
+    /// A stable English identifier, used to build element ids. Use
+    /// [`Self::localized_label`] for anything the user reads.
     pub fn label(&self) -> &'static str {
         match self {
             SearchOption::WholeWord => "Match Whole Words",
@@ -109,6 +120,17 @@ impl SearchOption {
             SearchOption::Regex => "Use Regular Expressions",
             SearchOption::OneMatchPerLine => "One Match Per Line",
             SearchOption::Backwards => "Search Backwards",
+        }
+    }
+
+    pub fn localized_label(&self) -> LocalizedString {
+        match self {
+            SearchOption::WholeWord => t!("Match Whole Words"),
+            SearchOption::CaseSensitive => t!("Match Case Sensitivity"),
+            SearchOption::IncludeIgnored => t!("Also search files ignored by configuration"),
+            SearchOption::Regex => t!("Use Regular Expressions"),
+            SearchOption::OneMatchPerLine => t!("One Match Per Line"),
+            SearchOption::Backwards => t!("Search Backwards"),
         }
     }
 
@@ -140,6 +162,7 @@ impl SearchOption {
     ) -> impl IntoElement {
         let action = self.to_toggle_action();
         let label = self.label();
+        let tooltip_label = self.localized_label();
 
         IconButton::new(
             (label, matches!(search_source, SearchSource::Buffer) as u32),
@@ -164,7 +187,9 @@ impl SearchOption {
         })
         .shape(IconButtonShape::Square)
         .toggle_state(active.contains(self.as_options()))
-        .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
+        .tooltip(move |_window, cx| {
+            Tooltip::for_action_in(tooltip_label.clone(), action, &focus_handle, cx)
+        })
     }
 }
 
@@ -239,7 +264,7 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
         };
         workspace.update(cx, |workspace, cx| {
             workspace.show_toast(
-                Toast::new(notification_id.clone(), "No more matches").autohide(),
+                Toast::new(notification_id.clone(), String::from(t!("No more matches"))).autohide(),
                 cx,
             );
         })
