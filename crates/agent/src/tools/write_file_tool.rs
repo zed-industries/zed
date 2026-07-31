@@ -7,6 +7,7 @@ use action_log::ActionLog;
 use agent_client_protocol::schema::v1 as acp;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
+use i18n::t;
 use language::LanguageRegistry;
 use project::Project;
 use schemars::JsonSchema;
@@ -14,8 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use ui::SharedString;
-
-const DEFAULT_UI_TEXT: &str = "Writing file";
 
 /// This is a tool for creating a new file or overwriting an existing file with completely new contents.
 ///
@@ -218,16 +217,16 @@ impl AgentTool for WriteFileTool {
         input: Result<Self::Input, serde_json::Value>,
         cx: &mut App,
     ) -> SharedString {
+        let default = t!("Writing file").resolve();
         match input {
-            Ok(input) => {
-                self.session_context
-                    .initial_title_from_path(&input.path, DEFAULT_UI_TEXT, cx)
-            }
+            Ok(input) => self
+                .session_context
+                .initial_title_from_path(&input.path, &default, cx),
             Err(raw_input) => initial_title_from_partial_path::<WriteFileToolPartialInput>(
                 &self.session_context,
                 raw_input,
                 |partial| partial.path.clone(),
-                DEFAULT_UI_TEXT,
+                &default,
                 cx,
             ),
         }

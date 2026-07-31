@@ -2,6 +2,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_skills::Skill;
 use anyhow::Result;
 use gpui::{App, AsyncApp, SharedString, Task};
+use i18n::t;
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -155,9 +156,9 @@ impl AgentTool for SkillTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("`{}` Skill", input.name).into()
+            t!(key = "named-skill", "`{$name}` Skill", name = input.name).into()
         } else {
-            "Skill".into()
+            t!("Skill").into()
         }
     }
 

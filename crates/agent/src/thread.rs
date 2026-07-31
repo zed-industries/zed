@@ -39,6 +39,7 @@ use gpui::{
     WeakEntity,
 };
 use heck::ToSnakeCase as _;
+use i18n::{LocalizedString, t};
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
@@ -965,12 +966,12 @@ impl ToolPermissionContext {
             return acp_thread::PermissionOptions::Flat(vec![
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("allow"),
-                    "Yes",
+                    t!("Yes"),
                     acp::PermissionOptionKind::AllowOnce,
                 ),
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("deny"),
-                    "No",
+                    t!("No"),
                     acp::PermissionOptionKind::RejectOnce,
                 ),
             ]);
@@ -981,12 +982,12 @@ impl ToolPermissionContext {
             return acp_thread::PermissionOptions::Flat(vec![
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("allow"),
-                    "Allow",
+                    t!("Allow"),
                     acp::PermissionOptionKind::AllowOnce,
                 ),
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("deny"),
-                    "Deny",
+                    t!("Deny"),
                     acp::PermissionOptionKind::RejectOnce,
                 ),
             ]);
@@ -1010,12 +1011,12 @@ impl ToolPermissionContext {
                     choices.push(acp_thread::PermissionOptionChoice {
                         allow: acp::PermissionOption::new(
                             acp::PermissionOptionId::new(format!("always_allow:{}", tool_name)),
-                            format!("Always for {}", tool_name.replace('_', " ")),
+                            t!("Always for {$tool}", tool = tool_name.replace('_', " ")),
                             acp::PermissionOptionKind::AllowAlways,
                         ),
                         deny: acp::PermissionOption::new(
                             acp::PermissionOptionId::new(format!("always_deny:{}", tool_name)),
-                            format!("Always for {}", tool_name.replace('_', " ")),
+                            t!("Always for {$tool}", tool = tool_name.replace('_', " ")),
                             acp::PermissionOptionKind::RejectAlways,
                         ),
                         sub_patterns: vec![],
@@ -1023,12 +1024,12 @@ impl ToolPermissionContext {
                     choices.push(acp_thread::PermissionOptionChoice {
                         allow: acp::PermissionOption::new(
                             acp::PermissionOptionId::new("allow"),
-                            "Only this time",
+                            t!("Only this time"),
                             acp::PermissionOptionKind::AllowOnce,
                         ),
                         deny: acp::PermissionOption::new(
                             acp::PermissionOptionId::new("deny"),
-                            "Only this time",
+                            t!("Only this time"),
                             acp::PermissionOptionKind::RejectOnce,
                         ),
                         sub_patterns: vec![],
@@ -1090,26 +1091,30 @@ impl ToolPermissionContext {
 
         let mut choices = Vec::new();
 
-        let mut push_choice =
-            |label: String, allow_id, deny_id, allow_kind, deny_kind, sub_patterns: Vec<String>| {
-                choices.push(acp_thread::PermissionOptionChoice {
-                    allow: acp::PermissionOption::new(
-                        acp::PermissionOptionId::new(allow_id),
-                        label.clone(),
-                        allow_kind,
-                    ),
-                    deny: acp::PermissionOption::new(
-                        acp::PermissionOptionId::new(deny_id),
-                        label,
-                        deny_kind,
-                    ),
-                    sub_patterns,
-                });
-            };
+        let mut push_choice = |label: LocalizedString,
+                               allow_id,
+                               deny_id,
+                               allow_kind,
+                               deny_kind,
+                               sub_patterns: Vec<String>| {
+            choices.push(acp_thread::PermissionOptionChoice {
+                allow: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(allow_id),
+                    label.clone(),
+                    allow_kind,
+                ),
+                deny: acp::PermissionOption::new(
+                    acp::PermissionOptionId::new(deny_id),
+                    label,
+                    deny_kind,
+                ),
+                sub_patterns,
+            });
+        };
 
         if shell_supports_always_allow {
             push_choice(
-                format!("Always for {}", tool_name.replace('_', " ")),
+                t!("Always for {$tool}", tool = tool_name.replace('_', " ")),
                 format!("always_allow:{}", tool_name),
                 format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
@@ -1119,9 +1124,9 @@ impl ToolPermissionContext {
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
                 let button_text = if tool_name == TerminalTool::NAME {
-                    format!("Always for `{}` commands", display)
+                    t!("Always for `{$pattern}` commands", pattern = display)
                 } else {
-                    format!("Always for `{}`", display)
+                    t!("Always for `{$pattern}`", pattern = display)
                 };
                 push_choice(
                     button_text,
@@ -1135,7 +1140,7 @@ impl ToolPermissionContext {
         }
 
         push_choice(
-            "Only this time".to_string(),
+            t!("Only this time"),
             "allow".to_string(),
             "deny".to_string(),
             acp::PermissionOptionKind::AllowOnce,
@@ -5800,14 +5805,14 @@ impl ToolCallEventStream {
             reason,
         };
         let allow_thread_label = if self.is_subagent(cx) {
-            "Allow for this subagent"
+            t!("Allow for this subagent")
         } else {
-            "Allow for this thread"
+            t!("Allow for this thread")
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
-                "Allow once",
+                t!("Allow once"),
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
@@ -5817,12 +5822,12 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
-                "Allow always",
+                t!("Allow always"),
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
-                "Deny",
+                t!("Deny"),
                 acp::PermissionOptionKind::RejectOnce,
             ),
         ]);
@@ -5936,12 +5941,12 @@ impl ToolCallEventStream {
         let options = acp_thread::PermissionOptions::Flat(vec![
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
-                "Continue",
+                t!("Continue"),
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
-                "Abort",
+                t!("Abort"),
                 acp::PermissionOptionKind::RejectOnce,
             ),
         ]);
@@ -6169,14 +6174,14 @@ impl ToolCallEventStream {
             docs_section,
         };
         let retry_label = if retries == 0 {
-            "Retry".to_string()
+            t!("Retry")
         } else {
-            format!("Retry (attempt {retries})")
+            t!("Retry (attempt {$retries})", retries = retries)
         };
         let allow_thread_label = if self.is_subagent(cx) {
-            "Run without sandbox for this subagent"
+            t!("Run without sandbox for this subagent")
         } else {
-            "Run without sandbox for this thread"
+            t!("Run without sandbox for this thread")
         };
         let options = acp_thread::PermissionOptions::Flat(vec![
             // Retry isn't an allow/deny choice; the UI renders it with its own
@@ -6191,7 +6196,7 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
-                "Run without sandbox once",
+                t!("Run without sandbox once"),
                 acp::PermissionOptionKind::AllowOnce,
             ),
             acp::PermissionOption::new(
@@ -6201,12 +6206,12 @@ impl ToolCallEventStream {
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowAlways.as_id()),
-                "Always run without sandbox",
+                t!("Always run without sandbox"),
                 acp::PermissionOptionKind::AllowAlways,
             ),
             acp::PermissionOption::new(
                 acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
-                "Deny",
+                t!("Deny"),
                 acp::PermissionOptionKind::RejectOnce,
             ),
         ]);

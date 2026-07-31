@@ -2,6 +2,7 @@ use acp_thread::{SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
+use i18n::t;
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -141,7 +142,7 @@ impl AgentTool for SpawnAgentTool {
                 .get("label")
                 .and_then(|v| v.as_str())
                 .map(|s| SharedString::from(s.to_owned()))
-                .unwrap_or_else(|| "Spawning agent".into()),
+                .unwrap_or_else(|| t!(key = "agent-tool-spawning-agent", "Spawning agent").into()),
         }
     }
 

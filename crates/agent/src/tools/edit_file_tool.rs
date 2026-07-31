@@ -11,6 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
+use i18n::t;
 use language::LanguageRegistry;
 use project::Project;
 use schemars::JsonSchema;
@@ -18,8 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use ui::SharedString;
-
-const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
@@ -240,16 +239,16 @@ impl AgentTool for EditFileTool {
         input: Result<Self::Input, serde_json::Value>,
         cx: &mut App,
     ) -> SharedString {
+        let default = t!("Editing file").resolve();
         match input {
-            Ok(input) => {
-                self.session_context
-                    .initial_title_from_path(&input.path, DEFAULT_UI_TEXT, cx)
-            }
+            Ok(input) => self
+                .session_context
+                .initial_title_from_path(&input.path, &default, cx),
             Err(raw_input) => initial_title_from_partial_path::<EditFileToolPartialInput>(
                 &self.session_context,
                 raw_input,
                 |partial| partial.path.clone(),
-                DEFAULT_UI_TEXT,
+                &default,
                 cx,
             ),
         }
@@ -287,6 +286,11 @@ impl AgentTool for EditFileTool {
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates, ToolInputSender};
+
+    /// The English source the fallback title falls back to when no catalog is
+    /// loaded, which is the case in tests.
+    const DEFAULT_UI_TEXT: &str = "Editing file";
+
     use fs::Fs as _;
     use gpui::{AppContext as _, TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;

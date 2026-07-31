@@ -4,6 +4,7 @@ use std::sync::Arc;
 use agent_client_protocol::schema::v1 as acp;
 use collections::HashSet;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -51,13 +52,14 @@ impl AgentTool for RenameTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!(
-                "Rename `{}` to `{}`",
-                input.symbol.symbol_name, input.new_name
+            t!(
+                "Rename `{$symbol}` to `{$new_name}`",
+                symbol = input.symbol.symbol_name,
+                new_name = input.new_name
             )
             .into()
         } else {
-            "Rename symbol".into()
+            t!(key = "agent-tool-rename-symbol", "Rename symbol").into()
         }
     }
 

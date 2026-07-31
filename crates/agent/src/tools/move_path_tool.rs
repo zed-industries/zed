@@ -11,6 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -86,12 +87,22 @@ impl AgentTool for MovePathTool {
             {
                 Some(filename) if src_path.parent() == dest_path.parent() => {
                     let filename = MarkdownInlineCode(&filename);
-                    format!("Rename {src} to {filename}").into()
+                    t!(
+                        "Rename {$src} to {$filename}",
+                        src = src.to_string(),
+                        filename = filename.to_string()
+                    )
+                    .into()
                 }
-                _ => format!("Move {src} to {dest}").into(),
+                _ => t!(
+                    "Move {$src} to {$dest}",
+                    src = src.to_string(),
+                    dest = dest.to_string()
+                )
+                .into(),
             }
         } else {
-            "Move path".into()
+            t!(key = "agent-tool-move-path", "Move path").into()
         }
     }
 
@@ -183,7 +194,12 @@ impl AgentTool for MovePathTool {
                         Self::NAME,
                         vec![input.source_path.clone(), input.destination_path.clone()],
                     );
-                    let title = format!("Move {src} to {dest}");
+                    let title = t!(
+                        "Move {$src} to {$dest}",
+                        src = src.to_string(),
+                        dest = dest.to_string()
+                    )
+                    .resolve();
                     authorize_with_sensitive_settings(
                         sensitive_kind,
                         context,

@@ -2,6 +2,7 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use futures::{Future, FutureExt as _};
 use gpui::{App, AsyncApp, Entity, Task};
+use i18n::t;
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use project::Project;
 use schemars::JsonSchema;
@@ -151,9 +152,13 @@ impl AgentTool for DiagnosticsTool {
             Some(path) if !path.is_empty() => Some(path),
             _ => None,
         }) {
-            format!("Check diagnostics for {}", MarkdownInlineCode(&path)).into()
+            t!(
+                "Check diagnostics for {$path}",
+                path = MarkdownInlineCode(&path).to_string()
+            )
+            .into()
         } else {
-            "Check project diagnostics".into()
+            t!("Check project diagnostics").into()
         }
     }
 

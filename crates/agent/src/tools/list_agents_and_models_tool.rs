@@ -1,6 +1,7 @@
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
+use i18n::t;
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -58,7 +59,7 @@ impl AgentTool for ListAgentsAndModelsTool {
         _input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        "List agents and models".into()
+        t!("List agents and models").into()
     }
 
     fn run(

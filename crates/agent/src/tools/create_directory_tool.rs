@@ -6,6 +6,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -96,9 +97,13 @@ impl AgentTool for CreateDirectoryTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("Create directory {}", MarkdownInlineCode(&input.path)).into()
+            t!(
+                "Create directory {$path}",
+                path = MarkdownInlineCode(&input.path).to_string()
+            )
+            .into()
         } else {
-            "Create directory".into()
+            t!(key = "agent-tool-create-directory", "Create directory").into()
         }
     }
 
@@ -179,7 +184,11 @@ impl AgentTool for CreateDirectoryTool {
                 match decision {
                     ToolPermissionDecision::Allow => None,
                     ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
-                        let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
+                        let title = t!(
+                            "Create directory {$path}",
+                            path = MarkdownInlineCode(&input.path).to_string()
+                        )
+                        .resolve();
                         let context =
                             crate::ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
                         authorize_with_sensitive_settings(

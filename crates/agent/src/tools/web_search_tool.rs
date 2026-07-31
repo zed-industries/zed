@@ -6,6 +6,7 @@ use anyhow::Result;
 use cloud_llm_client::WebSearchResponse;
 use futures::FutureExt as _;
 use gpui::{App, Task};
+use i18n::t;
 use language_model::{
     LanguageModelProviderId, LanguageModelToolResultContent, ZED_CLOUD_PROVIDER_ID,
 };
@@ -59,7 +60,7 @@ impl AgentTool for WebSearchTool {
         _input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        "Searching the Web".into()
+        t!("Searching the Web").into()
     }
 
     /// We currently only support Zed Cloud as a provider.
@@ -85,7 +86,10 @@ impl AgentTool for WebSearchTool {
                 let context =
                     crate::ToolPermissionContext::new(Self::NAME, vec![input.query.clone()]);
                 event_stream.authorize(
-                    format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                    t!(
+                        "Search the web for {$query}",
+                        query = MarkdownInlineCode(&input.query).to_string()
+                    ),
                     context,
                     cx,
                 )
@@ -109,7 +113,7 @@ impl AgentTool for WebSearchTool {
                         Ok(response) => response,
                         Err(err) => {
                             event_stream
-                                .update_fields(acp::ToolCallUpdateFields::new().title("Web Search Failed"));
+                                .update_fields(acp::ToolCallUpdateFields::new().title(String::from(t!("Web Search Failed"))));
                             return Err(WebSearchToolOutput::Error { error: err.to_string() });
                         }
                     }
@@ -139,14 +143,19 @@ impl AgentTool for WebSearchTool {
 }
 
 fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream) {
-    let result_text = if response.results.len() == 1 {
-        "1 result".to_string()
+    // The count is part of the sentence rather than a separate fragment, so that
+    // translations can inflect around it.
+    let title = if response.results.len() == 1 {
+        t!("Searched the web: 1 result")
     } else {
-        format!("{} results", response.results.len())
+        t!(
+            "Searched the web: {$count} results",
+            count = response.results.len()
+        )
     };
     event_stream.update_fields(
         acp::ToolCallUpdateFields::new()
-            .title(format!("Searched the web: {result_text}"))
+            .title(String::from(title))
             .content(
                 response
                     .results

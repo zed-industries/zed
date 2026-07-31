@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,12 +64,12 @@ impl AgentTool for ApplyCodeActionTool {
                     Some(pending.actions.get(index)?.lsp_action.title().to_string())
                 });
             if let Some(title) = title {
-                format!("Apply code action: {title}").into()
+                t!("Apply code action: {$title}", title = title).into()
             } else {
-                format!("Apply code action #{}", input.index).into()
+                t!("Apply code action #{$index}", index = input.index).into()
             }
         } else {
-            "Apply code action".into()
+            t!("Apply code action").into()
         }
     }
 

@@ -11,6 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -76,9 +77,16 @@ impl AgentTool for CopyPathTool {
         if let Ok(input) = input {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
-            format!("Copy {src} to {dest}").into()
+            t!(
+                "Copy {$src} to {$dest}",
+                src = src.to_string(),
+                dest = dest.to_string()
+            )
+            .into()
         } else {
-            "Copy path".into()
+            // Explicit keys keep these tool-call titles apart from the Title Case
+            // menu actions elsewhere, which derive the same key.
+            t!(key = "agent-tool-copy-path", "Copy path").into()
         }
     }
 

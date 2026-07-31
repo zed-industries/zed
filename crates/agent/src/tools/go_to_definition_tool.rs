@@ -5,6 +5,7 @@ use super::symbol_locator::{LocationDisplay, SymbolLocator};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,9 +47,13 @@ impl AgentTool for GoToDefinitionTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("Go to definition of `{}`", input.symbol.symbol_name).into()
+            t!(
+                "Go to definition of `{$symbol}`",
+                symbol = input.symbol.symbol_name
+            )
+            .into()
         } else {
-            "Go to definition".into()
+            t!(key = "agent-tool-go-to-definition", "Go to definition").into()
         }
     }
 

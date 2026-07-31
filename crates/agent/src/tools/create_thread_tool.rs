@@ -1,6 +1,7 @@
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
+use i18n::t;
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -150,12 +151,12 @@ impl AgentTool for CreateThreadTool {
         _cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(i) => format!("Create thread: {}", i.title).into(),
+            Ok(i) => t!("Create thread: {$title}", title = i.title).into(),
             Err(value) => value
                 .get("title")
                 .and_then(|v| v.as_str())
-                .map(|s| format!("Create thread: {s}").into())
-                .unwrap_or_else(|| "Create thread".into()),
+                .map(|s| t!("Create thread: {$title}", title = s.to_string()).into())
+                .unwrap_or_else(|| t!("Create thread").into()),
         }
     }
 

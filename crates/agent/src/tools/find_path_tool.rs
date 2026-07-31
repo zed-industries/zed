@@ -4,6 +4,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
+use i18n::t;
 use language_model::LanguageModelToolResultContent;
 use project::Project;
 use schemars::JsonSchema;
@@ -113,11 +114,10 @@ impl AgentTool for FindPathTool {
         input: Result<Self::Input, serde_json::Value>,
         _cx: &mut App,
     ) -> SharedString {
-        let mut title = "Find paths".to_string();
-        if let Ok(input) = input {
-            title.push_str(&format!(" matching “`{}`”", input.glob));
+        match input {
+            Ok(input) => t!("Find paths matching “`{$glob}`”", glob = input.glob).into(),
+            Err(_) => t!("Find paths").into(),
         }
-        title.into()
     }
 
     fn run(

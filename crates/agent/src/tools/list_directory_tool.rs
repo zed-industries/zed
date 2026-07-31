@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -195,9 +196,13 @@ impl AgentTool for ListDirectoryTool {
     ) -> SharedString {
         if let Ok(input) = input {
             let path = MarkdownInlineCode(&input.path);
-            format!("List the {path} directory's contents").into()
+            t!(
+                "List the {$path} directory's contents",
+                path = path.to_string()
+            )
+            .into()
         } else {
-            "List directory".into()
+            t!("List directory").into()
         }
     }
 

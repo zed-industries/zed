@@ -3,6 +3,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use indoc::formatdoc;
 use language::Point;
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
@@ -228,17 +229,22 @@ impl AgentTool for ReadFileTool {
                 .short_full_path_for_project_path(&project_path, cx)
         {
             match (input.start_line, input.end_line) {
-                (Some(start), Some(end)) => {
-                    format!("Read file `{path}` (lines {}-{})", start, end,)
-                }
-                (Some(start), None) => {
-                    format!("Read file `{path}` (from line {})", start)
-                }
-                _ => format!("Read file `{path}`"),
+                (Some(start), Some(end)) => t!(
+                    "Read file `{$path}` (lines {$start}-{$end})",
+                    path = path,
+                    start = start,
+                    end = end
+                ),
+                (Some(start), None) => t!(
+                    "Read file `{$path}` (from line {$start})",
+                    path = path,
+                    start = start
+                ),
+                _ => t!("Read file `{$path}`", path = path),
             }
             .into()
         } else {
-            "Read file".into()
+            t!("Read file").into()
         }
     }
 

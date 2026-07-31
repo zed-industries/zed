@@ -7,6 +7,7 @@ use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
 use fs::Fs;
 use gpui::{App, Entity, Task, WeakEntity};
+use i18n::t;
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::path::{Component, Path, PathBuf};
@@ -481,10 +482,10 @@ pub fn authorize_symlink_access(
     event_stream: &ToolCallEventStream,
     cx: &mut App,
 ) -> Task<Result<()>> {
-    let title = format!(
-        "`{}` points outside the project (symlink to `{}`)",
-        display_path,
-        canonical_target.display(),
+    let title = t!(
+        "`{$path}` points outside the project (symlink to `{$target}`)",
+        path = display_path.to_string(),
+        target = canonical_target.display().to_string(),
     );
 
     let context = ToolPermissionContext::symlink_target(
@@ -503,14 +504,18 @@ pub fn authorize_with_sensitive_settings(
     cx: &mut App,
 ) -> Task<Result<()>> {
     match kind {
-        Some(SensitiveSettingsKind::Local) => {
-            event_stream.authorize_always_prompt(format!("{title} (local settings)"), context, cx)
-        }
-        Some(SensitiveSettingsKind::Global) => {
-            event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
-        }
+        Some(SensitiveSettingsKind::Local) => event_stream.authorize_always_prompt(
+            t!("{$title} (local settings)", title = title.to_string()),
+            context,
+            cx,
+        ),
+        Some(SensitiveSettingsKind::Global) => event_stream.authorize_always_prompt(
+            t!("{$title} (settings)", title = title.to_string()),
+            context,
+            cx,
+        ),
         Some(SensitiveSettingsKind::AgentSkills) => event_stream.authorize_always_prompt(
-            format!("{title} (agent skills)"),
+            t!("{$title} (agent skills)", title = title.to_string()),
             context.for_agent_skills(),
             cx,
         ),
@@ -541,7 +546,7 @@ pub fn authorize_symlink_escapes(
         .map(|(path, target)| format!("`{}` → `{}`", path, target.display()))
         .collect::<Vec<_>>()
         .join(" and ");
-    let title = format!("{} (symlinks outside project)", targets);
+    let title = t!("{$targets} (symlinks outside project)", targets = targets);
 
     let context = ToolPermissionContext::symlink_target(
         tool_name,
@@ -641,7 +646,11 @@ pub fn authorize_file_edit(
     }
 
     let path_owned = path.to_path_buf();
-    let title = format!("Edit {}", util::markdown::MarkdownInlineCode(&path_str));
+    let title = t!(
+        "Edit {$path}",
+        path = util::markdown::MarkdownInlineCode(&path_str).to_string()
+    )
+    .resolve();
     let tool_name = tool_name.to_string();
     let thread = thread.clone();
     let event_stream = event_stream.clone();
@@ -741,7 +750,7 @@ pub fn authorize_file_edit(
                         vec![path_owned.to_string_lossy().to_string()],
                     );
                     event_stream.authorize_always_prompt(
-                        format!("{title} (local settings)"),
+                        t!("{$title} (local settings)", title = title.to_string()),
                         context,
                         cx,
                     )
@@ -754,7 +763,11 @@ pub fn authorize_file_edit(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
                     );
-                    event_stream.authorize_always_prompt(format!("{title} (settings)"), context, cx)
+                    event_stream.authorize_always_prompt(
+                        t!("{$title} (settings)", title = title.to_string()),
+                        context,
+                        cx,
+                    )
                 });
                 return authorize.await;
             }
@@ -766,7 +779,7 @@ pub fn authorize_file_edit(
                     )
                     .for_agent_skills();
                     event_stream.authorize_always_prompt(
-                        format!("{title} (agent skills)"),
+                        t!("{$title} (agent skills)", title = title.to_string()),
                         context,
                         cx,
                     )
@@ -784,7 +797,7 @@ pub fn authorize_file_edit(
                         &tool_name,
                         vec![path_owned.to_string_lossy().to_string()],
                     );
-                    event_stream.authorize(&title, context, cx)
+                    event_stream.authorize(&*title, context, cx)
                 });
                 authorize.await
             }

@@ -4,6 +4,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use language::{OffsetRangeExt, ParseStatus, Point};
 use project::{
     Project, ProjectPath, SearchResults, WorktreeSettings,
@@ -95,20 +96,32 @@ impl AgentTool for GrepTool {
         match input {
             Ok(input) => {
                 let page = input.page();
-                let regex_str = MarkdownInlineCode(&input.regex);
-                let case_info = if input.case_sensitive {
-                    " (case-sensitive)"
-                } else {
-                    ""
-                };
+                let regex = MarkdownInlineCode(&input.regex).to_string();
 
-                if page > 1 {
-                    format!("Get page {page} of search results for regex {regex_str}{case_info}")
-                } else {
-                    format!("Search files for regex {regex_str}{case_info}")
+                // Each combination is its own whole sentence, so that translations
+                // can place the page number and the case-sensitivity note wherever
+                // their grammar needs them.
+                match (page > 1, input.case_sensitive) {
+                    (true, true) => t!(
+                        "Get page {$page} of search results for regex {$regex} (case-sensitive)",
+                        page = page,
+                        regex = regex
+                    ),
+                    (true, false) => t!(
+                        "Get page {$page} of search results for regex {$regex}",
+                        page = page,
+                        regex = regex
+                    ),
+                    (false, true) => {
+                        t!(
+                            "Search files for regex {$regex} (case-sensitive)",
+                            regex = regex
+                        )
+                    }
+                    (false, false) => t!("Search files for regex {$regex}", regex = regex),
                 }
             }
-            Err(_) => "Search with regex".into(),
+            Err(_) => t!("Search with regex"),
         }
         .into()
     }

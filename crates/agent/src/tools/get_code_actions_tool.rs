@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -53,9 +54,13 @@ impl AgentTool for GetCodeActionsTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("Get code actions for `{}`", input.symbol.symbol_name).into()
+            t!(
+                "Get code actions for `{$symbol}`",
+                symbol = input.symbol.symbol_name
+            )
+            .into()
         } else {
-            "Get code actions".into()
+            t!("Get code actions").into()
         }
     }
 

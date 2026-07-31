@@ -8,6 +8,7 @@ use futures::{AsyncReadExt as _, FutureExt as _};
 use gpui::{App, AppContext as _, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
+use i18n::t;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::SharedString;
@@ -231,8 +232,15 @@ impl AgentTool for FetchTool {
         _cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(input) => format!("Fetch {}", MarkdownEscaped(&input.url)).into(),
-            Err(_) => "Fetch URL".into(),
+            // An explicit key keeps this apart from the bare "Fetch URL" below,
+            // which would otherwise derive the same `fetch-url`.
+            Ok(input) => t!(
+                key = "fetch-target",
+                "Fetch {$url}",
+                url = MarkdownEscaped(&input.url).to_string()
+            )
+            .into(),
+            Err(_) => t!("Fetch URL").into(),
         }
     }
 
@@ -253,7 +261,11 @@ impl AgentTool for FetchTool {
                     crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
 
                 event_stream.authorize(
-                    format!("Fetch {}", MarkdownInlineCode(&input.url)),
+                    t!(
+                        key = "fetch-target",
+                        "Fetch {$url}",
+                        url = MarkdownInlineCode(&input.url).to_string()
+                    ),
                     context,
                     cx,
                 )

@@ -11,6 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
+use i18n::t;
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,9 +69,16 @@ impl AgentTool for DeletePathTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("Delete “`{}`”", input.path).into()
+            // The curly quotes are typography around the path, not part of the
+            // sentence, so they stay out of the catalog entry.
+            t!(
+                key = "delete-target",
+                "Delete {$path}",
+                path = format!("“`{}`”", input.path)
+            )
+            .into()
         } else {
-            "Delete path".into()
+            t!(key = "agent-tool-delete-path", "Delete path").into()
         }
     }
 
@@ -142,7 +150,12 @@ impl AgentTool for DeletePathTool {
                     ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
                         let context =
                             crate::ToolPermissionContext::new(Self::NAME, vec![path.clone()]);
-                        let title = format!("Delete {}", MarkdownInlineCode(&path));
+                        let title = t!(
+                            key = "delete-target",
+                            "Delete {$path}",
+                            path = MarkdownInlineCode(&path).to_string()
+                        )
+                        .resolve();
                         authorize_with_sensitive_settings(
                             settings_kind,
                             context,

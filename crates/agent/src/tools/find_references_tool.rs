@@ -5,6 +5,7 @@ use super::symbol_locator::{LocationDisplay, SymbolLocator};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema::v1 as acp;
 use gpui::{App, Entity, SharedString, Task};
+use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,9 +47,13 @@ impl AgentTool for FindReferencesTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            format!("Find references to `{}`", input.symbol.symbol_name).into()
+            t!(
+                "Find references to `{$symbol}`",
+                symbol = input.symbol.symbol_name
+            )
+            .into()
         } else {
-            "Find references".into()
+            t!("Find references").into()
         }
     }
 
