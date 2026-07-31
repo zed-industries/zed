@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 editor.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 language.workspace = true
 picker.workspace = true
 project.workspace = true

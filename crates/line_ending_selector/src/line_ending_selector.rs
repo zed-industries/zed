@@ -2,6 +2,7 @@ mod line_ending_indicator;
 
 use editor::Editor;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, actions};
+use i18n::t;
 use language::{Buffer, LineEnding};
 pub use line_ending_indicator::LineEndingIndicator;
 use picker::{Picker, PickerDelegate};
@@ -120,7 +121,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a line ending…".into()
+        t!("Select a line ending…").resolve().as_ref().into()
     }
 
     fn match_count(&self) -> usize {

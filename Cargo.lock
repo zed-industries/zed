@@ -10305,6 +10305,7 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
+ "i18n",
  "language",
  "picker",
  "project",

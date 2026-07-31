@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{App, Entity, Subscription, WeakEntity};
+use i18n::t;
 use language::LineEnding;
 use ui::{Tooltip, prelude::*};
 use workspace::{
@@ -46,7 +47,9 @@ impl Render for LineEndingIndicator {
                             LineEndingSelector::toggle(editor, window, cx);
                         }
                     }))
-                    .tooltip(|_window, cx| Tooltip::for_action("Select Line Ending", &Toggle, cx)),
+                    .tooltip(|_window, cx| {
+                        Tooltip::for_action(t!("Select Line Ending"), &Toggle, cx)
+                    }),
             )
         })
     }
