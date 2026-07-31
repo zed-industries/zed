@@ -182,7 +182,9 @@ mod macos {
 
     struct NativeWebViewExample {
         webview: Rc<NativeWebView>,
+        about_active: bool,
         dialog_open: bool,
+        menu_open: bool,
         popover_open: bool,
     }
 
@@ -199,6 +201,33 @@ mod macos {
             .text_sm()
             .cursor_pointer()
             .hover(|style| style.bg(rgb(0x2d2f34)).border_color(rgb(0x3e4043)))
+            .child(label)
+    }
+
+    fn tab(id: &'static str, label: &'static str, active: bool) -> Stateful<Div> {
+        div()
+            .id(id)
+            .px_3()
+            .py_2()
+            .border_b_2()
+            .border_color(if active { rgb(0x5ac1fe) } else { rgb(0x313337) })
+            .text_color(if active { rgb(0xbfbdb6) } else { rgb(0x8a8986) })
+            .text_sm()
+            .cursor_pointer()
+            .hover(|style| style.text_color(rgb(0xbfbdb6)))
+            .child(label)
+    }
+
+    fn menu_item(id: &'static str, label: &'static str) -> Stateful<Div> {
+        div()
+            .id(id)
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .text_xs()
+            .text_color(rgb(0xbfbdb6))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(0x2d2f34)))
             .child(label)
     }
 
@@ -235,6 +264,7 @@ mod macos {
                         this.webview.focus_parent();
                         this.popover_open = false;
                         this.dialog_open = false;
+                        this.menu_open = false;
                         cx.notify();
                     }),
                 )
@@ -243,30 +273,20 @@ mod macos {
                         .flex()
                         .flex_col()
                         .justify_between()
-                        .w(px(150.))
-                        .py_1()
+                        .w(px(180.))
                         .child(
                             div()
                                 .child(
                                     div()
-                                        .text_xs()
-                                        .text_color(rgb(0xfeb454))
-                                        .child("GPUI / LAB 04"),
-                                )
-                                .child(
-                                    div()
-                                        .mt_3()
-                                        .text_2xl()
+                                        .mt(px(-2.))
+                                        .text_lg()
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .child("Native\ncomposition"),
+                                        .text_color(rgb(0xfeb454))
+                                        .child("GPUI NATIVE WEBVIEW"),
                                 )
-                                .child(
-                                    div()
-                                        .mt_3()
-                                        .text_sm()
-                                        .text_color(rgb(0x8a8986))
-                                        .child("Three surfaces.\nOne visual stack."),
-                                ),
+                                .child(div().mt_2().text_sm().text_color(rgb(0x8a8986)).child(
+                                    "Native composition.\nThree surfaces, one visual stack.",
+                                )),
                         )
                         .child(
                             div()
@@ -315,6 +335,7 @@ mod macos {
                                                     cx.stop_propagation();
                                                     this.webview.focus_parent();
                                                     this.popover_open = !this.popover_open;
+                                                    this.menu_open = false;
                                                     cx.notify();
                                                 }),
                                             ),
@@ -325,14 +346,171 @@ mod macos {
                                                 cx.stop_propagation();
                                                 this.webview.focus_parent();
                                                 this.dialog_open = true;
+                                                this.menu_open = false;
                                                 cx.notify();
                                             }),
                                         )),
                                 ),
                         )
-                        .child(div().flex_1().min_h_0().child(NativeWebViewElement {
-                            webview: self.webview.clone(),
-                        })),
+                        .child(
+                            div()
+                                .relative()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .border_b_1()
+                                .border_color(rgb(0x3f4043))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .child(
+                                            tab("webview-tab", "WebView", !self.about_active)
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        cx.stop_propagation();
+                                                        this.about_active = false;
+                                                        this.popover_open = false;
+                                                        this.dialog_open = false;
+                                                        this.menu_open = false;
+                                                        cx.notify();
+                                                    }),
+                                                ),
+                                        )
+                                        .child(
+                                            tab("about-tab", "About", self.about_active)
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        cx.stop_propagation();
+                                                        this.webview.focus_parent();
+                                                        this.about_active = true;
+                                                        this.popover_open = false;
+                                                        this.dialog_open = false;
+                                                        this.menu_open = false;
+                                                        cx.notify();
+                                                    }),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("popup-menu-trigger")
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .w(px(28.))
+                                        .h(px(28.))
+                                        .rounded_md()
+                                        .text_base()
+                                        .text_color(rgb(0x8a8986))
+                                        .cursor_pointer()
+                                        .hover(|style| {
+                                            style.bg(rgb(0x2d2f34)).text_color(rgb(0xbfbdb6))
+                                        })
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.webview.focus_parent();
+                                                this.menu_open = !this.menu_open;
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child("…"),
+                                )
+                                .when(self.menu_open, |tab_bar| {
+                                    tab_bar.child(
+                                        deferred(
+                                            div()
+                                                .absolute()
+                                                .top(px(34.))
+                                                .right_0()
+                                                .w(px(180.))
+                                                .p_1()
+                                                .rounded_lg()
+                                                .border_1()
+                                                .border_color(rgb(0x3f4043))
+                                                .bg(rgb(0x1f2127))
+                                                .shadow_xl()
+                                                .child(menu_item(
+                                                    "popup-menu-reload",
+                                                    "Reload WebView",
+                                                ))
+                                                .child(menu_item(
+                                                    "popup-menu-inspect",
+                                                    "Inspect native surface",
+                                                ))
+                                                .child(div().my_1().h(px(1.)).bg(rgb(0x3f4043)))
+                                                .child(menu_item(
+                                                    "popup-menu-about",
+                                                    "About this example",
+                                                ))
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        cx.stop_propagation();
+                                                        this.menu_open = false;
+                                                        cx.notify();
+                                                    }),
+                                                ),
+                                        )
+                                        .priority(2),
+                                    )
+                                }),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .flex_1()
+                                .min_h_0()
+                                .child(NativeWebViewElement {
+                                    webview: self.webview.clone(),
+                                })
+                                .when(self.about_active, |content| {
+                                    content.child(
+                                        deferred(
+                                            div()
+                                                .absolute()
+                                                .inset_0()
+                                                .flex()
+                                                .flex_col()
+                                                .justify_center()
+                                                .p_10()
+                                                .rounded_lg()
+                                                .bg(rgb(0x0d1016))
+                                                .text_color(rgb(0xbfbdb6))
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(rgb(0x5ac1fe))
+                                                        .child("GPUI OVERLAY CONTENT"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .mt_3()
+                                                        .text_3xl()
+                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                        .child("A regular rendered view"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .mt_4()
+                                                        .max_w(px(520.))
+                                                        .text_color(rgb(0x8a8986))
+                                                        .line_height(relative(1.6))
+                                                        .child(
+                                                            "This tab is rendered by GPUI above \
+                                                             the native WebView. It verifies that \
+                                                             non-popup content can replace and \
+                                                             fully occlude a native surface.",
+                                                        ),
+                                                ),
+                                        )
+                                        .priority(1),
+                                    )
+                                }),
+                        ),
                 )
                 .when(self.popover_open, |root| {
                     root.child(
@@ -366,7 +544,7 @@ mod macos {
                                          AppKit z-order.",
                                 )),
                         )
-                        .priority(1),
+                        .priority(3),
                     )
                 })
                 .when(self.dialog_open, |root| {
@@ -426,8 +604,8 @@ mod macos {
                                                      this transparent overlay surface.",
                                         ))
                                         .child(div().mt_5().h(px(1.)).w_full().bg(rgb(0x3f4043)))
-                                        .child(
-                                            button("close-dialog", "Close").mt_5().on_mouse_down(
+                                        .child(div().mt_5().flex().child(
+                                            button("close-dialog", "Close").on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(|this, _, _, cx| {
                                                     cx.stop_propagation();
@@ -436,10 +614,10 @@ mod macos {
                                                     cx.notify();
                                                 }),
                                             ),
-                                        ),
+                                        )),
                                 ),
                         )
-                        .priority(2),
+                        .priority(4),
                     )
                 })
         }
@@ -462,7 +640,9 @@ mod macos {
 
                     cx.new(|_| NativeWebViewExample {
                         webview,
+                        about_active: false,
                         dialog_open: false,
+                        menu_open: false,
                         popover_open: false,
                     })
                 },

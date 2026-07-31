@@ -612,6 +612,13 @@ struct MacWindowState {
 }
 
 impl MacWindowState {
+    fn set_presents_with_transaction(&mut self, enabled: bool) {
+        self.renderer.set_presents_with_transaction(enabled);
+        if let Some(renderer) = self.overlay_renderer.as_mut() {
+            renderer.set_presents_with_transaction(enabled);
+        }
+    }
+
     fn move_traffic_light(&mut self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() {
@@ -2859,14 +2866,14 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
         if lock.activated_least_once {
             if let Some(mut callback) = lock.request_frame_callback.take() {
-                lock.renderer.set_presents_with_transaction(true);
+                lock.set_presents_with_transaction(true);
                 lock.stop_display_link();
                 drop(lock);
                 callback(Default::default());
 
                 let mut lock = window_state.lock();
                 lock.request_frame_callback = Some(callback);
-                lock.renderer.set_presents_with_transaction(false);
+                lock.set_presents_with_transaction(false);
                 lock.start_display_link();
             }
         } else {
@@ -2976,14 +2983,14 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
-        lock.renderer.set_presents_with_transaction(true);
+        lock.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
         callback(Default::default());
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
-        lock.renderer.set_presents_with_transaction(false);
+        lock.set_presents_with_transaction(false);
         lock.start_display_link();
     }
 }

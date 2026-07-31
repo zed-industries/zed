@@ -68,6 +68,13 @@
       border-color: #5ac1fe;
       box-shadow: 0 0 0 3px rgba(90, 193, 254, .16);
     }
+    #keyboard-event {
+      grid-column: 1 / -1;
+      min-height: 16px;
+      color: #8a8986;
+      font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -86,6 +93,25 @@
       <div class="datum"><span>STATE</span><strong>INTERACTIVE</strong></div>
     </aside>
     <input autofocus value="Focus and type inside the native layer">
+    <div id="keyboard-event" aria-live="polite">Keyboard event: waiting for input</div>
   </main>
+  <script>
+    const keyboardEvent = document.querySelector("#keyboard-event");
+
+    function showKeyboardEvent(event) {
+      const modifiers = [
+        event.metaKey && "Meta",
+        event.ctrlKey && "Ctrl",
+        event.altKey && "Alt",
+        event.shiftKey && "Shift",
+      ].filter(Boolean).join("+") || "None";
+      const key = event.key === " " ? "Space" : event.key;
+      keyboardEvent.textContent =
+        `${event.type}: key=${key} · code=${event.code} · modifiers=${modifiers} · repeat=${event.repeat}`;
+    }
+
+    window.addEventListener("keydown", showKeyboardEvent, true);
+    window.addEventListener("keyup", showKeyboardEvent, true);
+  </script>
 </body>
 </html>
