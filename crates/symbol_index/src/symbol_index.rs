@@ -206,38 +206,22 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
             continue;
         }
 
-        // Build display_text from source, spanning from the first relevant
-        // capture to the last. This preserves original token order and
-        // includes captures after @name (e.g., "(" and ")").
+        // Build display_text directly from source, spanning from the first
+        // relevant capture to the last. This preserves original token order
+        // and spacing, including captures after @name (e.g., "()").
         let name_start_byte = name_node.start_byte();
         let name_end_byte = name_node.end_byte();
         let first_start = first_capture_start.unwrap_or(name_start_byte);
         let last_end = last_capture_end.unwrap_or(name_end_byte);
 
-        let raw_before = &text[first_start..name_start_byte];
-        let raw_after = &text[name_end_byte..last_end];
-        let norm_before: String =
-            raw_before.split_whitespace().collect::<Vec<_>>().join(" ");
-        let norm_after: String =
-            raw_after.split_whitespace().collect::<Vec<_>>().join(" ");
-
-        let (display_text, name_range) = {
-            let mut result = String::new();
-            let mut name_start = 0usize;
-
-            if !norm_before.is_empty() {
-                result.push_str(&norm_before);
-                result.push(' ');
-                name_start = result.len();
-            }
-            result.push_str(&name);
-            let name_end = result.len();
-            if !norm_after.is_empty() {
-                result.push(' ');
-                result.push_str(&norm_after);
-            }
-            (result, name_start as u32..name_end as u32)
-        };
+        let raw = &text[first_start..last_end];
+        // Normalize whitespace (collapse runs, including newlines, into single spaces).
+        let display_text: String = raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let name_range =
+            (name_start_byte - first_start) as u32..(name_end_byte - first_start) as u32;
 
         let kind = infer_symbol_kind(item_node.kind());
 
