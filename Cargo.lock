@@ -4589,6 +4589,7 @@ dependencies = [
  "feature_flags",
  "fuzzy",
  "gpui",
+ "i18n",
  "log",
  "picker",
  "text",

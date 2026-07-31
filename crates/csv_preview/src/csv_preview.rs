@@ -3,6 +3,7 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
+use i18n::t;
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -315,12 +316,15 @@ impl Item for CsvPreviewView {
             .and_then(|b| {
                 let file = b.read(cx).file()?;
                 let local_file = file.as_local()?;
-                local_file
-                    .abs_path(cx)
-                    .file_name()
-                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+                local_file.abs_path(cx).file_name().map(|name| {
+                    t!(
+                        "Preview {$name}",
+                        name = name.to_string_lossy().into_owned()
+                    )
+                    .into()
+                })
             })
-            .unwrap_or_else(|| SharedString::from("CSV Preview"))
+            .unwrap_or_else(|| t!("CSV Preview").resolve())
     }
 }
 

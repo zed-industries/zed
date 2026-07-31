@@ -1,5 +1,6 @@
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
+use i18n::t;
 use std::ops::Range;
 use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div, prelude::*};
 
@@ -40,7 +41,7 @@ impl CsvPreviewView {
                 .headers
                 .get(AnyColumn(i))
                 .and_then(|h| h.display_value().cloned())
-                .unwrap_or_else(|| format!("Col {}", i + 1).into());
+                .unwrap_or_else(|| t!("Col {$index}", index = i + 1).resolve());
 
             headers.push(self.create_header_element_with_sort_button(
                 header_text,
