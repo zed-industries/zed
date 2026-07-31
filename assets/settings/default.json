@@ -1927,6 +1927,9 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Whether to show an indicator with a countdown while a multi-stroke
+    // key binding is pending.
+    "pending_keystrokes_indicator": true,
   },
   // Settings specific to the terminal
   "terminal": {

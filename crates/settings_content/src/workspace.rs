@@ -561,6 +561,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Whether to show an indicator with a countdown while a multi-stroke key binding is pending.
+    ///
+    /// Default: true
+    pub pending_keystrokes_indicator: Option<bool>,
 }
 
 #[derive(

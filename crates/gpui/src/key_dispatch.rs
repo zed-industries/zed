@@ -1063,6 +1063,65 @@ mod tests {
     }
 
     #[crate::test]
+    fn test_pending_input_timeout_dispatches_shorter_binding(cx: &mut TestAppContext) {
+        struct TestView {
+            focus_handle: FocusHandle,
+            action_count: Rc<Cell<usize>>,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                use crate::{InteractiveElement as _, Styled as _};
+                let action_count = self.action_count.clone();
+                crate::div()
+                    .key_context("Terminal")
+                    .track_focus(&self.focus_handle)
+                    .size_full()
+                    .on_action(move |_: &TestAction, _, _| {
+                        action_count.set(action_count.get() + 1);
+                    })
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([
+                KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+            ]);
+        });
+
+        let action_count = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, cx| TestView {
+            focus_handle: cx.focus_handle(),
+            action_count: action_count.clone(),
+        });
+        cx.update(|window, cx| {
+            window.focus(&view.read(cx).focus_handle.clone(), cx);
+            window.activate_window();
+        });
+
+        cx.simulate_modifiers_change(crate::Modifiers::control());
+        cx.simulate_keystrokes("ctrl-b");
+        cx.simulate_modifiers_change(crate::Modifiers::default());
+        cx.update(|window, _| {
+            assert!(window.has_pending_keystrokes());
+            assert!(window.pending_input_will_timeout());
+        });
+        assert_eq!(action_count.get(), 0);
+
+        // Emulate a countdown indicator re-rendering the window while waiting for the timeout.
+        for _ in 0..10 {
+            cx.executor()
+                .advance_clock(crate::PENDING_INPUT_TIMEOUT / 10);
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+    }
+
+    #[crate::test]
     fn test_input_handler_pending(cx: &mut TestAppContext) {
         #[derive(Clone)]
         struct CustomElement {
