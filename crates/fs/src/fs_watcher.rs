@@ -970,15 +970,20 @@ impl GlobalWatcher {
 
     fn start_native_watch_limit_cooldown(&self, path: &Path) {
         let mut state = self.state.lock();
-        let now = Instant::now();
-        let should_log = !state.is_native_watch_limit_cooldown_active();
-        state.cooldown_until = Some(now + *NATIVE_WATCH_LIMIT_COOLDOWN);
-        if should_log {
-            log::warn!(
-                "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
-                NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
-            );
+        // A cooldown already in flight must not be pushed further out: both the
+        // add path (repeatedly failing to register new paths) and the remove
+        // path (repeatedly failing to unwatch, since notify's FSEvents backend
+        // recreates the stream on removal too) can call this in a tight loop
+        // while the OS limit is hit, and neither should be able to keep
+        // resetting the deadline indefinitely.
+        if state.is_native_watch_limit_cooldown_active() {
+            return;
         }
+        state.cooldown_until = Some(Instant::now() + *NATIVE_WATCH_LIMIT_COOLDOWN);
+        log::warn!(
+            "OS file watch limit reached while watching {path:?}; skipping new native file watcher registrations for {} seconds",
+            NATIVE_WATCH_LIMIT_COOLDOWN.as_secs()
+        );
     }
 
     pub fn remove(&self, id: WatcherRegistrationId) {
@@ -987,7 +992,18 @@ impl GlobalWatcher {
             return;
         };
         drop(state);
-        self.unwatch(path.as_path(), mode).log_err();
+        let result = self.unwatch(path.as_path(), mode);
+        // notify's FSEvents backend has to recreate the whole stream to drop a
+        // path too, so unwatching can hit the same OS limit as watching. Route
+        // it through the same cooldown instead of logging an error every time.
+        if let Err(error) = &result
+            && mode == WatcherMode::Native
+            && is_max_files_watch_error(error)
+        {
+            self.start_native_watch_limit_cooldown(path.as_path());
+            return;
+        }
+        result.log_err();
     }
 
     fn watch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
@@ -1081,10 +1097,18 @@ impl GlobalWatcher {
     }
 }
 
+/// macOS's FSEvents backend reports an `FSEventStreamStart` failure — which in
+/// practice means the process is out of file descriptors (EMFILE) — as this
+/// generic message rather than a structured `ErrorKind::MaxFilesWatch`
+/// (see `notify::fsevent`, `Error::generic(FSEVENT_STREAM_START_FAILURE)`
+/// upstream). Shared with the test module so the two never drift apart.
+const FSEVENT_STREAM_START_FAILURE: &str = "unable to start FSEvent stream";
+
 fn is_max_files_watch_error(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<notify::Error>()
-        .is_some_and(|error| matches!(&error.kind, notify::ErrorKind::MaxFilesWatch))
+    error.downcast_ref::<notify::Error>().is_some_and(|error| {
+        matches!(&error.kind, notify::ErrorKind::MaxFilesWatch)
+            || matches!(&error.kind, notify::ErrorKind::Generic(message) if message == FSEVENT_STREAM_START_FAILURE)
+    })
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
@@ -1162,6 +1186,7 @@ mod tests {
         watch_calls: Vec<PathBuf>,
         unwatch_calls: Vec<PathBuf>,
         fail_with_watch_limit: bool,
+        fail_with_fsevent_stream_error: bool,
     }
 
     struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
@@ -1174,6 +1199,9 @@ mod tests {
             if backend.fail_with_watch_limit {
                 return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
             }
+            if backend.fail_with_fsevent_stream_error {
+                return Err(notify::Error::generic(FSEVENT_STREAM_START_FAILURE));
+            }
             backend.watched_paths.insert(path);
             Ok(())
         }
@@ -1182,6 +1210,12 @@ mod tests {
             let path = path.to_path_buf();
             let mut backend = self.0.lock();
             backend.unwatch_calls.push(path.clone());
+            if backend.fail_with_watch_limit {
+                return Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch));
+            }
+            if backend.fail_with_fsevent_stream_error {
+                return Err(notify::Error::generic(FSEVENT_STREAM_START_FAILURE));
+            }
             if backend.watched_paths.remove(&path) {
                 Ok(())
             } else {
@@ -1329,6 +1363,84 @@ mod tests {
 
         let native_backend = native_backend.lock();
         assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    #[test]
+    fn macos_fsevent_stream_start_failure_triggers_native_watch_limit_cooldown() {
+        let native_backend = Arc::new(Mutex::new(FakeWatchBackend {
+            fail_with_fsevent_stream_error: true,
+            ..Default::default()
+        }));
+        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(native_backend.clone()), Some(poll_backend));
+        let first_path = Arc::<Path>::from(Path::new("/repo/first"));
+        let second_path = Arc::<Path>::from(Path::new("/repo/second"));
+
+        let first_registration = watcher
+            .add(first_path.clone(), WatcherMode::Native, false, |_| {})
+            .expect("fsevent stream-start failure is handled");
+        let second_registration = watcher
+            .add(second_path, WatcherMode::Native, false, |_| {})
+            .expect("fsevent stream-start failure backoff is handled");
+
+        assert!(first_registration.is_none());
+        assert!(second_registration.is_none());
+
+        // The second attempt is skipped by the cooldown rather than retrying
+        // FSEventStreamStart, so only the first path ever reaches the backend.
+        let native_backend = native_backend.lock();
+        assert_eq!(native_backend.watch_calls, &[first_path.to_path_buf()]);
+    }
+
+    #[test]
+    fn unwatch_failure_from_native_watch_limit_starts_cooldown_instead_of_erroring() {
+        let native_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(native_backend.clone()), Some(poll_backend));
+
+        let registration = watcher
+            .add(
+                Arc::<Path>::from(Path::new("/repo/first")),
+                WatcherMode::Native,
+                false,
+                |_| {},
+            )
+            .expect("native watch succeeds")
+            .expect("native watch registered");
+
+        native_backend.lock().fail_with_fsevent_stream_error = true;
+        watcher.remove(registration);
+
+        assert!(watcher.state.lock().is_native_watch_limit_cooldown_active());
+    }
+
+    #[test]
+    fn repeated_failures_do_not_extend_an_already_active_cooldown() {
+        let native_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let poll_backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher_with_backends(Some(native_backend), Some(poll_backend));
+        let path = Path::new("/repo/first");
+
+        watcher.start_native_watch_limit_cooldown(path);
+        let first_deadline = watcher
+            .state
+            .lock()
+            .cooldown_until
+            .expect("cooldown started");
+
+        // A second failure while the cooldown from the first is still active
+        // (e.g. GlobalWatcher::remove hitting the same OS limit trying to
+        // unwatch a different path) must not push the deadline further out -
+        // otherwise a steady stream of failures under sustained fd pressure
+        // would never let the cooldown actually expire.
+        watcher.start_native_watch_limit_cooldown(path);
+        let second_deadline = watcher
+            .state
+            .lock()
+            .cooldown_until
+            .expect("cooldown still active");
+
+        assert_eq!(first_deadline, second_deadline);
     }
 
     fn modify_event(path: &str) -> notify::Event {

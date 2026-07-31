@@ -3748,6 +3748,28 @@ impl AcpThread {
             id: turn_id,
             send_task: cx.spawn(async move |this, cx| {
                 cancel_task.await;
+                // shared_buffers only needs to live long enough to back
+                // reuse_shared_snapshot and read/write consistency *within* a
+                // turn (see the comment on ResolvedLocation - it's held
+                // strong "for saving on the thread", not for the thread's
+                // whole lifetime). Carrying entries forward across turns
+                // pins their buffers, and the invisible worktrees created to
+                // open out-of-workspace files, alive for the rest of the
+                // chat - across a long session that exhausts the OS's file
+                // descriptor/watch limits. Old tool-call locations stay
+                // resolvable regardless: resolve_locations always re-opens
+                // the buffer by path instead of depending on this cache.
+                //
+                // This runs after awaiting cancel_task, which narrows the
+                // window against the *previous* turn's own in-flight
+                // resolution work (cancel_task only waits on that turn's
+                // send_task, not on detached resolve_locations calls, so a
+                // straggler can still land after this clear - it's cleaned
+                // up at the next turn boundary instead). It always runs
+                // before invoking `f`, so it never clears anything *this*
+                // turn is about to populate.
+                this.update(cx, |this, _cx| this.shared_buffers.clear())
+                    .ok();
                 tx.send(f(this, cx).await).ok();
             }),
         });
@@ -6392,6 +6414,153 @@ mod tests {
                 .expect("resolved location should keep an open buffer");
             assert_eq!(buffer.read(cx).text(), "skill body");
         });
+    }
+
+    #[gpui::test]
+    async fn test_shared_buffers_do_not_leak_invisible_worktrees_across_turns(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        const TURN_COUNT: usize = 6;
+        let fs = FakeFs::new(cx.executor());
+        let history_root = std::path::PathBuf::from(path!("/tmp/acp-history"));
+        let mut history_paths = Vec::new();
+        for i in 0..TURN_COUNT {
+            let dir = history_root.join(format!("case-{i}"));
+            fs.insert_tree(&dir, json!({ "file.txt": "content" })).await;
+            history_paths.push(dir.join("file.txt"));
+        }
+
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_request, _thread, _cx| {
+                async move { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }.boxed_local()
+            },
+        ));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        for path in &history_paths {
+            // Each iteration is a fresh prompt/response cycle (a new turn), and
+            // the tool call's location simulates the agent touching a file
+            // outside the visible workspace - e.g. a Read/Edit on an unrelated
+            // project - exactly what accumulated across turns in production.
+            cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["go".into()], cx)))
+                .await
+                .unwrap();
+
+            thread
+                .update(cx, |thread, cx| {
+                    thread.handle_session_update(
+                        acp::SessionUpdate::ToolCall(
+                            acp::ToolCall::new("read_file", "Read file")
+                                .kind(acp::ToolKind::Read)
+                                .status(acp::ToolCallStatus::Completed)
+                                .locations(vec![acp::ToolCallLocation::new(path.clone())]),
+                        ),
+                        cx,
+                    )
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        let diagnostics = project.read_with(cx, |project, cx| {
+            project.worktree_store().read(cx).diagnostics(cx)
+        });
+        let invisible_live = diagnostics.live_worktrees - diagnostics.visible_worktrees;
+        assert!(
+            invisible_live <= 2,
+            "expected old tool-call locations' invisible worktrees to be released once later \
+             turns start, but {invisible_live} are still live after {TURN_COUNT} turns \
+             (diagnostics: {diagnostics:?})",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_text_file_reuses_shared_snapshot_within_a_turn(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\n"})).await;
+        let project = Project::test(fs, [], cx).await;
+        // read_text_file (unlike resolve_locations) has no fallback for paths
+        // outside a registered worktree, so make one cover it first.
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let project = project.clone();
+            move |_request, thread, mut cx| {
+                let project = project.clone();
+                async move {
+                    let first = thread
+                        .update(&mut cx, |thread, cx| {
+                            thread.read_text_file(path!("/tmp/foo").into(), None, None, true, cx)
+                        })
+                        .unwrap()
+                        .await
+                        .unwrap();
+                    assert_eq!(first, "one\n");
+
+                    // Edit the already-open buffer directly (not just the
+                    // backing FakeFs) after the agent's read, in the same
+                    // turn, before it reads again - this is what
+                    // reuse_shared_snapshot is actually meant to shield
+                    // against, e.g. a concurrent edit from the user.
+                    let project_path = project
+                        .update(&mut cx, |project, cx| {
+                            project.project_path_for_absolute_path(Path::new(path!("/tmp/foo")), cx)
+                        })
+                        .expect("path is covered by the worktree created above");
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await
+                        .unwrap();
+                    buffer
+                        .update(&mut cx, |buffer, cx| buffer.set_text("two\n", cx))
+                        .unwrap();
+
+                    let second = thread
+                        .update(&mut cx, |thread, cx| {
+                            thread.read_text_file(path!("/tmp/foo").into(), None, None, true, cx)
+                        })
+                        .unwrap()
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        second, "one\n",
+                        "reuse_shared_snapshot should return the snapshot captured earlier in \
+                         the same turn, not the buffer's current content"
+                    );
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["go".into()], cx)))
+            .await
+            .unwrap();
     }
 
     #[gpui::test]
