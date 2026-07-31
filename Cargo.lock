@@ -15404,6 +15404,7 @@ dependencies = [
  "auto_update",
  "futures 0.3.32",
  "gpui",
+ "i18n",
  "log",
  "markdown",
  "menu",

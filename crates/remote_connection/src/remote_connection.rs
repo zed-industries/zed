@@ -1,3 +1,4 @@
+use i18n::t;
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
@@ -142,9 +143,9 @@ impl Render for RemoteConnectionPrompt {
         let is_password_prompt = self.is_password_prompt;
         let is_masked = self.is_masked;
         let (masked_password_icon, masked_password_tooltip) = if is_masked {
-            (IconName::Eye, "Toggle to Unmask Password")
+            (IconName::Eye, t!("Toggle to Unmask Password"))
         } else {
-            (IconName::EyeOff, "Toggle to Mask Password")
+            (IconName::EyeOff, t!("Toggle to Mask Password"))
         };
 
         v_flex()
@@ -191,7 +192,7 @@ impl Render for RemoteConnectionPrompt {
                                     .color(Color::Muted),
                             )
                             .child(
-                                Label::new("Caps lock is on.")
+                                Label::new(t!("Caps lock is on."))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
@@ -391,7 +392,7 @@ impl Render for RemoteConnectionModal {
                         .inset(true)
                         .spacing(ui::ListItemSpacing::Sparse)
                         .start_slot(Icon::new(IconName::Close).color(Color::Muted))
-                        .child(Label::new("Cancel"))
+                        .child(Label::new(t!("Cancel")))
                         .end_slot(
                             KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle(cx), cx)
                                 .size(rems_from_px(12.)),
