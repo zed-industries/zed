@@ -148,7 +148,13 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
         let mut item_node = None;
         let mut name_node = None;
         let mut name_parts = Vec::new();
-        let mut context_parts = Vec::new();
+        // Track the earliest capture byte position so we can extract context
+        // text from source in the correct order. This avoids a bug where
+        // @context captures appearing after @name in source (e.g. "(" and ")"
+        // in TypeScript function_declarations) would be placed before the name
+        // in the display text, producing "async ( ) mmdata" instead of
+        // "async function mmdata".
+        let mut first_capture_start: Option<usize> = None;
 
         for capture in query_match.captures {
             let node = capture.node;
@@ -163,11 +169,14 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
                 if let Ok(text) = node.utf8_text(source) {
                     name_parts.push(text.to_string());
                 }
+                if first_capture_start.map_or(true, |s| node.start_byte() < s) {
+                    first_capture_start = Some(node.start_byte());
+                }
             } else if config.context_capture_ix == Some(capture_index)
                 || config.extra_context_capture_ix == Some(capture_index)
             {
-                if let Ok(text) = node.utf8_text(source) {
-                    context_parts.push(text.to_string());
+                if first_capture_start.map_or(true, |s| node.start_byte() < s) {
+                    first_capture_start = Some(node.start_byte());
                 }
             }
         }
@@ -177,24 +186,34 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
             None => continue,
         };
 
+        let name_node = match name_node {
+            Some(node) => node,
+            None => continue,
+        };
+
         let name = name_parts.join(" ");
         if name.is_empty() {
             continue;
         }
 
-        let context = context_parts.join(" ");
+        // Build context from source text between the first capture and the
+        // name, preserving original token order. Captures after @name (like
+        // "(" and ")") are naturally excluded.
+        let name_start_byte = name_node.start_byte();
+        let first_start = first_capture_start.unwrap_or(name_start_byte);
+        let context = if first_start < name_start_byte {
+            text[first_start..name_start_byte]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            String::new()
+        };
+
         let kind = infer_symbol_kind(item_node.kind());
 
-        let (row, column) = match name_node {
-            Some(node) => {
-                let pos = node.start_position();
-                (pos.row as u32, pos.column as u32)
-            }
-            None => {
-                let pos = item_node.start_position();
-                (pos.row as u32, pos.column as u32)
-            }
-        };
+        let pos = name_node.start_position();
+        let (row, column) = (pos.row as u32, pos.column as u32);
 
         extracted_symbols.push(ExtractedSymbol {
             name,
