@@ -944,16 +944,29 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
-                            workspace,
-                            &CreateWorktree {
-                                worktree_name: None,
-                                branch_target: NewWorktreeBranchTarget::CurrentBranch,
-                            },
-                            window,
-                            self.focused_dock,
-                            cx,
-                        );
+                        if secondary {
+                            crate::worktree_service::handle_create_worktree_in_new_window(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: None,
+                                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                                },
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        } else {
+                            crate::worktree_service::handle_create_worktree(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: None,
+                                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                                },
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        }
                     });
                 }
             }
@@ -963,19 +976,35 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
-                            workspace,
-                            &CreateWorktree {
-                                worktree_name: None,
-                                branch_target: NewWorktreeBranchTarget::RemoteBranch {
-                                    remote_name: default_branch.remote_name.clone(),
-                                    branch_name: default_branch.branch_name.clone(),
+                        if secondary {
+                            crate::worktree_service::handle_create_worktree_in_new_window(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: None,
+                                    branch_target: NewWorktreeBranchTarget::RemoteBranch {
+                                        remote_name: default_branch.remote_name.clone(),
+                                        branch_name: default_branch.branch_name.clone(),
+                                    },
                                 },
-                            },
-                            window,
-                            self.focused_dock,
-                            cx,
-                        );
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        } else {
+                            crate::worktree_service::handle_create_worktree(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: None,
+                                    branch_target: NewWorktreeBranchTarget::RemoteBranch {
+                                        remote_name: default_branch.remote_name.clone(),
+                                        branch_name: default_branch.branch_name.clone(),
+                                    },
+                                },
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        }
                     });
                 }
             }
@@ -1031,16 +1060,29 @@ impl PickerDelegate for WorktreePickerDelegate {
                 };
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
-                            workspace,
-                            &CreateWorktree {
-                                worktree_name: Some(name.clone()),
-                                branch_target,
-                            },
-                            window,
-                            self.focused_dock,
-                            cx,
-                        );
+                        if secondary {
+                            crate::worktree_service::handle_create_worktree_in_new_window(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: Some(name.clone()),
+                                    branch_target,
+                                },
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        } else {
+                            crate::worktree_service::handle_create_worktree(
+                                workspace,
+                                &CreateWorktree {
+                                    worktree_name: Some(name.clone()),
+                                    branch_target,
+                                },
+                                window,
+                                self.focused_dock,
+                                cx,
+                            );
+                        }
                     });
                 }
             }
@@ -1659,7 +1701,7 @@ pub async fn open_remote_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs};
     use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::project_settings::ProjectSettings;
     use project::{Project, WorktreeSettings};
@@ -1692,6 +1734,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         fs.insert_tree(
             path!("/root"),
             json!({
@@ -1929,6 +1972,44 @@ mod tests {
                 );
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_secondary_create_opens_in_new_window(cx: &mut TestAppContext) {
+        let (_fs, worktree_picker, _repository, _worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        let source_workspace = worktree_picker.update(&mut cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker
+                    .delegate
+                    .workspace
+                    .upgrade()
+                    .expect("workspace should exist")
+            })
+        });
+
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.default_branch = None;
+                picker.refresh(window, cx);
+                picker.delegate.selected_index = 0;
+                picker.delegate.confirm(true, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        let active_workspace = cx.update(|window, cx| {
+            window
+                .root::<MultiWorkspace>()
+                .expect("window should have a multi workspace root")
+                .expect("window root should be set")
+                .read(cx)
+                .workspace()
+                .clone()
+        });
+
+        assert_eq!(active_workspace, source_workspace);
     }
 
     #[gpui::test]
