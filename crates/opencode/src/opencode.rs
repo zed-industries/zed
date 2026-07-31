@@ -234,6 +234,7 @@ impl Model {
             | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
+            | Self::Gpt5_6Luna
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
