@@ -30,7 +30,7 @@ use gpui::{
     deferred, div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
     uniform_list,
 };
-use i18n::t;
+use i18n::{LocalizedString, t};
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -7748,8 +7748,8 @@ impl Panel for ProjectPanel {
             .then_some(IconName::FileTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Project Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<LocalizedString> {
+        Some(t!("Project Panel"))
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

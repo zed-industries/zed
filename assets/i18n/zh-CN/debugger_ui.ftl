@@ -137,3 +137,7 @@ in-path = 位于 { $path }
 launch-custom = 启动自定义配置
 rerun = 重新运行
 spawn = 运行
+
+## 侧边栏图标提示
+
+debug-panel = 调试面板

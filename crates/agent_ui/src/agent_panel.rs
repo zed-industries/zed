@@ -78,7 +78,7 @@ use gpui::{
     PlatformDisplay, Subscription, Task, TaskExt, WeakEntity, WindowHandle, prelude::*,
     pulsating_between,
 };
-use i18n::t;
+use i18n::{LocalizedString, t};
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
@@ -5060,8 +5060,8 @@ impl Panel for AgentPanel {
         (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Agent Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<LocalizedString> {
+        Some(t!("Agent Panel"))
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

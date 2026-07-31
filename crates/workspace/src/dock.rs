@@ -13,7 +13,7 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
-use i18n::t;
+use i18n::{LocalizedString, t};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, TerminalDockPosition};
 use std::sync::Arc;
@@ -70,7 +70,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     ) {
     }
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<LocalizedString>;
     fn toggle_action(&self) -> Box<dyn Action>;
     fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
         None
@@ -124,7 +124,7 @@ pub trait PanelHandle: Send + Sync {
     fn has_flexible_size(&self, window: &Window, cx: &App) -> bool;
     fn set_flexible_size(&self, flexible: bool, window: &mut Window, cx: &mut App);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<LocalizedString>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
     fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
@@ -232,7 +232,7 @@ where
         self.read(cx).icon(window, cx)
     }
 
-    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str> {
+    fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<LocalizedString> {
         self.read(cx).icon_tooltip(window, cx)
     }
 
@@ -1276,7 +1276,7 @@ impl Render for PanelButtons {
                 } else {
                     let action = entry.panel.toggle_action(window, cx);
 
-                    (action, icon_tooltip.into())
+                    (action, icon_tooltip.clone().into())
                 };
 
                 let focus_handle = dock.focus_handle(cx);
@@ -1386,7 +1386,7 @@ impl Render for PanelButtons {
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .tab_index(0isize)
-                                .aria_label(icon_tooltip)
+                                .aria_label(icon_tooltip.clone())
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
@@ -1577,7 +1577,7 @@ pub mod test {
             None
         }
 
-        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
+        fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<LocalizedString> {
             None
         }
 

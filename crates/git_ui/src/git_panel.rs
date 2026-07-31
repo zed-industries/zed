@@ -8318,8 +8318,8 @@ impl Panel for GitPanel {
         Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Git Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<LocalizedString> {
+        Some(t!("Git Panel"))
     }
 
     fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {

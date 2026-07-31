@@ -20,7 +20,7 @@ use gpui::{
     canvas, deferred, div, fill, point, prelude::*, px, size, uniform_list,
 };
 
-use i18n::t;
+use i18n::{LocalizedString, t};
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::{Fs, Project};
@@ -4058,8 +4058,8 @@ impl Panel for CollabPanel {
             .then_some(ui::IconName::UserGroup)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
-        Some("Collab Panel")
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<LocalizedString> {
+        Some(t!("Collab Panel"))
     }
 
     fn toggle_action(&self) -> Box<dyn gpui::Action> {
