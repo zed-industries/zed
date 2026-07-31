@@ -97,6 +97,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         t!("Select Icon Theme..."),
                         zed_actions::icon_theme_selector::Toggle::default(),
                     ),
+                    MenuItem::action(
+                        t!("Select Interface Language…"),
+                        zed_actions::locale_selector::Toggle,
+                    ),
                 ])),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]

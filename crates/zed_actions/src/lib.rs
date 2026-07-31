@@ -473,6 +473,18 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod locale_selector {
+    use gpui::actions;
+
+    actions!(
+        locale_selector,
+        [
+            /// Toggles the interface language selector.
+            Toggle
+        ]
+    );
+}
+
 pub mod search {
     use gpui::actions;
     actions!(

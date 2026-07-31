@@ -783,6 +783,7 @@ fn main() {
         line_ending_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);
+        locale_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);

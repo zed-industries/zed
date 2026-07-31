@@ -86,8 +86,14 @@ Only mark text the user reads. Leave product names (Zed, Git), file names
 ## Adding a language
 
 1. Create `assets/i18n/<locale>/zed.ftl`, where `<locale>` is a BCP 47 tag.
-2. Translate the keys reported by `script/i18n-coverage`.
-3. Set `"ui_language": "<locale>"` and check the result.
+2. Define `locale-display-name` as the name the language gives itself, written in
+   that language. The interface language picker lists a catalog by that name, and
+   falls back to the tag for a catalog that does not define it. Leave it
+   untranslated: a language list reads as 简体中文 and English whichever locale is
+   active.
+3. Translate the keys reported by `script/i18n-coverage`.
+4. Run the `locale selector: toggle` action to switch to it, or set
+   `"ui_language": "<locale>"` directly.
 
 Region-specific catalogs fall back to their base language, so `zh-CN` may define
 only what differs from a `zh` catalog.
@@ -100,6 +106,10 @@ catalogs and reports, per locale:
 - **missing** — marked for localization but absent from the catalog
 - **orphaned** — defined in the catalog but no longer marked in the sources
 - **collision** — distinct English strings that derive the same key
+
+A key the runtime reads directly instead of through a `t!` call site, such as
+`locale-display-name`, has no English literal to derive from. Those are listed in
+the script's `RESERVED_KEYS` and counted as neither missing nor orphaned.
 
 ```sh
 script/i18n-coverage                    # report every locale

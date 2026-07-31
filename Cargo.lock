@@ -10552,6 +10552,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "locale_selector"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "fuzzy",
+ "gpui",
+ "i18n",
+ "picker",
+ "settings",
+ "telemetry",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -23451,6 +23468,7 @@ dependencies = [
  "language_tools",
  "languages",
  "line_ending_selector",
+ "locale_selector",
  "log",
  "lsp_locations",
  "markdown",
