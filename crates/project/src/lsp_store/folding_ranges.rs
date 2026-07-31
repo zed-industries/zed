@@ -51,9 +51,9 @@ impl FoldingRangeData {
             None => {
                 self.ranges.clear();
                 self.fetched_servers.clear();
+                self.ranges_update = None;
             }
         }
-        self.ranges_update = None;
     }
 }
 

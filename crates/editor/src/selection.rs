@@ -1809,12 +1809,19 @@ impl Editor {
         let end_x = tail_x.max(head_x);
         let reversed = head_x < tail_x;
 
+        let mut last_buffer_row = None;
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
                 if display_map.is_block_line(row) {
                     return None;
                 }
+
+                let buffer_row = row.as_display_point().to_point(display_map).row;
+                if last_buffer_row == Some(buffer_row) {
+                    return None;
+                }
+                last_buffer_row = Some(buffer_row);
 
                 let layout = display_map.layout_row(row, &text_layout_details);
                 if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })
