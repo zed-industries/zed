@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
@@ -26689,6 +26689,91 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
         );
         assert_eq!(active_item.buffer_kind(cx), ItemBufferKind::Multibuffer);
     });
+}
+
+#[gpui::test]
+async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "worktree\n",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "head\n".to_string())],
+    );
+    fs.set_merge_base_content_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "base\n".to_string())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().diff_base =
+                    Some(settings::GitDiffBaseSetting::DefaultBranch);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        let diff = editor
+            .buffer()
+            .read(cx)
+            .diff_for(buffer_id)
+            .expect("buffer should have a display diff");
+        assert!(!diff.read(cx).is_stageable());
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "worktree\n"
+    );
+    let index_contents = fs
+        .with_git_state(
+            std::path::Path::new(path!("/project/.git")),
+            false,
+            |state| state.index_contents.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        index_contents,
+        [(
+            ::git::repository::repo_path("file.rs"),
+            "head\n".to_string(),
+        )]
+        .into_iter()
+        .collect::<HashMap<_, _>>()
+    );
 }
 
 #[gpui::test]
