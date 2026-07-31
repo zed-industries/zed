@@ -46,20 +46,11 @@ use workspace::AppState;
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 
 actions!(
-    copilot,
+    copilot_edit_predictions,
     [
-        /// Requests a code completion suggestion from Copilot.
-        Suggest,
-        /// Cycles to the next Copilot suggestion.
-        NextSuggestion,
-        /// Cycles to the previous Copilot suggestion.
-        PreviousSuggestion,
-        /// Reinstalls the Copilot language server.
+        /// Reinstalls the Copilot Edit Predictions language server.
+        #[action(deprecated_aliases = ["copilot::Reinstall"])]
         Reinstall,
-        /// Signs in to GitHub Copilot.
-        SignIn,
-        /// Signs out of GitHub Copilot.
-        SignOut
     ]
 );
 
@@ -1265,7 +1256,6 @@ impl Copilot {
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
                     cx.emit(Event::CopilotAuthSignedIn);
-                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -1285,7 +1275,6 @@ impl Copilot {
                         };
                     }
                     cx.emit(Event::CopilotAuthSignedOut);
-                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
@@ -1297,40 +1286,15 @@ impl Copilot {
     }
 
     fn update_action_visibilities(&self, cx: &mut App) {
-        let signed_in_actions = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let auth_actions = [TypeId::of::<SignOut>()];
-        let no_auth_actions = [TypeId::of::<SignIn>()];
-        let status = self.status();
+        let signed_in_actions = [TypeId::of::<Reinstall>()];
 
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
 
         if is_ai_disabled {
             filter.hide_action_types(&signed_in_actions);
-            filter.hide_action_types(&auth_actions);
-            filter.hide_action_types(&no_auth_actions);
         } else {
-            match status {
-                Status::Disabled => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.hide_action_types(&no_auth_actions);
-                }
-                Status::Authorized => {
-                    filter.hide_action_types(&no_auth_actions);
-                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
-                }
-                _ => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(&no_auth_actions);
-                }
-            }
+            filter.show_action_types(&signed_in_actions);
         }
     }
 }
@@ -1387,15 +1351,6 @@ fn notify_did_change_config_to_server(
         })
         .ok();
     Ok(())
-}
-
-/// Notify Copilot Chat after the Copilot LSP reports an auth state change.
-/// This replaces watching the SDK's token files, which is unreliable for
-/// SQLite backed auth because writes may go through WAL files.
-fn notify_copilot_chat_auth_changed(cx: &mut Context<Copilot>) {
-    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
-        copilot_chat.update(cx, |chat, cx| chat.reload_auth(cx));
-    }
 }
 
 async fn clear_copilot_dir() {
