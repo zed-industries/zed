@@ -575,27 +575,31 @@ impl ActivityIndicator {
 
         // Show any health messages for the language servers
         if let Some((server_name, health, message)) = health_messages.pop() {
-            // The prefix is built as a whole phrase rather than concatenated
-            // pieces, so a translation can reorder the server name and the
-            // severity word. Fluent trims trailing whitespace from a value, so
-            // the separating space stays in Rust.
-            let health_str = match health {
-                ServerHealth::Ok => {
-                    format!("{} ", t!("({$server})", server = server_name.to_string()))
+            // The server's own message is a placeable in a whole sentence rather
+            // than something concatenated onto a prefix, so a translation
+            // controls both the word order and the punctuation between them.
+            let compose = |message: &str| -> String {
+                let server = server_name.to_string();
+                let message = message.to_owned();
+                match health {
+                    ServerHealth::Ok => {
+                        t!("({$server}) {$message}", server = server, message = message)
+                    }
+                    ServerHealth::Warning => t!(
+                        "({$server}) Warning: {$message}",
+                        server = server,
+                        message = message
+                    ),
+                    ServerHealth::Error => t!(
+                        "({$server}) Error: {$message}",
+                        server = server,
+                        message = message
+                    ),
                 }
-                ServerHealth::Warning => {
-                    format!(
-                        "{} ",
-                        t!("({$server}) Warning:", server = server_name.to_string())
-                    )
-                }
-                ServerHealth::Error => {
-                    format!(
-                        "{} ",
-                        t!("({$server}) Error:", server = server_name.to_string())
-                    )
-                }
+                .into()
             };
+            // Budget the truncation against what `compose` adds around the message.
+            let health_str_len = compose("").len();
             let single_line_message = message
                 .lines()
                 .filter_map(|line| {
@@ -607,13 +611,13 @@ impl ActivityIndicator {
             let mut altered_message = single_line_message != message;
             let truncated_message = truncate_and_trailoff(
                 &single_line_message,
-                MAX_MESSAGE_LEN.saturating_sub(health_str.len()),
+                MAX_MESSAGE_LEN.saturating_sub(health_str_len),
             );
             altered_message |= truncated_message != single_line_message;
-            let final_message = format!("{health_str}{truncated_message}");
+            let final_message = compose(&truncated_message);
 
             let tooltip_message = if altered_message {
-                Some(format!("{health_str}{message}"))
+                Some(compose(&message))
             } else {
                 None
             };
