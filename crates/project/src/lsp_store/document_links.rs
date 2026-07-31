@@ -66,9 +66,9 @@ impl DocumentLinksData {
                 self.links.clear();
                 self.fetched_servers.clear();
                 self.link_resolves.clear();
+                self.links_update = None;
             }
         }
-        self.links_update = None;
     }
 }
 

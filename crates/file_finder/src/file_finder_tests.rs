@@ -484,7 +484,9 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_at_position(finder, 1, &query_inside_file.to_string());
+        // The CreateNew fallback is now keyed on the parsed path (without the
+        // `:row:column` suffix), so its file_name matches `file_query`.
+        assert_match_at_position(finder, 1, file_query);
         let finder = &finder.delegate;
         assert_eq!(finder.matches.len(), 2);
         let latest_search_query = finder
@@ -558,7 +560,9 @@ async fn test_row_column_numbers_query_inside_unicode_file(cx: &mut TestAppConte
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_at_position(finder, 1, &query_inside_file.to_string());
+        // The CreateNew fallback is now keyed on the parsed path (without the
+        // `:row:column` suffix), so its file_name matches `file_query`.
+        assert_match_at_position(finder, 1, file_query);
         let finder = &finder.delegate;
         assert_eq!(finder.matches.len(), 2);
         let latest_search_query = finder
@@ -644,7 +648,9 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_at_position(finder, 1, &query_outside_file.to_string());
+        // The CreateNew fallback is now keyed on the parsed path (without the
+        // `:row:column` suffix), so its file_name matches `file_query`.
+        assert_match_at_position(finder, 1, file_query);
         let delegate = &finder.delegate;
         assert_eq!(delegate.matches.len(), 2);
         let latest_search_query = delegate
@@ -787,9 +793,8 @@ async fn test_line_range_query_selects_lines(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 1);
         assert_match_at_position(finder, 0, "first.rs");
-        assert_match_at_position(finder, 1, "first.rs:2-4");
 
         let latest_search_query = finder
             .delegate
@@ -873,6 +878,48 @@ async fn test_line_range_query_outside_file_clamps_to_eof(cx: &mut TestAppContex
         assert_eq!(selection.start, selection.end);
         assert_eq!(selection.start.row, 1);
         assert_eq!(selection.start.column, "line 2".len() as u32);
+    });
+}
+
+// Regression test for https://github.com/zed-industries/zed/issues/55551.
+//
+// Typing `path:line` for an already-open file must keep the file selected
+// rather than offering to create one or skipping past it to a fuzzy neighbor.
+#[gpui::test]
+async fn test_path_with_position_when_target_file_is_open(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "default.json": "line 1\nline 2\nline 3\n",
+                "seed.default.json": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (_, workspace, cx) = build_find_picker(project, cx);
+    open_queried_buffer("default", 2, "default.json", &workspace, cx).await;
+
+    // Type the query character by character. Appending `:3` keeps
+    // `path_query()` the same, so the previously-buggy code preserved the
+    // skipped-to selection (`seed.default.json`) instead of re-evaluating.
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("default.json:3");
+    picker.update(cx, |finder, _| {
+        assert!(
+            finder
+                .delegate
+                .matches
+                .matches
+                .iter()
+                .all(|m| !matches!(m, Match::CreateNew(_))),
+            "`Create file:` row should not be offered for an existing file"
+        );
+        assert_match_selection(finder, 0, "default.json");
     });
 }
 

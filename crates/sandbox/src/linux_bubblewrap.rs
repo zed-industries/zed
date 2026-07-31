@@ -1218,12 +1218,14 @@ pub fn run_wsl_helper_if_invoked() {
 /// silently treating it as native.
 fn path_is_on_windows_fs(path: &Path) -> bool {
     // `statfs.f_type` magics for the DrvFs transports. virtiofs is FUSE-backed.
-    const V9FS_MAGIC: i64 = 0x0102_1997;
-    const FUSE_SUPER_MAGIC: i64 = 0x6573_5546;
+    const V9FS_MAGIC: u64 = 0x0102_1997;
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
     match nix::sys::statfs::statfs(path) {
         Ok(stat) => {
-            let fs_type = stat.filesystem_type().0;
-            fs_type == V9FS_MAGIC || fs_type == FUSE_SUPER_MAGIC
+            // `f_type` is `i64` on glibc but `u64` on musl, so widen it
+            // losslessly instead of comparing against a fixed-width constant.
+            u64::try_from(stat.filesystem_type().0)
+                .is_ok_and(|fs_type| fs_type == V9FS_MAGIC || fs_type == FUSE_SUPER_MAGIC)
         }
         Err(_) => true,
     }
