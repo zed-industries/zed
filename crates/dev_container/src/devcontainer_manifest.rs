@@ -877,9 +877,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             push_unique_string(&mut security_opt, &opt);
         }
 
-        let entrypoint_script = if dev_container.override_command == Some(false) {
-            None
-        } else {
+        let entrypoint_script = if dev_container.override_command() {
             let mut entrypoint_script_lines = vec![
                 "echo Container started".to_string(),
                 "trap \"exit 0\" 15".to_string(),
@@ -894,6 +892,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             ]);
 
             Some(entrypoint_script_lines.join("\n").trim().to_string())
+        } else {
+            None
         };
 
         let mut container_env = HashMap::new();
@@ -4008,13 +4008,16 @@ mod test {
                 < post_start_script.find("printf '%s'").unwrap(),
             "postStartCommand marker must be written only after the command succeeds"
         );
-        assert_eq!(docker_exec_commands[1]._inner_command.get_program(), "echo");
+        assert_eq!(
+            docker_exec_commands[1]._inner_command.get_program(),
+            "/bin/sh"
+        );
         assert_eq!(
             docker_exec_commands[1]
                 ._inner_command
                 .get_args()
                 .collect::<Vec<_>>(),
-            vec![OsStr::new("post-attach")]
+            vec![OsStr::new("-c"), OsStr::new("echo post-attach")]
         );
     }
 
@@ -5150,7 +5153,7 @@ ENV DOCKER_BUILDKIT=1
             Some(vec!["seccomp=unconfined".to_string()])
         );
         assert_eq!(app_service.privileged, Some(true));
-        assert!(app_service.entrypoint.is_some());
+        assert!(app_service.entrypoint.is_none());
 
         let labels = app_service.labels.as_ref().unwrap();
         assert_eq!(
