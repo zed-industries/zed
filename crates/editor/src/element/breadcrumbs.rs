@@ -1,0 +1,2711 @@
+//! Breadcrumb path/symbol navigation: turns the breadcrumb bar's segments into clickable
+//! dropdown targets, sharing the project panel's ordering and gitignore treatment (see
+//! `BreadcrumbDirectoryListingSettings`) rather than reimplementing them. Split out from
+//! `element.rs` at the maintainer's request on #60282.
+
+use super::*;
+
+/// Computes, for each item in a flat pre-order outline (given as `depths`), the index of its
+/// parent — the nearest preceding item with a smaller depth (`None` for top-level items).
+/// "Nearest preceding item with a smaller depth" is used rather than `depth - 1`, because
+/// tree-sitter outlines can have uneven depth jumps (e.g. going straight from depth 0 to depth
+/// 2). `sibling_outline_indices`, `child_outline_indices` and `top_level_outline_indices` all
+/// derive from this single pass so they can't disagree about what "parent" means.
+fn outline_parents(depths: &[usize]) -> Vec<Option<usize>> {
+    let mut parents = Vec::with_capacity(depths.len());
+    let mut ancestor_stack: Vec<(usize, usize)> = Vec::new();
+    for (index, &depth) in depths.iter().enumerate() {
+        while ancestor_stack
+            .last()
+            .is_some_and(|&(ancestor_depth, _)| ancestor_depth >= depth)
+        {
+            ancestor_stack.pop();
+        }
+        parents.push(ancestor_stack.last().map(|&(_, parent_index)| parent_index));
+        ancestor_stack.push((depth, index));
+    }
+    parents
+}
+
+/// Indices of `target_index`'s siblings — items at the same depth that share its nearest
+/// shallower ancestor (`target_index` included in the result).
+pub(crate) fn sibling_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
+    if target_index >= depths.len() {
+        return Vec::new();
+    }
+
+    let parents = outline_parents(depths);
+    let target_parent = parents[target_index];
+    parents
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &parent)| (parent == target_parent).then_some(index))
+        .collect()
+}
+
+/// Indices of the items directly nested inside `target_index` — one level deeper, using the
+/// same "nearest shallower ancestor" notion of parenthood as `sibling_outline_indices`. A
+/// node's siblings are its parent's children, which is why the breadcrumb dropdown prefers
+/// this (drilling down) and only falls back to `sibling_outline_indices` when a node has no
+/// children.
+pub(crate) fn child_outline_indices(depths: &[usize], target_index: usize) -> Vec<usize> {
+    if target_index >= depths.len() {
+        return Vec::new();
+    }
+
+    let parents = outline_parents(depths);
+    parents
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &parent)| (parent == Some(target_index)).then_some(index))
+        .collect()
+}
+
+/// Indices of the top-level items — those with no parent. The breadcrumb's leading path
+/// segment stands in for the tree's implicit root, so it lists these.
+pub(crate) fn top_level_outline_indices(depths: &[usize]) -> Vec<usize> {
+    let parents = outline_parents(depths);
+    parents
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &parent)| parent.is_none().then_some(index))
+        .collect()
+}
+
+/// What a single breadcrumb segment's dropdown drills into, computed alongside `segments` in
+/// [`render_breadcrumb_text`] so the render pass for each segment (which only has `&App`) can
+/// stay ignorant of where the data came from.
+#[derive(Clone, Debug)]
+pub(crate) enum BreadcrumbSegmentTarget {
+    /// A path or symbol segment whose dropdown lists document symbols: `item.is_none()` for the
+    /// file segment itself (lists the buffer's top-level symbols), `Some` for an ancestor symbol
+    /// segment (lists its children, falling back to its siblings).
+    Symbol {
+        buffer_id: BufferId,
+        item: Option<OutlineItem<Anchor>>,
+    },
+    /// A directory segment whose dropdown lists `path`'s contents — the segment's own children in
+    /// [`BreadcrumbNavigationMode::DrillDown`], its parent's (i.e. the segment's siblings) in
+    /// [`BreadcrumbNavigationMode::Siblings`]. `active_path` is the currently open buffer's path
+    /// (the same value at every directory in its ancestor chain), so the listing — at any depth,
+    /// including inside a submenu drilled into further — can mark which entry the breadcrumb's own
+    /// path currently passes through.
+    Directory {
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        active_path: Option<Arc<RelPath>>,
+        /// Whether this segment produced the breadcrumb bar's currently open directory dropdown
+        /// (see [`Editor::breadcrumb_navigation`]), so its render can draw the "selected" box
+        /// IntelliJ's navigation bar shows around such a segment.
+        is_active_segment: bool,
+        /// In [`BreadcrumbNavigationMode::Siblings`], this segment's own path — distinct from
+        /// `path` above, which is its *parent's* path in that mode — so the listing can mark this
+        /// segment's own entry among its newly-listed siblings as the current one. `None` in
+        /// [`BreadcrumbNavigationMode::DrillDown`], where `path`'s listing is this segment's
+        /// children, not siblings that include itself.
+        ///
+        /// **Canonical explanation of `own_path` vs `path`**, referenced rather than repeated by
+        /// `Editor::open_breadcrumb_navigation`, `Editor::clear_breadcrumb_navigation`, and
+        /// `render_breadcrumb_directory_segment`'s `.menu()` builder: `path` is what a segment's
+        /// dropdown *lists*, which in `Siblings` mode is its *parent's* children, not its own —
+        /// so it can't be used to identify the segment itself. Anything that needs the segment's
+        /// own identity (marking it active, recognizing a dismissal as still current, or
+        /// re-anchoring a popover under it) instead computes `own_path =
+        /// mark_current_path.unwrap_or(path)`, falling back to `path` only where the two already
+        /// coincide (`DrillDown`, or the one `Siblings` listing that continues descending into a
+        /// just-navigated segment — see `breadcrumb_path_segments`'s `descend_into_active_path`).
+        /// Passing `path` itself to one of those identity-sensitive calls instead would silently
+        /// misattribute "active" to the wrong (parent) segment.
+        mark_current_path: Option<Arc<RelPath>>,
+    },
+}
+
+/// Splits `path` into its component prefixes, root first and `path` itself last — e.g.
+/// `a/b/c.rs` becomes `[a, a/b, a/b/c.rs]`. Used to turn the breadcrumb's leading path segment
+/// into one clickable component per path element (each directory, then the file), mirroring
+/// IntelliJ's navigation bar. Empty for the empty path (a worktree root, which is never itself a
+/// buffer's path).
+fn breadcrumb_path_prefixes(path: &RelPath) -> Vec<&RelPath> {
+    let mut prefixes: Vec<&RelPath> = path
+        .ancestors()
+        .filter(|prefix| !prefix.is_empty())
+        .collect();
+    prefixes.reverse();
+    prefixes
+}
+
+/// Builds the breadcrumb's leading path segments, laid out differently depending on `mode`:
+///
+/// - [`BreadcrumbNavigationMode::DrillDown`]: a segment for the worktree root — so sibling
+///   top-level directories are reachable the way IntelliJ's navigation bar reaches them, by
+///   starting at the project root rather than the file's own path — followed by one segment per
+///   path component of `path`, each listing its own children.
+/// - [`BreadcrumbNavigationMode::Siblings`]: no root segment (redundant — clicking the first real
+///   segment already lists the project root's own children), one segment per path component of
+///   `path`, each listing its *parent's* children (i.e. its own siblings) instead.
+///
+/// `terminal_buffer_id` distinguishes what the last segment is: `Some` when `path` is the open
+/// file itself (its dropdown lists document symbols), `None` when `path` is a directory the bar
+/// has navigated to (its dropdown lists directory contents like every other segment). `active_path`
+/// marks which entries a submenu should highlight as "on the way to the open file" — always the
+/// real open file's path, even while `path` itself is a navigated directory elsewhere in the tree.
+/// `active_segment`, when it names one of `path`'s own prefixes, marks that segment as the one
+/// whose dropdown is currently open (see
+/// [`BreadcrumbSegmentTarget::Directory::is_active_segment`]).
+///
+/// `descend_into_active_path`, in [`BreadcrumbNavigationMode::Siblings`] only, makes
+/// `active_segment`'s own listing its children instead of its parent's — see
+/// [`crate::BreadcrumbNavigation::descend_into_active_path`] for why: it's what makes choosing a
+/// directory row continue descending into it, rather than re-listing the same siblings the row
+/// was chosen from.
+///
+/// Pure aside from the borrowed `root_name`, so the split is unit-testable without a live
+/// worktree/project.
+pub(crate) fn breadcrumb_path_segments(
+    worktree_id: WorktreeId,
+    root_name: &str,
+    path: &Arc<RelPath>,
+    active_path: Option<Arc<RelPath>>,
+    terminal_buffer_id: Option<BufferId>,
+    active_segment: Option<&RelPath>,
+    mode: BreadcrumbNavigationMode,
+    descend_into_active_path: bool,
+) -> (Vec<HighlightedText>, Vec<Option<BreadcrumbSegmentTarget>>) {
+    let mut labels = Vec::new();
+    let mut targets = Vec::new();
+
+    if mode == BreadcrumbNavigationMode::DrillDown {
+        labels.push(HighlightedText {
+            text: root_name.to_string().into(),
+            highlights: vec![],
+        });
+        targets.push(Some(BreadcrumbSegmentTarget::Directory {
+            worktree_id,
+            path: RelPath::empty().into_arc(),
+            active_path: active_path.clone(),
+            is_active_segment: active_segment == Some(RelPath::empty()),
+            mark_current_path: None,
+        }));
+    }
+
+    let prefixes = breadcrumb_path_prefixes(path);
+    let last_prefix_index = prefixes.len().saturating_sub(1);
+    for (prefix_index, prefix) in prefixes.iter().copied().enumerate() {
+        let name = prefix.file_name().unwrap_or_else(|| prefix.as_unix_str());
+        labels.push(HighlightedText {
+            text: name.to_string().into(),
+            highlights: vec![],
+        });
+        targets.push(Some(
+            if prefix_index == last_prefix_index
+                && let Some(buffer_id) = terminal_buffer_id
+            {
+                BreadcrumbSegmentTarget::Symbol {
+                    buffer_id,
+                    item: None,
+                }
+            } else {
+                let (list_path, mark_current_path) = match mode {
+                    BreadcrumbNavigationMode::DrillDown => (prefix.into_arc(), None),
+                    BreadcrumbNavigationMode::Siblings
+                        if descend_into_active_path && active_segment == Some(prefix) =>
+                    {
+                        // Choosing this very segment from its parent's listing is what navigated
+                        // the bar here — list its own children so the reopened dropdown continues
+                        // downwards, instead of re-listing the siblings it was just chosen from.
+                        (prefix.into_arc(), None)
+                    }
+                    BreadcrumbNavigationMode::Siblings => {
+                        let parent_path = prefix_index
+                            .checked_sub(1)
+                            .map(|parent_index| prefixes[parent_index].into_arc())
+                            .unwrap_or_else(|| RelPath::empty().into_arc());
+                        (parent_path, Some(prefix.into_arc()))
+                    }
+                };
+                BreadcrumbSegmentTarget::Directory {
+                    worktree_id,
+                    path: list_path,
+                    active_path: active_path.clone(),
+                    is_active_segment: active_segment == Some(prefix),
+                    mark_current_path,
+                }
+            },
+        ));
+    }
+
+    (labels, targets)
+}
+
+/// Flattens `text` to a single display line by replacing newlines with spaces, for text that
+/// carries along a set of *byte-offset* highlight ranges (tree-sitter/LSP syntax highlighting, or
+/// a manually computed range like `apply_dirty_filename_style`'s bold-filename span) computed
+/// against the original, unflattened string. Byte-offset highlights are only still valid against
+/// the returned string because `'\n'` and `' '` both encode to exactly one UTF-8 byte, so the
+/// replacement can't shift any byte index — every other transform in this file that touches text
+/// with highlights attached must preserve that same "same byte length" invariant or recompute the
+/// ranges. Debug-asserts the invariant instead of only documenting it, so a future change to the
+/// replacement character (or to `'\n'` handling) fails a test instead of silently mis-highlighting.
+fn flatten_text_for_single_line_display(text: &str) -> String {
+    debug_assert_eq!(
+        '\n'.len_utf8(),
+        ' '.len_utf8(),
+        "replacement must be single-byte like the newline it replaces, or byte-offset highlights \
+         computed against the original text would need remapping"
+    );
+    text.replace('\n', " ")
+}
+
+/// Renders a breadcrumb symbol dropdown entry the same way the outline picker and outline panel
+/// render outline items: with `item.highlight_ranges` (tree-sitter/LSP syntax highlighting)
+/// applied to its text, so `fun resolveEnv` reads as code and the symbol's kind is legible from
+/// keyword coloring, not just a flat label. `ContextMenu` has no built-in "highlighted text
+/// entry" variant, so this is built as a `custom_entry` row instead; the leading checkmark
+/// (shown, not just reserved-and-hidden, only for `is_current`) mirrors what `toggleable_entry`
+/// draws for a toggled item, so switching from `toggleable_entry` doesn't lose that affordance.
+///
+/// `show_current_column` reserves the checkmark's width even for rows that aren't current, so
+/// every row in the menu stays aligned — but only when some row in the menu can actually be
+/// current; symbol menus almost never have one (the cursor is rarely sitting exactly on a
+/// symbol's own range), so most menus render this column for nothing otherwise, indenting every
+/// row for a checkmark that will never appear.
+fn render_outline_item_menu_row(
+    item: &OutlineItem<Anchor>,
+    is_current: bool,
+    show_current_column: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui::AnyElement {
+    let mut text_style = window.text_style();
+    text_style.color = Color::Default.color(cx);
+
+    h_flex()
+        .gap_1p5()
+        .when(is_current, |this| {
+            this.child(
+                Icon::new(IconName::Check)
+                    .color(Color::Accent)
+                    .size(IconSize::Small),
+            )
+        })
+        .when(!is_current && show_current_column, |this| {
+            this.child(div().size(IconSize::Small.rems()))
+        })
+        .child(
+            StyledText::new(flatten_text_for_single_line_display(&item.text))
+                .with_default_highlights(&text_style, item.highlight_ranges.clone()),
+        )
+        .into_any_element()
+}
+
+/// Renders a single breadcrumb segment as a clickable element that opens a dropdown drilling
+/// into the outline: `target`'s children if it has any, else its siblings (so the deepest
+/// segment, typically the method the cursor sits in and which has no children of its own, can
+/// still switch between methods), else — for the leading path segment, `target: None` — the
+/// buffer's top-level symbols. Chosen via [`Editor::breadcrumb_symbol_menu_items`] and
+/// [`Editor::navigate_to_outline_item`], which give this element real symbol data despite
+/// `render_breadcrumb_text` itself only having `&App`: the popover trigger and its entries are
+/// event handlers, invoked later with their own `&mut Window`/`&mut App`, not part of this render pass.
+fn render_breadcrumb_symbol_segment(
+    editor: WeakEntity<Editor>,
+    buffer_id: BufferId,
+    target: Option<OutlineItem<Anchor>>,
+    label: gpui::AnyElement,
+    index: usize,
+) -> gpui::AnyElement {
+    // `PopoverMenu::trigger` installs its own click handler, and `ButtonLike` wraps whichever
+    // handler it ends up with in `cx.stop_propagation()`. That is what keeps a click here from
+    // also reaching the enclosing "toggle outline view" button and opening the outline picker
+    // behind the popover.
+    let trigger = ButtonLike::new(("breadcrumb-symbol", index))
+        .style(ButtonStyle::Subtle)
+        .size(ButtonSize::None)
+        .child(label);
+
+    PopoverMenu::new(("breadcrumb-symbol-menu", index))
+        .trigger(trigger)
+        .menu(move |window, cx| {
+            let editor_entity = editor.upgrade()?;
+            let (menu_items, truncated) =
+                editor_entity
+                    .read(cx)
+                    .breadcrumb_symbol_menu_items(buffer_id, target.as_ref(), cx);
+            // With nothing to drill into — a buffer whose language has no outline, or no
+            // grammar at all — fall through to the outline picker the whole breadcrumb bar
+            // used to open, instead of flashing an empty popover or swallowing the click.
+            if menu_items.is_empty() {
+                if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
+                    callback(editor_entity.to_any_view(), window, cx);
+                }
+                return None;
+            }
+            let current_range = target.as_ref().map(|item| item.range.clone());
+            let editor = editor.clone();
+            let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+                let show_current_column = menu_items
+                    .iter()
+                    .any(|item| current_range.as_ref() == Some(&item.range));
+                for menu_item in menu_items {
+                    let is_current = current_range.as_ref() == Some(&menu_item.range);
+                    let editor = editor.clone();
+                    let navigate_to = menu_item.clone();
+                    let row_item = menu_item.clone();
+                    menu = menu.custom_entry(
+                        move |window, cx| {
+                            render_outline_item_menu_row(
+                                &row_item,
+                                is_current,
+                                show_current_column,
+                                window,
+                                cx,
+                            )
+                        },
+                        move |window, cx| {
+                            if let Some(editor_entity) = editor.upgrade() {
+                                editor_entity.update(cx, |editor, cx| {
+                                    editor.navigate_to_outline_item(&navigate_to, window, cx);
+                                });
+                            }
+                        },
+                    );
+                }
+                if truncated {
+                    menu = menu.custom_row(|_, _| {
+                        Label::new(format!(
+                            "Showing first {MAX_BREADCRUMB_MENU_ENTRIES} entries"
+                        ))
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .mx_2()
+                        .into_any_element()
+                    });
+                }
+                menu
+            });
+            Some(menu)
+        })
+        .into_any_element()
+}
+
+/// Caps how many entries a breadcrumb dropdown lists — both a directory dropdown's children
+/// (`Worktree` entries already scanned and held in memory, so this bounds layout cost, not I/O)
+/// and a symbol dropdown's siblings/children (see `Editor::breadcrumb_symbol_menu_items`), which a
+/// generated file's flat top-level listing can make just as large. Exists to keep one popover
+/// legible and its layout cheap.
+pub(crate) const MAX_BREADCRUMB_MENU_ENTRIES: usize = 200;
+
+/// Caps how many single-child directories [`descend_single_child_directories`] will walk through
+/// before giving up and treating the current directory as the fork. Guards against pathological
+/// depth and against looping forever if a worktree ever contained a symlink cycle.
+const MAX_BREADCRUMB_DESCENT_DEPTH: usize = 64;
+
+/// Walks down from `start` through directories that have exactly one child directory, the way
+/// IntelliJ's navigation bar skips straight past them instead of making the user click through a
+/// chain with no alternative — e.g. a `com/example/app/` chain holding nothing but the next single
+/// subdirectory collapses straight to the first one with an actual choice (zero or multiple
+/// children) to show. Stops there, and also stops one directory short of descending into a file:
+/// when the only remaining child is a file, that file is left as the sole entry of the directory
+/// returned, so the user still has to click it themselves rather than having it opened for them —
+/// scrolling through a chain of single-item directories is done on the user's behalf, opening a
+/// file is not.
+///
+/// `child_entries` is injected rather than reading a worktree directly so this stays pure and
+/// unit-testable; production callers back it with a real worktree snapshot.
+fn descend_single_child_directories(
+    start: Arc<RelPath>,
+    mut child_entries: impl FnMut(&RelPath) -> Vec<(Arc<RelPath>, bool)>,
+) -> Arc<RelPath> {
+    let mut current = start;
+    for _ in 0..MAX_BREADCRUMB_DESCENT_DEPTH {
+        let children = child_entries(&current);
+        let [(only_child_path, only_child_is_dir)] = children.as_slice() else {
+            return current;
+        };
+        if !only_child_is_dir {
+            return current;
+        }
+        current = only_child_path.clone();
+    }
+    current
+}
+
+/// Backs [`descend_single_child_directories`] with a live worktree: every direct child of `path`,
+/// as `(path, is_dir)` pairs.
+fn breadcrumb_directory_children(
+    worktree: &Entity<project::Worktree>,
+    path: &RelPath,
+    cx: &App,
+) -> Vec<(Arc<RelPath>, bool)> {
+    worktree
+        .read(cx)
+        .snapshot()
+        .child_entries(path)
+        .map(|entry| (entry.path.clone(), entry.is_dir()))
+        .collect()
+}
+
+/// Which icon source a breadcrumb directory dropdown row should draw from, given
+/// `toolbar.breadcrumb_file_icons`/`toolbar.breadcrumb_folder_icons` and whether the row is a
+/// directory. Mirrors the project/git/outline panels: turning folder icons off falls back to a
+/// chevron rather than hiding the icon slot entirely (see
+/// `crates/project_panel/src/project_panel.rs`'s `EntryKind` icon match), while turning file
+/// icons off just leaves files with no icon. Factored out as pure selection logic — with no
+/// `cx`/icon-theme lookup — so it's testable without a GPUI context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BreadcrumbEntryIconSource {
+    File,
+    Folder,
+    Chevron,
+    None,
+}
+
+fn breadcrumb_entry_icon_source(
+    is_dir: bool,
+    show_file_icons: bool,
+    show_folder_icons: bool,
+) -> BreadcrumbEntryIconSource {
+    if is_dir {
+        if show_folder_icons {
+            BreadcrumbEntryIconSource::Folder
+        } else {
+            BreadcrumbEntryIconSource::Chevron
+        }
+    } else if show_file_icons {
+        BreadcrumbEntryIconSource::File
+    } else {
+        BreadcrumbEntryIconSource::None
+    }
+}
+
+/// Mirrors the project panel's directory ordering and gitignore visibility settings
+/// (`project_panel.sort_mode`, `project_panel.sort_order`, `project_panel.hide_gitignore`) so the
+/// breadcrumb dropdown's listing agrees with the panel's, including when the user changes those
+/// settings — see `cmp_worktree_entries` and its `hide_gitignore` uses in
+/// `crates/project_panel/src/project_panel.rs`.
+///
+/// This can't just call into `project_panel::ProjectPanelSettings` and reuse its already-resolved
+/// fields: `project_panel` depends on `editor` (for `entry_git_aware_label_color`, reused below),
+/// so `editor` depending back on `project_panel` for this would be circular. Reading the same
+/// `project_panel` section of `SettingsContent` a second time, independently, keeps the ordering
+/// in sync with the panel without inverting that dependency.
+#[derive(Clone, Copy, settings::RegisterSetting)]
+struct BreadcrumbDirectoryListingSettings {
+    sort_mode: settings::ProjectPanelSortMode,
+    sort_order: settings::ProjectPanelSortOrder,
+    hide_gitignore: bool,
+}
+
+impl settings::Settings for BreadcrumbDirectoryListingSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let project_panel = content.project_panel.clone().unwrap();
+        Self {
+            sort_mode: project_panel.sort_mode.unwrap(),
+            sort_order: project_panel.sort_order.unwrap(),
+            hide_gitignore: project_panel.hide_gitignore.unwrap(),
+        }
+    }
+}
+
+/// A single row in a [`BreadcrumbDirectoryBrowser`] listing: `path`'s direct children, ready to
+/// render, already sorted the same way the project panel orders siblings (see
+/// [`BreadcrumbDirectoryListingSettings`]) and truncated to `MAX_BREADCRUMB_MENU_ENTRIES`.
+struct BreadcrumbDirectoryEntry {
+    name: SharedString,
+    path: Arc<RelPath>,
+    is_dir: bool,
+    is_ignored: bool,
+}
+
+/// Lists `path`'s direct children for a [`BreadcrumbDirectoryBrowser`] to render, plus whether the
+/// listing was truncated. Entries gitignored by Git are dropped entirely when
+/// `project_panel.hide_gitignore` is set, matching the project panel; otherwise they're kept and
+/// [`BreadcrumbDirectoryBrowser::render_entry`] colors them the same way the panel does.
+fn breadcrumb_directory_entries(
+    worktree: &Entity<project::Worktree>,
+    path: &RelPath,
+    cx: &App,
+) -> (Vec<BreadcrumbDirectoryEntry>, bool) {
+    let settings = BreadcrumbDirectoryListingSettings::get_global(cx);
+    let mut entries = worktree
+        .read(cx)
+        .snapshot()
+        .child_entries(path)
+        .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
+        .cloned()
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| {
+        util::paths::compare_rel_paths_by(
+            (&*a.path, a.is_file()),
+            (&*b.path, b.is_file()),
+            settings.sort_mode.into(),
+            settings.sort_order.into(),
+        )
+    });
+    let truncated = entries.len() > MAX_BREADCRUMB_MENU_ENTRIES;
+    entries.truncate(MAX_BREADCRUMB_MENU_ENTRIES);
+
+    let entries = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let name = entry.path.file_name()?.to_string();
+            Some(BreadcrumbDirectoryEntry {
+                name: name.into(),
+                path: entry.path.clone(),
+                is_dir: entry.is_dir(),
+                is_ignored: entry.is_ignored,
+            })
+        })
+        .collect();
+    (entries, truncated)
+}
+
+/// A breadcrumb directory dropdown's contents: the current directory's children. Clicking a
+/// directory row navigates the same popover into that directory in place — rather than opening a
+/// nested submenu the way `ContextMenu` would — mirroring IntelliJ's navigation bar popup, which
+/// has no submenu tree. Clicking a file row opens it and dismisses the popover.
+///
+/// Keyboard support is intentionally minimal: `Escape` dismisses. Arrow-key/Enter row selection
+/// isn't wired up — every row is still reachable and clickable, this just doesn't add a
+/// keyboard-driven highlight cursor on top of mouse hover.
+pub(crate) struct BreadcrumbDirectoryBrowser {
+    editor: WeakEntity<Editor>,
+    workspace: WeakEntity<Workspace>,
+    worktree_id: WorktreeId,
+    current_path: Arc<RelPath>,
+    active_path: Option<Arc<RelPath>>,
+    /// See [`BreadcrumbSegmentTarget::Directory::mark_current_path`]: `Some` whenever this
+    /// listing includes an entry that should be marked "current" among its siblings — which
+    /// happens only in [`BreadcrumbNavigationMode::Siblings`], and even there not for the one
+    /// listing that continues descending into the segment just navigated to (see
+    /// `breadcrumb_path_segments`'s `descend_into_active_path` handling), since none of *that*
+    /// listing's entries is the segment itself. `choose` no longer needs to know which mode this
+    /// dropdown was opened under — single-child descent (see
+    /// [`descend_single_child_directories`]) now applies the same way regardless of mode.
+    mark_current_path: Option<Arc<RelPath>>,
+    focus_handle: FocusHandle,
+    _on_blur_subscription: Subscription,
+}
+
+impl BreadcrumbDirectoryBrowser {
+    fn new(
+        editor: WeakEntity<Editor>,
+        workspace: WeakEntity<Workspace>,
+        worktree_id: WorktreeId,
+        current_path: Arc<RelPath>,
+        active_path: Option<Arc<RelPath>>,
+        mark_current_path: Option<Arc<RelPath>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            // Clicking away — including into the editor — moves focus off this popover, which
+            // should end the navigation session the same way `Escape` does (see
+            // `Editor::clear_breadcrumb_navigation`), rather than leaving it open and stale.
+            let _on_blur_subscription =
+                cx.on_blur(&focus_handle, window, |_, _, cx| cx.emit(DismissEvent));
+            Self {
+                editor,
+                workspace,
+                worktree_id,
+                current_path,
+                active_path,
+                mark_current_path,
+                focus_handle,
+                _on_blur_subscription,
+            }
+        })
+    }
+
+    fn worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
+        let workspace = self.workspace.upgrade()?;
+        workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(self.worktree_id, cx)
+    }
+
+    /// Handles choosing `entry`. Descends through any chain of single-child directories (see
+    /// [`descend_single_child_directories`]) before navigating this popover to the resolved
+    /// directory — choosing a row is what triggers the descent, unlike opening a segment's own
+    /// dropdown, which lists `path`'s direct children verbatim. The descent never opens a file on
+    /// its own — even a directory whose only child is a file stops there and lists that file as
+    /// the resolved directory's sole entry, leaving the actual open to the user's own click on it
+    /// (handled below, since `is_dir` is false for that click). This applies the same way in both
+    /// [`BreadcrumbNavigationMode::DrillDown`] and [`BreadcrumbNavigationMode::Siblings`]: after
+    /// choosing a directory row you're descending into it either way, so skipping through
+    /// single-child directories is just as useful in `Siblings` mode. `self.mode` still matters
+    /// elsewhere — see [`BreadcrumbSegmentTarget::Directory::mark_current_path`] — but no longer
+    /// gates whether descent happens at all.
+    fn choose(
+        &mut self,
+        entry_path: Arc<RelPath>,
+        is_dir: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_dir {
+            self.open_file(entry_path, window, cx);
+            return;
+        }
+        let worktree_id = self.worktree_id;
+        let resolved_path = {
+            let Some(worktree) = self.worktree(cx) else {
+                return;
+            };
+            descend_single_child_directories(entry_path, |path| {
+                breadcrumb_directory_children(&worktree, path, cx)
+            })
+        };
+        // Doesn't update `self.current_path`/re-render this browser in place: the popover is
+        // about to be dismissed and reopened under the resolved directory's own segment (see
+        // `Editor::navigate_breadcrumb_to`), so a fresh `BreadcrumbDirectoryBrowser` for it is
+        // built there instead.
+        if let Some(editor) = self.editor.upgrade() {
+            editor.update(cx, |editor, cx| {
+                editor.navigate_breadcrumb_to(worktree_id, resolved_path, window, cx);
+            });
+        }
+    }
+
+    fn open_file(&mut self, path: Arc<RelPath>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .open_path(
+                        ProjectPath {
+                            worktree_id: self.worktree_id,
+                            path,
+                        },
+                        None,
+                        true,
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            });
+        }
+        cx.emit(DismissEvent);
+    }
+
+    fn render_entry(
+        &self,
+        entry: BreadcrumbDirectoryEntry,
+        show_file_icons: bool,
+        show_folder_icons: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_open_ancestor = entry.is_dir
+            && self
+                .active_path
+                .as_ref()
+                .is_some_and(|active_path| active_path.starts_with(&entry.path));
+        // In `Siblings` mode, this listing is the segment's own siblings, so the entry that marks
+        // "current" is the segment itself — `mark_current_path` — rather than the ordinary
+        // on-the-way-to-the-open-file marking `active_path` gives every other listing (including
+        // this one's directories, via `is_open_ancestor` above).
+        let is_active = match self.mark_current_path.as_deref() {
+            Some(current) => current == entry.path.as_ref(),
+            None => !entry.is_dir && self.active_path.as_deref() == Some(entry.path.as_ref()),
+        };
+
+        let icon_path =
+            match breadcrumb_entry_icon_source(entry.is_dir, show_file_icons, show_folder_icons) {
+                BreadcrumbEntryIconSource::File => {
+                    file_icons::FileIcons::get_icon(entry.path.as_std_path(), cx)
+                }
+                BreadcrumbEntryIconSource::Folder => file_icons::FileIcons::get_folder_icon(
+                    is_open_ancestor,
+                    entry.path.as_std_path(),
+                    cx,
+                ),
+                BreadcrumbEntryIconSource::Chevron => {
+                    // Unlike the project/git/outline panels, these rows aren't expandable in
+                    // place — choosing a directory row navigates into it rather than expanding it
+                    // inline — so there's no real "expanded" state for the chevron to reflect;
+                    // always pass `false` for the collapsed, right-pointing chevron.
+                    file_icons::FileIcons::get_chevron_icon(false, cx)
+                }
+                BreadcrumbEntryIconSource::None => None,
+            };
+        let icon = icon_path
+            .map(Icon::from_path)
+            .map(|icon| {
+                icon.color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_any_element()
+            })
+            .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
+
+        // Colors ignored entries the same way the project panel does — see
+        // `entry_git_aware_label_color`'s doc comment. Passed `GitSummary::UNCHANGED` rather than
+        // this entry's real tracked/conflict/untracked status: `Worktree::child_entries` (unlike
+        // the panel's own `GitTraversal`) doesn't join per-entry git status onto `Entry`, and
+        // computing it separately just for this dropdown's coloring would duplicate the panel's
+        // traversal for a detail that matters far less here than the ignored-or-not distinction,
+        // which is already on hand as `Entry::is_ignored`.
+        let label_color = crate::items::entry_git_aware_label_color(
+            GitSummary::UNCHANGED,
+            entry.is_ignored,
+            is_active,
+        );
+
+        let entry_path = entry.path.clone();
+        let is_dir = entry.is_dir;
+        ListItem::new(SharedString::from(format!(
+            "breadcrumb-directory-entry-{}",
+            entry.name
+        )))
+        .toggle_state(is_active)
+        .start_slot(icon)
+        .child(Label::new(entry.name).color(label_color))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.choose(entry_path.clone(), is_dir, window, cx);
+        }))
+    }
+}
+
+impl gpui::Focusable for BreadcrumbDirectoryBrowser {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for BreadcrumbDirectoryBrowser {}
+
+impl Render for BreadcrumbDirectoryBrowser {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let show_file_icons = EditorSettings::get_global(cx).toolbar.breadcrumb_file_icons;
+        let show_folder_icons = EditorSettings::get_global(cx)
+            .toolbar
+            .breadcrumb_folder_icons;
+        let (entries, truncated) = self
+            .worktree(cx)
+            .map(|worktree| breadcrumb_directory_entries(&worktree, &self.current_path, cx))
+            .unwrap_or_default();
+
+        let rows = entries
+            .into_iter()
+            .map(|entry| {
+                self.render_entry(entry, show_file_icons, show_folder_icons, cx)
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        Popover::new().child(
+            v_flex()
+                .id("breadcrumb-directory-browser")
+                .track_focus(&self.focus_handle)
+                .key_context("BreadcrumbDirectoryBrowser")
+                .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| cx.emit(DismissEvent)))
+                .min_w(px(200.))
+                .max_h(px(400.))
+                .overflow_y_scroll()
+                .child(List::new().empty_message("Empty directory").children(rows))
+                .when(truncated, |this| {
+                    this.child(
+                        Label::new(format!(
+                            "Showing first {MAX_BREADCRUMB_MENU_ENTRIES} entries"
+                        ))
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .mx_2(),
+                    )
+                }),
+        )
+    }
+}
+
+/// Renders a single breadcrumb path segment as a clickable element that opens a dropdown listing
+/// `path`'s direct children verbatim — subdirectories and files, directories first then
+/// alphabetical — so the whole project tree is reachable from the breadcrumb bar the way
+/// IntelliJ's navigation bar reaches it, without switching to the project panel. Opening the
+/// dropdown only marks this segment active (see [`Editor::open_breadcrumb_navigation`]); it does
+/// not itself skip through single-child directories or otherwise change the bar — that happens
+/// only once a row is chosen, inside [`BreadcrumbDirectoryBrowser::choose`], which is also what
+/// replaces the bar with the resolved directory (see [`Editor::navigate_breadcrumb_to`]).
+fn render_breadcrumb_directory_segment(
+    editor: WeakEntity<Editor>,
+    workspace: WeakEntity<Workspace>,
+    worktree_id: WorktreeId,
+    path: Arc<RelPath>,
+    active_path: Option<Arc<RelPath>>,
+    is_active_segment: bool,
+    mark_current_path: Option<Arc<RelPath>>,
+    shared_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+    label: gpui::AnyElement,
+    index: usize,
+) -> gpui::AnyElement {
+    let trigger = ButtonLike::new(("breadcrumb-directory", index))
+        .style(ButtonStyle::Subtle)
+        .size(ButtonSize::None)
+        .child(label);
+
+    // The active segment's `PopoverMenu` carries the handle `Editor::navigate_breadcrumb_to`
+    // reopens the dropdown through once the bar re-renders with it marked active; every other
+    // segment gets its own throwaway handle, same as a plain independently-openable dropdown.
+    let popover_handle = if is_active_segment {
+        shared_popover_handle
+    } else {
+        PopoverMenuHandle::default()
+    };
+
+    PopoverMenu::new(("breadcrumb-directory-menu", index))
+        .with_handle(popover_handle)
+        .trigger(trigger)
+        .menu(move |window, cx| {
+            let workspace_entity = workspace.upgrade()?;
+            workspace_entity
+                .read(cx)
+                .project()
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)?;
+
+            // `own_path`, not `path`: `open_breadcrumb_navigation` below and this popover's own
+            // dismiss subscription further down both need this segment's own identity to
+            // correctly recognize a later reopen (or a stale, queued dismiss — see
+            // `Editor::clear_breadcrumb_navigation`) of the same segment — see
+            // `BreadcrumbSegmentTarget::Directory::mark_current_path` for why that's not always
+            // `path`.
+            let own_path = mark_current_path.clone().unwrap_or_else(|| path.clone());
+
+            if let Some(editor_entity) = editor.upgrade() {
+                editor_entity.update(cx, |editor, cx| {
+                    editor.open_breadcrumb_navigation(worktree_id, own_path.clone(), cx);
+                });
+            }
+
+            let browser = BreadcrumbDirectoryBrowser::new(
+                editor.clone(),
+                workspace.clone(),
+                worktree_id,
+                path.clone(),
+                active_path.clone(),
+                mark_current_path.clone(),
+                window,
+                cx,
+            );
+            cx.subscribe(&browser, {
+                let editor = editor.clone();
+                let own_path = own_path.clone();
+                move |_browser, _: &DismissEvent, cx| {
+                    if let Some(editor_entity) = editor.upgrade() {
+                        editor_entity.update(cx, |editor, cx| {
+                            editor.clear_breadcrumb_navigation(worktree_id, &own_path, cx);
+                        });
+                    }
+                }
+            })
+            .detach();
+            Some(browser)
+        })
+        .into_any_element()
+}
+
+/// Aligns `symbol_segments` 1:1 with `segments`, then collapses the middle of both into a single
+/// ellipsis once there are more than `max_segments` entries, keeping `file_segment_index` pointing
+/// at the same logical segment (or `usize::MAX` if that segment itself got collapsed away).
+///
+/// The alignment must happen *before* the collapse: `symbol_segments` is built by a caller that
+/// tracks navigation state independently of `segments` (see `render_breadcrumb_text`'s comment on
+/// why the two can diverge — e.g. a navigated worktree that no longer resolves), so by the time
+/// this runs the two vectors aren't guaranteed to be the same length. The collapse below computes
+/// its splice range purely from `segments.len()`; applying that same range to a shorter
+/// `symbol_segments` would make `Vec::splice` panic. Aligning first — replacing `symbol_segments`
+/// wholesale with `None`s the same length as `segments` whenever they disagree — makes the
+/// invariant hold structurally instead of by caller convention, and makes it testable without a
+/// live rendered editor.
+fn collapse_breadcrumb_segments(
+    mut segments: Vec<HighlightedText>,
+    mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
+    mut file_segment_index: usize,
+    max_segments: usize,
+) -> (
+    Vec<HighlightedText>,
+    Vec<Option<BreadcrumbSegmentTarget>>,
+    usize,
+) {
+    if symbol_segments.len() != segments.len() {
+        symbol_segments = vec![None; segments.len()];
+    }
+
+    let prefix_end_ix = cmp::min(segments.len(), max_segments / 2);
+    let suffix_start_ix = cmp::max(
+        prefix_end_ix,
+        segments.len().saturating_sub(max_segments / 2),
+    );
+
+    if suffix_start_ix > prefix_end_ix {
+        segments.splice(
+            prefix_end_ix..suffix_start_ix,
+            Some(HighlightedText {
+                text: "⋯".into(),
+                highlights: vec![],
+            }),
+        );
+        symbol_segments.splice(prefix_end_ix..suffix_start_ix, Some(None));
+        // Keep `file_segment_index` pointing at the same logical segment after the splice: it
+        // shifts left by however many segments got collapsed into the ellipsis, or — if the file
+        // segment itself was one of the collapsed ones — stops matching any real index, so the
+        // dirty-filename styling below simply doesn't apply (consistent with the ellipsis
+        // already hiding that segment's real content).
+        file_segment_index = if file_segment_index < prefix_end_ix {
+            file_segment_index
+        } else if file_segment_index < suffix_start_ix {
+            usize::MAX
+        } else {
+            file_segment_index - (suffix_start_ix - prefix_end_ix) + 1
+        };
+    }
+
+    (segments, symbol_segments, file_segment_index)
+}
+
+/// Whether the breadcrumb bar's leading path/file segment should offer any navigation
+/// (directory-splitting into a dropdown, or the whole-buffer symbol-listing fallback) at all.
+///
+/// `false` for two cases the maintainer review on #60282 called out by name:
+/// - `has_project_path: false` — an untitled/unsaved buffer, which has no location in a project
+///   for a dropdown to browse from.
+/// - `worktree_is_single_file: Some(true)` — a file opened outside any real worktree, which Zed
+///   represents as a worktree scoped to that one file (see [`project::Worktree::is_single_file`]);
+///   there's no directory tree to browse and no sibling to reach.
+///
+/// `worktree_is_single_file: None` (the worktree couldn't be resolved at all, e.g. removed
+/// mid-session) is treated as navigable, preserving the prior fallback-to-symbols behavior for
+/// that unrelated edge case rather than conflating "can't check" with "confirmed not navigable".
+fn breadcrumb_path_is_navigable(
+    has_project_path: bool,
+    worktree_is_single_file: Option<bool>,
+) -> bool {
+    has_project_path && !worktree_is_single_file.unwrap_or(false)
+}
+
+pub fn render_breadcrumb_text(
+    mut segments: Vec<HighlightedText>,
+    breadcrumb_font: Option<Font>,
+    prefix: Option<gpui::AnyElement>,
+    active_item: &dyn ItemHandle,
+    multibuffer_header: bool,
+    window: &mut Window,
+    cx: &App,
+) -> gpui::AnyElement {
+    const MAX_SEGMENTS: usize = 12;
+
+    let element = h_flex().flex_grow_1().text_ui(cx);
+
+    let editor = active_item
+        .downcast::<Editor>()
+        .map(|editor| editor.downgrade());
+
+    let breadcrumb_navigation_mode = EditorSettings::get_global(cx)
+        .toolbar
+        .breadcrumb_navigation_mode;
+
+    // Segment data aligned 1:1 with `segments` once the path-splitting below runs: the leading
+    // path segment is split into one directory segment per path component plus a final file
+    // segment (buffer id paired with `None` — no ancestor item, so its dropdown lists top-level
+    // symbols instead), and each subsequent ancestor symbol segment gets the buffer id paired
+    // with its own item. Empty unless we can resolve a live singleton-buffer editor, since
+    // that's exactly the precondition `Editor::breadcrumbs_inner` uses to include symbols in
+    // `segments`. The buffer id comes from the singleton directly rather than
+    // `outline_symbols_at_cursor` so the path segment still gets a menu when the cursor sits
+    // outside any symbol (an empty ancestor chain).
+    let mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>> = Vec::new();
+    // Which final segment is "the file", for the dirty-filename styling below. Stays 0 —
+    // matching the pre-split behavior — whenever the path-splitting below doesn't run (a
+    // multibuffer header, or a buffer with no project path, e.g. unsaved).
+    let mut file_segment_index = 0usize;
+
+    if !multibuffer_header
+        && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
+    {
+        let editor_ref = editor_entity.read(cx);
+        if let Some(buffer) = editor_ref.buffer().read(cx).as_singleton() {
+            let buffer_id = buffer.read(cx).remote_id();
+            let mut path_split = false;
+
+            // The real open file's path, independent of any breadcrumb navigation below — used
+            // both as the fallback bar (when nothing is navigated) and, while navigated, as the
+            // `active_path` that submenus still highlight their way towards, so browsing
+            // elsewhere in the tree doesn't lose the trail back to the file actually open.
+            let real_project_path = active_item.project_path(cx);
+            // Set once a directory row has been chosen inside an open dropdown (see
+            // `Editor::navigate_breadcrumb_to`); while set, the bar shows that directory's own
+            // path instead of the open file's, with no symbol segments.
+            let navigation = editor_ref.breadcrumb_navigation().cloned();
+            let navigated = navigation
+                .as_ref()
+                .is_some_and(|navigation| navigation.navigated);
+            let active_segment = navigation
+                .as_ref()
+                .map(|navigation| navigation.active_path.clone());
+
+            // A buffer with no project path at all (never saved) has no directory tree to
+            // browse and no location in a project for the leading segment to represent, so it
+            // must stay plain text rather than degrading to a whole-buffer symbol dropdown.
+            // Likewise a path that resolves into a worktree created just to hold one file opened
+            // outside any real project (see `Worktree::is_single_file`) has no siblings and no
+            // real root to split into — IntelliJ's navigation bar and VS Code's breadcrumbs both
+            // leave such files unclickable rather than offering a dropdown with nothing useful
+            // in it. A worktree that can't be resolved at all (removed mid-session) is treated
+            // as navigable, preserving the prior fallback-to-symbols behavior for that edge case.
+            let is_navigable = breadcrumb_path_is_navigable(
+                real_project_path.is_some(),
+                real_project_path.as_ref().and_then(|project_path| {
+                    editor_ref
+                        .project()
+                        .and_then(|project| {
+                            project
+                                .read(cx)
+                                .worktree_for_id(project_path.worktree_id, cx)
+                        })
+                        .map(|worktree| worktree.read(cx).is_single_file())
+                }),
+            );
+
+            // Splitting the path requires knowing which worktree to name its root and list its
+            // top-level entries from; falls back to the single unsplit path segment
+            // `render_breadcrumb_text`'s caller already built otherwise (e.g. an unsaved buffer).
+            // The root segment is added unconditionally — even for a single-worktree project —
+            // so sibling top-level directories are reachable the way IntelliJ's navigation bar
+            // reaches them, starting at the project root rather than the file's own path.
+            // `Editor::breadcrumbs_inner` separately bakes the root name into its own single
+            // unsplit segment when more than one worktree is visible (via `resolve_file_path`'s
+            // `include_root`); that doesn't double up here because this whole branch replaces
+            // that segment's text wholesale via the `splice` below rather than reusing it.
+            if is_navigable
+                && !segments.is_empty()
+                && let Some(project) = editor_ref.project()
+            {
+                let split = if let Some(navigation) = navigation
+                    .as_ref()
+                    .filter(|navigation| navigation.navigated)
+                {
+                    project
+                        .read(cx)
+                        .worktree_for_id(navigation.worktree_id, cx)
+                        .map(|worktree| {
+                            breadcrumb_path_segments(
+                                navigation.worktree_id,
+                                worktree.read(cx).root_name_str(),
+                                &navigation.active_path,
+                                real_project_path.as_ref().map(|path| path.path.clone()),
+                                None,
+                                active_segment.as_deref(),
+                                breadcrumb_navigation_mode,
+                                navigation.descend_into_active_path,
+                            )
+                        })
+                } else if let Some(project_path) = real_project_path.as_ref()
+                    && let Some(worktree) = project
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)
+                {
+                    Some(breadcrumb_path_segments(
+                        project_path.worktree_id,
+                        worktree.read(cx).root_name_str(),
+                        &project_path.path,
+                        Some(project_path.path.clone()),
+                        Some(buffer_id),
+                        active_segment.as_deref(),
+                        breadcrumb_navigation_mode,
+                        false,
+                    ))
+                } else {
+                    None
+                };
+
+                if let Some((path_labels, path_targets)) = split {
+                    file_segment_index = path_labels.len() - 1;
+                    let replace_range = if navigated { 0..segments.len() } else { 0..1 };
+                    segments.splice(replace_range, path_labels);
+                    symbol_segments = path_targets;
+                    path_split = true;
+                }
+            }
+
+            if !path_split && is_navigable {
+                symbol_segments.push(Some(BreadcrumbSegmentTarget::Symbol {
+                    buffer_id,
+                    item: None,
+                }));
+            } else if !path_split {
+                // Not navigable (see `is_navigable`'s doc comment): leave this segment with no
+                // target at all so `render_breadcrumb_text` renders it as plain, unclickable
+                // text instead of wrapping it in a popover trigger.
+                symbol_segments.push(None);
+            }
+
+            if !navigated {
+                let ancestors = editor_ref
+                    .outline_symbols_at_cursor
+                    .as_ref()
+                    .filter(|(id, _)| *id == buffer_id)
+                    .map(|(_, ancestors)| ancestors.as_slice())
+                    .unwrap_or_default();
+                symbol_segments.extend(ancestors.iter().cloned().map(|item| {
+                    Some(BreadcrumbSegmentTarget::Symbol {
+                        buffer_id,
+                        item: Some(item),
+                    })
+                }));
+            }
+        }
+    }
+
+    let (segments, symbol_segments, file_segment_index) =
+        collapse_breadcrumb_segments(segments, symbol_segments, file_segment_index, MAX_SEGMENTS);
+
+    // Each segment owns exactly one arrow's hitbox — hover and click on the arrow behave as
+    // though they landed on whichever segment it's baked into — so hovering/clicking the arrow
+    // itself always does the same thing as hovering/clicking the segment it's attached to. Which
+    // segment that is flips with `breadcrumb_navigation_mode`:
+    //
+    // - `DrillDown`: each segment owns the arrow to its *right* — it reads as "and inside this,
+    //   the next thing," matching that clicking the segment lists its children. The trailing
+    //   (final) segment has nothing to its right, so it gets no arrow.
+    // - `Siblings`: each segment owns the arrow to its *left* — it points at the element whose
+    //   alternatives the dropdown lists, matching that clicking the segment lists its siblings
+    //   (its parent's contents). The leading segment has nothing to its left, so it gets no arrow.
+    //
+    // Baking the separator into one edge of the owning segment's own content (instead of
+    // interspersing it as a standalone element between segments) achieves the shared hitbox for
+    // free: whichever trigger wraps this combined content gets a hitbox spanning both.
+    //
+    // Geometry: this replaces the old `gap + separator + gap` produced by
+    // `Itertools::intersperse_with` between two `gap_1()`-spaced flex children with a single
+    // `gap_1()`-spaced inner child (separator, then content, or the reverse) plus the outer
+    // `gap_1()` before it — still exactly one gap on each side of the separator, so neither the
+    // bar's overall width nor the spacing between segments changes.
+    let segment_count = segments.len();
+    let last_segment_index = segment_count.saturating_sub(1);
+    let with_separator = |index: usize, content: gpui::AnyElement| -> gpui::AnyElement {
+        match breadcrumb_navigation_mode {
+            BreadcrumbNavigationMode::DrillDown if index != last_segment_index => h_flex()
+                .gap_1()
+                .child(content)
+                .child(Label::new("›").color(Color::Placeholder))
+                .into_any_element(),
+            BreadcrumbNavigationMode::Siblings if index != 0 => h_flex()
+                .gap_1()
+                .child(Label::new("›").color(Color::Placeholder))
+                .child(content)
+                .into_any_element(),
+            _ => content,
+        }
+    };
+
+    let highlighted_segments =
+        segments
+            .into_iter()
+            .zip(symbol_segments)
+            .enumerate()
+            .map(|(index, (segment, symbol))| {
+                let mut text_style = window.text_style();
+                if let Some(font) = &breadcrumb_font {
+                    text_style.font_family = font.family.clone();
+                    text_style.font_features = font.features.clone();
+                    text_style.font_style = font.style;
+                    text_style.font_weight = font.weight;
+                }
+                text_style.color = Color::Muted.color(cx);
+
+                if index == file_segment_index
+                    && !workspace::TabBarSettings::get_global(cx).show
+                    && active_item.is_dirty(cx)
+                    && let Some(styled_element) =
+                        apply_dirty_filename_style(&segment, &text_style, cx)
+                {
+                    return with_separator(index, styled_element);
+                }
+
+                let label = StyledText::new(flatten_text_for_single_line_display(&segment.text))
+                    .with_default_highlights(&text_style, segment.highlights)
+                    .into_any();
+                let label = with_separator(index, label);
+
+                match (symbol, editor.clone()) {
+                    (Some(BreadcrumbSegmentTarget::Symbol { buffer_id, item }), Some(editor)) => {
+                        render_breadcrumb_symbol_segment(editor, buffer_id, item, label, index)
+                    }
+                    (
+                        Some(BreadcrumbSegmentTarget::Directory {
+                            worktree_id,
+                            path,
+                            active_path,
+                            is_active_segment,
+                            mark_current_path,
+                        }),
+                        Some(editor),
+                    ) => {
+                        let Some(upgraded_editor) = editor.upgrade() else {
+                            return label;
+                        };
+                        let Some(workspace) = upgraded_editor
+                            .read(cx)
+                            .workspace()
+                            .map(|workspace| workspace.downgrade())
+                        else {
+                            return label;
+                        };
+                        let shared_popover_handle =
+                            upgraded_editor.read(cx).breadcrumb_popover_handle();
+                        // No extra "active segment" marker is painted here (unlike an earlier
+                        // version of this code, which filled the segment with
+                        // `element_selected`): the ordinary hover styling plus the open dropdown
+                        // already make the active segment obvious, matching how symbol segments
+                        // (which have never had such a marker) render. `is_active_segment` is
+                        // still threaded through below — `render_breadcrumb_directory_segment`
+                        // needs it to know which segment's popover handle to reuse for
+                        // re-anchoring (see `BreadcrumbSegmentTarget::Directory::is_active_segment`).
+                        render_breadcrumb_directory_segment(
+                            editor,
+                            workspace,
+                            worktree_id,
+                            path,
+                            active_path,
+                            is_active_segment,
+                            mark_current_path,
+                            shared_popover_handle,
+                            label,
+                            index,
+                        )
+                    }
+                    _ => label,
+                }
+            });
+
+    let breadcrumbs_stack = h_flex()
+        .gap_1()
+        .when(multibuffer_header, |this| {
+            this.pl_2()
+                .border_l_1()
+                .border_color(cx.theme().colors().border.opacity(0.6))
+        })
+        .children(highlighted_segments);
+
+    let breadcrumbs = if let Some(prefix) = prefix {
+        h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+    } else {
+        breadcrumbs_stack
+    };
+
+    let has_project_path = active_item.project_path(cx).is_some();
+
+    match editor {
+        Some(editor) => element
+            .id("breadcrumb_container")
+            .when(!multibuffer_header, |this| this.overflow_x_scroll())
+            .child(
+                ButtonLike::new("toggle outline view")
+                    .child(breadcrumbs)
+                    // Transparent rather than the default `Subtle` even outside the multibuffer
+                    // header case: with `Subtle`, hovering any part of the bar — including a
+                    // segment's own `Subtle` popover trigger nested inside it — tinted the whole
+                    // bar the same color, so individual segments never looked clickable on their
+                    // own. Each segment still gets its own hover highlight; this just stops the
+                    // outer bar from drowning it out.
+                    .style(ButtonStyle::Transparent)
+                    .when(!multibuffer_header, |this| {
+                        // No tooltip on the whole-bar `ButtonLike`: it repeatedly ended up
+                        // painted on top of a segment's own open dropdown (escaping two separate
+                        // suppression mechanisms in the process), which this removes for good
+                        // rather than patching a third time. Right-click-to-copy-path is kept —
+                        // it doesn't need a hint to be discoverable enough to keep.
+                        this.when(has_project_path, |this| {
+                            this.on_right_click({
+                                let editor = editor.clone();
+                                move |_, _, cx| {
+                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.target_file_abs_path(cx)
+                                        })
+                                    }) {
+                                        if let Some(path_str) = abs_path.to_str() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                path_str.to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            })
+                        })
+                    }),
+            )
+            .into_any_element(),
+        None => element
+            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
+            .pl_1()
+            .child(breadcrumbs)
+            .into_any_element(),
+    }
+}
+
+fn apply_dirty_filename_style(
+    segment: &HighlightedText,
+    text_style: &gpui::TextStyle,
+    cx: &App,
+) -> Option<gpui::AnyElement> {
+    let text = flatten_text_for_single_line_display(&segment.text);
+
+    let filename_position = std::path::Path::new(segment.text.as_ref())
+        .file_name()
+        .and_then(|f| {
+            let filename_str = f.to_string_lossy();
+            segment.text.rfind(filename_str.as_ref())
+        })?;
+
+    let bold_weight = FontWeight::BOLD;
+    let default_color = Color::Default.color(cx);
+
+    if filename_position == 0 {
+        let mut filename_style = text_style.clone();
+        filename_style.font_weight = bold_weight;
+        filename_style.color = default_color;
+
+        return Some(
+            StyledText::new(text)
+                .with_default_highlights(&filename_style, [])
+                .into_any(),
+        );
+    }
+
+    let highlight_style = gpui::HighlightStyle {
+        font_weight: Some(bold_weight),
+        color: Some(default_color),
+        ..Default::default()
+    };
+
+    let highlight = vec![(filename_position..text.len(), highlight_style)];
+    Some(
+        StyledText::new(text)
+            .with_default_highlights(text_style, highlight)
+            .into_any(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MultiBuffer;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    #[test]
+    fn test_breadcrumb_path_is_navigable() {
+        // Untitled/unsaved buffer: no project path at all.
+        assert!(!breadcrumb_path_is_navigable(false, None));
+        assert!(!breadcrumb_path_is_navigable(false, Some(false)));
+
+        // File opened outside any real worktree — Zed represents it as a single-file worktree.
+        assert!(!breadcrumb_path_is_navigable(true, Some(true)));
+
+        // Ordinary file inside a real worktree.
+        assert!(breadcrumb_path_is_navigable(true, Some(false)));
+
+        // Worktree couldn't be resolved (e.g. removed mid-session): preserves the prior
+        // fallback-to-symbols behavior rather than assuming non-navigable.
+        assert!(breadcrumb_path_is_navigable(true, None));
+    }
+
+    #[test]
+    fn test_flatten_text_for_single_line_display_preserves_byte_offsets() {
+        // The whole point of `flatten_text_for_single_line_display` is that byte-offset
+        // highlight ranges computed against `original` stay valid against its return value —
+        // verify that directly rather than just trusting the debug-assert, by locating the same
+        // substring by byte offset in both strings.
+        let original = "fn outer() {\n    inner()\n}";
+        let flattened = flatten_text_for_single_line_display(original);
+
+        assert_eq!(flattened, "fn outer() {     inner() }");
+        assert_eq!(flattened.len(), original.len());
+
+        let inner_offset = original.find("inner").unwrap();
+        assert_eq!(
+            &flattened[inner_offset..inner_offset + "inner".len()],
+            "inner",
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_entry_icon_source() {
+        assert_eq!(
+            breadcrumb_entry_icon_source(true, true, true),
+            BreadcrumbEntryIconSource::Folder
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(true, false, true),
+            BreadcrumbEntryIconSource::Folder
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(true, true, false),
+            BreadcrumbEntryIconSource::Chevron
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(true, false, false),
+            BreadcrumbEntryIconSource::Chevron
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(false, true, true),
+            BreadcrumbEntryIconSource::File
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(false, true, false),
+            BreadcrumbEntryIconSource::File
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(false, false, true),
+            BreadcrumbEntryIconSource::None
+        );
+        assert_eq!(
+            breadcrumb_entry_icon_source(false, false, false),
+            BreadcrumbEntryIconSource::None
+        );
+    }
+
+    #[test]
+    fn test_sibling_outline_indices_top_level() {
+        // struct A; struct B; struct C; — all depth 0, no parent.
+        let depths = [0, 0, 0];
+        assert_eq!(sibling_outline_indices(&depths, 0), vec![0, 1, 2]);
+        assert_eq!(sibling_outline_indices(&depths, 1), vec![0, 1, 2]);
+        assert_eq!(sibling_outline_indices(&depths, 2), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_sibling_outline_indices_nested() {
+        // impl A {         // 0
+        //     fn one() {}  // 1
+        //     fn two() {}  // 1
+        // }
+        // impl B {         // 0
+        //     fn three() {}// 1
+        // }
+        let depths = [0, 1, 1, 0, 1];
+        assert_eq!(sibling_outline_indices(&depths, 1), vec![1, 2]);
+        assert_eq!(sibling_outline_indices(&depths, 2), vec![1, 2]);
+        assert_eq!(sibling_outline_indices(&depths, 4), vec![4]);
+        assert_eq!(sibling_outline_indices(&depths, 0), vec![0, 3]);
+        assert_eq!(sibling_outline_indices(&depths, 3), vec![0, 3]);
+    }
+
+    #[test]
+    fn test_sibling_outline_indices_uneven_depths() {
+        // Tree-sitter outlines can jump straight from depth 0 to depth 2 (e.g. a struct
+        // whose fields are one nesting level "deeper" than a typical impl body). The parent
+        // of a depth-2 item here should be the nearest preceding shallower item (depth 0),
+        // not a nonexistent depth-1 item.
+        // struct Foo {  // 0
+        //     bar: u32, // 2
+        //     baz: u32, // 2
+        // }
+        // struct Qux;   // 0
+        let depths = [0, 2, 2, 0];
+        assert_eq!(sibling_outline_indices(&depths, 1), vec![1, 2]);
+        assert_eq!(sibling_outline_indices(&depths, 2), vec![1, 2]);
+        assert_eq!(sibling_outline_indices(&depths, 0), vec![0, 3]);
+    }
+
+    #[test]
+    fn test_sibling_outline_indices_single_item() {
+        let depths = [0];
+        assert_eq!(sibling_outline_indices(&depths, 0), vec![0]);
+    }
+
+    #[test]
+    fn test_sibling_outline_indices_out_of_bounds() {
+        let depths = [0, 0];
+        assert_eq!(sibling_outline_indices(&depths, 5), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_child_outline_indices_top_level() {
+        // struct A; struct B; struct C; — all depth 0, none has children.
+        let depths = [0, 0, 0];
+        assert_eq!(child_outline_indices(&depths, 0), Vec::<usize>::new());
+        assert_eq!(child_outline_indices(&depths, 1), Vec::<usize>::new());
+        assert_eq!(child_outline_indices(&depths, 2), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_child_outline_indices_nested() {
+        // impl A {         // 0
+        //     fn one() {}  // 1
+        //     fn two() {}  // 1
+        // }
+        // impl B {         // 0
+        //     fn three() {}// 1
+        // }
+        let depths = [0, 1, 1, 0, 1];
+        assert_eq!(child_outline_indices(&depths, 0), vec![1, 2]);
+        assert_eq!(child_outline_indices(&depths, 3), vec![4]);
+        // Leaf items have no children.
+        assert_eq!(child_outline_indices(&depths, 1), Vec::<usize>::new());
+        assert_eq!(child_outline_indices(&depths, 2), Vec::<usize>::new());
+        assert_eq!(child_outline_indices(&depths, 4), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_child_outline_indices_uneven_depths() {
+        // struct Foo {  // 0
+        //     bar: u32, // 2
+        //     baz: u32, // 2
+        // }
+        // struct Qux;   // 0
+        //
+        // The depth-2 fields are still direct children of the depth-0 struct, even though
+        // there's no depth-1 item between them — parenthood follows the nearest preceding
+        // shallower item, not `depth - 1`.
+        let depths = [0, 2, 2, 0];
+        assert_eq!(child_outline_indices(&depths, 0), vec![1, 2]);
+        assert_eq!(child_outline_indices(&depths, 3), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_child_outline_indices_out_of_bounds() {
+        let depths = [0, 0];
+        assert_eq!(child_outline_indices(&depths, 5), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_top_level_outline_indices() {
+        let depths = [0, 1, 1, 0, 1];
+        assert_eq!(top_level_outline_indices(&depths), vec![0, 3]);
+
+        let depths_uneven = [0, 2, 2, 0];
+        assert_eq!(top_level_outline_indices(&depths_uneven), vec![0, 3]);
+
+        let depths_empty: [usize; 0] = [];
+        assert_eq!(
+            top_level_outline_indices(&depths_empty),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_path_prefixes_nested() {
+        use util::rel_path::rel_path;
+
+        assert_eq!(
+            breadcrumb_path_prefixes(rel_path("a/b/c.rs")),
+            vec![rel_path("a"), rel_path("a/b"), rel_path("a/b/c.rs")]
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_path_prefixes_top_level_file() {
+        use util::rel_path::rel_path;
+
+        assert_eq!(
+            breadcrumb_path_prefixes(rel_path("file.rs")),
+            vec![rel_path("file.rs")]
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_path_prefixes_empty() {
+        assert_eq!(
+            breadcrumb_path_prefixes(RelPath::empty()),
+            Vec::<&RelPath>::new()
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_path_segments_nested() {
+        use util::rel_path::rel_path;
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let buffer_id = BufferId::new(1).unwrap();
+        let path = rel_path("src/main/kotlin/Foo.kt").into_arc();
+
+        let (labels, targets) = breadcrumb_path_segments(
+            worktree_id,
+            "my-project",
+            &path,
+            Some(path.clone()),
+            Some(buffer_id),
+            None,
+            BreadcrumbNavigationMode::DrillDown,
+            false,
+        );
+
+        assert_eq!(
+            labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["my-project", "src", "main", "kotlin", "Foo.kt"]
+        );
+        assert_eq!(targets.len(), labels.len());
+
+        match targets[0].as_ref().unwrap() {
+            BreadcrumbSegmentTarget::Directory {
+                worktree_id: id,
+                path,
+                active_path,
+                is_active_segment,
+                mark_current_path,
+            } => {
+                assert!(mark_current_path.is_none());
+                assert_eq!(*id, worktree_id);
+                assert_eq!(path.as_unix_str(), "");
+                assert_eq!(
+                    active_path.as_deref(),
+                    Some(rel_path("src/main/kotlin/Foo.kt"))
+                );
+                assert!(!is_active_segment);
+            }
+            other => panic!("expected root directory target, got {other:?}"),
+        }
+
+        for (index, expected_dir) in ["src", "src/main", "src/main/kotlin"]
+            .into_iter()
+            .enumerate()
+        {
+            match targets[index + 1].as_ref().unwrap() {
+                BreadcrumbSegmentTarget::Directory { path, .. } => {
+                    assert_eq!(path.as_unix_str(), expected_dir);
+                }
+                other => panic!("expected directory target, got {other:?}"),
+            }
+        }
+
+        match targets.last().unwrap().as_ref().unwrap() {
+            BreadcrumbSegmentTarget::Symbol {
+                buffer_id: id,
+                item,
+            } => {
+                assert_eq!(*id, buffer_id);
+                assert!(item.is_none());
+            }
+            other => panic!("expected symbol target for the file segment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_breadcrumb_path_segments_top_level_file() {
+        use util::rel_path::rel_path;
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let buffer_id = BufferId::new(1).unwrap();
+        let path = rel_path("Foo.kt").into_arc();
+
+        let (labels, targets) = breadcrumb_path_segments(
+            worktree_id,
+            "my-project",
+            &path,
+            Some(path.clone()),
+            Some(buffer_id),
+            None,
+            BreadcrumbNavigationMode::DrillDown,
+            false,
+        );
+
+        assert_eq!(
+            labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["my-project", "Foo.kt"]
+        );
+        assert!(matches!(
+            targets[0].as_ref().unwrap(),
+            BreadcrumbSegmentTarget::Directory { .. }
+        ));
+        assert!(matches!(
+            targets[1].as_ref().unwrap(),
+            BreadcrumbSegmentTarget::Symbol { item: None, .. }
+        ));
+    }
+
+    #[test]
+    fn test_breadcrumb_path_segments_navigated_directory_marks_active_segment() {
+        use util::rel_path::rel_path;
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let path = rel_path("src/main").into_arc();
+
+        let (labels, targets) = breadcrumb_path_segments(
+            worktree_id,
+            "ihavenever",
+            &path,
+            None,
+            None,
+            Some(rel_path("src/main")),
+            BreadcrumbNavigationMode::DrillDown,
+            false,
+        );
+
+        assert_eq!(
+            labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["ihavenever", "src", "main"]
+        );
+
+        // The terminal segment is a directory target — not a `Symbol` target — because a
+        // navigated bar's last segment is a directory the user browsed to, not the open file.
+        let active_flags: Vec<bool> = targets
+            .iter()
+            .map(|target| match target.as_ref().unwrap() {
+                BreadcrumbSegmentTarget::Directory {
+                    is_active_segment, ..
+                } => *is_active_segment,
+                BreadcrumbSegmentTarget::Symbol { .. } => {
+                    panic!("navigated directory path should have no symbol target")
+                }
+            })
+            .collect();
+        assert_eq!(active_flags, vec![false, false, true]);
+    }
+
+    #[test]
+    fn test_breadcrumb_path_segments_drill_down_includes_root_and_lists_own_children() {
+        use util::rel_path::rel_path;
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let path = rel_path("src/main/Foo.kt").into_arc();
+
+        let (labels, targets) = breadcrumb_path_segments(
+            worktree_id,
+            "my-project",
+            &path,
+            Some(path.clone()),
+            None,
+            None,
+            BreadcrumbNavigationMode::DrillDown,
+            false,
+        );
+
+        // The leading project-root segment is present — it's the only way to reach top-level
+        // siblings in this mode.
+        assert_eq!(
+            labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["my-project", "src", "main", "Foo.kt"]
+        );
+
+        // Clicking a segment lists its own children: `src`'s dropdown target is `src` itself,
+        // `src/main`'s is `src/main` itself.
+        let list_paths: Vec<String> = targets
+            .iter()
+            .map(|target| match target.as_ref().unwrap() {
+                BreadcrumbSegmentTarget::Directory {
+                    path,
+                    mark_current_path,
+                    ..
+                } => {
+                    assert!(
+                        mark_current_path.is_none(),
+                        "drill-down segments don't mark a current entry within their own listing"
+                    );
+                    path.as_unix_str().to_string()
+                }
+                BreadcrumbSegmentTarget::Symbol { .. } => "<symbol>".to_string(),
+            })
+            .collect();
+        assert_eq!(list_paths, vec!["", "src", "src/main", "src/main/Foo.kt"]);
+    }
+
+    #[test]
+    fn test_breadcrumb_path_segments_siblings_omits_root_and_lists_parent_contents() {
+        use util::rel_path::rel_path;
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let path = rel_path("src/main/Foo.kt").into_arc();
+
+        let (labels, targets) = breadcrumb_path_segments(
+            worktree_id,
+            "my-project",
+            &path,
+            Some(path.clone()),
+            None,
+            None,
+            BreadcrumbNavigationMode::Siblings,
+            false,
+        );
+
+        // No leading project-root segment — the first real segment's own dropdown already lists
+        // the project root's contents.
+        assert_eq!(
+            labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["src", "main", "Foo.kt"]
+        );
+
+        // Clicking a segment lists its *parent's* children, marking the segment's own path as
+        // the current one within that listing: `src`'s dropdown lists the project root's
+        // children with `src` marked current; `main`'s lists `src`'s children with `main` marked.
+        let listings: Vec<(String, Option<String>)> = targets
+            .iter()
+            .map(|target| match target.as_ref().unwrap() {
+                BreadcrumbSegmentTarget::Directory {
+                    path,
+                    mark_current_path,
+                    ..
+                } => (
+                    path.as_unix_str().to_string(),
+                    mark_current_path
+                        .as_ref()
+                        .map(|path| path.as_unix_str().to_string()),
+                ),
+                BreadcrumbSegmentTarget::Symbol { .. } => ("<symbol>".to_string(), None),
+            })
+            .collect();
+        assert_eq!(
+            listings,
+            vec![
+                ("".to_string(), Some("src".to_string())),
+                ("src".to_string(), Some("src/main".to_string())),
+                ("src/main".to_string(), Some("src/main/Foo.kt".to_string())),
+            ]
+        );
+    }
+
+    /// Regression coverage for the flicker-then-revert bug: choosing a directory row in
+    /// `Siblings` mode must make the reopened dropdown list *that directory's own children* (so
+    /// the user can keep descending), not re-list the siblings it was just chosen from — see
+    /// `BreadcrumbNavigation::descend_into_active_path`'s doc comment. Every other segment in the
+    /// same bar is unaffected: it still lists its parent's contents if clicked.
+    #[test]
+    fn test_breadcrumb_path_segments_siblings_descends_into_active_segment() {
+        use util::rel_path::rel_path;
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let path = rel_path("src/main/sub").into_arc();
+
+        let (labels, targets) = breadcrumb_path_segments(
+            worktree_id,
+            "my-project",
+            &path,
+            None,
+            None,
+            Some(rel_path("src/main/sub")),
+            BreadcrumbNavigationMode::Siblings,
+            true,
+        );
+
+        assert_eq!(
+            labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
+            vec!["src", "main", "sub"]
+        );
+
+        let listings: Vec<(String, Option<String>)> = targets
+            .iter()
+            .map(|target| match target.as_ref().unwrap() {
+                BreadcrumbSegmentTarget::Directory {
+                    path,
+                    mark_current_path,
+                    ..
+                } => (
+                    path.as_unix_str().to_string(),
+                    mark_current_path
+                        .as_ref()
+                        .map(|path| path.as_unix_str().to_string()),
+                ),
+                BreadcrumbSegmentTarget::Symbol { .. } => ("<symbol>".to_string(), None),
+            })
+            .collect();
+        assert_eq!(
+            listings,
+            vec![
+                // Non-active segments are unaffected: still their parent's contents.
+                ("".to_string(), Some("src".to_string())),
+                ("src".to_string(), Some("src/main".to_string())),
+                // The active segment (`sub`, the one just navigated to) lists its own children
+                // instead, with no "current" entry marked — there isn't one, since none of its
+                // children is itself.
+                ("src/main/sub".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_descend_single_child_directories_stops_at_fork() {
+        use util::rel_path::rel_path;
+
+        let tree: collections::HashMap<&str, Vec<(&str, bool)>> =
+            collections::HashMap::from_iter([
+                ("a", vec![("a/b", true)]),
+                ("a/b", vec![("a/b/c", true), ("a/b/d", true)]),
+            ]);
+
+        let result = descend_single_child_directories(rel_path("a").into_arc(), |path| {
+            tree.get(path.as_unix_str())
+                .into_iter()
+                .flatten()
+                .map(|(child, is_dir)| (rel_path(child).into_arc(), *is_dir))
+                .collect()
+        });
+
+        assert_eq!(result, rel_path("a/b").into_arc());
+    }
+
+    #[test]
+    fn test_descend_single_child_directories_stops_short_of_lone_file() {
+        use util::rel_path::rel_path;
+
+        let tree: collections::HashMap<&str, Vec<(&str, bool)>> = collections::HashMap::from_iter(
+            [("repository", vec![("repository/Repositories.kt", false)])],
+        );
+
+        let result = descend_single_child_directories(rel_path("repository").into_arc(), |path| {
+            tree.get(path.as_unix_str())
+                .into_iter()
+                .flatten()
+                .map(|(child, is_dir)| (rel_path(child).into_arc(), *is_dir))
+                .collect()
+        });
+
+        // Stops at `repository` itself rather than descending into the file it alone contains —
+        // the resolved directory's listing still has to show `Repositories.kt` as a row the user
+        // clicks themselves, not open it on their behalf.
+        assert_eq!(result, rel_path("repository").into_arc());
+    }
+
+    #[test]
+    fn test_descend_single_child_directories_caps_depth() {
+        use util::rel_path::rel_path;
+
+        // Each directory has exactly one child, forever — simulates a symlink cycle or a
+        // pathologically deep chain. The cap must stop the walk rather than looping forever.
+        let result = descend_single_child_directories(rel_path("a").into_arc(), |path| {
+            vec![(
+                rel_path(&format!("{}/x", path.as_unix_str())).into_arc(),
+                true,
+            )]
+        });
+
+        // The walk must terminate rather than loop forever; the cap bounds how many `/x` segments
+        // it can add on top of the starting `a`.
+        assert_eq!(
+            result.as_unix_str().matches('/').count(),
+            MAX_BREADCRUMB_DESCENT_DEPTH
+        );
+    }
+
+    #[test]
+    fn test_descend_single_child_directories_stops_at_empty_directory() {
+        use util::rel_path::rel_path;
+
+        let result = descend_single_child_directories(rel_path("empty").into_arc(), |_| Vec::new());
+
+        assert_eq!(result, rel_path("empty").into_arc());
+    }
+
+    #[test]
+    fn test_collapse_breadcrumb_segments_realigns_divergent_lengths() {
+        let segments: Vec<HighlightedText> = (0..3)
+            .map(|i| HighlightedText {
+                text: format!("segment-{i}").into(),
+                highlights: vec![],
+            })
+            .collect();
+        // Divergent on purpose, and shorter than `segments`: models `symbol_segments` built from a
+        // navigation whose worktree failed to resolve (see `render_breadcrumb_text`'s comment on
+        // `symbol_segments`).
+        let symbol_segments = vec![Some(BreadcrumbSegmentTarget::Symbol {
+            buffer_id: BufferId::new(1).unwrap(),
+            item: None,
+        })];
+
+        let (segments, symbol_segments, file_segment_index) =
+            collapse_breadcrumb_segments(segments, symbol_segments, 0, 12);
+
+        assert_eq!(segments.len(), 3);
+        assert_eq!(symbol_segments.len(), 3);
+        assert!(symbol_segments.iter().all(Option::is_none));
+        assert_eq!(file_segment_index, 0);
+    }
+
+    /// Regression test for the `symbol_segments.splice()` panic described in the branch review:
+    /// with the cursor `MAX_SEGMENTS` (12) or more symbol levels deep and a navigated worktree
+    /// that fails to resolve, `symbol_segments` ends up far shorter than `segments` (see
+    /// `render_breadcrumb_text`'s comment on `symbol_segments` for how the two are built
+    /// independently). Collapsing the middle of `segments` into an ellipsis computes its splice
+    /// range purely from `segments.len()`; applying that same range to the short
+    /// `symbol_segments` panics unless the alignment guard runs first.
+    ///
+    /// Fails without the fix: moving the alignment check inside `collapse_breadcrumb_segments`
+    /// back to *after* the splice (its position before this function was extracted) makes this
+    /// test panic with "range end index 8 out of range for slice of length 1" — a real
+    /// `Vec::splice` out-of-bounds panic — instead of passing. Confirmed by making exactly that
+    /// change and re-running this test before restoring the fix.
+    #[test]
+    fn test_collapse_breadcrumb_segments_divergent_length_beyond_max_does_not_panic() {
+        let segments: Vec<HighlightedText> = (0..14)
+            .map(|i| HighlightedText {
+                text: format!("segment-{i}").into(),
+                highlights: vec![],
+            })
+            .collect();
+        // Only one entry — far shorter than `segments` — modeling the divergence described above.
+        let symbol_segments = vec![Some(BreadcrumbSegmentTarget::Symbol {
+            buffer_id: BufferId::new(1).unwrap(),
+            item: None,
+        })];
+
+        let (segments, symbol_segments, file_segment_index) =
+            collapse_breadcrumb_segments(segments, symbol_segments, 13, 12);
+
+        // Middle collapsed into one ellipsis: 6 prefix + 1 ellipsis + 6 suffix = 13.
+        assert_eq!(segments.len(), 13);
+        assert_eq!(symbol_segments.len(), segments.len());
+        // The file segment (originally index 13, past the old suffix start) shifts left by the
+        // two collapsed segments, landing on the ellipsis's far side.
+        assert_eq!(file_segment_index, 12);
+    }
+
+    /// Regression test for the double-lease panic fixed on `Editor::navigate_breadcrumb_to`:
+    /// choosing a directory row runs `BreadcrumbDirectoryBrowser::choose` inside a `cx.listener`
+    /// on that browser entity (see `render_entry`'s `on_click`), i.e. the entity is leased for
+    /// the duration of the call. `choose` reaches `navigate_breadcrumb_to`, which re-anchors the
+    /// active segment's shared `PopoverMenuHandle` — and that handle's `menu` is the very browser
+    /// entity being chosen from, since a row can only be chosen from the active segment's own
+    /// dropdown. Calling `PopoverMenuHandle::hide`/`show` synchronously there updates that same
+    /// entity a second time and panics (`entity_map.rs`: "cannot update ... while it is already
+    /// being updated"). This wires up a real `PopoverMenu`/`PopoverMenuHandle` exactly as
+    /// `render_breadcrumb_directory_segment` does — including calling `open_breadcrumb_navigation`
+    /// from inside the same `.menu()` builder that creates the browser, not as a separate step —
+    /// opens it through `handle.show` to get the *same* `BreadcrumbDirectoryBrowser` entity
+    /// `handle`'s internal state holds, and then drives `choose` on that entity through
+    /// `Entity::update_in` the same way `cx.listener` does. Verified by temporarily reverting
+    /// `navigate_breadcrumb_to` to its pre-fix, synchronous `handle.hide`/`show`: this test then
+    /// panics with exactly "cannot update editor::element::BreadcrumbDirectoryBrowser while it is
+    /// already being updated", and passes again once the fix is restored.
+    ///
+    /// Not covered: real mouse-event dispatch through the popover's rendered rows (this calls
+    /// `choose` directly rather than clicking a laid-out `ListItem`), and the visual outcome of
+    /// the re-anchor (this only checks that it completes and lands in the expected state, not
+    /// pixel positions).
+    #[gpui::test]
+    async fn test_choosing_breadcrumb_directory_row_does_not_double_lease_browser(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use std::cell::RefCell;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        // A real `PopoverMenu`/`PopoverMenuHandle` only wires itself up during an actual layout
+        // pass of a rendered view (see `PopoverMenu::request_layout`), which itself needs a
+        // `current_view` on the window's render stack — so this has to be an honest `Render`
+        // mounted as a window's root, not a bare element drawn via `VisualTestContext::draw`.
+        //
+        // The `Editor` is created here too, inside the harness's own window, rather than in a
+        // window of its own: `Context::defer_in`'s `ensure_window` only *fills in* an entity's
+        // window association if it doesn't already have one, so an `Editor` native to a different
+        // window would keep re-anchoring's `on_next_frame` calls stuck on that other window,
+        // where nothing in this test ever drains them.
+        struct Harness {
+            handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+            editor: Entity<Editor>,
+            workspace: WeakEntity<Workspace>,
+            worktree_id: WorktreeId,
+            captured_browser: Rc<RefCell<Option<Entity<BreadcrumbDirectoryBrowser>>>>,
+        }
+
+        impl Render for Harness {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                let editor = self.editor.downgrade();
+                let workspace = self.workspace.clone();
+                let worktree_id = self.worktree_id;
+                let captured_browser = self.captured_browser.clone();
+                PopoverMenu::new("test-breadcrumb-directory-menu")
+                    .with_handle(self.handle.clone())
+                    .trigger(ButtonLike::new("trigger").child(div()))
+                    .menu(move |window, cx| {
+                        // Mirrors `render_breadcrumb_directory_segment`'s `.menu()` builder
+                        // exactly: `open_breadcrumb_navigation` marks this segment active as
+                        // part of the *same* opening sequence that creates the browser below,
+                        // not a separate step afterward. Calling it separately, after the
+                        // popover was already open, would itself dismiss that already-open
+                        // browser through `handle` (see `open_breadcrumb_navigation`'s own
+                        // `hide` call) before `choose` ever ran — which would silently defeat
+                        // the reproduction this test exists for, by leaving `handle` pointing at
+                        // nothing by the time `navigate_breadcrumb_to` tries to reach it.
+                        if let Some(editor_entity) = editor.upgrade() {
+                            editor_entity.update(cx, |editor, cx| {
+                                editor.open_breadcrumb_navigation(
+                                    worktree_id,
+                                    RelPath::empty().into(),
+                                    cx,
+                                );
+                            });
+                        }
+                        let browser = BreadcrumbDirectoryBrowser::new(
+                            editor.clone(),
+                            workspace.clone(),
+                            worktree_id,
+                            RelPath::empty().into(),
+                            None,
+                            None,
+                            window,
+                            cx,
+                        );
+                        *captured_browser.borrow_mut() = Some(browser.clone());
+                        Some(browser)
+                    })
+            }
+        }
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "dir_a": {
+                    "child1.txt": "",
+                    "child2.txt": "",
+                },
+                "file.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let captured_browser: Rc<RefCell<Option<Entity<BreadcrumbDirectoryBrowser>>>> =
+            Rc::default();
+
+        let harness_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            // The real handle `Editor::navigate_breadcrumb_to` re-anchors, exactly like
+            // `render_breadcrumb_directory_segment` uses for the active segment — not a fresh
+            // handle of the test's own, which `navigate_breadcrumb_to` would have no way to reach.
+            let handle = editor.read(cx).breadcrumb_popover_handle();
+            Harness {
+                handle,
+                editor,
+                workspace: workspace.downgrade(),
+                worktree_id,
+                captured_browser: captured_browser.clone(),
+            }
+        });
+        let editor = harness_window
+            .read_with(cx, |harness, _| harness.editor.clone())
+            .unwrap();
+        let handle = harness_window
+            .read_with(cx, |harness, _| harness.handle.clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*harness_window, cx);
+
+        // Lays out the harness once so `PopoverMenu::request_layout` wires `handle`'s state up to
+        // the popover's own `Rc<RefCell<Option<Entity<...>>>>`, exactly like a real breadcrumb
+        // bar render pass does before any dropdown ever opens.
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // Opening the popover through `handle.show` (rather than constructing a
+        // `BreadcrumbDirectoryBrowser` directly) is what makes `browser` below the exact same
+        // entity `handle`'s internal state holds — the crux of reproducing the bug, since the
+        // panic is specifically about `navigate_breadcrumb_to` reaching back into the entity
+        // that's currently leased.
+        cx.update(|window, cx| handle.show(window, cx));
+        let browser = captured_browser.borrow().clone().expect("popover opened");
+        assert!(handle.is_deployed());
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                editor.breadcrumb_navigation().is_some(),
+                "opening the popover marked this segment active"
+            );
+        });
+
+        // The actual reproduction: choosing a directory row while the browser entity is leased
+        // by this very `update` call. `dir_a` has two children, so `descend_single_child_directories`
+        // resolves it immediately and `choose` calls straight into `navigate_breadcrumb_to` —
+        // still inside this closure's lease. Pre-fix, this panicked.
+        browser.update_in(cx, |browser, window, cx| {
+            browser.choose(rel_path("dir_a").into_arc(), true, window, cx);
+        });
+
+        editor.read_with(cx, |editor, _| {
+            let navigation = editor
+                .breadcrumb_navigation()
+                .expect("navigate_breadcrumb_to set a session");
+            assert_eq!(navigation.active_path.as_unix_str(), "dir_a");
+            assert!(navigation.navigated);
+            assert!(
+                editor.breadcrumb_reanchoring,
+                "re-anchor is still in flight — the popover isn't back open yet"
+            );
+        });
+        assert!(
+            !handle.is_deployed(),
+            "the pre-navigation popover was dismissed synchronously by the defer"
+        );
+
+        // Draining the deferred re-anchor (see `navigate_breadcrumb_to`'s doc comment) must not
+        // panic either: it calls `handle.hide` then, a couple of frames later, `handle.show` —
+        // and by then `browser` is no longer leased, but a fresh browser now backs the handle.
+        // A handful of frames covers both this re-anchor's own two-frame focus dance and the one
+        // already in flight from this test's earlier explicit `handle.show` above.
+        cx.update(|window, cx| {
+            for _ in 0..4 {
+                window.simulate_next_frame(cx);
+            }
+        });
+
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                !editor.breadcrumb_reanchoring,
+                "re-anchor finishes within a few frames"
+            );
+        });
+        assert!(
+            handle.is_deployed(),
+            "the popover reopened under the resolved directory's own segment"
+        );
+    }
+
+    /// Regression test for the flicker-then-revert bug: in
+    /// [`BreadcrumbNavigationMode::Siblings`], choosing a sibling directory from an open dropdown
+    /// must leave the breadcrumb bar showing that directory — not silently snap back to the open
+    /// file's path a couple of frames later.
+    ///
+    /// Root cause: `render_breadcrumb_directory_segment`'s `.menu()` builder used to call
+    /// `Editor::open_breadcrumb_navigation` with `path` — the directory this dropdown *lists*,
+    /// which in `Siblings` mode is the segment's *parent* (its siblings are its parent's
+    /// children), not the segment's own identity (`mark_current_path`, when set). So opening
+    /// "main"'s dropdown (which lists "main"'s parent's children) marked the *parent* active
+    /// instead of "main" itself — even though `mark_current_path` already held the correct
+    /// identity right there, just unused. That misattribution is what let a subsequent
+    /// `navigate_breadcrumb_to` get its state silently clobbered: any later reopen along the
+    /// stale identity re-derives the wrong `path` and, since it no longer matches `active_path`,
+    /// resets `navigated` back to `false`, snapping the bar back to the open file.
+    ///
+    /// This drives the exact same `render_breadcrumb_directory_segment` and
+    /// `breadcrumb_path_segments` functions a real bar uses, recomputing its one modeled segment
+    /// fresh from live `Editor::breadcrumb_navigation()` state on every render — exactly like
+    /// `render_breadcrumb_text` does — so both the initial open (`path` = parent, `mark_current_path`
+    /// = "main", genuinely diverging) and the re-anchor's reopen run through the real, current
+    /// code, not hand-computed stand-ins.
+    ///
+    /// Verified to fail without the fix: reverting the `.menu()` builder's identity argument back
+    /// to plain `path.clone()` makes the first assertion below fail (`active_path` comes back
+    /// `""`, the parent, instead of `"main"`).
+    #[gpui::test]
+    async fn test_choosing_sibling_directory_does_not_revert_navigation(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        struct Harness {
+            handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+            editor: Entity<Editor>,
+            workspace: WeakEntity<Workspace>,
+            worktree_id: WorktreeId,
+        }
+
+        impl Render for Harness {
+            fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let editor_weak = self.editor.downgrade();
+                let workspace = self.workspace.clone();
+                let worktree_id = self.worktree_id;
+
+                // Mirrors `render_breadcrumb_text`'s own two branches: before anything is chosen,
+                // this models a single segment ("main") whose dropdown lists its parent's (the
+                // project root's) children; once `navigate_breadcrumb_to` fires, it re-derives the
+                // now-active segment's own listing fresh from live state, exactly like a real
+                // re-render would — a static, unchanging mock here would falsely fail (or falsely
+                // pass) independent of the fix, since real code always recomputes per render.
+                let navigation = self.editor.read(cx).breadcrumb_navigation().cloned();
+                let navigated = navigation.as_ref().is_some_and(|n| n.navigated);
+                let descend = navigation
+                    .as_ref()
+                    .is_some_and(|n| n.descend_into_active_path);
+                let active_segment = navigation.as_ref().map(|n| n.active_path.clone());
+                let path = if navigated {
+                    navigation.unwrap().active_path
+                } else {
+                    rel_path("main").into_arc()
+                };
+
+                let (_labels, targets) = breadcrumb_path_segments(
+                    worktree_id,
+                    "root",
+                    &path,
+                    None,
+                    None,
+                    active_segment.as_deref(),
+                    BreadcrumbNavigationMode::Siblings,
+                    descend,
+                );
+                let target = targets
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .expect("a single-component path yields exactly one segment target");
+                let BreadcrumbSegmentTarget::Directory {
+                    worktree_id,
+                    path,
+                    active_path,
+                    mark_current_path,
+                    ..
+                } = target
+                else {
+                    panic!("expected a directory target");
+                };
+
+                // `is_active_segment: true` regardless of what `breadcrumb_path_segments` itself
+                // computed: this harness always wants its one modeled segment wired to the
+                // editor's real shared handle so the test can drive it programmatically via
+                // `handle.show`, exactly like the double-lease test above — it isn't exercising
+                // real mouse dispatch onto a not-yet-active segment's own independent trigger.
+                render_breadcrumb_directory_segment(
+                    editor_weak,
+                    workspace,
+                    worktree_id,
+                    path,
+                    active_path,
+                    true,
+                    mark_current_path,
+                    self.handle.clone(),
+                    div().into_any_element(),
+                    0,
+                )
+            }
+        }
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "main": { "file.txt": "" },
+                "test": { "file.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let harness_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let handle = editor.read(cx).breadcrumb_popover_handle();
+            Harness {
+                handle,
+                editor,
+                workspace: workspace.downgrade(),
+                worktree_id,
+            }
+        });
+        let editor = harness_window
+            .read_with(cx, |harness, _| harness.editor.clone())
+            .unwrap();
+        let handle = harness_window
+            .read_with(cx, |harness, _| harness.handle.clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*harness_window, cx);
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        // Opens "main"'s dropdown — the moment `open_breadcrumb_navigation` is called with
+        // whatever identity the (fixed, or pre-fix buggy) `.menu()` builder passes it.
+        cx.update(|window, cx| handle.show(window, cx));
+        assert!(handle.is_deployed());
+        editor.read_with(cx, |editor, _| {
+            let navigation = editor
+                .breadcrumb_navigation()
+                .expect("opening the dropdown marked a segment active");
+            assert_eq!(
+                navigation.active_path.as_unix_str(),
+                "main",
+                "the active segment must be identified by its own path, not the parent \
+                 directory its dropdown lists"
+            );
+        });
+
+        // Choosing a sibling ("test") from "main"'s open dropdown is what
+        // `BreadcrumbDirectoryBrowser::choose` reduces to (see
+        // `test_breadcrumb_directory_browser_choose_descends_in_both_modes`): a call into
+        // `navigate_breadcrumb_to` with the resolved path — here, "test" itself, since its only
+        // child is a file and descent stops short of one. Driving it that way here avoids
+        // reaching back into the popover's internal entity, which `PopoverMenuHandle` doesn't
+        // expose — `choose`'s own descent is covered separately by the test above.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.navigate_breadcrumb_to(worktree_id, rel_path("test").into_arc(), window, cx);
+        });
+
+        // Draining the deferred re-anchor (see `navigate_breadcrumb_to`'s doc comment) is where
+        // the bug actually surfaced: pre-fix, the re-anchor's `handle.show` re-ran
+        // `open_breadcrumb_navigation` with the wrong identity, clobbering `navigated` back to
+        // `false` and reverting the bar to the open file's path.
+        cx.update(|window, cx| {
+            for _ in 0..4 {
+                window.simulate_next_frame(cx);
+            }
+        });
+
+        editor.read_with(cx, |editor, _| {
+            assert!(
+                !editor.breadcrumb_reanchoring,
+                "re-anchor finishes within a few frames"
+            );
+            let navigation = editor
+                .breadcrumb_navigation()
+                .expect("choosing a directory row must not clear the navigation session");
+            assert_eq!(
+                navigation.active_path.as_unix_str(),
+                "test",
+                "the bar must keep showing the chosen directory, not revert to the open file"
+            );
+            assert!(
+                navigation.navigated,
+                "choosing a directory row must stay in the navigated state"
+            );
+        });
+    }
+
+    /// Choosing a directory row descends through single-child directories (see
+    /// `descend_single_child_directories`) the same way in both
+    /// [`BreadcrumbNavigationMode::DrillDown`] and [`BreadcrumbNavigationMode::Siblings`] — after
+    /// choosing a directory row you're descending into it either way, so `Siblings` mode gets the
+    /// same skip-ahead behavior `DrillDown` always had. `mark_current_path` (which only matters in
+    /// `Siblings` mode, and only for how the *listing itself* marks its current entry — see
+    /// `BreadcrumbSegmentTarget::Directory::mark_current_path`) plays no role in `choose` and is
+    /// varied here to confirm that.
+    #[gpui::test]
+    async fn test_breadcrumb_directory_browser_choose_descends_in_both_modes(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "a": { "b": { "c.txt": "" } },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor_window = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+        let editor = editor_window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+
+        // `a`'s only child is `b`, whose only child is the file `c.txt` — a single-child chain —
+        // so choosing `a` descends straight to `a/b`, the directory that stops short of the file
+        // (see `descend_single_child_directories`).
+        let drill_down_browser = editor_window
+            .update(cx, |_, window, cx| {
+                BreadcrumbDirectoryBrowser::new(
+                    editor.downgrade(),
+                    workspace.downgrade(),
+                    worktree_id,
+                    RelPath::empty().into(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        drill_down_browser.update_in(cx, |browser, window, cx| {
+            browser.choose(rel_path("a").into_arc(), true, window, cx);
+        });
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor
+                    .breadcrumb_navigation()
+                    .expect("navigate_breadcrumb_to set a session")
+                    .active_path
+                    .as_unix_str(),
+                "a/b",
+            );
+        });
+
+        // Choosing the very same `a` entry from a `Siblings`-flavored listing (`mark_current_path`
+        // set, as `render_breadcrumb_directory_segment` would for one) descends exactly the same
+        // way — straight to `a/b`, not stopping at `a`.
+        let siblings_browser = editor_window
+            .update(cx, |_, window, cx| {
+                BreadcrumbDirectoryBrowser::new(
+                    editor.downgrade(),
+                    workspace.downgrade(),
+                    worktree_id,
+                    RelPath::empty().into(),
+                    None,
+                    Some(rel_path("a").into_arc()),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        siblings_browser.update_in(cx, |browser, window, cx| {
+            browser.choose(rel_path("a").into_arc(), true, window, cx);
+        });
+        editor.read_with(cx, |editor, _| {
+            assert_eq!(
+                editor
+                    .breadcrumb_navigation()
+                    .expect("navigate_breadcrumb_to set a session")
+                    .active_path
+                    .as_unix_str(),
+                "a/b",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_entries_sorts_like_project_panel(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use util::path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "Apple": { "leaf.txt": "" },
+                "banana.txt": "",
+                "Cherry.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        cx.run_until_parked();
+
+        // Default settings (`sort_mode: directories_first`, `sort_order: default`) match the
+        // project panel's own default: the directory first, then files in case-insensitive
+        // natural order.
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
+            vec!["Apple", "banana.txt", "Cherry.txt"],
+        );
+
+        // Reusing `util::paths::compare_rel_paths_by` (see `BreadcrumbDirectoryListingSettings`)
+        // means changing `project_panel.sort_mode`/`sort_order` changes our ordering exactly the
+        // way it changes the panel's: files first, compared by raw Unicode codepoint — so the
+        // uppercase `Cherry.txt` sorts before lowercase `banana.txt`, and the directory moves
+        // last.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let project_panel = settings.project_panel.get_or_insert_default();
+                    project_panel.sort_mode = Some(settings::ProjectPanelSortMode::FilesFirst);
+                    project_panel.sort_order = Some(settings::ProjectPanelSortOrder::Unicode);
+                });
+            });
+        });
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
+            vec!["Cherry.txt", "banana.txt", "Apple"],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_entries_honors_hide_gitignore_setting(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use util::path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "ignored.txt",
+                "kept.txt": "",
+                "ignored.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        cx.run_until_parked();
+
+        // `hide_gitignore` defaults to `false`: the ignored entry is still listed, matching
+        // `entry.is_ignored` on `worktree::Entry` so the caller can still color it, mirroring the
+        // project panel's default of showing gitignored entries dimmed rather than hidden.
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let ignored_entry = entries
+            .iter()
+            .find(|entry| entry.name.as_ref() == "ignored.txt")
+            .expect("gitignored entry is shown, not hidden, by default");
+        assert!(ignored_entry.is_ignored);
+
+        // Setting `project_panel.hide_gitignore` — the same setting the panel itself reads —
+        // removes it from the listing entirely, keeping the two views in agreement about what
+        // exists (see `BreadcrumbDirectoryListingSettings`'s doc comment).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project_panel
+                        .get_or_insert_default()
+                        .hide_gitignore = Some(true);
+                });
+            });
+        });
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.name.as_ref() == "ignored.txt"),
+            "hide_gitignore should drop the ignored entry entirely, not just dim it",
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.name.as_ref() == "kept.txt"),
+            "non-ignored entries stay listed"
+        );
+    }
+}
