@@ -903,63 +903,249 @@ fn render_breadcrumb_directory_segment(
         .into_any_element()
 }
 
-/// Aligns `symbol_segments` 1:1 with `segments`, then collapses the middle of both into a single
-/// ellipsis once there are more than `max_segments` entries, keeping `file_segment_index` pointing
-/// at the same logical segment (or `usize::MAX` if that segment itself got collapsed away).
+/// Where a breadcrumb segment sits in [`plan_breadcrumb_layout`]'s drop-priority order when the
+/// bar doesn't have room to show everything. Assigned by [`classify_breadcrumb_segment_kinds`]
+/// purely from a segment's position relative to `file_segment_index`; the actual survive/drop
+/// decision lives entirely in `plan_breadcrumb_layout`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BreadcrumbSegmentKind {
+    /// The leading project-root segment ([`BreadcrumbNavigationMode::DrillDown`] only) — kept
+    /// only once every [`Middle`](Self::Middle) segment is already gone, since it's the one
+    /// segment whose dropdown reaches top-level siblings.
+    Root,
+    /// A directory component strictly between the root (or the start of the trail) and the file
+    /// segment — dropped first, since the "⋯" is exactly what stands in for these.
+    Middle,
+    /// The trail's endpoint segment: the open file itself, or — while breadcrumb navigation has
+    /// drilled into a directory — that directory. Dropped only once every [`Root`](Self::Root)
+    /// and [`Middle`](Self::Middle) segment is already gone.
+    File,
+    /// An ancestor-symbol segment following the file, ordered outermost (shallowest) first and
+    /// innermost (nearest the cursor) last. `plan_breadcrumb_layout` never drops the last one —
+    /// it's what the user is actually reading — and drops earlier ones first when it must drop
+    /// any symbol at all.
+    Symbol,
+}
+
+/// Assigns each of `segment_count` breadcrumb segments its [`BreadcrumbSegmentKind`], purely from
+/// position: everything before `file_segment_index` is [`Root`](BreadcrumbSegmentKind::Root)
+/// (only index `0`, and only when `has_root_segment`) or [`Middle`](BreadcrumbSegmentKind::Middle);
+/// `file_segment_index` itself is [`File`](BreadcrumbSegmentKind::File); everything after is
+/// [`Symbol`](BreadcrumbSegmentKind::Symbol). Relies on the segment order `render_breadcrumb_text`
+/// already establishes — root, then path components, then the file, then ancestor symbols
+/// nearest-cursor-last (see `breadcrumb_path_segments` and `Editor::breadcrumbs_inner`).
+pub(crate) fn classify_breadcrumb_segment_kinds(
+    segment_count: usize,
+    file_segment_index: usize,
+    has_root_segment: bool,
+) -> Vec<BreadcrumbSegmentKind> {
+    (0..segment_count)
+        .map(|index| match index.cmp(&file_segment_index) {
+            Ordering::Greater => BreadcrumbSegmentKind::Symbol,
+            Ordering::Equal => BreadcrumbSegmentKind::File,
+            Ordering::Less if has_root_segment && index == 0 => BreadcrumbSegmentKind::Root,
+            Ordering::Less => BreadcrumbSegmentKind::Middle,
+        })
+        .collect()
+}
+
+/// Aligns `symbol_segments` 1:1 with `segments`, discarding it (replacing wholesale with `None`s
+/// the same length as `segments`) if the lengths disagree.
 ///
-/// The alignment must happen *before* the collapse: `symbol_segments` is built by a caller that
-/// tracks navigation state independently of `segments` (see `render_breadcrumb_text`'s comment on
-/// why the two can diverge — e.g. a navigated worktree that no longer resolves), so by the time
-/// this runs the two vectors aren't guaranteed to be the same length. The collapse below computes
-/// its splice range purely from `segments.len()`; applying that same range to a shorter
-/// `symbol_segments` would make `Vec::splice` panic. Aligning first — replacing `symbol_segments`
-/// wholesale with `None`s the same length as `segments` whenever they disagree — makes the
-/// invariant hold structurally instead of by caller convention, and makes it testable without a
-/// live rendered editor.
-fn collapse_breadcrumb_segments(
+/// `symbol_segments` is built by a caller that tracks navigation state independently of
+/// `segments` (see `render_breadcrumb_text`'s comment on why the two can diverge — e.g. a
+/// navigated worktree that no longer resolves), so the two vectors aren't guaranteed to start out
+/// the same length. Every later step — hard-capping, width measurement, applying the layout plan —
+/// indexes both vectors by the same original index and computes splice ranges purely from
+/// `segments.len()`; running any of them against a shorter `symbol_segments` would make
+/// `Vec::splice` panic. Aligning first makes the invariant hold structurally instead of by caller
+/// convention, and keeps it testable without a live rendered editor.
+fn align_symbol_segments(
+    segments: &[HighlightedText],
+    symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
+) -> Vec<Option<BreadcrumbSegmentTarget>> {
+    if symbol_segments.len() == segments.len() {
+        symbol_segments
+    } else {
+        vec![None; segments.len()]
+    }
+}
+
+/// Safety net against pathological input — a path many thousands of components deep — bounding
+/// the cost of [`plan_breadcrumb_layout`], which re-sums the whole row for every segment it
+/// considers dropping. Ordinary breadcrumbs, even deeply nested real-world ones, stay far under
+/// this; it's `plan_breadcrumb_layout`'s width comparison that actually fires in normal use, not
+/// this cap.
+const MAX_BREADCRUMB_SEGMENTS_HARD_CAP: usize = 64;
+
+/// Pre-trims a pathologically long `Middle` run (see [`MAX_BREADCRUMB_SEGMENTS_HARD_CAP`]) down to
+/// a bounded prefix and suffix before the width-based planner ever sees it, the same shape the old
+/// count-based collapse used. `Middle` segments are always contiguous — the span between the root
+/// (or the start of the trail) and the file segment — so this is a single splice, and it never
+/// touches `Root`, `File`, or `Symbol` segments, which `plan_breadcrumb_layout`'s priority order
+/// already keeps until last.
+fn hard_cap_breadcrumb_middle_segments(
     mut segments: Vec<HighlightedText>,
     mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>>,
+    mut kinds: Vec<BreadcrumbSegmentKind>,
     mut file_segment_index: usize,
-    max_segments: usize,
 ) -> (
     Vec<HighlightedText>,
     Vec<Option<BreadcrumbSegmentTarget>>,
+    Vec<BreadcrumbSegmentKind>,
     usize,
 ) {
-    if symbol_segments.len() != segments.len() {
-        symbol_segments = vec![None; segments.len()];
+    let middle_start = kinds
+        .iter()
+        .position(|kind| *kind == BreadcrumbSegmentKind::Middle);
+    let middle_end = kinds
+        .iter()
+        .rposition(|kind| *kind == BreadcrumbSegmentKind::Middle)
+        .map(|index| index + 1);
+    let (Some(middle_start), Some(middle_end)) = (middle_start, middle_end) else {
+        return (segments, symbol_segments, kinds, file_segment_index);
+    };
+    if middle_end - middle_start <= MAX_BREADCRUMB_SEGMENTS_HARD_CAP {
+        return (segments, symbol_segments, kinds, file_segment_index);
     }
 
-    let prefix_end_ix = cmp::min(segments.len(), max_segments / 2);
-    let suffix_start_ix = cmp::max(
-        prefix_end_ix,
-        segments.len().saturating_sub(max_segments / 2),
+    let half = MAX_BREADCRUMB_SEGMENTS_HARD_CAP / 2;
+    let splice_start = middle_start + half;
+    let splice_end = middle_end - half;
+
+    segments.splice(
+        splice_start..splice_end,
+        Some(HighlightedText {
+            text: "⋯".into(),
+            highlights: vec![],
+        }),
+    );
+    symbol_segments.splice(splice_start..splice_end, Some(None));
+    kinds.splice(
+        splice_start..splice_end,
+        Some(BreadcrumbSegmentKind::Middle),
     );
 
-    if suffix_start_ix > prefix_end_ix {
-        segments.splice(
-            prefix_end_ix..suffix_start_ix,
-            Some(HighlightedText {
-                text: "⋯".into(),
-                highlights: vec![],
-            }),
-        );
-        symbol_segments.splice(prefix_end_ix..suffix_start_ix, Some(None));
-        // Keep `file_segment_index` pointing at the same logical segment after the splice: it
-        // shifts left by however many segments got collapsed into the ellipsis, or — if the file
-        // segment itself was one of the collapsed ones — stops matching any real index, so the
-        // dirty-filename styling below simply doesn't apply (consistent with the ellipsis
-        // already hiding that segment's real content).
-        file_segment_index = if file_segment_index < prefix_end_ix {
-            file_segment_index
-        } else if file_segment_index < suffix_start_ix {
-            usize::MAX
+    // `File` always follows every `Middle` segment (see `classify_breadcrumb_segment_kinds`), so
+    // this splice can only ever shift it left, never swallow it.
+    file_segment_index -= (splice_end - splice_start) - 1;
+
+    (segments, symbol_segments, kinds, file_segment_index)
+}
+
+/// The result of [`plan_breadcrumb_layout`]: which original segment indices survive, and which
+/// contiguous runs of indices collapse into a single "⋯" each. `visible` and `ellipses` together
+/// partition `0..segment_count` — every index is in exactly one of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BreadcrumbLayoutPlan {
+    pub(crate) visible: Vec<usize>,
+    pub(crate) ellipses: Vec<Range<usize>>,
+}
+
+/// Sums the rendered width of a candidate layout: visible segments at their measured width, each
+/// maximal run of dropped segments collapsed to a single `ellipsis_width`. The same model
+/// `plan_breadcrumb_layout` searches over.
+fn total_breadcrumb_layout_width(
+    widths: &[Pixels],
+    dropped: &[bool],
+    ellipsis_width: Pixels,
+) -> Pixels {
+    let mut total = Pixels::ZERO;
+    let mut in_dropped_run = false;
+    for (index, &is_dropped) in dropped.iter().enumerate() {
+        if is_dropped {
+            if !in_dropped_run {
+                total += ellipsis_width;
+                in_dropped_run = true;
+            }
         } else {
-            file_segment_index - (suffix_start_ix - prefix_end_ix) + 1
+            total += widths[index];
+            in_dropped_run = false;
+        }
+    }
+    total
+}
+
+/// Groups a `dropped` bitmap into the [`BreadcrumbLayoutPlan`] shape: consecutive dropped indices
+/// become one collapsed range each.
+fn breadcrumb_layout_plan_from_dropped(dropped: &[bool]) -> BreadcrumbLayoutPlan {
+    let mut visible = Vec::new();
+    let mut ellipses = Vec::new();
+    let mut run_start = None;
+    for (index, &is_dropped) in dropped.iter().enumerate() {
+        if is_dropped {
+            run_start.get_or_insert(index);
+        } else {
+            if let Some(start) = run_start.take() {
+                ellipses.push(start..index);
+            }
+            visible.push(index);
+        }
+    }
+    if let Some(start) = run_start {
+        ellipses.push(start..dropped.len());
+    }
+    BreadcrumbLayoutPlan { visible, ellipses }
+}
+
+/// Decides which breadcrumb segments survive when `widths` (each already inclusive of that
+/// segment's own separator/gap — see `render_breadcrumb_text`'s width measurement) don't fit in
+/// `available_width`, and where the resulting "⋯" placeholders go. A pure function of measured
+/// widths and segment kinds — no `Window` involved — so it's unit-testable independent of any
+/// GPUI layout; `render_breadcrumb_text` is the only caller that has to do the (impure) measuring.
+///
+/// Drops segments one at a time, cheapest-to-lose first, stopping as soon as the remainder fits:
+/// every [`Middle`](BreadcrumbSegmentKind::Middle) segment, then
+/// [`Root`](BreadcrumbSegmentKind::Root), then [`File`](BreadcrumbSegmentKind::File), then each
+/// [`Symbol`](BreadcrumbSegmentKind::Symbol) from outermost to innermost — exactly the priority
+/// order the feature calls for. The very last segment is excluded from every one of those groups,
+/// so it is never a drop candidate at all; that is what makes the degenerate case graceful — even
+/// when nothing else fits, that one segment still renders instead of the bar going empty.
+pub(crate) fn plan_breadcrumb_layout(
+    widths: &[Pixels],
+    kinds: &[BreadcrumbSegmentKind],
+    ellipsis_width: Pixels,
+    available_width: Pixels,
+) -> BreadcrumbLayoutPlan {
+    debug_assert_eq!(widths.len(), kinds.len());
+    let segment_count = widths.len();
+    if segment_count == 0 {
+        return BreadcrumbLayoutPlan {
+            visible: Vec::new(),
+            ellipses: Vec::new(),
         };
     }
 
-    (segments, symbol_segments, file_segment_index)
+    let mut dropped = vec![false; segment_count];
+    if total_breadcrumb_layout_width(widths, &dropped, ellipsis_width) <= available_width {
+        return breadcrumb_layout_plan_from_dropped(&dropped);
+    }
+
+    let last_index = segment_count - 1;
+    let mut drop_order = Vec::with_capacity(segment_count - 1);
+    for kind in [
+        BreadcrumbSegmentKind::Middle,
+        BreadcrumbSegmentKind::Root,
+        BreadcrumbSegmentKind::File,
+        BreadcrumbSegmentKind::Symbol,
+    ] {
+        drop_order.extend(
+            kinds
+                .iter()
+                .enumerate()
+                .filter(|(index, segment_kind)| *index != last_index && **segment_kind == kind)
+                .map(|(index, _)| index),
+        );
+    }
+
+    for index in drop_order {
+        dropped[index] = true;
+        if total_breadcrumb_layout_width(widths, &dropped, ellipsis_width) <= available_width {
+            break;
+        }
+    }
+
+    breadcrumb_layout_plan_from_dropped(&dropped)
 }
 
 /// Whether the breadcrumb bar's leading path/file segment should offer any navigation
@@ -982,17 +1168,393 @@ fn breadcrumb_path_is_navigable(
     has_project_path && !worktree_is_single_file.unwrap_or(false)
 }
 
+/// One breadcrumb segment with everything [`BreadcrumbsRow`] needs to measure it and, if it
+/// survives [`plan_breadcrumb_layout`], render it — resolved ahead of time by
+/// `render_breadcrumb_text` so the element itself never has to reach back into `Editor`/
+/// `Workspace`/`ItemHandle` state during layout.
+struct PreparedBreadcrumbSegment {
+    kind: BreadcrumbSegmentKind,
+    label: HighlightedText,
+    target: Option<BreadcrumbSegmentTarget>,
+    /// Whether this is the dirty/unsaved file's own segment and should render through
+    /// `apply_dirty_filename_style` instead of its plain label — precomputed because that check
+    /// needs `active_item` and `workspace::TabBarSettings`, neither of which a `'static` GPUI
+    /// element like `BreadcrumbsRow` can hold onto.
+    dirty_filename_style: bool,
+}
+
+/// Per-segment "slot" width [`BreadcrumbsRow`] plans against: the segment's own label plus one
+/// arrow and the gaps around it, all measured once per render in `request_layout` via the
+/// window's text system. `shape_line` is cached by text/font (see `TextSystem::shape_line`), so
+/// this is a handful of cache lookups per render — not a full reshape — and it only happens when
+/// GPUI actually re-renders the breadcrumb bar (e.g. the cursor moves), never on every frame.
+///
+/// Deliberately uniform regardless of where a segment ends up in the final `with_separator`
+/// sequence: a row of `n` rendered items has at most `n - 1` arrows, so summing "one arrow per
+/// segment" overestimates the true row width by about one arrow's worth. That bias only ever
+/// makes [`plan_breadcrumb_layout`] collapse slightly earlier than the bare minimum, never later —
+/// it can't be the reason something overflows.
+struct BreadcrumbSegmentMetrics {
+    widths: Vec<Pixels>,
+    ellipsis_width: Pixels,
+}
+
+/// Sums `plan`'s rendered width the same way `plan_breadcrumb_layout` modeled it internally,
+/// re-expressed from the plan's `visible`/`ellipses` shape instead of a `dropped` bitmap.
+fn breadcrumb_layout_plan_width(
+    widths: &[Pixels],
+    plan: &BreadcrumbLayoutPlan,
+    ellipsis_width: Pixels,
+) -> Pixels {
+    let mut dropped = vec![false; widths.len()];
+    for range in &plan.ellipses {
+        for index in range.clone() {
+            dropped[index] = true;
+        }
+    }
+    total_breadcrumb_layout_width(widths, &dropped, ellipsis_width)
+}
+
+/// Renders the breadcrumb bar's segment trail, deciding — from the width GPUI actually offers it,
+/// not a fixed segment count — how many segments to show before collapsing the rest into a single
+/// "⋯" (see [`plan_breadcrumb_layout`]). A custom [`gpui::Element`] rather than a plain `h_flex`
+/// because that decision can only be made once the surrounding flex layout has resolved how much
+/// horizontal space this row gets, which — like `List`/`UniformList` in `gpui` — means requesting
+/// a *measured* layout (`Window::request_measured_layout`) sized purely from text metrics, then,
+/// once `prepaint` hands back the authoritative final `bounds`, building the real interactive
+/// segment elements only for whichever ones the plan keeps and laying them out by hand
+/// (`AnyElement::layout_as_root` / `prepaint_at`, the same pattern `UniformList` uses for its
+/// visible rows) rather than through a normal taffy child tree.
+struct BreadcrumbsRow {
+    segments: Vec<PreparedBreadcrumbSegment>,
+    editor: Option<WeakEntity<Editor>>,
+    breadcrumb_navigation_mode: BreadcrumbNavigationMode,
+    breadcrumb_font: Option<Font>,
+}
+
+impl BreadcrumbsRow {
+    fn effective_text_style(&self, window: &Window) -> gpui::TextStyle {
+        let mut text_style = window.text_style();
+        if let Some(font) = &self.breadcrumb_font {
+            text_style.font_family = font.family.clone();
+            text_style.font_features = font.features.clone();
+            text_style.font_style = font.style;
+            text_style.font_weight = font.weight;
+        }
+        text_style
+    }
+
+    fn measure(&self, window: &mut Window) -> BreadcrumbSegmentMetrics {
+        let text_style = self.effective_text_style(window);
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let gap = window.rem_size() * 0.25;
+
+        let arrow_run = text_style.to_run("›".len());
+        let arrow_width = window
+            .text_system()
+            .shape_line("›".into(), font_size, &[arrow_run], None)
+            .width();
+
+        let ellipsis_run = text_style.to_run("⋯".len());
+        let ellipsis_label_width = window
+            .text_system()
+            .shape_line("⋯".into(), font_size, &[ellipsis_run], None)
+            .width();
+        let ellipsis_width = ellipsis_label_width + arrow_width + gap * 2.;
+
+        let widths = self
+            .segments
+            .iter()
+            .map(|segment| {
+                let text = flatten_text_for_single_line_display(&segment.label.text);
+                let run = text_style.to_run(text.len());
+                let label_width = window
+                    .text_system()
+                    .shape_line(text.into(), font_size, &[run], None)
+                    .width();
+                label_width + arrow_width + gap * 2.
+            })
+            .collect();
+
+        BreadcrumbSegmentMetrics {
+            widths,
+            ellipsis_width,
+        }
+    }
+
+    /// Wraps `content` with its arrow, exactly like the pre-width-aware code's `with_separator`
+    /// did — just driven by `position`/`last_position` in the *final rendered* sequence (after
+    /// collapsing) rather than the raw segment index, since that's the sequence whose first/last
+    /// edge actually has nothing to point at.
+    fn with_separator(
+        &self,
+        position: usize,
+        last_position: usize,
+        content: gpui::AnyElement,
+    ) -> gpui::AnyElement {
+        match self.breadcrumb_navigation_mode {
+            BreadcrumbNavigationMode::DrillDown if position != last_position => h_flex()
+                .gap_1()
+                .child(content)
+                .child(Label::new("›").color(Color::Placeholder))
+                .into_any_element(),
+            BreadcrumbNavigationMode::Siblings if position != 0 => h_flex()
+                .gap_1()
+                .child(Label::new("›").color(Color::Placeholder))
+                .child(content)
+                .into_any_element(),
+            _ => content,
+        }
+    }
+
+    /// Builds the actual clickable element for segment `index`, matching the pre-width-aware
+    /// code's per-segment rendering exactly, just moved here so it only ever runs for segments
+    /// `plan_breadcrumb_layout` actually kept.
+    fn render_segment(
+        &self,
+        index: usize,
+        position: usize,
+        last_position: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::AnyElement {
+        let segment = &self.segments[index];
+        let mut text_style = self.effective_text_style(window);
+        text_style.color = Color::Muted.color(cx);
+
+        if segment.dirty_filename_style
+            && let Some(styled_element) =
+                apply_dirty_filename_style(&segment.label, &text_style, cx)
+        {
+            return self.with_separator(position, last_position, styled_element);
+        }
+
+        let label = StyledText::new(flatten_text_for_single_line_display(&segment.label.text))
+            .with_default_highlights(&text_style, segment.label.highlights.clone())
+            .into_any();
+        let label = self.with_separator(position, last_position, label);
+
+        match (segment.target.clone(), self.editor.clone()) {
+            (Some(BreadcrumbSegmentTarget::Symbol { buffer_id, item }), Some(editor)) => {
+                render_breadcrumb_symbol_segment(editor, buffer_id, item, label, index)
+            }
+            (
+                Some(BreadcrumbSegmentTarget::Directory {
+                    worktree_id,
+                    path,
+                    active_path,
+                    is_active_segment,
+                    mark_current_path,
+                }),
+                Some(editor),
+            ) => {
+                let Some(upgraded_editor) = editor.upgrade() else {
+                    return label;
+                };
+                let Some(workspace) = upgraded_editor
+                    .read(cx)
+                    .workspace()
+                    .map(|workspace| workspace.downgrade())
+                else {
+                    return label;
+                };
+                let shared_popover_handle = upgraded_editor.read(cx).breadcrumb_popover_handle();
+                // No extra "active segment" marker is painted here (unlike an earlier version of
+                // this code, which filled the segment with `element_selected`): the ordinary
+                // hover styling plus the open dropdown already make the active segment obvious,
+                // matching how symbol segments (which have never had such a marker) render.
+                // `is_active_segment` is still threaded through below —
+                // `render_breadcrumb_directory_segment` needs it to know which segment's popover
+                // handle to reuse for re-anchoring (see
+                // `BreadcrumbSegmentTarget::Directory::is_active_segment`).
+                render_breadcrumb_directory_segment(
+                    editor,
+                    workspace,
+                    worktree_id,
+                    path,
+                    active_path,
+                    is_active_segment,
+                    mark_current_path,
+                    shared_popover_handle,
+                    label,
+                    index,
+                )
+            }
+            _ => label,
+        }
+    }
+
+    /// The "⋯" placeholder for a collapsed run. Deliberately inert (plain `Label`, no popover
+    /// trigger): the whole point of width-aware collapse is that it fires far less often than the
+    /// old count-based version did, and every segment it stands in for is still reachable by
+    /// widening the window (or the segments to either side of it, which remain fully clickable) —
+    /// making it list the hidden components itself would mean giving it its own popover machinery
+    /// (a `PopoverMenu` plus a listing widget) for a rarely-hit case, which isn't worth the added
+    /// layout-logic complexity here.
+    fn render_ellipsis(&self, position: usize, last_position: usize) -> gpui::AnyElement {
+        let content = Label::new("⋯").color(Color::Placeholder).into_any_element();
+        self.with_separator(position, last_position, content)
+    }
+}
+
+/// [`gpui::Element::PrepaintState`] for [`BreadcrumbsRow`]: the already-laid-out child elements
+/// (segments and "⋯" placeholders, in final left-to-right order), ready for `paint` to just walk
+/// and paint — all the layout decisions happened in `prepaint`, which is the only place the row's
+/// authoritative final width is known.
+struct BreadcrumbsRowPrepaintState {
+    children: Vec<gpui::AnyElement>,
+}
+
+impl gpui::IntoElement for BreadcrumbsRow {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl gpui::Element for BreadcrumbsRow {
+    type RequestLayoutState = BreadcrumbSegmentMetrics;
+    type PrepaintState = BreadcrumbsRowPrepaintState;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        _cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let metrics = self.measure(window);
+        let natural_width = metrics
+            .widths
+            .iter()
+            .fold(Pixels::ZERO, |total, width| total + *width);
+        let line_height = window.text_style().line_height_in_pixels(window.rem_size());
+
+        let widths = metrics.widths.clone();
+        let ellipsis_width = metrics.ellipsis_width;
+        let kinds: Vec<BreadcrumbSegmentKind> = self.segments.iter().map(|s| s.kind).collect();
+
+        let layout_id = window.request_measured_layout(
+            Style::default(),
+            move |known_dimensions, available_space, _window, _cx| {
+                let width = known_dimensions
+                    .width
+                    .unwrap_or(match available_space.width {
+                        AvailableSpace::Definite(available_width) => {
+                            let plan = plan_breadcrumb_layout(
+                                &widths,
+                                &kinds,
+                                ellipsis_width,
+                                available_width,
+                            );
+                            breadcrumb_layout_plan_width(&widths, &plan, ellipsis_width)
+                        }
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => natural_width,
+                    });
+                let height = known_dimensions.height.unwrap_or(line_height);
+                size(width, height)
+            },
+        );
+
+        (layout_id, metrics)
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        metrics: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        let kinds: Vec<BreadcrumbSegmentKind> = self.segments.iter().map(|s| s.kind).collect();
+        let plan = plan_breadcrumb_layout(
+            &metrics.widths,
+            &kinds,
+            metrics.ellipsis_width,
+            bounds.size.width,
+        );
+
+        enum FinalItem {
+            Segment(usize),
+            Ellipsis,
+        }
+
+        let segment_count = kinds.len();
+        let mut sequence = Vec::with_capacity(plan.visible.len() + plan.ellipses.len());
+        let mut index = 0;
+        while index < segment_count {
+            if let Some(range) = plan.ellipses.iter().find(|range| range.start == index) {
+                sequence.push(FinalItem::Ellipsis);
+                index = range.end;
+            } else {
+                sequence.push(FinalItem::Segment(index));
+                index += 1;
+            }
+        }
+
+        let last_position = sequence.len().saturating_sub(1);
+        let gap = window.rem_size() * 0.25;
+        let mut x = bounds.origin.x;
+        let mut children = Vec::with_capacity(sequence.len());
+        for (position, item) in sequence.into_iter().enumerate() {
+            let mut element = match item {
+                FinalItem::Segment(index) => {
+                    self.render_segment(index, position, last_position, window, cx)
+                }
+                FinalItem::Ellipsis => self.render_ellipsis(position, last_position),
+            };
+            let available_space = size(
+                AvailableSpace::MaxContent,
+                AvailableSpace::Definite(bounds.size.height),
+            );
+            let element_size = element.layout_as_root(available_space, window, cx);
+            element.prepaint_at(point(x, bounds.origin.y), window, cx);
+            x += element_size.width + gap;
+            children.push(element);
+        }
+
+        BreadcrumbsRowPrepaintState { children }
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for child in &mut prepaint.children {
+            child.paint(window, cx);
+        }
+    }
+}
+
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
     prefix: Option<gpui::AnyElement>,
     active_item: &dyn ItemHandle,
     multibuffer_header: bool,
-    window: &mut Window,
+    // No longer used directly: segment text is measured inside `BreadcrumbsRow::request_layout`,
+    // which gets its own `&mut Window` from GPUI when it actually runs. Kept in the signature
+    // since every caller already threads a `window` through this call site for other reasons.
+    _window: &mut Window,
     cx: &App,
 ) -> gpui::AnyElement {
-    const MAX_SEGMENTS: usize = 12;
-
     let element = h_flex().flex_grow_1().text_ui(cx);
 
     let editor = active_item
@@ -1017,6 +1579,11 @@ pub fn render_breadcrumb_text(
     // matching the pre-split behavior — whenever the path-splitting below doesn't run (a
     // multibuffer header, or a buffer with no project path, e.g. unsaved).
     let mut file_segment_index = 0usize;
+    // Whether the path-splitting below inserted a leading root segment at index `0`
+    // (`DrillDown` mode only — see `breadcrumb_path_segments`'s doc comment), so
+    // `classify_breadcrumb_segment_kinds` below can tell that segment apart from an ordinary
+    // `Middle` directory component.
+    let mut has_root_segment = false;
 
     if !multibuffer_header
         && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
@@ -1123,6 +1690,8 @@ pub fn render_breadcrumb_text(
                     segments.splice(replace_range, path_labels);
                     symbol_segments = path_targets;
                     path_split = true;
+                    has_root_segment =
+                        breadcrumb_navigation_mode == BreadcrumbNavigationMode::DrillDown;
                 }
             }
 
@@ -1155,139 +1724,57 @@ pub fn render_breadcrumb_text(
         }
     }
 
-    let (segments, symbol_segments, file_segment_index) =
-        collapse_breadcrumb_segments(segments, symbol_segments, file_segment_index, MAX_SEGMENTS);
+    let symbol_segments = align_symbol_segments(&segments, symbol_segments);
+    let kinds =
+        classify_breadcrumb_segment_kinds(segments.len(), file_segment_index, has_root_segment);
+    let (segments, symbol_segments, kinds, file_segment_index) =
+        hard_cap_breadcrumb_middle_segments(segments, symbol_segments, kinds, file_segment_index);
 
-    // Each segment owns exactly one arrow's hitbox — hover and click on the arrow behave as
-    // though they landed on whichever segment it's baked into — so hovering/clicking the arrow
-    // itself always does the same thing as hovering/clicking the segment it's attached to. Which
-    // segment that is flips with `breadcrumb_navigation_mode`:
-    //
-    // - `DrillDown`: each segment owns the arrow to its *right* — it reads as "and inside this,
-    //   the next thing," matching that clicking the segment lists its children. The trailing
-    //   (final) segment has nothing to its right, so it gets no arrow.
-    // - `Siblings`: each segment owns the arrow to its *left* — it points at the element whose
-    //   alternatives the dropdown lists, matching that clicking the segment lists its siblings
-    //   (its parent's contents). The leading segment has nothing to its left, so it gets no arrow.
-    //
-    // Baking the separator into one edge of the owning segment's own content (instead of
-    // interspersing it as a standalone element between segments) achieves the shared hitbox for
-    // free: whichever trigger wraps this combined content gets a hitbox spanning both.
-    //
-    // Geometry: this replaces the old `gap + separator + gap` produced by
-    // `Itertools::intersperse_with` between two `gap_1()`-spaced flex children with a single
-    // `gap_1()`-spaced inner child (separator, then content, or the reverse) plus the outer
-    // `gap_1()` before it — still exactly one gap on each side of the separator, so neither the
-    // bar's overall width nor the spacing between segments changes.
-    let segment_count = segments.len();
-    let last_segment_index = segment_count.saturating_sub(1);
-    let with_separator = |index: usize, content: gpui::AnyElement| -> gpui::AnyElement {
-        match breadcrumb_navigation_mode {
-            BreadcrumbNavigationMode::DrillDown if index != last_segment_index => h_flex()
-                .gap_1()
-                .child(content)
-                .child(Label::new("›").color(Color::Placeholder))
-                .into_any_element(),
-            BreadcrumbNavigationMode::Siblings if index != 0 => h_flex()
-                .gap_1()
-                .child(Label::new("›").color(Color::Placeholder))
-                .child(content)
-                .into_any_element(),
-            _ => content,
-        }
+    // Precomputed here rather than inside `BreadcrumbsRow`: the dirty-filename check needs
+    // `active_item` and `TabBarSettings`, and `BreadcrumbsRow` is a `'static` GPUI element that
+    // can't hold a borrow of the former. Whether this ends up actually applying to a rendered
+    // segment is still decided per-frame, by `plan_breadcrumb_layout` — if the file segment gets
+    // collapsed into a "⋯" under extreme width pressure, this flag on it simply never gets read.
+    let apply_dirty_filename_style =
+        !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
+
+    let prepared_segments = segments
+        .into_iter()
+        .zip(symbol_segments)
+        .zip(kinds)
+        .enumerate()
+        .map(
+            |(index, ((label, target), kind))| PreparedBreadcrumbSegment {
+                kind,
+                label,
+                target,
+                dirty_filename_style: apply_dirty_filename_style && index == file_segment_index,
+            },
+        )
+        .collect();
+
+    let row = BreadcrumbsRow {
+        segments: prepared_segments,
+        editor: editor.clone(),
+        breadcrumb_navigation_mode,
+        breadcrumb_font,
     };
 
-    let highlighted_segments =
-        segments
-            .into_iter()
-            .zip(symbol_segments)
-            .enumerate()
-            .map(|(index, (segment, symbol))| {
-                let mut text_style = window.text_style();
-                if let Some(font) = &breadcrumb_font {
-                    text_style.font_family = font.family.clone();
-                    text_style.font_features = font.features.clone();
-                    text_style.font_style = font.style;
-                    text_style.font_weight = font.weight;
-                }
-                text_style.color = Color::Muted.color(cx);
-
-                if index == file_segment_index
-                    && !workspace::TabBarSettings::get_global(cx).show
-                    && active_item.is_dirty(cx)
-                    && let Some(styled_element) =
-                        apply_dirty_filename_style(&segment, &text_style, cx)
-                {
-                    return with_separator(index, styled_element);
-                }
-
-                let label = StyledText::new(flatten_text_for_single_line_display(&segment.text))
-                    .with_default_highlights(&text_style, segment.highlights)
-                    .into_any();
-                let label = with_separator(index, label);
-
-                match (symbol, editor.clone()) {
-                    (Some(BreadcrumbSegmentTarget::Symbol { buffer_id, item }), Some(editor)) => {
-                        render_breadcrumb_symbol_segment(editor, buffer_id, item, label, index)
-                    }
-                    (
-                        Some(BreadcrumbSegmentTarget::Directory {
-                            worktree_id,
-                            path,
-                            active_path,
-                            is_active_segment,
-                            mark_current_path,
-                        }),
-                        Some(editor),
-                    ) => {
-                        let Some(upgraded_editor) = editor.upgrade() else {
-                            return label;
-                        };
-                        let Some(workspace) = upgraded_editor
-                            .read(cx)
-                            .workspace()
-                            .map(|workspace| workspace.downgrade())
-                        else {
-                            return label;
-                        };
-                        let shared_popover_handle =
-                            upgraded_editor.read(cx).breadcrumb_popover_handle();
-                        // No extra "active segment" marker is painted here (unlike an earlier
-                        // version of this code, which filled the segment with
-                        // `element_selected`): the ordinary hover styling plus the open dropdown
-                        // already make the active segment obvious, matching how symbol segments
-                        // (which have never had such a marker) render. `is_active_segment` is
-                        // still threaded through below — `render_breadcrumb_directory_segment`
-                        // needs it to know which segment's popover handle to reuse for
-                        // re-anchoring (see `BreadcrumbSegmentTarget::Directory::is_active_segment`).
-                        render_breadcrumb_directory_segment(
-                            editor,
-                            workspace,
-                            worktree_id,
-                            path,
-                            active_path,
-                            is_active_segment,
-                            mark_current_path,
-                            shared_popover_handle,
-                            label,
-                            index,
-                        )
-                    }
-                    _ => label,
-                }
-            });
-
-    let breadcrumbs_stack = h_flex()
-        .gap_1()
+    let breadcrumbs_stack = div()
         .when(multibuffer_header, |this| {
             this.pl_2()
                 .border_l_1()
                 .border_color(cx.theme().colors().border.opacity(0.6))
         })
-        .children(highlighted_segments);
+        .child(row)
+        .into_any_element();
 
     let breadcrumbs = if let Some(prefix) = prefix {
-        h_flex().gap_1p5().child(prefix).child(breadcrumbs_stack)
+        h_flex()
+            .gap_1p5()
+            .child(prefix)
+            .child(breadcrumbs_stack)
+            .into_any_element()
     } else {
         breadcrumbs_stack
     };
@@ -1985,7 +2472,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collapse_breadcrumb_segments_realigns_divergent_lengths() {
+    fn test_align_symbol_segments_realigns_divergent_lengths() {
         let segments: Vec<HighlightedText> = (0..3)
             .map(|i| HighlightedText {
                 text: format!("segment-{i}").into(),
@@ -2000,31 +2487,56 @@ mod tests {
             item: None,
         })];
 
-        let (segments, symbol_segments, file_segment_index) =
-            collapse_breadcrumb_segments(segments, symbol_segments, 0, 12);
+        let symbol_segments = align_symbol_segments(&segments, symbol_segments);
 
-        assert_eq!(segments.len(), 3);
         assert_eq!(symbol_segments.len(), 3);
         assert!(symbol_segments.iter().all(Option::is_none));
-        assert_eq!(file_segment_index, 0);
+    }
+
+    #[test]
+    fn test_classify_breadcrumb_segment_kinds() {
+        // Root, two directory components, file, two ancestor symbols.
+        let kinds = classify_breadcrumb_segment_kinds(6, 3, true);
+        assert_eq!(
+            kinds,
+            vec![
+                BreadcrumbSegmentKind::Root,
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::File,
+                BreadcrumbSegmentKind::Symbol,
+                BreadcrumbSegmentKind::Symbol,
+            ]
+        );
+
+        // No root segment (`Siblings` mode, or the path wasn't split at all): the first segment
+        // is `Middle`, not `Root`.
+        let kinds = classify_breadcrumb_segment_kinds(3, 1, false);
+        assert_eq!(
+            kinds,
+            vec![
+                BreadcrumbSegmentKind::Middle,
+                BreadcrumbSegmentKind::File,
+                BreadcrumbSegmentKind::Symbol,
+            ]
+        );
+
+        // The path wasn't split (unsaved buffer): a single `File` segment, `file_segment_index`
+        // stays `0`.
+        let kinds = classify_breadcrumb_segment_kinds(1, 0, false);
+        assert_eq!(kinds, vec![BreadcrumbSegmentKind::File]);
     }
 
     /// Regression test for the `symbol_segments.splice()` panic described in the branch review:
-    /// with the cursor `MAX_SEGMENTS` (12) or more symbol levels deep and a navigated worktree
-    /// that fails to resolve, `symbol_segments` ends up far shorter than `segments` (see
-    /// `render_breadcrumb_text`'s comment on `symbol_segments` for how the two are built
-    /// independently). Collapsing the middle of `segments` into an ellipsis computes its splice
-    /// range purely from `segments.len()`; applying that same range to the short
-    /// `symbol_segments` panics unless the alignment guard runs first.
-    ///
-    /// Fails without the fix: moving the alignment check inside `collapse_breadcrumb_segments`
-    /// back to *after* the splice (its position before this function was extracted) makes this
-    /// test panic with "range end index 8 out of range for slice of length 1" — a real
-    /// `Vec::splice` out-of-bounds panic — instead of passing. Confirmed by making exactly that
-    /// change and re-running this test before restoring the fix.
+    /// with the cursor deep in a symbol chain and a navigated worktree that fails to resolve,
+    /// `symbol_segments` ends up far shorter than `segments` (see `render_breadcrumb_text`'s
+    /// comment on `symbol_segments` for how the two are built independently). Every splice below —
+    /// hard-capping, and later applying `plan_breadcrumb_layout`'s plan — computes its range purely
+    /// from `segments.len()`; applying that same range to the short `symbol_segments` panics unless
+    /// `align_symbol_segments` runs first.
     #[test]
-    fn test_collapse_breadcrumb_segments_divergent_length_beyond_max_does_not_panic() {
-        let segments: Vec<HighlightedText> = (0..14)
+    fn test_hard_cap_breadcrumb_middle_segments_does_not_panic_on_divergent_symbol_segments() {
+        let segments: Vec<HighlightedText> = (0..100)
             .map(|i| HighlightedText {
                 text: format!("segment-{i}").into(),
                 highlights: vec![],
@@ -2035,16 +2547,127 @@ mod tests {
             buffer_id: BufferId::new(1).unwrap(),
             item: None,
         })];
-
-        let (segments, symbol_segments, file_segment_index) =
-            collapse_breadcrumb_segments(segments, symbol_segments, 13, 12);
-
-        // Middle collapsed into one ellipsis: 6 prefix + 1 ellipsis + 6 suffix = 13.
-        assert_eq!(segments.len(), 13);
+        let symbol_segments = align_symbol_segments(&segments, symbol_segments);
         assert_eq!(symbol_segments.len(), segments.len());
-        // The file segment (originally index 13, past the old suffix start) shifts left by the
-        // two collapsed segments, landing on the ellipsis's far side.
-        assert_eq!(file_segment_index, 12);
+
+        // A root segment, 98 middle components, then the file at the end.
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), 99, true);
+
+        let (segments, symbol_segments, kinds, file_segment_index) =
+            hard_cap_breadcrumb_middle_segments(segments, symbol_segments, kinds, 99);
+
+        // Root (1) + hard-capped middle (32 kept prefix + 1 "⋯" + 32 kept suffix = 65) + file (1)
+        // = 67.
+        assert_eq!(segments.len(), 67);
+        assert_eq!(symbol_segments.len(), segments.len());
+        assert_eq!(kinds.len(), segments.len());
+        assert_eq!(file_segment_index, 66);
+        assert_eq!(kinds[file_segment_index], BreadcrumbSegmentKind::File);
+    }
+
+    #[test]
+    fn test_hard_cap_breadcrumb_middle_segments_leaves_ordinary_input_untouched() {
+        let segments: Vec<HighlightedText> = (0..6)
+            .map(|i| HighlightedText {
+                text: format!("segment-{i}").into(),
+                highlights: vec![],
+            })
+            .collect();
+        let symbol_segments = vec![None; segments.len()];
+        let kinds = classify_breadcrumb_segment_kinds(segments.len(), 3, true);
+
+        let (segments, symbol_segments, kinds, file_segment_index) =
+            hard_cap_breadcrumb_middle_segments(segments, symbol_segments, kinds, 3);
+
+        assert_eq!(segments.len(), 6);
+        assert_eq!(symbol_segments.len(), 6);
+        assert_eq!(kinds.len(), 6);
+        assert_eq!(file_segment_index, 3);
+    }
+
+    /// Widths (in pixels) for a synthetic six-segment trail modeling the report's own example:
+    /// root, four middle directory components, the file, then two ancestor symbols (outermost
+    /// first, cursor-nearest last) — `root, a, b, c, d, file.kt, Class, fun method`.
+    fn sample_breadcrumb_widths_and_kinds() -> (Vec<Pixels>, Vec<BreadcrumbSegmentKind>) {
+        use BreadcrumbSegmentKind::*;
+        let widths = vec![
+            px(60.),  // root
+            px(30.),  // a
+            px(30.),  // b
+            px(30.),  // c
+            px(30.),  // d
+            px(80.),  // file.kt
+            px(90.),  // Class
+            px(120.), // fun method
+        ];
+        let kinds = vec![Root, Middle, Middle, Middle, Middle, File, Symbol, Symbol];
+        (widths, kinds)
+    }
+
+    #[test]
+    fn test_plan_breadcrumb_layout_everything_fits() {
+        let (widths, kinds) = sample_breadcrumb_widths_and_kinds();
+        let total: Pixels = widths.iter().fold(Pixels::ZERO, |sum, w| sum + *w);
+
+        let plan = plan_breadcrumb_layout(&widths, &kinds, px(20.), total);
+
+        assert_eq!(plan.visible, (0..widths.len()).collect::<Vec<_>>());
+        assert!(plan.ellipses.is_empty());
+    }
+
+    #[test]
+    fn test_plan_breadcrumb_layout_drops_middle_before_root_before_file_before_outer_symbols() {
+        let (widths, kinds) = sample_breadcrumb_widths_and_kinds();
+
+        // Narrow enough that all 4 middle components must go (dropping only 3 of them leaves
+        // root(60) + ⋯(20) + d(30) + file(80) + symbols(90+120) = 400, still too wide), but root,
+        // file, and both symbols still fit once all 4 are gone: root(60) + ⋯(20) + file(80) +
+        // symbols(90+120) = 370.
+        let plan = plan_breadcrumb_layout(&widths, &kinds, px(20.), px(380.));
+        assert_eq!(plan.visible, vec![0, 5, 6, 7]);
+        assert_eq!(plan.ellipses, vec![1..5]);
+
+        // Narrow enough that root has to go too, but file and both symbols still fit: ⋯(20) +
+        // file(80) + symbols(90+120) = 310.
+        let plan = plan_breadcrumb_layout(&widths, &kinds, px(20.), px(340.));
+        assert_eq!(plan.visible, vec![5, 6, 7]);
+        assert_eq!(plan.ellipses, vec![0..5]);
+
+        // Narrower still: file goes as well, leaving just the symbol chain — "only symbols fit".
+        let plan = plan_breadcrumb_layout(&widths, &kinds, px(20.), px(230.));
+        assert_eq!(plan.visible, vec![6, 7]);
+        assert_eq!(plan.ellipses, vec![0..6]);
+
+        // Narrower yet: the outer symbol goes too, leaving only the innermost — the one segment
+        // `plan_breadcrumb_layout` never drops.
+        let plan = plan_breadcrumb_layout(&widths, &kinds, px(20.), px(140.));
+        assert_eq!(plan.visible, vec![7]);
+        assert_eq!(plan.ellipses, vec![0..7]);
+    }
+
+    #[test]
+    fn test_plan_breadcrumb_layout_degenerate_case_always_keeps_the_last_segment() {
+        let (widths, kinds) = sample_breadcrumb_widths_and_kinds();
+
+        // Not even the innermost symbol alone fits — still renders it rather than nothing.
+        let plan = plan_breadcrumb_layout(&widths, &kinds, px(20.), px(1.));
+        assert_eq!(plan.visible, vec![7]);
+        assert_eq!(plan.ellipses, vec![0..7]);
+    }
+
+    #[test]
+    fn test_plan_breadcrumb_layout_single_segment_never_collapses() {
+        let plan =
+            plan_breadcrumb_layout(&[px(500.)], &[BreadcrumbSegmentKind::File], px(20.), px(1.));
+        assert_eq!(plan.visible, vec![0]);
+        assert!(plan.ellipses.is_empty());
+    }
+
+    #[test]
+    fn test_plan_breadcrumb_layout_empty_input() {
+        let plan = plan_breadcrumb_layout(&[], &[], px(20.), px(500.));
+        assert!(plan.visible.is_empty());
+        assert!(plan.ellipses.is_empty());
     }
 
     /// Regression test for the double-lease panic fixed on `Editor::navigate_breadcrumb_to`:
