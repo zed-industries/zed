@@ -7,6 +7,13 @@
 # A key that has a natural home keeps it: the application menus own theirs in
 # zed.ftl, the title bar owns its call-quality terms in title_bar.ftl. This file
 # is for the plain interface vocabulary that belongs to no one crate.
+#
+# A key earns a place here when it is marked by four or more crates, is a bare
+# word with no placeables, and has no owner in that sense. That leaves the
+# application-menu items (Copy, Paste, Cut, Save, Settings, Zoom In, Zoom Out)
+# in zed.ftl, the named workspace actions (Copy Path, Copy Relative Path, Open
+# in Terminal) in workspace.ftl, and message templates like `error-error`
+# wherever they are raised.
 
 ## Confirmation and dismissal
 
@@ -15,6 +22,8 @@ cancel = 取消
 retry = 重试
 yes = 是
 no = 否
+close = 关闭
+dismiss = 忽略
 
 ## Actions with no single owner
 
@@ -22,6 +31,19 @@ no = 否
 # button that opens something already chosen names this key instead.
 open-action = 打开
 learn-more = 了解更多
+configure = 配置
+delete = 删除
+remove = 移除
+copy-link = 复制链接
+
+## Account
+
+sign-in = 登录
+sign-out = 退出登录
+
+## Zed concepts named across crates
+
+restricted-mode = 受限模式
 
 ## Tab titles
 

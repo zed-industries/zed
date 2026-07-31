@@ -30,7 +30,6 @@ as-a-multi-root-folder = 作为多根文件夹
 
 ## Removing entries
 
-remove = 移除
 remove-folder = 移除文件夹
 remove-folder-from-project = 从项目中移除文件夹
 remove-from-window = 从窗口中移除

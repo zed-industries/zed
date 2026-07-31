@@ -36,7 +36,6 @@ disconnected-from-host = 已断开与 { $host } 的连接
 
 ## Restricted mode
 
-restricted-mode = 受限模式
 you-re-in-restricted-mode = 你正处于受限模式
 mark-this-project-as-trusted-and-unlock-all-features = 将此项目标记为受信任以解锁全部功能
 
@@ -44,8 +43,6 @@ mark-this-project-as-trusted-and-unlock-all-features = 将此项目标记为受�
 
 disconnected = 已断开连接
 signing-in = 正在登录…
-sign-in = 登录
-sign-out = 退出登录
 user-menu = 用户菜单
 organization = 组织
 click-to-follow = 点击以跟随

@@ -11,7 +11,6 @@ apply = 应用
 changes = 更改
 commit = 提交
 create = 创建
-delete = 删除
 deleting = 正在删除…
 drop = 丢弃
 history = 历史

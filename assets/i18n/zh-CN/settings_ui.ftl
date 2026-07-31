@@ -15,7 +15,6 @@ reset-to-default = 重置为默认值
 modified-in-file = —  已在 { $file } 中修改
 overridden-by-organization = 已被组织覆盖
 contact-your-organization-admins-to-adjust-this-setting = 请联系你的组织管理员以调整此设置。
-copy-link = 复制链接
 search-settings = 搜索设置…
 settings-file = 设置文件
 view-other-projects = 查看其他项目

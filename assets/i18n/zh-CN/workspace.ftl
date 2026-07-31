@@ -32,7 +32,6 @@ open-threads-sidebar = 打开会话侧边栏
 
 ## Tab context menu
 
-close = 关闭
 close-others = 关闭其他
 close-multibuffers = 关闭多缓冲区
 close-left = 关闭左侧
@@ -91,7 +90,6 @@ untitled = 未命名
 
 ## Notifications
 
-dismiss = 忽略
 suppress = 屏蔽
 click-to-close = 点击以关闭
 suppress-with-shift-click = 按住 Shift 点击可屏蔽
@@ -168,7 +166,6 @@ get-started = 开始使用
 open-project = 打开项目
 clone-repository = 克隆仓库
 open-command-palette = 打开命令面板
-configure = 配置
 customize-keymaps = 自定义按键映射
 explore-extensions = 探索扩展
 collaborate-with-agents = 与智能体协作
