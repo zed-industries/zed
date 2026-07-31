@@ -883,12 +883,15 @@ CRITICAL DISTINCTION — shared symptoms vs shared root cause:
 - If the issues just happen to be in the same feature area, or describe similar-sounding problems
   with different specifics (different error messages, different triggers, different platforms,
   different configurations), they are NOT duplicates.
+- Compare the causal mechanism, not only the surface observations. Differing observed effects do
+  not rule out a duplicate when the provided evidence supports a specific shared trigger and
+  mechanism, but do create uncertainty about the match.
 
 Sort matches into two buckets:
 - "likely_matches": Almost certainly the same bug. You can name a specific shared root cause, and
   the reproduction steps / error messages / triggers are consistent.
-- "possible_matches": Likely the same bug based on specific technical details, but some
-  uncertainty remains.
+- "possible_matches": Plausibly the same bug because concrete evidence supports a shared trigger
+  or mechanism, but incomplete evidence or differing observed effects leave meaningful uncertainty.
 - Do NOT include issues that merely share symptoms, affect the same feature area, or sound similar
   at a surface level.
 
@@ -1086,7 +1089,9 @@ For an issue candidate, keep the match only when both reports plausibly describe
 BUG. Shared symptoms, product area, or terminology are insufficient. The proposed shared
 root cause and every concrete claim in the explanation must be supported by the provided
 text. Omit matches that rely on invented mechanisms, contradictory triggers, different
-errors, configurations, or platforms without evidence tying them together.
+errors, configurations, or platforms without evidence tying them together. Judge the proposed
+causal mechanism rather than requiring every surface observation to be identical; any claimed
+bridge between differing observations must itself be supported by the provided text.
 
 Some reports framed as bugs are actually requests for behavior Zed does not support. Zed
 tracks feature requests and open-ended proposals in Discussions. For a discussion candidate,
