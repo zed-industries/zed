@@ -10036,6 +10036,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
+ "i18n",
  "project",
  "ui",
  "workspace",
