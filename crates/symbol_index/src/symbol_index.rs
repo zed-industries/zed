@@ -151,12 +151,11 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
     while let Some(query_match) = matches.next() {
         let mut item_node = None;
         let mut name_node = None;
-        let mut name_parts = Vec::new();
-        // Track the byte range spanning all relevant captures (context, name,
-        // open, close) so we can extract display text from source in the
-        // correct order, preserving original token positions.
-        let mut first_capture_start: Option<usize> = None;
-        let mut last_capture_end: Option<usize> = None;
+        // Collect (byte_range, is_name) for each relevant capture, preserving
+        // capture order. This mirrors outline panel's next_outline_item:
+        // adjacent captures with source gaps get a space between them;
+        // adjacent captures with no gap are concatenated directly.
+        let mut capture_ranges: Vec<(Range<usize>, bool)> = Vec::new();
 
         for capture in query_match.captures {
             let node = capture.node;
@@ -168,27 +167,32 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
                 if name_node.is_none() {
                     name_node = Some(node);
                 }
-                if let Ok(text) = node.utf8_text(source) {
-                    name_parts.push(text.to_string());
+                // Truncate to first line (multiline names are rare; outline panel does the same).
+                let mut range = node.start_byte()..node.end_byte();
+                if node.end_position().row > node.start_position().row {
+                    let line_end = node.start_byte()
+                        + source_line_len(source, node.start_position().row)
+                        - node.start_position().column;
+                    range.end = range.start + line_end;
                 }
-                if first_capture_start.map_or(true, |s| node.start_byte() < s) {
-                    first_capture_start = Some(node.start_byte());
-                }
-                if last_capture_end.map_or(true, |e| node.end_byte() > e) {
-                    last_capture_end = Some(node.end_byte());
+                if !range.is_empty() {
+                    capture_ranges.push((range, true));
                 }
             } else if config.context_capture_ix == Some(capture_index)
                 || config.extra_context_capture_ix == Some(capture_index)
-                || config.open_capture_ix == Some(capture_index)
-                || config.close_capture_ix == Some(capture_index)
             {
-                if first_capture_start.map_or(true, |s| node.start_byte() < s) {
-                    first_capture_start = Some(node.start_byte());
+                let mut range = node.start_byte()..node.end_byte();
+                if node.end_position().row > node.start_position().row {
+                    let line_end = node.start_byte()
+                        + source_line_len(source, node.start_position().row)
+                        - node.start_position().column;
+                    range.end = range.start + line_end;
                 }
-                if last_capture_end.map_or(true, |e| node.end_byte() > e) {
-                    last_capture_end = Some(node.end_byte());
+                if !range.is_empty() {
+                    capture_ranges.push((range, false));
                 }
             }
+            // @open and @close are not included in display text, matching outline panel.
         }
 
         let item_node = match item_node {
@@ -201,27 +205,46 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
             None => continue,
         };
 
-        let name = name_parts.join(" ");
+        if capture_ranges.is_empty() {
+            continue;
+        }
+
+        // Build name from name captures.
+        let name: String = capture_ranges
+            .iter()
+            .filter(|(_, is_name)| *is_name)
+            .map(|(range, _)| &text[range.clone()])
+            .collect::<Vec<_>>()
+            .join("");
         if name.is_empty() {
             continue;
         }
 
-        // Build display_text directly from source, spanning from the first
-        // relevant capture to the last. This preserves original token order
-        // and spacing, including captures after @name (e.g., "()").
-        let name_start_byte = name_node.start_byte();
-        let name_end_byte = name_node.end_byte();
-        let first_start = first_capture_start.unwrap_or(name_start_byte);
-        let last_end = last_capture_end.unwrap_or(name_end_byte);
+        // Build display_text: iterate captures in order, add a space between
+        // adjacent captures only when there's a gap in source. This preserves
+        // "mmdata()" (no gap) vs "async function" (gap → space).
+        let mut display_text = String::new();
+        let mut name_ranges: Vec<Range<usize>> = Vec::new();
+        let mut last_end: Option<usize> = None;
 
-        let raw = &text[first_start..last_end];
-        // Normalize whitespace (collapse runs, including newlines, into single spaces).
-        let display_text: String = raw
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        let name_range =
-            (name_start_byte - first_start) as u32..(name_end_byte - first_start) as u32;
+        for (range, is_name) in &capture_ranges {
+            let has_gap = last_end.is_some_and(|prev| range.start > prev);
+            if !display_text.is_empty() && has_gap {
+                display_text.push(' ');
+            }
+            let start = display_text.len();
+            display_text.push_str(&text[range.clone()]);
+            let end = display_text.len();
+            if *is_name {
+                name_ranges.push(start..end);
+            }
+            last_end = Some(range.end);
+        }
+
+        let name_range = match (name_ranges.first(), name_ranges.last()) {
+            (Some(first), Some(last)) => first.start as u32..last.end as u32,
+            _ => 0..0,
+        };
 
         let kind = infer_symbol_kind(item_node.kind());
 
@@ -239,6 +262,22 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
     }
 
     extracted_symbols
+}
+
+/// Returns the byte length of line `row` in `source` (excluding newline).
+fn source_line_len(source: &[u8], row: usize) -> usize {
+    let mut line_start = 0;
+    for _ in 0..row {
+        match source[line_start..].iter().position(|&b| b == b'\n') {
+            Some(pos) => line_start += pos + 1,
+            None => return 0,
+        }
+    }
+    let line_end = source[line_start..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map_or(source.len(), |pos| line_start + pos);
+    line_end - line_start
 }
 
 fn infer_symbol_kind(node_type: &str) -> SymbolKind {
