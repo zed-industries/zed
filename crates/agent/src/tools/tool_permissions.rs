@@ -483,9 +483,9 @@ pub fn authorize_symlink_access(
     cx: &mut App,
 ) -> Task<Result<()>> {
     let title = t!(
-        "`{$path}` points outside the project (symlink to `{$target}`)",
-        path = display_path.to_string(),
-        target = canonical_target.display().to_string(),
+        "{$path} points outside the project (symlink to {$target})",
+        path = format!("`{display_path}`"),
+        target = format!("`{}`", canonical_target.display()),
     );
 
     let context = ToolPermissionContext::symlink_target(
@@ -843,33 +843,36 @@ pub fn authorize_dirty_buffer(
 ) -> Task<Result<DirtyBufferDecision>> {
     let (message, options) = match kind {
         DirtyBufferPromptKind::Edit => (
-            "This file has unsaved changes. Do you want to save or discard them \
-             before the agent continues editing?"
-                .to_string(),
+            String::from(t!(
+                "This file has unsaved changes. Do you want to save or discard them \
+                 before the agent continues editing?"
+            )),
             vec![
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("save"),
-                    "Save",
+                    t!("Save"),
                     acp::PermissionOptionKind::AllowOnce,
                 ),
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("discard"),
-                    "Discard",
+                    t!("Discard"),
                     acp::PermissionOptionKind::RejectOnce,
                 ),
             ],
         ),
         DirtyBufferPromptKind::Overwrite => (
-            "This file has unsaved changes and the agent wants to overwrite it.".to_string(),
+            String::from(t!(
+                "This file has unsaved changes and the agent wants to overwrite it."
+            )),
             vec![
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("discard"),
-                    "Overwrite",
+                    t!("Overwrite"),
                     acp::PermissionOptionKind::AllowOnce,
                 ),
                 acp::PermissionOption::new(
                     acp::PermissionOptionId::new("keep"),
-                    "Cancel",
+                    t!("Cancel"),
                     acp::PermissionOptionKind::RejectOnce,
                 ),
             ],

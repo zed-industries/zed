@@ -87,6 +87,7 @@ targets-symlinks-outside-project = { $targets }（符号链接指向项目之外
 ## 权限选项按钮
 
 always-for-tool = 始终允许 { $tool }
+always-for-tool-mcp-tool = 始终允许 MCP 工具 { $tool }
 always-for-pattern = 始终允许 { $pattern }
 always-for-pattern-commands = 始终允许 { $pattern } 命令
 allow-once = 仅允许一次
@@ -102,3 +103,9 @@ run-without-sandbox-once = 本次不使用沙箱运行
 run-without-sandbox-for-this-thread = 在本会话中不使用沙箱运行
 run-without-sandbox-for-this-subagent = 在本子智能体中不使用沙箱运行
 always-run-without-sandbox = 始终不使用沙箱运行
+
+## 未保存修改的提示
+
+this-file-has-unsaved-changes-do-you-want-to-save-or-discard-them-before-the-agent-continues-editing = 该文件有未保存的修改。在智能体继续编辑之前，要保存还是放弃这些修改？
+this-file-has-unsaved-changes-and-the-agent-wants-to-overwrite-it = 该文件有未保存的修改，而智能体想覆盖它。
+discard = 放弃

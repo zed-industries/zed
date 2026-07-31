@@ -1124,9 +1124,12 @@ impl ToolPermissionContext {
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
                 let button_text = if tool_name == TerminalTool::NAME {
-                    t!("Always for `{$pattern}` commands", pattern = display)
+                    t!(
+                        "Always for {$pattern} commands",
+                        pattern = format!("`{display}`")
+                    )
                 } else {
-                    t!("Always for `{$pattern}`", pattern = display)
+                    t!("Always for {$pattern}", pattern = format!("`{display}`"))
                 };
                 push_choice(
                     button_text,
@@ -5670,12 +5673,12 @@ impl ToolCallEventStream {
             acp_thread::PermissionOptionChoice {
                 allow: acp::PermissionOption::new(
                     acp::PermissionOptionId::new(format!("always_allow_mcp:{tool_id}")),
-                    format!("Always for {display_name} MCP tool"),
+                    t!("Always for {$tool} MCP tool", tool = display_name.clone()),
                     acp::PermissionOptionKind::AllowAlways,
                 ),
                 deny: acp::PermissionOption::new(
                     acp::PermissionOptionId::new(format!("always_deny_mcp:{tool_id}")),
-                    format!("Always for {display_name} MCP tool"),
+                    t!("Always for {$tool} MCP tool", tool = display_name),
                     acp::PermissionOptionKind::RejectAlways,
                 ),
                 sub_patterns: vec![],
@@ -5683,12 +5686,12 @@ impl ToolCallEventStream {
             acp_thread::PermissionOptionChoice {
                 allow: acp::PermissionOption::new(
                     acp::PermissionOptionId::new("allow"),
-                    "Only this time",
+                    t!("Only this time"),
                     acp::PermissionOptionKind::AllowOnce,
                 ),
                 deny: acp::PermissionOption::new(
                     acp::PermissionOptionId::new("deny"),
-                    "Only this time",
+                    t!("Only this time"),
                     acp::PermissionOptionKind::RejectOnce,
                 ),
                 sub_patterns: vec![],
