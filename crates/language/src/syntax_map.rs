@@ -1858,10 +1858,6 @@ impl<'a> SyntaxLayer<'a> {
 
         let mut query_cursor = QueryCursorHandle::new();
         query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
-        query_cursor.set_containing_byte_range(
-            offset.saturating_sub(MAX_BYTES_TO_QUERY / 2)
-                ..offset.saturating_add(MAX_BYTES_TO_QUERY / 2),
-        );
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);

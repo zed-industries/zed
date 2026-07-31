@@ -5444,6 +5444,21 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         * text
         ˇ
     "});
+
+        // Ensure block comment continuation works for very long comments
+        // (larger than MAX_BYTES_TO_QUERY). Previously, the containing byte
+        // range filter in override_id excluded large comment nodes, causing
+        // the "comment" scope to not be detected.
+        let mut long_comment = String::from("/**\n");
+        for i in 0..600 {
+            long_comment.push_str(&format!(" * Line {i} padding padding padding\n"));
+        }
+        long_comment.push_str(" * Last lineˇ\n");
+        long_comment.push_str(" */");
+        cx.set_state(&long_comment);
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        let expected = long_comment.replace(" * Last lineˇ\n", " * Last line\n * ˇ\n");
+        cx.assert_editor_state(&expected);
     }
     // Ensure that comment continuations can be disabled.
     update_test_language_settings(cx, &|settings| {
