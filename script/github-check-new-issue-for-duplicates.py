@@ -735,6 +735,25 @@ def search_for_similar_issues(issue, detected_areas, search_queries, max_searche
     return similar_issues
 
 
+def enrich_popular_candidate_comments(candidates):
+    for candidate in candidates:
+        if (
+            candidate["kind"] != "issue"
+            or "popular_area" not in candidate.get("matched_searches", [])
+        ):
+            continue
+        try:
+            comments = github_api_get(
+                f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{candidate['number']}/comments",
+                params={"per_page": 100},
+            )
+        except requests.RequestException as error:
+            log(f"  Failed to fetch comments for {candidate['key']}: {error}")
+            continue
+        bodies = [comment.get("body") or "" for comment in comments]
+        candidate["recent_comments_preview"] = "\n\n---\n\n".join(filter(None, bodies[-5:]))[-3000:]
+
+
 def search_discussions(issue, detected_areas, search_queries, max_searches=6):
     """Search Discussions for a topic/request the new issue may duplicate.
 
@@ -836,6 +855,8 @@ def analyze_duplicates(anthropic_key, issue, candidates):
     )
     if not selected_candidates:
         return {"likely_matches": [], "possible_matches": [], "related_closed_candidates": []}
+
+    enrich_popular_candidate_comments(selected_candidates)
 
     log("Analyzing candidates with Claude")
     log(
@@ -1125,6 +1146,9 @@ def critique_proposed_matches(anthropic_key, issue, likely_matches, possible_mat
 
 **Body preview:**
 {candidate['body_preview']}
+
+**Recent comments:**
+{candidate.get('recent_comments_preview') or 'None provided'}
 
 ## Proposed Match
 **Confidence:** {confidence}
