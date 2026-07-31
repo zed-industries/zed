@@ -1,6 +1,7 @@
 use super::register_zed_scheme;
 use anyhow::Result;
 use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
+use i18n::t;
 use release_channel::ReleaseChannel;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -108,11 +109,11 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
                         |cx| {
                             cx.new(|cx| {
                                 MessageNotification::new(
-                                    "You can add `zed` to your PATH manually.",
+                                    t!("You can add `zed` to your PATH manually."),
                                     cx,
                                 )
-                                .with_title("Couldn't install the Zed CLI")
-                                .more_info_message("Show me how")
+                                .with_title(t!("Couldn't install the Zed CLI"))
+                                .more_info_message(t!("Show me how"))
                                 .more_info_url(CANT_INSTALL_DOCS_URL)
                             })
                         },
@@ -128,11 +129,11 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<InstalledZedCli>(),
-                    format!(
-                        "Installed `zed` to {}. You can launch {} from your terminal.",
-                        path.to_string_lossy(),
-                        ReleaseChannel::global(cx).display_name()
-                    ),
+                    String::from(t!(
+                        "Installed `zed` to {$path}. You can launch {$app} from your terminal.",
+                        path = path.to_string_lossy().into_owned(),
+                        app = ReleaseChannel::global(cx).display_name()
+                    )),
                 ),
                 cx,
             )
@@ -140,5 +141,10 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
         register_zed_scheme(cx).await.log_err();
         Ok(())
     })
-    .detach_and_prompt_err("Cannot install the Zed CLI", window, cx, |_, _, _| None);
+    .detach_and_prompt_err(
+        &t!("Cannot install the Zed CLI").resolve(),
+        window,
+        cx,
+        |_, _, _| None,
+    );
 }
