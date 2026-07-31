@@ -510,7 +510,10 @@ message Envelope {
     GitCreateTag git_create_tag = 479;
     GitCherryPick git_cherry_pick = 480;
     GitRevertCommit git_revert_commit = 481;
-    GitMerge git_merge = 482; // current max
+    GitMerge git_merge = 482;
+    GitOperationState git_operation_state = 483;
+    GitOperationStateResponse git_operation_state_response = 484;
+    GitRunOperationAction git_run_operation_action = 485; // current max
   }
 
   reserved 87 to 88;

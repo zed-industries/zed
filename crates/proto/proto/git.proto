@@ -846,3 +846,32 @@ message SearchCommits {
 message SearchCommitsResponse {
   repeated string shas = 1;
 }
+
+enum GitOperationKind {
+  MERGE_OPERATION = 0;
+  REBASE_OPERATION = 1;
+  CHERRY_PICK_OPERATION = 2;
+  REVERT_OPERATION = 3;
+}
+
+enum GitOperationAction {
+  CONTINUE_ACTION = 0;
+  SKIP_ACTION = 1;
+  ABORT_ACTION = 2;
+}
+
+message GitOperationState {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitOperationStateResponse {
+  optional GitOperationKind operation = 1;
+}
+
+message GitRunOperationAction {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitOperationKind operation = 3;
+  GitOperationAction action = 4;
+}

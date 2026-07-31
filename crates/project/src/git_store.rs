@@ -39,7 +39,8 @@ use git::{
         FetchOptions, FileHistoryChangedFileSets, GitCommitTemplate, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, MergeMode,
         PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag, GitOperationAction,
+        GitOperationKind,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -455,6 +456,7 @@ pub struct RepositorySnapshot {
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
     pub linked_worktrees: Arc<[GitWorktree]>,
+    pub active_operation: Option<GitOperationKind>,
 }
 
 type JobId = u64;
@@ -820,6 +822,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_cherry_pick);
         client.add_entity_request_handler(Self::handle_revert_commit);
         client.add_entity_request_handler(Self::handle_merge);
+        client.add_entity_request_handler(Self::handle_git_operation_state);
+        client.add_entity_request_handler(Self::handle_git_run_operation_action);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_create_checkpoint);
         client.add_entity_request_handler(Self::handle_create_archive_checkpoint);
@@ -4049,6 +4053,38 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_git_operation_state(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitOperationState>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitOperationStateResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let operation = repository_handle
+            .update(&mut cx, |repository, cx| repository.operation_state(cx))
+            .await??;
+        Ok(proto::GitOperationStateResponse {
+            operation: operation.map(|op| git_operation_kind_to_proto(op) as i32),
+        })
+    }
+
+    async fn handle_git_run_operation_action(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRunOperationAction>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let operation = git_operation_kind_from_proto(envelope.payload.operation);
+        let action = git_operation_action_from_proto(envelope.payload.action);
+        repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.run_operation_action(operation, action, cx)
+            })
+            .await??;
+        Ok(proto::Ack {})
+    }
+
     async fn handle_checkout_files(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCheckoutFiles>,
@@ -5493,6 +5529,7 @@ impl RepositorySnapshot {
             branch_list_error: None,
             head_commit: None,
             scan_id: 0,
+            active_operation: None,
             merge: Default::default(),
             remote_origin_url: None,
             remote_upstream_url: None,
@@ -6654,6 +6691,63 @@ impl Repository {
                 }
             }
         });
+        self.finish_graph_mutation(receiver, cx)
+    }
+
+    pub fn operation_state(
+        &mut self,
+        _cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<Option<GitOperationKind>>> {
+        let id = self.id;
+        self.send_job("operation_state", None, move |git_repo, _| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.operation_state().await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitOperationState {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+                    Ok(response.operation.map(git_operation_kind_from_proto))
+                }
+            }
+        })
+    }
+
+    pub fn run_operation_action(
+        &mut self,
+        operation: GitOperationKind,
+        action: GitOperationAction,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let receiver = self.send_job(
+            "run_operation_action",
+            None,
+            move |git_repo, _| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState {
+                        backend,
+                        environment,
+                        ..
+                    }) => backend.run_operation_action(operation, action, environment).await,
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRunOperationAction {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                operation: git_operation_kind_to_proto(operation) as i32,
+                                action: git_operation_action_to_proto(action) as i32,
+                            })
+                            .await?;
+                        Ok(())
+                    }
+                }
+            },
+        );
         self.finish_graph_mutation(receiver, cx)
     }
 
@@ -10419,6 +10513,40 @@ fn merge_mode_from_proto(mode: git_merge::MergeMode) -> MergeMode {
     }
 }
 
+fn git_operation_kind_to_proto(kind: GitOperationKind) -> proto::GitOperationKind {
+    match kind {
+        GitOperationKind::Merge => proto::GitOperationKind::MergeOperation,
+        GitOperationKind::Rebase => proto::GitOperationKind::RebaseOperation,
+        GitOperationKind::CherryPick => proto::GitOperationKind::CherryPickOperation,
+        GitOperationKind::Revert => proto::GitOperationKind::RevertOperation,
+    }
+}
+
+fn git_operation_kind_from_proto(proto_val: i32) -> GitOperationKind {
+    match proto::GitOperationKind::from_i32(proto_val) {
+        Some(proto::GitOperationKind::MergeOperation) | None => GitOperationKind::Merge,
+        Some(proto::GitOperationKind::RebaseOperation) => GitOperationKind::Rebase,
+        Some(proto::GitOperationKind::CherryPickOperation) => GitOperationKind::CherryPick,
+        Some(proto::GitOperationKind::RevertOperation) => GitOperationKind::Revert,
+    }
+}
+
+fn git_operation_action_to_proto(action: GitOperationAction) -> proto::GitOperationAction {
+    match action {
+        GitOperationAction::Continue => proto::GitOperationAction::ContinueAction,
+        GitOperationAction::Skip => proto::GitOperationAction::SkipAction,
+        GitOperationAction::Abort => proto::GitOperationAction::AbortAction,
+    }
+}
+
+fn git_operation_action_from_proto(proto_val: i32) -> GitOperationAction {
+    match proto::GitOperationAction::from_i32(proto_val) {
+        Some(proto::GitOperationAction::ContinueAction) | None => GitOperationAction::Continue,
+        Some(proto::GitOperationAction::SkipAction) => GitOperationAction::Skip,
+        Some(proto::GitOperationAction::AbortAction) => GitOperationAction::Abort,
+    }
+}
+
 fn reset_mode_to_proto(mode: ResetMode) -> i32 {
     match mode {
         ResetMode::Soft => git_reset::ResetMode::Soft.into(),
@@ -10705,6 +10833,10 @@ impl Repository {
     pub fn set_branch_list_for_test(&mut self, branches: Vec<Branch>, cx: &mut Context<Self>) {
         self.snapshot.branch_list = branches.into();
         cx.emit(RepositoryEvent::BranchListChanged);
+    }
+
+    pub fn set_active_operation_for_test(&mut self, operation: Option<GitOperationKind>) {
+        self.snapshot.active_operation = operation;
     }
 
     pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
@@ -11608,6 +11740,7 @@ async fn compute_snapshot(
     let mut remote_urls = backend.remote_urls().await;
     let remote_origin_url = remote_urls.remove("origin");
     let remote_upstream_url = remote_urls.remove("upstream");
+    let active_operation = backend.operation_state().await.ok().flatten();
 
     log::debug!("fetched remotes");
 
@@ -11628,6 +11761,7 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
+            active_operation,
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };

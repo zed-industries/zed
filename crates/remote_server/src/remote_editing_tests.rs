@@ -23,8 +23,8 @@ use fs::{FakeFs, Fs};
 use git::{
     Oid,
     repository::{
-        CommitData, CreateTagOptions, GitCommitTemplate, MergeMode, RepoPath, ResetMode,
-        Worktree as GitWorktree,
+        CommitData, CreateTagOptions, GitCommitTemplate, GitOperationAction, GitOperationKind,
+        MergeMode, RepoPath, ResetMode, Worktree as GitWorktree,
     },
 };
 use gpui::{
@@ -3483,6 +3483,66 @@ async fn test_remote_git_graph_mutations_forward_exact_options(
             },
         ]
     );
+}
+
+#[gpui::test]
+async fn test_remote_git_operation_lifecycle(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
+    let dot_git = Path::new(path!("/code/project1/.git"));
+
+    fs.with_git_state(dot_git, true, |state| {
+        state.active_operation = Some(GitOperationKind::Rebase);
+        Ok(())
+    })
+    .unwrap();
+
+    let op = repository
+        .update(cx, |repository, cx| repository.operation_state(cx))
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(op, Some(GitOperationKind::Rebase));
+
+    repository
+        .update(cx, |repository, cx| {
+            repository.run_operation_action(GitOperationKind::Rebase, GitOperationAction::Abort, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    server_cx.run_until_parked();
+    let op_after = repository
+        .update(cx, |repository, cx| repository.operation_state(cx))
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(op_after, None);
 }
 
 #[gpui::test]

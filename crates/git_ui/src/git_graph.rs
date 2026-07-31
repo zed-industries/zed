@@ -12,8 +12,8 @@ use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
     repository::{
-        CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
-        SearchCommitArgs,
+        CommitDiff, CommitFile, GitOperationKind, InitialGraphCommitData, LogOrder, LogSource,
+        RepoPath, SearchCommitArgs,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
@@ -1376,6 +1376,12 @@ impl GitGraph {
 
     fn graph_canvas_content_width(&self) -> Pixels {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
+    }
+
+    pub fn active_operation(&self, cx: &App) -> Option<GitOperationKind> {
+        let workspace = self.workspace.upgrade()?;
+        let repo = workspace.read(cx).project().read(cx).active_repository(cx)?;
+        repo.read(cx).active_operation
     }
 
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
@@ -7562,4 +7568,5 @@ mod tests {
             assert_eq!(message_entity_id, new_entity_id);
         });
     }
+
 }

@@ -15,7 +15,7 @@ use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
@@ -659,6 +659,21 @@ pub struct CreateTagOptions {
     pub message: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GitOperationKind {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GitOperationAction {
+    Continue,
+    Skip,
+    Abort,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum FetchOptions {
     All,
@@ -921,6 +936,15 @@ pub trait GitRepository: Send + Sync {
         &self,
         commit: String,
         mode: MergeMode,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn operation_state(&self) -> BoxFuture<'_, Result<Option<GitOperationKind>>>;
+
+    fn run_operation_action(
+        &self,
+        operation: GitOperationKind,
+        action: GitOperationAction,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1686,6 +1710,70 @@ impl GitRepository for RealGitRepository {
             }
             args.push(commit);
             run_git_mutation(&git, &args, &env).await
+        }
+        .boxed()
+    }
+
+    fn operation_state(&self) -> BoxFuture<'_, Result<Option<GitOperationKind>>> {
+        let git_dir = self.git_dir.clone();
+        async move {
+            if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+                Ok(Some(GitOperationKind::Rebase))
+            } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+                Ok(Some(GitOperationKind::CherryPick))
+            } else if git_dir.join("REVERT_HEAD").exists() {
+                Ok(Some(GitOperationKind::Revert))
+            } else if git_dir.join("MERGE_HEAD").exists() {
+                Ok(Some(GitOperationKind::Merge))
+            } else {
+                Ok(None)
+            }
+        }
+        .boxed()
+    }
+
+    fn run_operation_action(
+        &self,
+        operation: GitOperationKind,
+        action: GitOperationAction,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        let current_op_fut = self.operation_state();
+        async move {
+            let current_op = current_op_fut.await?;
+            anyhow::ensure!(
+                current_op == Some(operation),
+                "operation state mismatch: expected {:?}, found {:?}",
+                operation,
+                current_op
+            );
+
+            if operation == GitOperationKind::Merge && action == GitOperationAction::Skip {
+                anyhow::bail!("cannot skip a merge operation");
+            }
+
+            let git = git?;
+            let op_str = match operation {
+                GitOperationKind::Merge => "merge",
+                GitOperationKind::Rebase => "rebase",
+                GitOperationKind::CherryPick => "cherry-pick",
+                GitOperationKind::Revert => "revert",
+            };
+
+            let action_str = match action {
+                GitOperationAction::Continue => "--continue",
+                GitOperationAction::Skip => "--skip",
+                GitOperationAction::Abort => "--abort",
+            };
+
+            let mut merged_env = (*env).clone();
+            if action == GitOperationAction::Continue {
+                merged_env.insert("GIT_EDITOR".to_string(), "true".to_string());
+            }
+
+            let args = [op_str, action_str];
+            run_git_mutation(&git, &args, &merged_env).await
         }
         .boxed()
     }
@@ -4338,6 +4426,30 @@ mod tests {
         git_command_output(working_directory, arguments);
     }
 
+    #[allow(clippy::disallowed_methods)]
+    #[track_caller]
+    fn git_command_failure<I, S>(working_directory: &Path, arguments: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let output = std::process::Command::new("git")
+            .args(arguments)
+            .current_dir(working_directory)
+            .env("GIT_CONFIG_GLOBAL", "")
+            .env("GIT_CONFIG_SYSTEM", "")
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@zed.dev")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@zed.dev")
+            .output()
+            .expect("failed to run git command");
+        assert!(
+            !output.status.success(),
+            "git command unexpectedly succeeded"
+        );
+    }
+
     fn git_init_repo(path: &Path) {
         fs::create_dir_all(path).expect("failed to create repo directory");
         git_command(path, ["init", "-b", "main"]);
@@ -6850,5 +6962,48 @@ mod tests {
             remote_urls.get("upstream").unwrap(),
             "/Users/user/My Projects/upstream.git"
         );
+    }
+
+    #[gpui::test]
+    async fn test_git_operation_lifecycle_detection_and_actions(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        graph_mutation_commit(repo_dir.path(), "file.txt", "one", "one");
+        git_command(repo_dir.path(), ["switch", "-c", "feature"]);
+        graph_mutation_commit(repo_dir.path(), "file.txt", "two", "two");
+        git_command(repo_dir.path(), ["switch", "main"]);
+        graph_mutation_commit(repo_dir.path(), "file.txt", "three", "three");
+
+        let repo = graph_mutation_repository(repo_dir.path(), cx);
+
+        git_command_failure(repo_dir.path(), ["merge", "--no-ff", "feature"]);
+
+        assert_eq!(
+            repo.operation_state().await.unwrap(),
+            Some(GitOperationKind::Merge)
+        );
+
+        assert!(
+            repo.run_operation_action(
+                GitOperationKind::Merge,
+                GitOperationAction::Skip,
+                graph_mutation_env()
+            )
+            .await
+            .is_err()
+        );
+
+        repo.run_operation_action(
+            GitOperationKind::Merge,
+            GitOperationAction::Abort,
+            graph_mutation_env(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(repo.operation_state().await.unwrap(), None);
     }
 }

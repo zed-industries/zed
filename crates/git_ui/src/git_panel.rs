@@ -32,9 +32,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GitCommitTemplate, GitCommitter, GitOperationAction, GitOperationKind, InitialGraphCommitData,
+    LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream,
+    UpstreamTracking, UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -5839,6 +5839,120 @@ impl GitPanel {
         )
     }
 
+    fn run_operation_action(
+        &self,
+        operation: GitOperationKind,
+        action: GitOperationAction,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.active_repository.clone() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let receiver = repository.update(cx, |repository, cx| {
+            repository.run_operation_action(operation, action, cx)
+        });
+        cx.spawn(async move |_, cx| {
+            if let Err(error) = receiver.await? {
+                if let Some(workspace) = workspace.upgrade() {
+                    cx.update(|cx| {
+                        show_error_toast(workspace, "run Git operation action", error, cx);
+                    });
+                }
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn render_operation_lifecycle_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let repository = self.active_repository.as_ref()?;
+        let operation = repository.read(cx).active_operation?;
+        let operation_name = match operation {
+            GitOperationKind::Merge => "Merge in progress",
+            GitOperationKind::Rebase => "Rebase in progress",
+            GitOperationKind::CherryPick => "Cherry-pick in progress",
+            GitOperationKind::Revert => "Revert in progress",
+        };
+        let has_unresolved_conflicts = self.has_unstaged_conflicts()
+            || (self.conflicted_count > 0 && self.conflicted_staged_count < self.conflicted_count);
+
+        let continue_button = Button::new("operation-continue", "Continue")
+            .style(ButtonStyle::Filled)
+            .disabled(has_unresolved_conflicts)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.run_operation_action(operation, GitOperationAction::Continue, cx);
+            }));
+        let skip_button = (operation != GitOperationKind::Merge).then(|| {
+            Button::new("operation-skip", "Skip")
+                .style(ButtonStyle::OutlinedGhost)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.run_operation_action(operation, GitOperationAction::Skip, cx);
+                }))
+        });
+        let abort_button = Button::new("operation-abort", "Abort")
+            .style(ButtonStyle::OutlinedGhost)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let prompt = window.prompt(
+                    PromptLevel::Warning,
+                    "Abort operation?",
+                    Some("Are you sure you want to abort the current Git operation?"),
+                    &["Abort", "Cancel"],
+                    cx,
+                );
+                let repository = this.active_repository.clone();
+                let workspace = this.workspace.clone();
+                cx.spawn_in(window, async move |_, cx| {
+                    if prompt.await? != 0 {
+                        return anyhow::Ok(());
+                    }
+                    let Some(repository) = repository else {
+                        return anyhow::Ok(());
+                    };
+                    let receiver = repository.update(cx, |repository, cx| {
+                        repository.run_operation_action(
+                            operation,
+                            GitOperationAction::Abort,
+                            cx,
+                        )
+                    });
+                    if let Err(error) = receiver.await? {
+                        if let Some(workspace) = workspace.upgrade() {
+                            cx.update(|_, cx| {
+                                show_error_toast(
+                                    workspace,
+                                    "abort Git operation",
+                                    error,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }));
+
+        Some(
+            v_flex()
+                .w_full()
+                .p_2()
+                .gap_1p5()
+                .bg(cx.theme().colors().element_hover)
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .child(Label::new(operation_name).size(LabelSize::Small))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(continue_button)
+                        .children(skip_button)
+                        .child(abort_button),
+                )
+                .into_any_element(),
+        )
+    }
+
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let branch = self.active_repository.as_ref()?.read(cx).branch.clone();
         if !self.can_push_and_pull(cx) {
@@ -8336,6 +8450,7 @@ impl Render for GitPanel {
                     .map(|this| match self.active_tab {
                         GitPanelTab::Changes => this
                             .children(self.render_changes_header(window, cx))
+                            .children(self.render_operation_lifecycle_banner(cx))
                             .when(!self.commit_editor_expanded, |this| {
                                 this.map(|this| {
                                     if let Some(repo) = self.active_repository.clone()
@@ -12866,5 +12981,29 @@ mod tests {
             !detail.contains("unstaged.rs"),
             "prompt should NOT list unstaged.rs, got: {detail}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_git_panel_operation_lifecycle_banner(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "file.txt": "contents",
+            }),
+            &[],
+        )
+        .await;
+        let active_repository = panel
+            .read_with(&cx, |panel, _| panel.active_repository.clone())
+            .expect("panel should have an active repository");
+        active_repository.update(&mut cx, |repository, _| {
+            repository.set_active_operation_for_test(Some(GitOperationKind::Rebase));
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            assert!(panel.render_operation_lifecycle_banner(cx).is_some());
+        });
     }
 }

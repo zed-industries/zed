@@ -13,7 +13,7 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateTagOptions, CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets,
-        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
+        GRAPH_CHUNK_SIZE, GitOperationAction, GitOperationKind, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
         LogSource, MergeMode, PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs,
         Worktree, commit_hash_search_query,
     },
@@ -69,6 +69,10 @@ pub enum FakeGitMutation {
         commit: String,
         mode: MergeMode,
     },
+    RunOperationAction {
+        operation: GitOperationKind,
+        action: GitOperationAction,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +107,7 @@ pub struct FakeGitRepositoryState {
     pub stash_entries: GitStash,
     pub commit_template: Option<GitCommitTemplate>,
     pub graph_mutations: Vec<FakeGitMutation>,
+    pub active_operation: Option<GitOperationKind>,
 }
 
 impl FakeGitRepositoryState {
@@ -130,6 +135,7 @@ impl FakeGitRepositoryState {
             stash_entries: Default::default(),
             commit_template: None,
             graph_mutations: Vec::new(),
+            active_operation: None,
         }
     }
 }
@@ -523,6 +529,41 @@ impl GitRepository for FakeGitRepository {
                 state.index_contents = snapshot.index_contents;
                 state.refs.insert("HEAD".into(), snapshot.sha);
             }
+            Ok(())
+        })
+    }
+
+    fn operation_state(&self) -> BoxFuture<'_, Result<Option<GitOperationKind>>> {
+        self.with_state_async(false, |state| Ok(state.active_operation))
+    }
+
+    fn run_operation_action(
+        &self,
+        operation: GitOperationKind,
+        action: GitOperationAction,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            anyhow::ensure!(
+                state.active_operation == Some(operation),
+                "operation state mismatch: expected {:?}, found {:?}",
+                operation,
+                state.active_operation
+            );
+
+            if operation == GitOperationKind::Merge && action == GitOperationAction::Skip {
+                anyhow::bail!("cannot skip a merge operation");
+            }
+
+            if action == GitOperationAction::Continue && !state.unmerged_paths.is_empty() {
+                anyhow::bail!("cannot continue with unresolved conflicts");
+            }
+
+            state.graph_mutations.push(FakeGitMutation::RunOperationAction {
+                operation,
+                action,
+            });
+            state.active_operation = None;
             Ok(())
         })
     }
