@@ -5225,6 +5225,7 @@ dependencies = [
  "editor",
  "futures-lite 1.13.0",
  "gpui",
+ "i18n",
  "indoc",
  "itertools 0.14.0",
  "language",

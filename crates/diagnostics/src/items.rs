@@ -5,6 +5,7 @@ use gpui::{
     App, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription,
     Task, WeakEntity, Window,
 };
+use i18n::t;
 use language::Diagnostic;
 use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
@@ -66,9 +67,9 @@ impl Render for DiagnosticIndicator {
                 .map_or(&*diagnostic.message, |(first, _)| first);
             let diagnostics_already_active = self.any_active_diagnostics(cx);
             let tooltip = if !diagnostics_already_active {
-                "Expand Diagnostics"
+                t!("Expand Diagnostics")
             } else {
-                "Next Diagnostic"
+                t!("Next Diagnostic")
             };
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
@@ -77,7 +78,7 @@ impl Render for DiagnosticIndicator {
                     .tab_index(0isize)
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action(
-                            tooltip,
+                            tooltip.clone(),
                             &editor::actions::GoToDiagnostic::default(),
                             cx,
                         )
@@ -90,24 +91,32 @@ impl Render for DiagnosticIndicator {
             None
         };
 
+        // Each count combination is a whole sentence rather than assembled
+        // fragments: the singular forms have to stay exact in English, and a
+        // translation needs to reorder the whole thing.
         let diagnostics_label = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => "Project diagnostics: no problems".to_string(),
-            (errors, warnings) => {
-                let mut parts = Vec::new();
-                if errors > 0 {
-                    parts.push(format!(
-                        "{errors} error{}",
-                        if errors == 1 { "" } else { "s" }
-                    ));
-                }
-                if warnings > 0 {
-                    parts.push(format!(
-                        "{warnings} warning{}",
-                        if warnings == 1 { "" } else { "s" }
-                    ));
-                }
-                format!("Project diagnostics: {}", parts.join(", "))
-            }
+            (0, 0) => t!("Project diagnostics: no problems"),
+            (1, 0) => t!("Project diagnostics: 1 error"),
+            (errors, 0) => t!("Project diagnostics: {$errors} errors", errors = errors),
+            (0, 1) => t!("Project diagnostics: 1 warning"),
+            (0, warnings) => t!(
+                "Project diagnostics: {$warnings} warnings",
+                warnings = warnings
+            ),
+            (1, 1) => t!("Project diagnostics: 1 error, 1 warning"),
+            (1, warnings) => t!(
+                "Project diagnostics: 1 error, {$warnings} warnings",
+                warnings = warnings
+            ),
+            (errors, 1) => t!(
+                "Project diagnostics: {$errors} errors, 1 warning",
+                errors = errors
+            ),
+            (errors, warnings) => t!(
+                "Project diagnostics: {$errors} errors, {$warnings} warnings",
+                errors = errors,
+                warnings = warnings
+            ),
         };
 
         indicator
@@ -117,7 +126,7 @@ impl Render for DiagnosticIndicator {
                     .tab_index(0isize)
                     .aria_label(diagnostics_label)
                     .tooltip(move |_window, cx| {
-                        Tooltip::for_action("Project Diagnostics", &Deploy, cx)
+                        Tooltip::for_action(t!("Project Diagnostics"), &Deploy, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
