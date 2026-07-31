@@ -1322,6 +1322,10 @@ pub(crate) enum DrawPhase {
     Focus,
 }
 
+/// How long the window waits for more keystrokes before flushing pending input, when the
+/// keystrokes typed so far both match a binding and are a prefix of longer bindings.
+pub const PENDING_INPUT_TIMEOUT: Duration = Duration::from_secs(1);
+
 #[derive(Default, Debug)]
 struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
@@ -5307,7 +5311,7 @@ impl Window {
 
             if currently_pending.needs_timeout {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.background_executor.timer(PENDING_INPUT_TIMEOUT).await;
                     cx.update(move |window, cx| {
                         let Some(currently_pending) = window
                             .pending_input
@@ -5468,6 +5472,13 @@ impl Window {
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         self.pending_input.take();
+    }
+
+    /// Whether the currently pending input keystrokes will be flushed after
+    /// [`PENDING_INPUT_TIMEOUT`], because they also match a shorter binding or text input.
+    pub fn pending_input_will_timeout(&self) -> bool {
+        self.active_pending_input()
+            .is_some_and(|pending_input| pending_input.timer.is_some())
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
