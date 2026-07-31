@@ -771,7 +771,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let keystrokes = action
             .command
             .chars()
-            .map(|c| Keystroke::parse(&c.to_string()).unwrap())
+            .filter_map(|c| Keystroke::parse(&c.to_string()).ok())
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
         if let Some(override_rows) = &action.override_rows {
@@ -835,8 +835,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         {
                             let last_sel = editor.selections.disjoint_anchors_arc();
                             editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.0 = old.0.get(..1).unwrap_or(&[]).into();
-                                old.1 = Some(last_sel);
+                                old.undo = old.undo.get(..1).unwrap_or(&[]).into();
+                                old.redo = Some(last_sel);
                             });
                         }
                     });

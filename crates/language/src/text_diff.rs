@@ -1,10 +1,6 @@
 use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope};
 use anyhow::{Context, anyhow};
-use imara_diff::{
-    Algorithm, Sink, diff,
-    intern::{InternedInput, Interner, Token},
-    sources::lines_with_terminator,
-};
+use imara_diff::{Algorithm, Diff, InternedInput, Interner, Token, sources::lines};
 use std::{fmt::Write, iter, ops::Range, sync::Arc};
 
 const MAX_WORD_DIFF_LEN: usize = 512;
@@ -36,12 +32,17 @@ pub fn unified_diff_with_context(
     new_start_line: u32,
     context_lines: u32,
 ) -> String {
-    let input = InternedInput::new(old_text, new_text);
-    diff(
-        Algorithm::Histogram,
-        &input,
-        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines),
-    )
+    // The builder appends its own line terminators, so tokenize without them.
+    let mut input = InternedInput::default();
+    input.update_before(old_text.lines());
+    input.update_after(new_text.lines());
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    let mut builder =
+        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines);
+    for hunk in diff.hunks() {
+        builder.process_change(hunk.before, hunk.after);
+    }
+    builder.finish()
 }
 
 /// A unified diff builder that applies line number offsets to hunk headers.
@@ -126,9 +127,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
     }
 }
 
-impl Sink for OffsetUnifiedDiffBuilder<'_> {
-    type Out = String;
-
+impl OffsetUnifiedDiffBuilder<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         if before.start - self.pos > self.context_lines * 2 {
             self.flush();
@@ -148,7 +147,7 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
         self.print_tokens(&self.after[after.start as usize..after.end as usize], '+');
     }
 
-    fn finish(mut self) -> Self::Out {
+    fn finish(mut self) -> String {
         self.flush();
         self.dst
     }
@@ -158,10 +157,7 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
 /// ranges.
 pub fn line_diff(old_text: &str, new_text: &str) -> Vec<(Range<u32>, Range<u32>)> {
     let mut edits = Vec::new();
-    let input = InternedInput::new(
-        lines_with_terminator(old_text),
-        lines_with_terminator(new_text),
-    );
+    let input = InternedInput::new(lines(old_text), lines(new_text));
     diff_internal(&input, &mut |_, _, old_rows, new_rows| {
         edits.push((old_rows, new_rows));
     });
@@ -264,10 +260,7 @@ pub fn text_diff_with_options(
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
-    let input = InternedInput::new(
-        lines_with_terminator(old_text),
-        lines_with_terminator(new_text),
-    );
+    let input = InternedInput::new(lines(old_text), lines(new_text));
     diff_internal(&input, &mut |old_byte_range,
                                 new_byte_range,
                                 old_rows,
@@ -349,35 +342,34 @@ fn diff_internal(
     let mut new_offset = 0;
     let mut old_token_ix = 0;
     let mut new_token_ix = 0;
-    diff(
-        Algorithm::Histogram,
-        input,
-        |old_tokens: Range<u32>, new_tokens: Range<u32>| {
-            old_offset += token_len(
-                input,
-                &input.before[old_token_ix as usize..old_tokens.start as usize],
-            );
-            new_offset += token_len(
-                input,
-                &input.after[new_token_ix as usize..new_tokens.start as usize],
-            );
-            let old_len = token_len(
-                input,
-                &input.before[old_tokens.start as usize..old_tokens.end as usize],
-            );
-            let new_len = token_len(
-                input,
-                &input.after[new_tokens.start as usize..new_tokens.end as usize],
-            );
-            let old_byte_range = old_offset..old_offset + old_len;
-            let new_byte_range = new_offset..new_offset + new_len;
-            old_token_ix = old_tokens.end;
-            new_token_ix = new_tokens.end;
-            old_offset = old_byte_range.end;
-            new_offset = new_byte_range.end;
-            on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
-        },
-    );
+    let diff = Diff::compute(Algorithm::Histogram, input);
+    for hunk in diff.hunks() {
+        let old_tokens = hunk.before;
+        let new_tokens = hunk.after;
+        old_offset += token_len(
+            input,
+            &input.before[old_token_ix as usize..old_tokens.start as usize],
+        );
+        new_offset += token_len(
+            input,
+            &input.after[new_token_ix as usize..new_tokens.start as usize],
+        );
+        let old_len = token_len(
+            input,
+            &input.before[old_tokens.start as usize..old_tokens.end as usize],
+        );
+        let new_len = token_len(
+            input,
+            &input.after[new_tokens.start as usize..new_tokens.end as usize],
+        );
+        let old_byte_range = old_offset..old_offset + old_len;
+        let new_byte_range = new_offset..new_offset + new_len;
+        old_token_ix = old_tokens.end;
+        new_token_ix = new_tokens.end;
+        old_offset = old_byte_range.end;
+        new_offset = new_byte_range.end;
+        on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
+    }
 }
 
 fn tokenize_chars(text: &str) -> impl Iterator<Item = &str> {

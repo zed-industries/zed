@@ -438,7 +438,7 @@ impl<D: PickerDelegate> Picker<D> {
                 side.position(
                     this,
                     self.shape.clamped_position_and_size(
-                        self.preview_layout(),
+                        self.preview_layout_rendered(window),
                         &self.size_bounds,
                         window,
                     ),
@@ -451,7 +451,7 @@ impl<D: PickerDelegate> Picker<D> {
                 ResizeDrag::<S>::start_new(
                     self.shape,
                     &self.size_bounds,
-                    self.preview_layout(),
+                    self.preview_layout_rendered(window),
                     window,
                 ),
                 |_, _, _, cx| cx.new(|_| DragPreview),
@@ -464,7 +464,7 @@ impl<D: PickerDelegate> Picker<D> {
                     side.clamp(
                         &mut working,
                         &this.size_bounds,
-                        this.preview_layout(),
+                        this.preview_layout_rendered(window),
                         window,
                     );
                     this.shape = Shape::Resizing(working);
@@ -487,9 +487,11 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         side.revert_to_default_size(&mut self.shape, &self.default_shape, window);
-        let pos =
-            self.shape
-                .clamped_position_and_size(self.preview_layout(), &self.size_bounds, window);
+        let pos = self.shape.clamped_position_and_size(
+            self.preview_layout_rendered(window),
+            &self.size_bounds,
+            window,
+        );
         self.shape = Shape::Resizing(pos);
         cx.notify();
     }

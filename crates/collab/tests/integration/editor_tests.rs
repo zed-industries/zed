@@ -1881,7 +1881,7 @@ async fn test_share_project(
     let incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
     executor.run_until_parked();
     let call = incoming_call_b.borrow().clone().unwrap();
-    assert_eq!(call.calling_user.github_login, "user_a");
+    assert_eq!(call.calling_user.username, "user_a");
     let initial_project = call.initial_project.unwrap();
     active_call_b
         .update(cx_b, |call, cx| call.accept_incoming(cx))
@@ -1997,7 +1997,7 @@ async fn test_share_project(
     let incoming_call_c = active_call_c.read_with(cx_c, |call, _| call.incoming());
     executor.run_until_parked();
     let call = incoming_call_c.borrow().clone().unwrap();
-    assert_eq!(call.calling_user.github_login, "user_b");
+    assert_eq!(call.calling_user.username, "user_b");
     let initial_project = call.initial_project.unwrap();
     active_call_c
         .update(cx_c, |call, cx| call.accept_incoming(cx))
@@ -4214,6 +4214,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
+        tag_names: Default::default(),
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
