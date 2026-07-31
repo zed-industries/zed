@@ -14,6 +14,7 @@ use settings::Settings;
 use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
+use util::markdown::MarkdownInlineCode;
 
 fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent {
     LanguageModelToolResultContent::from(e.to_string())
@@ -228,19 +229,24 @@ impl AgentTool for ReadFileTool {
                 .read(cx)
                 .short_full_path_for_project_path(&project_path, cx)
         {
+            // The backticks are inline-code markup around the path, not part of
+            // the sentence, so they travel with the argument.
+            let path = MarkdownInlineCode(&path).to_string();
             match (input.start_line, input.end_line) {
                 (Some(start), Some(end)) => t!(
-                    "Read file `{$path}` (lines {$start}-{$end})",
+                    "Read file {$path} (lines {$start}-{$end})",
                     path = path,
                     start = start,
                     end = end
                 ),
-                (Some(start), None) => t!(
-                    "Read file `{$path}` (from line {$start})",
-                    path = path,
-                    start = start
-                ),
-                _ => t!("Read file `{$path}`", path = path),
+                (Some(start), None) => {
+                    t!(
+                        "Read file {$path} (from line {$start})",
+                        path = path,
+                        start = start
+                    )
+                }
+                _ => t!("Read file {$path}", path = path),
             }
             .into()
         } else {

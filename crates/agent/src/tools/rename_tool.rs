@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::symbol_locator::SymbolLocator;
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use util::markdown::MarkdownInlineCode;
 
 /// Renames a symbol across the project using the language server.
 ///
@@ -53,9 +54,9 @@ impl AgentTool for RenameTool {
     ) -> SharedString {
         if let Ok(input) = input {
             t!(
-                "Rename `{$symbol}` to `{$new_name}`",
-                symbol = input.symbol.symbol_name,
-                new_name = input.new_name
+                "Rename {$symbol} to {$new_name}",
+                symbol = MarkdownInlineCode(&input.symbol.symbol_name).to_string(),
+                new_name = MarkdownInlineCode(&input.new_name).to_string()
             )
             .into()
         } else {

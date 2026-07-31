@@ -9,6 +9,7 @@ use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::markdown::MarkdownInlineCode;
 
 /// Finds all references to a symbol across the project using the language server.
 ///
@@ -48,8 +49,8 @@ impl AgentTool for FindReferencesTool {
     ) -> SharedString {
         if let Ok(input) = input {
             t!(
-                "Find references to `{$symbol}`",
-                symbol = input.symbol.symbol_name
+                "Find references to {$symbol}",
+                symbol = MarkdownInlineCode(&input.symbol.symbol_name).to_string()
             )
             .into()
         } else {

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::symbol_locator::{CodeActionStore, PendingCodeActions, SymbolLocator};
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use util::markdown::MarkdownInlineCode;
 
 /// Gets the list of available code actions at a symbol location from the language server.
 ///
@@ -55,8 +56,8 @@ impl AgentTool for GetCodeActionsTool {
     ) -> SharedString {
         if let Ok(input) = input {
             t!(
-                "Get code actions for `{$symbol}`",
-                symbol = input.symbol.symbol_name
+                "Get code actions for {$symbol}",
+                symbol = MarkdownInlineCode(&input.symbol.symbol_name).to_string()
             )
             .into()
         } else {

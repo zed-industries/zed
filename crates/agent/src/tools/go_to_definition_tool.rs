@@ -9,6 +9,7 @@ use i18n::t;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::markdown::MarkdownInlineCode;
 
 /// Jumps to the definition of a symbol using the language server.
 ///
@@ -48,8 +49,8 @@ impl AgentTool for GoToDefinitionTool {
     ) -> SharedString {
         if let Ok(input) = input {
             t!(
-                "Go to definition of `{$symbol}`",
-                symbol = input.symbol.symbol_name
+                "Go to definition of {$symbol}",
+                symbol = MarkdownInlineCode(&input.symbol.symbol_name).to_string()
             )
             .into()
         } else {

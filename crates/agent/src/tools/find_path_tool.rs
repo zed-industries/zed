@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
+use util::markdown::MarkdownInlineCode;
 use util::paths::PathMatcher;
 
 /// Find file paths that match a given pattern.
@@ -115,7 +116,11 @@ impl AgentTool for FindPathTool {
         _cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(input) => t!("Find paths matching “`{$glob}`”", glob = input.glob).into(),
+            Ok(input) => t!(
+                "Find paths matching {$glob}",
+                glob = format!("“{}”", MarkdownInlineCode(&input.glob))
+            )
+            .into(),
             Err(_) => t!("Find paths").into(),
         }
     }

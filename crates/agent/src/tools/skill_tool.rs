@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use util::markdown::MarkdownInlineCode;
 
 /// XML-escape a string so a malicious skill author cannot break out of the
 /// `<skill_content>` envelope (or the `<available_skills>` catalog) by
@@ -156,7 +157,12 @@ impl AgentTool for SkillTool {
         _cx: &mut App,
     ) -> SharedString {
         if let Ok(input) = input {
-            t!(key = "named-skill", "`{$name}` Skill", name = input.name).into()
+            t!(
+                key = "named-skill",
+                "{$name} Skill",
+                name = MarkdownInlineCode(&input.name).to_string()
+            )
+            .into()
         } else {
             t!("Skill").into()
         }

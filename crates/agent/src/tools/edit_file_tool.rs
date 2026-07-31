@@ -286,11 +286,6 @@ impl AgentTool for EditFileTool {
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates, ToolInputSender};
-
-    /// The English source the fallback title falls back to when no catalog is
-    /// loaded, which is the case in tests.
-    const DEFAULT_UI_TEXT: &str = "Editing file";
-
     use fs::Fs as _;
     use gpui::{AppContext as _, TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
@@ -301,6 +296,10 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use util::rel_path::{RelPath, rel_path};
+
+    /// The English source the fallback title falls back to when no catalog is
+    /// loaded, which is the case in tests.
+    const DEFAULT_UI_TEXT: &str = "Editing file";
 
     #[gpui::test]
     async fn test_streaming_edit_granular_edits(cx: &mut TestAppContext) {
