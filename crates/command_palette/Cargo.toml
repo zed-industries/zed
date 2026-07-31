@@ -23,6 +23,7 @@ command_palette_hooks.workspace = true
 db.workspace = true
 fuzzy_nucleo.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 menu.workspace = true
 log.workspace = true
 picker.workspace = true

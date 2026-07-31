@@ -3597,6 +3597,7 @@ dependencies = [
  "fuzzy_nucleo",
  "go_to_line",
  "gpui",
+ "i18n",
  "language",
  "log",
  "menu",
