@@ -47,6 +47,17 @@ pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub remote_user: String,
+    /// The dev container's host project folder (the `devcontainer.local_folder`
+    /// label). Together with `config_file` this forms the connection's stable
+    /// identity across container rebuilds, whose `container_id` is ephemeral.
+    /// `None` for a hypothetical Docker remote without dev-container labels, in
+    /// which case the identity falls back to `container_id`.
+    #[serde(default)]
+    pub local_folder: Option<String>,
+    /// The dev container's config file on the host (the `devcontainer.config_file`
+    /// label). See `local_folder`.
+    #[serde(default)]
+    pub config_file: Option<String>,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
     pub remote_env: BTreeMap<String, String>,
