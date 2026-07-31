@@ -1147,7 +1147,7 @@ impl PlatformNativeSurface for DirectCompositionPortal {
     }
 
     fn set_visible(&self, visible: bool) -> Result<()> {
-        if self.visible.replace(visible) != visible {
+        if self.visible.get() != visible {
             unsafe {
                 if visible {
                     self.container.AddVisual(&self.visual, true, None)?;
@@ -1156,6 +1156,7 @@ impl PlatformNativeSurface for DirectCompositionPortal {
                 }
                 self.comp_device.Commit()?;
             }
+            self.visible.set(visible);
         }
         Ok(())
     }
