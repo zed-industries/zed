@@ -20,6 +20,7 @@ extension_host.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 language.workspace = true
 project.workspace = true
 proto.workspace = true
