@@ -251,13 +251,12 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         if !self.active_highlights.is_empty() {
             let mut active_highlights = self.active_highlights.iter().peekable();
             while let Some((tag, style)) = active_highlights.next() {
-                let overridden_by_later_semantic_token = matches!(
-                    tag,
-                    HighlightKey::SemanticToken(_)
-                ) && matches!(
-                    active_highlights.peek(),
-                    Some((HighlightKey::SemanticToken(_), _))
-                );
+                let overridden_by_later_semantic_token =
+                    matches!(tag, HighlightKey::SemanticToken(_))
+                        && matches!(
+                            active_highlights.peek(),
+                            Some((HighlightKey::SemanticToken(_), _))
+                        );
                 if overridden_by_later_semantic_token {
                     continue;
                 }

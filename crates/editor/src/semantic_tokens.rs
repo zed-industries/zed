@@ -361,8 +361,8 @@ fn server_precedences(
                         .iter()
                         .position(|ordered_adapter| ordered_adapter.name == adapter.name)
                 });
-            let precedence = configured_precedence
-                .unwrap_or_else(|| ordered_adapters.len() + server_id.0);
+            let precedence =
+                configured_precedence.unwrap_or_else(|| ordered_adapters.len() + server_id.0);
             (server_id, precedence as u32)
         })
         .collect()
