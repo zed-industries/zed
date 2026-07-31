@@ -8,6 +8,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, TaskExt, WeakEntity, Window, actions,
 };
+use i18n::t;
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use open_path_prompt::file_finder_settings::FileFinderSettings;
 use picker::{Picker, PickerDelegate};
@@ -202,7 +203,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a language…".into()
+        t!("Select a language…").resolve().as_ref().into()
     }
 
     fn match_count(&self) -> usize {

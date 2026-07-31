@@ -10044,6 +10044,7 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
+ "i18n",
  "language",
  "open_path_prompt",
  "picker",

@@ -18,6 +18,7 @@ editor.workspace = true
 file_icons.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 language.workspace = true
 open_path_prompt.workspace = true
 picker.workspace = true
