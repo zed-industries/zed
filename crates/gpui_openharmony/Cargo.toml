@@ -1,0 +1,42 @@
+[package]
+name = "gpui_openharmony"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+description = "OpenHarmony host foundation for GPUI (surface/event contracts; no fake renderer)"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_openharmony.rs"
+doctest = false
+
+[features]
+default = []
+host-foundation = []
+test-support = ["gpui/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+parking_lot.workspace = true
+raw-window-handle.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_env = "ohos")'.dependencies]
+gpui_wgpu.workspace = true
+libc.workspace = true
+log.workspace = true
+pollster.workspace = true
+smol.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

@@ -7982,6 +7982,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_openharmony"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_wgpu",
+ "libc",
+ "log",
+ "parking_lot",
+ "pollster 0.4.0",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "smol",
+ "thiserror 2.0.17",
+ "uuid",
+]
+
+[[package]]
 name = "gpui_platform"
 version = "0.1.0"
 dependencies = [
@@ -7989,6 +8011,7 @@ dependencies = [
  "gpui",
  "gpui_linux",
  "gpui_macos",
+ "gpui_openharmony",
  "gpui_web",
  "gpui_windows",
 ]
