@@ -795,9 +795,6 @@ impl RecentProjects {
                         .get(hit.candidate_id)
                         .cloned()
                     {
-                        if picker.delegate.is_active_project_group(&key, cx) {
-                            return;
-                        }
                         picker.delegate.remove_project_group(key, window, cx);
                         let query = picker.query(cx);
                         picker.update_matches(query, window, cx);
@@ -1459,7 +1456,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                             })
                             .on_click({
-                                let project_group_key = project_group_key.clone();
                                 cx.listener(move |picker, _, window, cx| {
                                     cx.stop_propagation();
                                     window.prevent_default();
