@@ -320,3 +320,293 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     }
     ret
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rel_path::rel_path;
+
+    #[test]
+    fn test_join_path_uses_path_style_separator() {
+        let posix_path = PathStyle::Unix
+            .join_path(Path::new("/home/user/dev"), "worktrees")
+            .unwrap();
+        let windows_path = PathStyle::Windows
+            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
+            .unwrap();
+
+        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
+        assert_eq!(
+            windows_path.to_string_lossy(),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_normalize_uses_path_style_separator() {
+        assert_eq!(
+            PathStyle::Unix.normalize("/home/user/dev/../worktrees/./zed"),
+            "/home/user/worktrees/zed"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
+            "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_normalize_windows_path_regardless_of_host_platform() {
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\user\dev\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\.\worktrees"),
+            r"C:\Users\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\user\dev\sub\..\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize("C:/Users/user/dev/../worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:/Users\user/dev\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users/user\.\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"\\server\share\dev\..\worktrees"),
+            r"\\server\share\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"//server\share/dev\..\worktrees"),
+            r"\\server\share\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"\dev\..\worktrees"),
+            r"\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"dev\..\worktrees"),
+            r"worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\..\worktrees"),
+            r"C:\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_strip_prefix() {
+        let expected = [
+            (
+                PathStyle::Unix,
+                "/a/b/c",
+                "/a/b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Unix,
+                "/a/b/c",
+                "/a/b/",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Unix,
+                "/a/b/c",
+                "/",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Unix, "/a/b/c", "", None),
+            (PathStyle::Unix, "/a/b//c", "/a/b/", None),
+            (PathStyle::Unix, "/a/bc", "/a/b", None),
+            (
+                PathStyle::Unix,
+                "/a/b/c",
+                "/a/b/c",
+                Some(rel_path("").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
+            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
+            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b/",
+                Some(rel_path("c").into_arc()),
+            ),
+        ];
+        let actual = expected.clone().map(|(style, child, parent, _)| {
+            (
+                style,
+                child,
+                parent,
+                style
+                    .strip_prefix(child.as_ref(), parent.as_ref())
+                    .map(|rel_path| rel_path.into_arc()),
+            )
+        });
+        pretty_assertions::assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_unix_path_style_file_name() {
+        let unix_paths_and_filenames = [
+            (Path::new(""), None),
+            (Path::new("/usr/bin/"), Some("bin")),
+            (Path::new("tmp/foo.txt"), Some("foo.txt")),
+            (Path::new("."), None),
+            (Path::new("./"), None),
+            (Path::new("foo.txt/."), Some("foo.txt")),
+            (Path::new("foo.txt/.//"), Some("foo.txt")),
+            (Path::new("foo/./bar"), Some("bar")),
+            (Path::new("foo.txt/.."), None),
+            (Path::new("/.."), None),
+            (Path::new("/"), None),
+        ];
+
+        for (path, filename) in unix_paths_and_filenames {
+            assert_eq!(PathStyle::Unix.file_name(path), filename);
+        }
+    }
+
+    #[test]
+    fn test_windows_path_style_file_name() {
+        let windows_paths_and_filenames = [
+            (Path::new(""), None),
+            (Path::new("."), None),
+            (Path::new(r"C:\usr\bin\"), Some("bin")),
+            (Path::new(r"C:"), None),
+            (Path::new(r"tmp\foo.txt"), Some("foo.txt")),
+            (Path::new("tmp/foo.txt"), Some("foo.txt")),
+            (Path::new(r"foo.txt\."), Some("foo.txt")),
+            (Path::new(r"foo.txt\.\"), Some("foo.txt")),
+            (Path::new(r"foo.txt\.."), None),
+            (Path::new(r"C:\"), None),
+            (Path::new(r"\\server\share"), None),
+            (Path::new(r"\\server\share\foo.txt"), Some("foo.txt")),
+            (Path::new("//server/share"), None),
+            (Path::new("//server/share/foo.txt"), Some("foo.txt")),
+            (Path::new(r"\\?\bar"), None),
+            (Path::new(r"\\?\bar\foo.txt"), Some("foo.txt")),
+            (Path::new(r"\\?\C:/foo/bar"), Some("foo/bar")),
+            (Path::new(r"\\.\device"), None),
+            (Path::new(r"\\.\device\foo.txt"), Some("foo.txt")),
+        ];
+
+        for (path, filename) in windows_paths_and_filenames {
+            assert_eq!(PathStyle::Windows.file_name(path), filename);
+        }
+    }
+
+    #[test]
+    fn test_unix_path_style_parent() {
+        let unix_paths_and_parents = [
+            ("", None),
+            ("/foo/bar", Some("/foo")),
+            ("/foo", Some("/")),
+            ("/", None),
+            ("///foo///", Some("/")),
+            ("///foo///bar", Some("///foo")),
+            ("foo/bar", Some("foo")),
+            ("foo", Some("")),
+            ("foo/.", Some("")),
+            ("foo/./bar", Some("foo")),
+            ("foo/../bar", Some("foo/..")),
+            ("./a", Some(".")),
+            ("./.", Some("")),
+            ("/..", Some("/")),
+            (".", Some("")),
+            ("..", Some("")),
+        ];
+
+        for (path, parent) in unix_paths_and_parents {
+            assert_eq!(
+                PathStyle::Unix.parent(Path::new(path)),
+                parent.map(Path::new)
+            );
+        }
+    }
+
+    #[test]
+    fn test_windows_path_style_parent() {
+        let windows_paths_and_parents = [
+            ("", None),
+            (r"C:\foo\bar", Some(r"C:\foo")),
+            (r"C:\foo", Some(r"C:\")),
+            (r"C:\", None),
+            (r"C:foo", Some("C:")),
+            (r"C:", None),
+            (r"\foo", Some(r"\")),
+            (r"\", None),
+            (r"foo\bar", Some("foo")),
+            (r"foo\\bar", Some("foo")),
+            ("foo/bar", Some("foo")),
+            ("foo", Some("")),
+            (r"foo\.", Some("")),
+            (r"foo\.\bar", Some("foo")),
+            (r"foo\..\bar", Some(r"foo\..")),
+            (r".\a", Some(".")),
+            (r".\.", Some("")),
+            (r"\\server\share", None),
+            (r"\\server\share\foo.txt", Some(r"\\server\share\")),
+            ("//server/share", None),
+            ("//server/share/foo.txt", Some("//server/share/")),
+            (r"\\?\bar", None),
+            (r"\\?\bar\foo.txt", Some(r"\\?\bar\")),
+            (
+                r"\\?\UNC\server\share\foo.txt",
+                Some(r"\\?\UNC\server\share\"),
+            ),
+            (r"\\?\C:\foo.txt", Some(r"\\?\C:\")),
+            (r"\\?\C:/foo/bar", Some(r"\\?\C:/")),
+            (r"\\.\device", None),
+            (r"\\.\device\foo.txt", Some(r"\\.\device\")),
+            (".", Some("")),
+            ("..", Some("")),
+        ];
+
+        for (path, parent) in windows_paths_and_parents {
+            assert_eq!(
+                PathStyle::Windows.parent(Path::new(path)),
+                parent.map(Path::new)
+            );
+        }
+    }
+}
