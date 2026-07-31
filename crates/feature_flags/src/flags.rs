@@ -27,26 +27,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
 }
 register_feature_flag!(AcpBetaFeatureFlag);
 
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentSharingFeatureFlag);
-
-pub struct HandoffFeatureFlag;
-
-impl FeatureFlag for HandoffFeatureFlag {
-    const NAME: &'static str = "handoff";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(HandoffFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -59,29 +39,20 @@ impl FeatureFlag for DiffReviewFeatureFlag {
 }
 register_feature_flag!(DiffReviewFeatureFlag);
 
-pub struct UpdatePlanToolFeatureFlag;
+/// Gates the `create_thread` and `list_agents_and_models` tools, which let
+/// the agent spawn independent sibling threads that show up in the agent
+/// panel sidebar.
+pub struct CreateThreadToolFeatureFlag;
 
-impl FeatureFlag for UpdatePlanToolFeatureFlag {
-    const NAME: &'static str = "update-plan-tool";
+impl FeatureFlag for CreateThreadToolFeatureFlag {
+    const NAME: &'static str = "create-thread-tool";
     type Value = PresenceFlag;
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
-register_feature_flag!(UpdatePlanToolFeatureFlag);
-
-pub struct UpdateTitleToolFeatureFlag;
-
-impl FeatureFlag for UpdateTitleToolFeatureFlag {
-    const NAME: &'static str = "update-title-tool";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-register_feature_flag!(UpdateTitleToolFeatureFlag);
+register_feature_flag!(CreateThreadToolFeatureFlag);
 
 pub struct LspToolFeatureFlag;
 
@@ -116,6 +87,13 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     fn enabled_for_staff() -> bool {
         true
     }
+
+    fn enabled_for_all() -> bool {
+        !matches!(
+            *release_channel::RELEASE_CHANNEL,
+            release_channel::ReleaseChannel::Stable
+        )
+    }
 }
 register_feature_flag!(ProjectPanelUndoRedoFeatureFlag);
 
@@ -148,14 +126,20 @@ impl FeatureFlag for AutoWatchFeatureFlag {
 }
 register_feature_flag!(AutoWatchFeatureFlag);
 
-/// Wraps agent-run terminal commands in an OS-level sandbox where supported
-/// (currently macOS Seatbelt only). When off, terminal commands run with the
-/// agent's full ambient permissions, as they always have.
+/// Wraps agent-run terminal commands in an OS-level sandbox where supported,
+/// and applies the shared per-host network grants to the `fetch` tool and the
+/// out-of-project write grants to the `create_directory` tool. When off,
+/// these tools run with the agent's full ambient permissions, as they always
+/// have.
 pub struct SandboxingFeatureFlag;
 
 impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 
     fn enabled_for_staff() -> bool {
         false

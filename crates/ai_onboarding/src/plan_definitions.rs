@@ -45,6 +45,12 @@ impl PlanDefinitions {
             .child(ListBulletItem::new("Usage-based billing"))
     }
 
+    pub fn vip_plan(&self) -> impl IntoElement {
+        List::new()
+            .child(ListBulletItem::new("Unlimited edit predictions"))
+            .child(ListBulletItem::new("Tokens in the Zed agent"))
+    }
+
     pub fn student_plan(&self) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("Unlimited edit predictions"))

@@ -7,11 +7,13 @@
 # Or use the helper script:
 #   crates/eval_cli/script/build-linux
 
-FROM rust:1.95.0 AS builder
+FROM rust:1.95.0@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3 AS builder
+
+ARG CARGO_ZIGBUILD_VERSION=0.22.3
 
 WORKDIR /app
 
-    # Pre-install the toolchain specified in rust-toolchain.toml so it is cached.
+# Pre-install the toolchain specified in rust-toolchain.toml so it is cached.
 RUN rustup toolchain install 1.95.0 --profile minimal \
     --component rustfmt --component clippy --component rust-analyzer --component rust-src \
     --target wasm32-wasip2 --target wasm32-unknown-unknown --target x86_64-unknown-linux-musl --target x86_64-unknown-linux-gnu
@@ -34,7 +36,7 @@ RUN mkdir -p /opt/zig \
     | tar -xJ -C /opt/zig --strip-components=1 \
     && ln -s /opt/zig/zig /usr/local/bin/zig
 
-RUN cargo install --locked cargo-zigbuild
+RUN cargo install --locked cargo-zigbuild --version ${CARGO_ZIGBUILD_VERSION}
 
 COPY . .
 

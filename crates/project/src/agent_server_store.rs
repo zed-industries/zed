@@ -21,7 +21,7 @@ use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use settings::{RegisterSetting, SettingsStore, update_settings_file};
+use settings::{AgentConfigOptionValue, RegisterSetting, SettingsStore, update_settings_file};
 use sha2::{Digest, Sha256};
 use url::Url;
 use util::{ResultExt as _, debug_panic};
@@ -116,7 +116,7 @@ pub enum ExternalAgentSource {
 
 pub trait ExternalAgentServer {
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -131,6 +131,12 @@ pub trait ExternalAgentServer {
     }
 
     fn set_new_version_available_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
+
+    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        None
+    }
+
+    fn set_loading_status_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
 
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -226,9 +232,7 @@ impl AgentServerStore {
                 registry_id.to_string(),
                 settings.unwrap_or_else(|| settings::CustomAgentServerSettings::Registry {
                     default_mode: None,
-                    default_model: None,
                     env: Default::default(),
-                    favorite_models: Vec::new(),
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
                 }),
@@ -256,6 +260,7 @@ impl AgentServerStore {
 
     pub fn init_remote(session: &AnyProtoClient) {
         session.add_entity_message_handler(Self::handle_external_agents_updated);
+        session.add_entity_message_handler(Self::handle_loading_status_updated);
         session.add_entity_message_handler(Self::handle_new_version_available);
     }
 
@@ -334,12 +339,19 @@ impl AgentServerStore {
         // reconnect when the version changes.
         let mut old_versioned_agents: HashMap<
             AgentId,
-            (SharedString, watch::Sender<Option<String>>),
+            (
+                SharedString,
+                Option<watch::Sender<Option<String>>>,
+                Option<watch::Sender<Option<String>>>,
+            ),
         > = HashMap::default();
         for (name, mut entry) in self.external_agents.drain() {
             if let Some(version) = entry.server.version().cloned() {
-                if let Some(tx) = entry.server.take_new_version_available_tx() {
-                    old_versioned_agents.insert(name, (version, tx));
+                let new_version_available_tx = entry.server.take_new_version_available_tx();
+                let loading_status_tx = entry.server.take_loading_status_tx();
+                if new_version_available_tx.is_some() || loading_status_tx.is_some() {
+                    old_versioned_agents
+                        .insert(name, (version, new_version_available_tx, loading_status_tx));
                 }
             }
         }
@@ -388,11 +400,14 @@ impl AgentServerStore {
                                         http_client: http_client.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
-                                        registry_id: Arc::from(name.as_str()),
+                                        installation_dir: paths::external_agents_dir()
+                                            .join("registry")
+                                            .join(sanitize_path_component(name)),
                                         version: agent.metadata.version.clone(),
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
                                         new_version_available_tx: None,
+                                        loading_status_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -433,7 +448,9 @@ impl AgentServerStore {
         // changed, notify the active connection to reconnect. Otherwise,
         // transfer the channel to the new entry so future updates can use it.
         for (name, entry) in &mut self.external_agents {
-            let Some((old_version, mut tx)) = old_versioned_agents.remove(name) else {
+            let Some((old_version, new_version_available_tx, loading_status_tx)) =
+                old_versioned_agents.remove(name)
+            else {
                 continue;
             };
             let Some(new_version) = entry.server.version() else {
@@ -441,9 +458,16 @@ impl AgentServerStore {
             };
 
             if new_version != &old_version {
-                tx.send(Some(new_version.to_string())).ok();
+                if let Some(mut tx) = new_version_available_tx {
+                    tx.send(Some(new_version.to_string())).ok();
+                }
             } else {
-                entry.server.set_new_version_available_tx(tx);
+                if let Some(tx) = new_version_available_tx {
+                    entry.server.set_new_version_available_tx(tx);
+                }
+                if let Some(tx) = loading_status_tx {
+                    entry.server.set_loading_status_tx(tx);
+                }
             }
         }
 
@@ -632,12 +656,38 @@ impl AgentServerStore {
                             .detach_and_log_err(cx);
                             new_version_available_tx
                         });
+                let loading_status_tx =
+                    downstream_client
+                        .clone()
+                        .map(|(project_id, downstream_client)| {
+                            let (loading_status_tx, mut loading_status_rx) = watch::channel(None);
+                            cx.spawn({
+                                let name = envelope.payload.name.clone();
+                                async move |_, _| {
+                                    while let Ok(status) = loading_status_rx.recv().await {
+                                        downstream_client.send(
+                                            proto::ExternalAgentLoadingStatusUpdated {
+                                                project_id,
+                                                name: name.clone(),
+                                                status,
+                                            },
+                                        )?;
+                                    }
+                                    anyhow::Ok(())
+                                }
+                            })
+                            .detach_and_log_err(cx);
+                            loading_status_tx
+                        });
                 let mut extra_env = HashMap::default();
                 if no_browser {
                     extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                 }
                 if let Some(new_version_available_tx) = new_version_available_tx {
                     agent.set_new_version_available_tx(new_version_available_tx);
+                }
+                if let Some(loading_status_tx) = loading_status_tx {
+                    agent.set_loading_status_tx(loading_status_tx);
                 }
                 anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
@@ -677,11 +727,15 @@ impl AgentServerStore {
 
             let mut previous_entries = std::mem::take(&mut this.external_agents);
             let mut new_version_available_txs = HashMap::default();
+            let mut loading_status_txs = HashMap::default();
             let mut metadata = HashMap::default();
 
             for (name, mut entry) in previous_entries.drain() {
                 if let Some(tx) = entry.server.take_new_version_available_tx() {
                     new_version_available_txs.insert(name.clone(), tx);
+                }
+                if let Some(tx) = entry.server.take_loading_status_tx() {
+                    loading_status_txs.insert(name.clone(), tx);
                 }
 
                 metadata.insert(name, (entry.icon, entry.display_name, entry.source));
@@ -713,6 +767,7 @@ impl AgentServerStore {
                         worktree_store: worktree_store.clone(),
                         name: agent_id.clone(),
                         new_version_available_tx: new_version_available_txs.remove(&agent_id),
+                        loading_status_tx: loading_status_txs.remove(&agent_id),
                     };
                     (
                         agent_id,
@@ -728,6 +783,22 @@ impl AgentServerStore {
             cx.emit(AgentServersUpdated);
             Ok(())
         })
+    }
+
+    async fn handle_loading_status_updated(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExternalAgentLoadingStatusUpdated>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            if let Some(entry) = this.external_agents.get_mut(&*envelope.payload.name)
+                && let Some(mut tx) = entry.server.take_loading_status_tx()
+            {
+                tx.send(envelope.payload.status).ok();
+                entry.server.set_loading_status_tx(tx);
+            }
+        });
+        Ok(())
     }
 
     async fn handle_new_version_available(
@@ -753,6 +824,7 @@ struct RemoteExternalAgentServer {
     worktree_store: Entity<WorktreeStore>,
     name: AgentId,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
+    loading_status_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for RemoteExternalAgentServer {
@@ -764,8 +836,16 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         self.new_version_available_tx = Some(tx);
     }
 
+    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.loading_status_tx.take()
+    }
+
+    fn set_loading_status_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.loading_status_tx = Some(tx);
+    }
+
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -813,21 +893,80 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
     }
 }
 
-fn asset_kind_for_archive_url(archive_url: &str) -> Result<AssetKind> {
+#[derive(Debug, PartialEq, Eq)]
+enum RegistryArchiveKind {
+    Archive(AssetKind),
+    /// The archive URL points directly at an executable, per the ACP registry
+    /// schema: "URL to download archive (.zip, .tar.gz, .tgz, .tar.bz2, .tbz2,
+    /// or raw binary)".
+    RawBinary {
+        file_name: String,
+    },
+}
+
+fn registry_archive_kind_for_url(archive_url: &str) -> Result<RegistryArchiveKind> {
+    const UNSUPPORTED_SUFFIXES: &[&str] = &[
+        // Installer formats explicitly rejected by the registry schema.
+        ".dmg",
+        ".pkg",
+        ".deb",
+        ".rpm",
+        ".msi",
+        ".appimage",
+        // Archive formats we cannot extract; treating them as raw binaries
+        // would produce a broken install.
+        ".tar.xz",
+        ".txz",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+    ];
+
     let archive_path = Url::parse(archive_url)
         .ok()
         .map(|url| url.path().to_string())
         .unwrap_or_else(|| archive_url.to_string());
+    let lowercase_path = archive_path.to_lowercase();
 
-    if archive_path.ends_with(".zip") {
-        Ok(AssetKind::Zip)
-    } else if archive_path.ends_with(".tar.gz") || archive_path.ends_with(".tgz") {
-        Ok(AssetKind::TarGz)
-    } else if archive_path.ends_with(".tar.bz2") || archive_path.ends_with(".tbz2") {
-        Ok(AssetKind::TarBz2)
+    if lowercase_path.ends_with(".zip") {
+        Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
+    } else if lowercase_path.ends_with(".tar.gz") || lowercase_path.ends_with(".tgz") {
+        Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
+    } else if lowercase_path.ends_with(".tar.bz2") || lowercase_path.ends_with(".tbz2") {
+        Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
+    } else if let Some(suffix) = UNSUPPORTED_SUFFIXES
+        .iter()
+        .find(|suffix| lowercase_path.ends_with(*suffix))
+    {
+        bail!("unsupported archive type {suffix} in URL: {archive_url}");
     } else {
-        bail!("unsupported archive type in URL: {archive_url}");
+        let file_name = raw_binary_file_name(&archive_path)
+            .with_context(|| format!("determining binary file name from URL: {archive_url}"))?;
+        Ok(RegistryArchiveKind::RawBinary { file_name })
     }
+}
+
+fn raw_binary_file_name(archive_path: &str) -> Result<String> {
+    let last_segment = archive_path
+        .rsplit('/')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .context("URL has no file name")?;
+    let file_name = percent_decode_str(last_segment)
+        .decode_utf8()
+        .context("file name is not valid UTF-8")?
+        .into_owned();
+    anyhow::ensure!(
+        !file_name.is_empty()
+            && file_name != "."
+            && file_name != ".."
+            && !file_name.contains(['/', '\\'])
+            && !file_name.contains('\0'),
+        "invalid binary file name: {file_name}"
+    );
+    Ok(file_name)
 }
 
 struct GithubReleaseArchive {
@@ -885,6 +1024,7 @@ fn versioned_archive_cache_dir(
     base_dir: &Path,
     version: Option<&str>,
     archive_url: &str,
+    sha256: Option<&str>,
 ) -> PathBuf {
     let version = version.unwrap_or_default();
     let sanitized_version = sanitize_path_component(version);
@@ -893,14 +1033,18 @@ fn versioned_archive_cache_dir(
     version_hasher.update(version.as_bytes());
     let version_hash = format!("{:x}", version_hasher.finalize());
 
-    let mut url_hasher = Sha256::new();
-    url_hasher.update(archive_url.as_bytes());
-    let url_hash = format!("{:x}", url_hasher.finalize());
+    let mut archive_hasher = Sha256::new();
+    archive_hasher.update(archive_url.as_bytes());
+    if let Some(sha256) = sha256 {
+        archive_hasher.update(b"\0sha256:");
+        archive_hasher.update(sha256.to_ascii_lowercase().as_bytes());
+    }
+    let archive_hash = format!("{:x}", archive_hasher.finalize());
 
     base_dir.join(format!(
         "v_{sanitized_version}_{}_{}",
         &version_hash[..16],
-        &url_hash[..16],
+        &archive_hash[..16],
     ))
 }
 
@@ -975,11 +1119,12 @@ struct LocalRegistryArchiveAgent {
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
-    registry_id: Arc<str>,
+    installation_dir: PathBuf,
     version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
+    loading_status_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryArchiveAgent {
@@ -995,8 +1140,16 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         self.new_version_available_tx = Some(tx);
     }
 
+    fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.loading_status_tx.take()
+    }
+
+    fn set_loading_status_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.loading_status_tx = Some(tx);
+    }
+
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1005,10 +1158,11 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
-        let registry_id = self.registry_id.clone();
+        let installation_dir = self.installation_dir.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
         let version = self.version.clone();
+        let loading_status_tx = self.loading_status_tx.take();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1018,9 +1172,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 .await
                 .unwrap_or_default();
 
-            let dir = paths::external_agents_dir()
-                .join("registry")
-                .join(sanitize_path_component(&registry_id));
+            let dir = installation_dir;
             fs.create_dir(&dir).await?;
 
             let os = if cfg!(target_os = "macos") {
@@ -1059,10 +1211,20 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             env.extend(settings_env);
 
             let archive_url = &target_config.archive;
-            let version_dir =
-                versioned_archive_cache_dir(&dir, Some(version.as_ref()), archive_url);
+            let version_dir = versioned_archive_cache_dir(
+                &dir,
+                Some(version.as_ref()),
+                archive_url,
+                target_config.sha256.as_deref(),
+            );
 
             if !fs.is_dir(&version_dir).await {
+                let mut loading_status_tx = loading_status_tx;
+                if let Some(tx) = loading_status_tx.as_mut() {
+                    tx.send(Some(format!("Installing {}…", version.as_ref())))
+                        .ok();
+                }
+
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
                 } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
@@ -1093,16 +1255,28 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
-                let asset_kind = asset_kind_for_archive_url(archive_url)?;
-
-                ::http_client::github_download::download_server_binary(
-                    &*http_client,
-                    archive_url,
-                    sha256.as_deref(),
-                    &version_dir,
-                    asset_kind,
-                )
-                .await?;
+                match registry_archive_kind_for_url(archive_url)? {
+                    RegistryArchiveKind::Archive(asset_kind) => {
+                        ::http_client::github_download::download_server_binary(
+                            &*http_client,
+                            archive_url,
+                            sha256.as_deref(),
+                            &version_dir,
+                            asset_kind,
+                        )
+                        .await?;
+                    }
+                    RegistryArchiveKind::RawBinary { file_name } => {
+                        ::http_client::github_download::download_server_raw_binary(
+                            &*http_client,
+                            archive_url,
+                            sha256.as_deref(),
+                            &version_dir,
+                            &file_name,
+                        )
+                        .await?;
+                    }
+                }
             }
 
             let cmd = &target_config.cmd;
@@ -1188,7 +1362,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     }
 
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1197,7 +1371,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let registry_id = self.registry_id.clone();
-        let package = bounded_npm_package_spec(&self.package);
+        let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
@@ -1210,34 +1384,39 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let prefix_dir = paths::external_agents_dir()
+            let install_dir = paths::external_agents_dir()
                 .join("registry")
                 .join("npx")
                 .join(sanitize_path_component(&registry_id));
-            fs.create_dir(&prefix_dir).await?;
+            fs.create_dir(&install_dir).await?;
 
-            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
-            exec_args.extend(args);
-
-            let npm_command = node_runtime
-                .npm_command(
-                    Some(&prefix_dir),
-                    "exec",
-                    &exec_args.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+            let (package_name, package_spec) = bounded_npm_package_spec(&package);
+            node_runtime
+                .run_npm_subcommand(
+                    Some(&install_dir),
+                    "install",
+                    &[package_spec.as_str(), "--save-exact"],
                 )
                 .await?;
+            let executable = node_runtime::read_package_executable(
+                install_dir.join("node_modules"),
+                package_name,
+            )
+            .await?;
 
-            env.extend(npm_command.env);
+            let node_binary = node_runtime.binary_path().await?;
+            env.extend(node_runtime::npm_command_env(&node_binary));
             env.extend(distribution_env);
             env.extend(extra_env);
             env.extend(settings_env);
 
-            let mut args = npm_command.args;
-            args.extend(extra_args);
+            let mut command_args = vec![executable.to_string_lossy().into_owned()];
+            command_args.extend(args);
+            command_args.extend(extra_args);
 
             let command = AgentServerCommand {
-                path: npm_command.path,
-                args,
+                path: node_binary,
+                args: command_args,
                 env: Some(env),
             };
 
@@ -1274,15 +1453,18 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
 /// strips during parsing. PS only re-adds CRT-style transport quotes around native command args
 /// containing whitespace, so `package@<=0.25.3` reaches cmd.exe bare and the unquoted `<` is
 /// interpreted as input redirection. See zed-industries/zed#55921.
-fn bounded_npm_package_spec(package_spec: &str) -> String {
+fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     let Some((package_name, version)) = package_spec.rsplit_once('@') else {
-        return package_spec.to_string();
+        return (package_spec, package_spec.to_string());
     };
-    if package_name.is_empty() || Version::parse(version).is_err() {
-        return package_spec.to_string();
+    if package_name.is_empty() {
+        return (package_spec, package_spec.to_string());
+    }
+    if Version::parse(version).is_err() {
+        return (package_name, package_spec.to_string());
     }
 
-    format!("{package_name}@0.0.0 - {version}")
+    (package_name, format!("{package_name}@0.0.0 - {version}"))
 }
 
 struct LocalCustomAgent {
@@ -1292,7 +1474,7 @@ struct LocalCustomAgent {
 
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
-        &self,
+        &mut self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
         cx: &mut AsyncApp,
@@ -1357,22 +1539,12 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// Default: []
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
-        /// This is a map from config option ID to value ID.
+        /// This is a map from config option ID to the default value for that option.
         ///
         /// Default: {}
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
@@ -1391,22 +1563,12 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: None
         default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// Default: []
-        favorite_models: Vec<String>,
         /// Default values for session config options.
         ///
-        /// This is a map from config option ID to value ID.
+        /// This is a map from config option ID to the default value for that option.
         ///
         /// Default: {}
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
@@ -1431,25 +1593,7 @@ impl CustomAgentServerSettings {
         }
     }
 
-    pub fn default_model(&self) -> Option<&str> {
-        match self {
-            CustomAgentServerSettings::Custom { default_model, .. }
-            | CustomAgentServerSettings::Registry { default_model, .. } => default_model.as_deref(),
-        }
-    }
-
-    pub fn favorite_models(&self) -> &[String] {
-        match self {
-            CustomAgentServerSettings::Custom {
-                favorite_models, ..
-            }
-            | CustomAgentServerSettings::Registry {
-                favorite_models, ..
-            } => favorite_models,
-        }
-    }
-
-    pub fn default_config_option(&self, config_id: &str) -> Option<&str> {
+    pub fn default_config_option(&self, config_id: &str) -> Option<&AgentConfigOptionValue> {
         match self {
             CustomAgentServerSettings::Custom {
                 default_config_options,
@@ -1458,7 +1602,7 @@ impl CustomAgentServerSettings {
             | CustomAgentServerSettings::Registry {
                 default_config_options,
                 ..
-            } => default_config_options.get(config_id).map(|s| s.as_str()),
+            } => default_config_options.get(config_id),
         }
     }
 
@@ -1486,8 +1630,6 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 args,
                 env,
                 default_mode,
-                default_model,
-                favorite_models,
                 default_config_options,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Custom {
@@ -1497,24 +1639,18 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                     env: Some(env),
                 },
                 default_mode,
-                default_model,
-                favorite_models,
                 default_config_options,
                 favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
-                default_model,
                 default_config_options,
-                favorite_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Registry {
                 env,
                 default_mode,
-                default_model,
                 default_config_options,
-                favorite_models,
                 favorite_config_option_values,
             },
         }
@@ -1550,8 +1686,74 @@ mod tests {
     };
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
     use gpui::TestAppContext;
+    #[cfg(feature = "test-support")]
+    use http_client::{AsyncBody, FakeHttpClient, Response};
     use node_runtime::NodeRuntime;
     use settings::Settings as _;
+
+    #[cfg(feature = "test-support")]
+    const TEST_ARCHIVE_URL: &str = "https://example.test/agent";
+
+    #[cfg(feature = "test-support")]
+    fn static_http_client(body: Vec<u8>) -> Arc<dyn HttpClient> {
+        FakeHttpClient::create(move |_| {
+            let body = body.clone();
+            async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(body))?)
+            }
+        })
+    }
+
+    #[cfg(feature = "test-support")]
+    fn make_registry_archive_agent(
+        cx: &mut TestAppContext,
+        installation_dir: PathBuf,
+        http_client: Arc<dyn HttpClient>,
+        sha256: Option<String>,
+    ) -> LocalRegistryArchiveAgent {
+        let fs: Arc<dyn Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        let target = RegistryTargetConfig {
+            archive: TEST_ARCHIVE_URL.to_string(),
+            cmd: "./agent".to_string(),
+            args: Vec::new(),
+            sha256,
+            env: HashMap::default(),
+        };
+        let targets = [
+            "darwin-aarch64",
+            "darwin-x86_64",
+            "linux-aarch64",
+            "linux-x86_64",
+            "windows-aarch64",
+            "windows-x86_64",
+        ]
+        .into_iter()
+        .map(|platform| (platform.to_string(), target.clone()))
+        .collect();
+
+        cx.update(|cx| {
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+            let project_environment = cx.new(|cx| {
+                crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+            });
+
+            LocalRegistryArchiveAgent {
+                fs,
+                http_client,
+                node_runtime: NodeRuntime::unavailable(),
+                project_environment,
+                installation_dir,
+                version: "1.0.0".into(),
+                targets,
+                env: HashMap::default(),
+                new_version_available_tx: None,
+                loading_status_tx: None,
+            }
+        })
+    }
 
     fn make_npx_agent(id: &str, version: &str) -> RegistryAgent {
         let id = SharedString::from(id.to_string());
@@ -1597,8 +1799,6 @@ mod tests {
                                 settings::CustomAgentServerSettings::Registry {
                                     env: HashMap::default(),
                                     default_mode: None,
-                                    default_model: None,
-                                    favorite_models: Vec::new(),
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
                                 }
@@ -1638,64 +1838,106 @@ mod tests {
     fn builds_bounded_npm_package_specs() {
         assert_eq!(
             bounded_npm_package_spec("agent-package@1.2.3"),
-            "agent-package@0.0.0 - 1.2.3"
+            ("agent-package", "agent-package@0.0.0 - 1.2.3".to_string())
         );
         assert_eq!(
             bounded_npm_package_spec("@scope/agent-package@1.2.3-beta.1"),
-            "@scope/agent-package@0.0.0 - 1.2.3-beta.1"
+            (
+                "@scope/agent-package",
+                "@scope/agent-package@0.0.0 - 1.2.3-beta.1".to_string()
+            )
         );
         assert_eq!(
             bounded_npm_package_spec("@scope/agent-package"),
-            "@scope/agent-package"
+            ("@scope/agent-package", "@scope/agent-package".to_string())
         );
         assert_eq!(
             bounded_npm_package_spec("agent-package@latest"),
-            "agent-package@latest"
+            ("agent-package", "agent-package@latest".to_string())
         );
     }
 
     #[test]
     fn detects_supported_archive_suffixes() {
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.zip"),
-            Ok(AssetKind::Zip)
+            registry_archive_kind_for_url("https://example.com/agent.zip"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.zip?download=1"),
-            Ok(AssetKind::Zip)
+            registry_archive_kind_for_url("https://example.com/agent.zip?download=1"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.gz"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tar.gz"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.gz?download=1#latest"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tar.gz?download=1#latest"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tgz"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tgz"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tgz#download"),
-            Ok(AssetKind::TarGz)
+            registry_archive_kind_for_url("https://example.com/agent.tgz#download"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarGz))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.bz2"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tar.bz2"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tar.bz2?download=1"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tar.bz2?download=1"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tbz2"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tbz2"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
         assert!(matches!(
-            asset_kind_for_archive_url("https://example.com/agent.tbz2#download"),
-            Ok(AssetKind::TarBz2)
+            registry_archive_kind_for_url("https://example.com/agent.tbz2#download"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::TarBz2))
         ));
+        assert!(matches!(
+            registry_archive_kind_for_url("https://example.com/agent.ZIP"),
+            Ok(RegistryArchiveKind::Archive(AssetKind::Zip))
+        ));
+    }
+
+    #[test]
+    fn detects_raw_binary_archive_urls() {
+        assert_eq!(
+            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-macos-aarch64").unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "grok-0.2.20-macos-aarch64".to_string()
+            },
+        );
+        assert_eq!(
+            registry_archive_kind_for_url("https://x.ai/cli/grok-0.2.20-windows-x86_64.exe")
+                .unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "grok-0.2.20-windows-x86_64.exe".to_string()
+            },
+        );
+        assert_eq!(
+            registry_archive_kind_for_url("https://example.com/agent-binary?download=1#latest")
+                .unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "agent-binary".to_string()
+            },
+        );
+        assert_eq!(
+            registry_archive_kind_for_url("https://example.com/agent%20binary").unwrap(),
+            RegistryArchiveKind::RawBinary {
+                file_name: "agent binary".to_string()
+            },
+        );
+        // No file name to install the binary as.
+        assert!(registry_archive_kind_for_url("https://example.com/").is_err());
+        // Percent-decoding must not allow path traversal in the file name.
+        assert!(registry_archive_kind_for_url("https://example.com/a%2F..%2Fevil").is_err());
+        assert!(registry_archive_kind_for_url("https://example.com/%2E%2E").is_err());
     }
 
     #[test]
@@ -1712,27 +1954,46 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_archive_suffixes() {
-        let error = asset_kind_for_archive_url("https://example.com/agent.tar.xz")
+        let error = registry_archive_kind_for_url("https://example.com/agent.tar.xz")
             .err()
             .map(|error| error.to_string());
 
         assert_eq!(
             error,
-            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string()),
+            Some(
+                "unsupported archive type .tar.xz in URL: https://example.com/agent.tar.xz"
+                    .to_string()
+            ),
         );
+
+        for installer_url in [
+            "https://example.com/agent.dmg",
+            "https://example.com/agent.pkg",
+            "https://example.com/agent.deb",
+            "https://example.com/agent.rpm",
+            "https://example.com/agent.msi",
+            "https://example.com/agent.AppImage",
+        ] {
+            assert!(
+                registry_archive_kind_for_url(installer_url).is_err(),
+                "expected {installer_url} to be rejected"
+            );
+        }
     }
 
     #[test]
-    fn versioned_archive_cache_dir_includes_version_before_url_hash() {
+    fn versioned_archive_cache_dir_includes_artifact_identity() {
         let slash_version_dir = versioned_archive_cache_dir(
             Path::new("/tmp/agents"),
             Some("release/2.3.5"),
             "https://example.com/agent.zip",
+            None,
         );
         let colon_version_dir = versioned_archive_cache_dir(
             Path::new("/tmp/agents"),
             Some("release:2.3.5"),
             "https://example.com/agent.zip",
+            None,
         );
         let file_name = slash_version_dir
             .file_name()
@@ -1741,6 +2002,129 @@ mod tests {
 
         assert!(file_name.starts_with("v_release-2.3.5_"));
         assert_ne!(slash_version_dir, colon_version_dir);
+
+        let lowercase_checksum_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        );
+        let uppercase_checksum_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+            Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        );
+        let changed_checksum_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        );
+
+        assert_ne!(slash_version_dir, lowercase_checksum_dir);
+        assert_eq!(lowercase_checksum_dir, uppercase_checksum_dir);
+        assert_ne!(lowercase_checksum_dir, changed_checksum_dir);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_checksum_invalidates_unverified_cache_and_blocks_mismatch(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let old_version_dir =
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None);
+        std::fs::create_dir_all(&old_version_dir).unwrap();
+        std::fs::write(old_version_dir.join("agent"), b"unverified agent").unwrap();
+
+        let expected_sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+        let http_client = static_http_client(b"unexpected agent".to_vec());
+        let mut agent = make_registry_archive_agent(
+            cx,
+            installation_dir.clone(),
+            http_client,
+            Some(expected_sha256.to_string()),
+        );
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let error = get_command.await.unwrap_err();
+        assert!(
+            error.to_string().contains("SHA-256 mismatch"),
+            "unexpected error: {error:#}"
+        );
+        assert!(old_version_dir.exists());
+        assert!(
+            !versioned_archive_cache_dir(
+                &installation_dir,
+                Some("1.0.0"),
+                TEST_ARCHIVE_URL,
+                Some(expected_sha256),
+            )
+            .exists()
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_with_checksum_installs(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let contents = b"verified agent";
+        let expected_sha256 = format!("{:X}", Sha256::digest(contents));
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent = make_registry_archive_agent(
+            cx,
+            installation_dir.clone(),
+            http_client,
+            Some(expected_sha256.clone()),
+        );
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let command = get_command.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            command.path,
+            versioned_archive_cache_dir(
+                &installation_dir,
+                Some("1.0.0"),
+                TEST_ARCHIVE_URL,
+                Some(&expected_sha256),
+            )
+            .join("agent")
+        );
+        assert_eq!(std::fs::read(command.path).unwrap(), contents);
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_without_checksum_installs(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let contents = b"unchecked agent";
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let command = get_command.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            command.path,
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None,)
+                .join("agent")
+        );
+        assert_eq!(std::fs::read(command.path).unwrap(), contents);
     }
 
     #[gpui::test]
