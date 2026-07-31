@@ -227,7 +227,7 @@ use project::{
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
+use scroll::{Autoscroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -1222,7 +1222,6 @@ pub struct EditorSnapshot {
     pub placeholder_display_snapshot: Option<DisplaySnapshot>,
     is_focused: bool,
     scroll_anchor: SharedScrollAnchor,
-    ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
@@ -2739,6 +2738,9 @@ impl Editor {
         }
 
         let disjoint = self.selections.disjoint_anchors();
+        if disjoint.len() > 1 {
+            key_context.add("multiple_selections");
+        }
         if matches!(
             &self.mode,
             EditorMode::SingleLine | EditorMode::AutoHeight { .. }
@@ -3003,7 +3005,6 @@ impl Editor {
                 .placeholder_display_map
                 .as_ref()
                 .map(|display_map| display_map.update(cx, |map, cx| map.snapshot(cx))),
-            ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             is_focused: self.focus_handle.is_focused(window),
             current_line_highlight: self
                 .current_line_highlight
@@ -5859,14 +5860,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let source = snapshot.anchor_before(Point::new(display_row.0, 0u32));
+        let display_snapshot = self.display_snapshot(cx);
+        let display_point = display_row.as_display_point();
+        let source = display_snapshot.display_point_to_anchor(display_point, Bias::Left);
         let anchor = position.unwrap_or(source);
 
         // Every entry in this menu either requires a worktree-file-backed buffer
         // (breakpoints, bookmarks, run to cursor) or is meaningless without one
         // (git blame), so don't open it for e.g. untitled buffers.
-        if !snapshot
+        if !display_snapshot
+            .buffer_snapshot()
             .anchor_to_buffer_anchor(anchor)
             .is_some_and(|(_, buffer_snapshot)| {
                 project::File::from_dyn(buffer_snapshot.file()).is_some()
@@ -9766,7 +9769,8 @@ impl Editor {
                     .into_iter()
                     .flatten(),
             )
-            .flat_map(|accent| accent.0.clone().map(SharedString::from))
+            .flat_map(|accent| accent.0.as_ref().map(|c| c.to_string()))
+            .map(SharedString::from)
             .collect();
 
         Some(AccentData {

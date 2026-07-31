@@ -45,14 +45,15 @@ use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
     ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
+    DispatchPhase, DisplayId, EventEmitter, ExternalDragPayload, FocusHandle, FocusMap,
+    ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu,
+    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
+    PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
+    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -673,6 +674,18 @@ impl GpuiMode {
     }
 }
 
+struct PlatformOwnedDrag {
+    source_window: WindowId,
+    state: PlatformOwnedDragState,
+}
+
+enum PlatformOwnedDragState {
+    Suspended(AnyDrag),
+    // A source-window drop consumes `active_drag` before AppKit ends the dragging session, so this
+    // marker can outlive the active drag and is cleaned up by `FileDropEvent::Ended`.
+    RestoredInSourceWindow,
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
@@ -683,6 +696,7 @@ pub struct App {
 
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
+    platform_owned_drag: Option<PlatformOwnedDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) entities: EntityMap,
@@ -797,6 +811,7 @@ impl App {
                 flushing_effects: false,
                 pending_updates: 0,
                 active_drag: None,
+                platform_owned_drag: None,
                 background_executor,
                 foreground_executor,
                 svg_renderer: SvgRenderer::new(asset_source.clone()),
@@ -1325,6 +1340,20 @@ impl App {
         self.platform.window_appearance()
     }
 
+    /// Overrides the appearance (light/dark) applied to the app's windows, independent of
+    /// the OS-wide setting. Pass `None` to clear the override and follow the system again.
+    /// The current value is reported by [`App::window_appearance`].
+    ///
+    /// On macOS this sets the underlying `NSApplication.appearance`, which controls the
+    /// native window chrome (the window border and titlebar) of every window. Use this
+    /// when the app uses a dark theme while the system is in light mode (or vice versa)
+    /// so the window edges render to match the theme. While an appearance is forced,
+    /// windows stop tracking system light/dark changes; pass `None` to resume following
+    /// the system. On other platforms this is a no-op.
+    pub fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
+        self.platform.set_window_appearance(appearance);
+    }
+
     /// Returns the window button layout configuration when supported.
     pub fn button_layout(&self) -> Option<WindowButtonLayout> {
         self.platform.button_layout()
@@ -1784,6 +1813,7 @@ impl App {
                 cx.window_update_stack.pop();
 
                 if window.removed {
+                    cx.end_platform_drag(id);
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
                     if let Some(tracked) = cx.tracked_entities.remove(&id) {
@@ -2425,11 +2455,74 @@ impl App {
     pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
         if self.active_drag.is_some() {
             self.active_drag = None;
+            if self.platform_owned_drag.as_ref().is_some_and(|drag| {
+                drag.source_window == window.window_handle().window_id()
+                    && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+            }) {
+                self.platform_owned_drag = None;
+            }
             window.refresh();
             true
         } else {
             false
         }
+    }
+
+    pub(crate) fn hand_active_drag_to_platform(&mut self, source_window: WindowId) -> bool {
+        let Some(drag) = self.active_drag.take() else {
+            return false;
+        };
+        self.platform_owned_drag = Some(PlatformOwnedDrag {
+            source_window,
+            state: PlatformOwnedDragState::Suspended(drag),
+        });
+        true
+    }
+
+    pub(crate) fn restore_platform_drag(&mut self, source_window: WindowId) -> bool {
+        let Some(platform_drag) = self
+            .platform_owned_drag
+            .as_mut()
+            .filter(|drag| drag.source_window == source_window)
+        else {
+            return false;
+        };
+        let state = std::mem::replace(
+            &mut platform_drag.state,
+            PlatformOwnedDragState::RestoredInSourceWindow,
+        );
+        let PlatformOwnedDragState::Suspended(drag) = state else {
+            return false;
+        };
+        self.active_drag = Some(drag);
+        true
+    }
+
+    pub(crate) fn hand_restored_drag_to_platform(&mut self, source_window: WindowId) -> bool {
+        let Some(platform_drag) = self.platform_owned_drag.as_mut().filter(|drag| {
+            drag.source_window == source_window
+                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+        }) else {
+            return false;
+        };
+        let Some(drag) = self.active_drag.take() else {
+            return false;
+        };
+        platform_drag.state = PlatformOwnedDragState::Suspended(drag);
+        true
+    }
+
+    pub(crate) fn end_platform_drag(&mut self, source_window: WindowId) -> bool {
+        if !self
+            .platform_owned_drag
+            .as_ref()
+            .is_some_and(|drag| drag.source_window == source_window)
+        {
+            return false;
+        }
+        self.platform_owned_drag = None;
+        self.active_drag = None;
+        true
     }
 
     /// Sets the cursor style for the currently active drag operation.
@@ -2474,6 +2567,14 @@ impl App {
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
         self.loading_assets.remove(&asset_id);
+    }
+
+    /// Check whether an asset is present in GPUI's cache (loading or loaded),
+    /// without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_asset<A: Asset>(&self, source: &A::Source) -> bool {
+        let asset_id = (TypeId::of::<A>(), hash(source));
+        self.loading_assets.contains_key(&asset_id)
     }
 
     /// Asynchronously load an asset, if the asset hasn't finished loading this will return None.
@@ -2800,7 +2901,16 @@ pub struct AnyDrag {
 
     /// The cursor style to use while dragging
     pub cursor_style: Option<CursorStyle>,
+
+    /// Resolves the payload to offer the platform if the drag leaves the window.
+    /// Invoked at most once per drag gesture, at promotion time.
+    pub external_payload_source: Option<ExternalDragPayloadSource>,
 }
+
+/// Lazily resolves the payload handed to the platform when an internal drag is
+/// promoted to a native drag session.
+pub type ExternalDragPayloadSource =
+    Box<dyn FnOnce(&mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
 /// tooltip behavior on a custom element. Otherwise, use [Div::tooltip](crate::Interactivity::tooltip).
