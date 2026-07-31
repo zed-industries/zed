@@ -10887,6 +10887,7 @@ dependencies = [
  "editor",
  "fs",
  "gpui",
+ "i18n",
  "language",
  "log",
  "markdown",

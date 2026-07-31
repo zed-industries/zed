@@ -1,3 +1,4 @@
+use i18n::t;
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::cmp::min;
@@ -1448,9 +1449,9 @@ impl Item for MarkdownPreviewView {
             .map(|editor_state| {
                 let buffer = editor_state.editor.read(cx).buffer().read(cx);
                 let title = buffer.title(cx);
-                format!("Preview {}", title).into()
+                t!("Preview {$name}", name = title.to_string()).into()
             })
-            .unwrap_or_else(|| SharedString::from("Markdown Preview"))
+            .unwrap_or_else(|| t!("Markdown Preview").resolve())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1624,7 +1625,7 @@ impl Render for MarkdownPreviewView {
                                         menu.when_some(focus, |menu, focus| menu.context(focus))
                                             .when_some(selected_text, |menu, text| {
                                                 menu.entry(
-                                                    "Copy",
+                                                    t!("Copy"),
                                                     Some(Box::new(markdown::Copy)),
                                                     move |_, cx| {
                                                         cx.write_to_clipboard(
@@ -1637,7 +1638,7 @@ impl Render for MarkdownPreviewView {
                                             })
                                             .when_some(selected_markdown, |menu, text| {
                                                 menu.entry(
-                                                    "Copy as Markdown",
+                                                    t!("Copy as Markdown"),
                                                     Some(Box::new(markdown::CopyAsMarkdown)),
                                                     move |_, cx| {
                                                         cx.write_to_clipboard(
@@ -1649,7 +1650,7 @@ impl Render for MarkdownPreviewView {
                                                 )
                                             })
                                             .when_some(context_menu_link, |menu, url| {
-                                                menu.entry("Copy Link", None, move |_, cx| {
+                                                menu.entry(t!("Copy Link"), None, move |_, cx| {
                                                     cx.write_to_clipboard(
                                                         ClipboardItem::new_string(url.to_string()),
                                                     );

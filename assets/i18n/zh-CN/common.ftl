@@ -23,6 +23,12 @@ no = 否
 open-action = 打开
 learn-more = 了解更多
 
+## Tab titles
+
+# The tab title every preview pane builds from the file it previews: markdown,
+# SVG and CSV all name this key.
+preview-name = 预览 { $name }
+
 ## Tools an agent can be granted
 
 # The tool that retrieves a URL, named by both the agent's @fetch command and the
