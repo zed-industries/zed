@@ -1,3 +1,4 @@
+use i18n::t;
 use std::sync::Arc;
 
 use agent_skills::GLOBAL_SKILLS_DIR_DISPLAY;
@@ -81,7 +82,7 @@ fn notify_release_notes_failed_to_show(
         fn primary_action(&self) -> ErrorAction {
             self.url
                 .clone()
-                .map(|url| ErrorAction::link("View in Browser", url))
+                .map(|url| ErrorAction::link(t!("View in Browser"), url))
                 .unwrap_or_else(ErrorAction::dismiss)
         }
     }
@@ -223,21 +224,27 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
             rules_to_skills_migration::migration_result().is_some_and(|result| !result.is_empty());
 
         let mut bullet_items: Vec<SharedString> = Vec::with_capacity(3);
-        bullet_items
-            .push(format!("Skills live in {GLOBAL_SKILLS_DIR_DISPLAY}/<name>/SKILL.md").into());
-        bullet_items.push("Type / to manually invoke a skill".into());
+        bullet_items.push(
+            t!(
+                "Skills live in {$dir}/<name>/SKILL.md",
+                dir = GLOBAL_SKILLS_DIR_DISPLAY
+            )
+            .resolve(),
+        );
+        bullet_items.push(t!("Type / to manually invoke a skill").resolve());
         if migrated_anything {
             bullet_items.push(
-                "The Rules Library is making way for skills: your default rules are now in a global AGENTS.md, and your other rules have been converted to skills".into(),
+                t!("The Rules Library is making way for skills: your default rules are now in a global AGENTS.md, and your other rules have been converted to skills").resolve(),
             );
         }
 
         Some(AnnouncementContent {
-            heading: "Introducing Skills Support".into(),
-            description: "Extend the agent with focused instructions and domain knowledge.".into(),
+            heading: t!("Introducing Skills Support").resolve(),
+            description: t!("Extend the agent with focused instructions and domain knowledge.")
+                .resolve(),
             bullet_items,
-            primary_action_label: "Try Now".into(),
-            secondary_action_label: "Read Documentation".into(),
+            primary_action_label: t!("Try Now").resolve(),
+            secondary_action_label: t!("Read Documentation").resolve(),
             primary_action_url: None,
             primary_action_callback: Some(Arc::new(move |window, cx| {
                 window.dispatch_action(Box::new(zed_actions::assistant::FocusAgent), cx);
@@ -350,17 +357,24 @@ fn show_update_notification(cx: &mut App) {
             move |cx| {
                 let workspace_handle = cx.entity().downgrade();
                 cx.new(|cx| {
-                    MessageNotification::new(format!("Updated to {app_name} {}", version), cx)
-                        .primary_message("View Release Notes")
-                        .primary_on_click(move |window, cx| {
-                            if let Some(workspace) = workspace_handle.upgrade() {
-                                workspace.update(cx, |workspace, cx| {
-                                    crate::view_release_notes_locally(workspace, window, cx);
-                                })
-                            }
-                            cx.emit(DismissEvent);
-                        })
-                        .show_suppress_button(false)
+                    MessageNotification::new(
+                        t!(
+                            "Updated to {$app} {$version}",
+                            app = app_name,
+                            version = version.to_string()
+                        ),
+                        cx,
+                    )
+                    .primary_message(t!("View Release Notes"))
+                    .primary_on_click(move |window, cx| {
+                        if let Some(workspace) = workspace_handle.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                crate::view_release_notes_locally(workspace, window, cx);
+                            })
+                        }
+                        cx.emit(DismissEvent);
+                    })
+                    .show_suppress_button(false)
                 })
             },
         );

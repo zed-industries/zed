@@ -1457,6 +1457,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
+ "i18n",
  "markdown_preview",
  "notifications",
  "prompt_store",
