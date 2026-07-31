@@ -88,18 +88,6 @@ pub enum SearchOption {
     Backwards,
 }
 
-fn replace_placeholder() -> LocalizedString {
-    t!("Replace in project…")
-}
-
-fn include_placeholder() -> LocalizedString {
-    t!("Include: e.g. src/**/*.rs")
-}
-
-fn exclude_placeholder() -> LocalizedString {
-    t!("Exclude: e.g. vendor/*, *.lock")
-}
-
 pub enum SearchSource<'a, 'b> {
     Buffer,
     Project(&'a Context<'b, ProjectSearchBar>),

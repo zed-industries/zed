@@ -381,7 +381,7 @@ impl AddToolchainState {
 /// lister supplies it from `crates/languages`, which is not localized. The terms
 /// Zed itself ships get a whole-sentence entry so a translation reads naturally;
 /// anything else keeps the term verbatim, which is right for a language name.
-pub fn select_term_label(term: &str) -> LocalizedString {
+fn select_term_label(term: &str) -> LocalizedString {
     match term {
         "Toolchain" => t!("Select Toolchain"),
         "Virtual Environment" => t!("Select Virtual Environment"),

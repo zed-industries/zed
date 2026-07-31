@@ -3,7 +3,6 @@ use crate::{
     ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    exclude_placeholder, include_placeholder, replace_placeholder,
     search_bar::{
         ActionButtonState, HistoryNavigationDirection, alignment_element, input_base_styles,
         render_action_button, render_text_input, should_navigate_history,
@@ -1091,7 +1090,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
-            editor.set_placeholder_text(&replace_placeholder().resolve(), window, cx);
+            editor.set_placeholder_text(&t!("Replace in project…").resolve(), window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
             }
@@ -1121,7 +1120,7 @@ impl ProjectSearchView {
 
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&include_placeholder().resolve(), window, cx);
+            editor.set_placeholder_text(&t!("Include: e.g. src/**/*.rs").resolve(), window, cx);
 
             editor
         });
@@ -1134,7 +1133,11 @@ impl ProjectSearchView {
 
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&exclude_placeholder().resolve(), window, cx);
+            editor.set_placeholder_text(
+                &t!("Exclude: e.g. vendor/*, *.lock").resolve(),
+                window,
+                cx,
+            );
 
             editor
         });
