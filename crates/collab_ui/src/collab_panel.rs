@@ -373,7 +373,7 @@ impl CollabPanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(&t!("Search channels…").resolve(), window, cx);
+                editor.set_localized_placeholder_text(t!("Search channels…"), window, cx);
                 editor
             });
 

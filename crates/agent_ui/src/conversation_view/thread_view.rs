@@ -188,8 +188,8 @@ impl ThreadFeedbackState {
                 window,
                 cx,
             );
-            editor.set_placeholder_text(
-                &t!("What went wrong? Share your feedback so we can improve.").resolve(),
+            editor.set_localized_placeholder_text(
+                t!("What went wrong? Share your feedback so we can improve."),
                 window,
                 cx,
             );
@@ -816,7 +816,7 @@ impl ThreadView {
                 thread_store,
                 session_capabilities.clone(),
                 agent_id.clone(),
-                &placeholder,
+                placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
                     max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
@@ -2125,7 +2125,9 @@ impl ThreadView {
                 None,
                 self.session_capabilities.clone(),
                 self.agent_id.clone(),
-                "",
+                // A queued message shows no placeholder, so there is nothing to
+                // localize.
+                LocalizedString::from_parts("", ""),
                 EditorMode::AutoHeight {
                     min_lines: 1,
                     max_lines: Some(10),

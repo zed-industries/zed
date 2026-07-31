@@ -365,7 +365,7 @@ impl EditNicknameState {
             .and_then(|state| state.nickname)
             .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
-            this.set_placeholder_text(&t!("Add a nickname for this server").resolve(), window, cx);
+            this.set_localized_placeholder_text(t!("Add a nickname for this server"), window, cx);
             if let Some(starting_text) = starting_text {
                 this.set_text(starting_text, window, cx);
             }

@@ -171,7 +171,7 @@ impl ThreadsArchiveView {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&t!("Search all threads…").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Search all threads…"), window, cx);
             editor
         });
 

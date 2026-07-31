@@ -711,7 +711,7 @@ impl OutlinePanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(&t!("Search buffer symbols…").resolve(), window, cx);
+                editor.set_localized_placeholder_text(t!("Search buffer symbols…"), window, cx);
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(

@@ -211,7 +211,7 @@ impl SkillCreatorPage {
                 buffer
             });
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
-            editor.set_placeholder_text(t!("Add skill content…").resolve().as_ref(), window, cx);
+            editor.set_localized_placeholder_text(t!("Add skill content…"), window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);

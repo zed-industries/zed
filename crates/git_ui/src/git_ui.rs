@@ -562,7 +562,7 @@ impl RefPickerModal {
     ) -> Self {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&t!("Enter git ref...").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Enter git ref..."), window, cx);
             editor
         });
 
@@ -1253,7 +1253,7 @@ impl GitCloneModal {
     pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo_input = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&t!("Enter repository URL…").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Enter repository URL…"), window, cx);
             editor
         });
         let focus_handle = repo_input.focus_handle(cx);

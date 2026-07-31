@@ -1770,7 +1770,7 @@ impl SettingsWindow {
         let current_file = SettingsUiFile::User;
         let search_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(t!("Search settings…").resolve().as_ref(), window, cx);
+            editor.set_localized_placeholder_text(t!("Search settings…"), window, cx);
             editor
         });
         cx.subscribe(&search_bar, |this, _, event: &EditorEvent, cx| {

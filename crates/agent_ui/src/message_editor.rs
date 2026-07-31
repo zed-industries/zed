@@ -455,7 +455,7 @@ impl MessageEditor {
         thread_store: Option<Entity<ThreadStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
-        placeholder: &str,
+        placeholder: impl Into<i18n::LocalizedString>,
         mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -475,7 +475,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
-            editor.set_placeholder_text(placeholder, window, cx);
+            editor.set_localized_placeholder_text(placeholder, window, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
@@ -1894,12 +1894,12 @@ impl MessageEditor {
 
     pub fn set_placeholder_text(
         &mut self,
-        placeholder: &str,
+        placeholder: impl Into<i18n::LocalizedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(placeholder, window, cx);
+            editor.set_localized_placeholder_text(placeholder, window, cx);
         });
     }
 
@@ -2256,6 +2256,7 @@ mod tests {
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
         actions::{Cut, Paste},
     };
+    use i18n::t;
 
     use fs::FakeFs;
     use futures::{FutureExt as _, StreamExt as _};
@@ -2553,7 +2554,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -2653,7 +2654,7 @@ mod tests {
                     thread_store.clone(),
                     session_capabilities.clone(),
                     "Claude Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -2818,7 +2819,7 @@ mod tests {
                     thread_store.clone(),
                     session_capabilities.clone(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -2982,7 +2983,7 @@ mod tests {
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -3102,7 +3103,7 @@ mod tests {
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -3250,7 +3251,7 @@ mod tests {
                     Some(thread_store),
                     session_capabilities.clone(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -3742,7 +3743,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -3842,7 +3843,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -3910,7 +3911,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -3962,7 +3963,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -4018,7 +4019,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -4075,7 +4076,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -4136,7 +4137,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -4295,7 +4296,7 @@ mod tests {
                     thread_store.clone(),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::full(),
                     window,
                     cx,
@@ -4414,7 +4415,7 @@ mod tests {
                     Some(thread_store.clone()),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -4492,7 +4493,7 @@ mod tests {
                     Some(thread_store),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -4669,7 +4670,7 @@ mod tests {
                     Some(thread_store),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -5080,7 +5081,7 @@ mod tests {
                     Some(thread_store),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -5416,7 +5417,7 @@ mod tests {
                     Some(thread_store),
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         max_lines: None,
                         min_lines: 1,
@@ -5538,7 +5539,7 @@ mod tests {
                     None,
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,
@@ -5713,7 +5714,7 @@ mod tests {
                     None,
                     Default::default(),
                     "Test Agent".into(),
-                    "Test",
+                    t!("Test"),
                     EditorMode::AutoHeight {
                         min_lines: 1,
                         max_lines: None,

@@ -178,8 +178,8 @@ impl Render for BufferSearchBar {
 
         self.query_editor.update(cx, |query_editor, cx| {
             if query_editor.placeholder_text(cx).is_none() {
-                query_editor.set_placeholder_text(
-                    &t!(key = "search-placeholder", "Search…").resolve(),
+                query_editor.set_localized_placeholder_text(
+                    t!(key = "search-placeholder", "Search…"),
                     window,
                     cx,
                 );
@@ -187,7 +187,7 @@ impl Render for BufferSearchBar {
         });
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(&t!("Replace with…").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Replace with…"), window, cx);
         });
 
         let mut color_override = None;

@@ -1061,8 +1061,8 @@ impl ProjectSearchView {
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
-            editor.set_placeholder_text(
-                &t!(key = "search-all-files-placeholder", "Search all files…").resolve(),
+            editor.set_localized_placeholder_text(
+                t!(key = "search-all-files-placeholder", "Search all files…"),
                 window,
                 cx,
             );
@@ -1090,7 +1090,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
-            editor.set_placeholder_text(&t!("Replace in project…").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Replace in project…"), window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
             }
@@ -1120,7 +1120,7 @@ impl ProjectSearchView {
 
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&t!("Include: e.g. src/**/*.rs").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Include: e.g. src/**/*.rs"), window, cx);
 
             editor
         });
@@ -1133,11 +1133,7 @@ impl ProjectSearchView {
 
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(
-                &t!("Exclude: e.g. vendor/*, *.lock").resolve(),
-                window,
-                cx,
-            );
+            editor.set_localized_placeholder_text(t!("Exclude: e.g. vendor/*, *.lock"), window, cx);
 
             editor
         });

@@ -151,6 +151,12 @@ pub struct Picker<D: PickerDelegate> {
     /// picker open while that menu has focus.
     actions_menu_handle: PopoverMenuHandle<ContextMenu>,
     reopenable: bool,
+    /// The locale the current placeholder was resolved for.
+    ///
+    /// The placeholder is baked into a buffer by `Editor::set_placeholder_text`,
+    /// so it cannot follow the locale on its own; tracking what it was built for
+    /// is how the picker knows to ask the delegate for it again.
+    placeholder_generation: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -611,6 +617,7 @@ impl<D: PickerDelegate> Picker<D> {
             size_bounds,
             actions_menu_handle: PopoverMenuHandle::default(),
             reopenable: true,
+            placeholder_generation: i18n::generation(),
         };
         // give delegate the initial preview layout
         this.delegate
@@ -1152,6 +1159,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.placeholder_generation = i18n::generation();
         match &self.head {
             Head::Editor(editor) => {
                 let placeholder = self.delegate.placeholder_text(window, cx);

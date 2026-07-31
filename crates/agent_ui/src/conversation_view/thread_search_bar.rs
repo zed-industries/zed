@@ -170,7 +170,7 @@ impl ThreadSearchBar {
     ) -> Self {
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&t!("Search this thread…").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Search this thread…"), window, cx);
             editor
         });
         let editor_subscription = cx.subscribe_in(

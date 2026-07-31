@@ -1473,7 +1473,7 @@ impl GitGraph {
 
         let search_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(&t!("Search commits…").resolve(), window, cx);
+            editor.set_localized_placeholder_text(t!("Search commits…"), window, cx);
             editor
         });
 

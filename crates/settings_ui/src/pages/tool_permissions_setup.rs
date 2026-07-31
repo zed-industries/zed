@@ -538,10 +538,8 @@ fn render_verification_section(
 
     let editor = window.use_keyed_state(input_id, cx, |window, cx| {
         let mut editor = editor::Editor::single_line(window, cx);
-        editor.set_placeholder_text(
-            t!("Enter a tool input to test your rules…")
-                .resolve()
-                .as_ref(),
+        editor.set_localized_placeholder_text(
+            t!("Enter a tool input to test your rules…"),
             window,
             cx,
         );

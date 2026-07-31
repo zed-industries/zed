@@ -840,8 +840,7 @@ impl Sidebar {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            let placeholder_text = t!("Search threads…").resolve();
-            editor.set_placeholder_text(&placeholder_text, window, cx);
+            editor.set_localized_placeholder_text(t!("Search threads…"), window, cx);
             editor
         });
         let thread_rename_editor = cx.new(|cx| Editor::single_line(window, cx));

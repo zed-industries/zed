@@ -931,6 +931,10 @@ pub struct Editor {
     /// Handles soft wraps, folds, fake inlay text insertions, etc.
     pub display_map: Entity<DisplayMap>,
     placeholder_display_map: Option<Entity<DisplayMap>>,
+    /// The localized text the placeholder was laid out from, and the locale it was
+    /// laid out for. `None` when the placeholder is not localized and so never
+    /// needs rebuilding.
+    localized_placeholder: Option<(i18n::LocalizedString, usize)>,
     pub selections: SelectionsCollection,
     /// Manages the scroll position for the given editor.
     ///
@@ -2252,6 +2256,7 @@ impl Editor {
             buffer: multi_buffer.clone(),
             display_map: display_map.clone(),
             placeholder_display_map: None,
+            localized_placeholder: None,
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_state: None,
@@ -3082,7 +3087,61 @@ impl Editor {
             .map(|display_map| display_map.update(cx, |map, cx| map.snapshot(cx)).text())
     }
 
+    /// Sets a placeholder that does not change with the interface locale, such as
+    /// a path or a file name.
+    ///
+    /// Use [`Self::set_localized_placeholder_text`] for text the user reads, so
+    /// that it follows a locale change.
     pub fn set_placeholder_text(
+        &mut self,
+        placeholder_text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.localized_placeholder = None;
+        self.build_placeholder(placeholder_text, window, cx);
+    }
+
+    /// Sets a placeholder that is rebuilt when the interface locale changes.
+    ///
+    /// The placeholder is laid out as a buffer rather than resolved on each draw,
+    /// so the localized text is kept in order to build it again; see
+    /// [`Self::rebuild_placeholder_if_stale`].
+    pub fn set_localized_placeholder_text(
+        &mut self,
+        placeholder_text: impl Into<i18n::LocalizedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let placeholder_text = placeholder_text.into();
+        let resolved = placeholder_text.resolve();
+        self.localized_placeholder = Some((placeholder_text, i18n::generation()));
+        self.build_placeholder(&resolved, window, cx);
+    }
+
+    /// Rebuilds a localized placeholder when the locale has moved on since it was
+    /// laid out.
+    ///
+    /// Called from [`crate::element::EditorElement`]'s layout rather than from
+    /// [`Render::render`], because callers that style their own editor build the
+    /// element directly and never go through the editor's own `render`.
+    pub(crate) fn rebuild_placeholder_if_stale(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stale = self
+            .localized_placeholder
+            .as_ref()
+            .filter(|(_, generation)| *generation != i18n::generation())
+            .map(|(placeholder_text, _)| placeholder_text.clone());
+
+        if let Some(placeholder_text) = stale {
+            self.set_localized_placeholder_text(placeholder_text, window, cx);
+        }
+    }
+
+    fn build_placeholder(
         &mut self,
         placeholder_text: &str,
         window: &mut Window,

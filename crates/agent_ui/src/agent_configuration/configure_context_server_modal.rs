@@ -562,8 +562,8 @@ impl ConfigureContextServerModal {
                     scroll_handle: ScrollHandle::new(),
                     secret_editor: cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
-                        editor.set_placeholder_text(
-                            &t!("Enter client secret (leave empty for public clients)").resolve(),
+                        editor.set_localized_placeholder_text(
+                            t!("Enter client secret (leave empty for public clients)"),
                             window,
                             cx,
                         );

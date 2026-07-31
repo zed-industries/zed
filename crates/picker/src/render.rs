@@ -28,6 +28,11 @@ pub mod window_controls;
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.finish_any_completed_resize(window, cx);
+        // The delegate resolves its placeholder afresh on every call, so asking
+        // again is what makes the placeholder follow a locale change.
+        if self.placeholder_generation != i18n::generation() {
+            self.refresh_placeholder(window, cx);
+        }
         // toggle between BelowForced and Right based on whether it'd clamp if
         // horizontal
         let rendered_layout = self.preview_layout_rendered(window);

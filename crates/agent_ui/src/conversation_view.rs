@@ -1850,7 +1850,7 @@ impl ConversationView {
                         session_capabilities.set_available_commands(available_commands.clone());
                         session_capabilities.set_available_skills(available_skills);
                         thread_view.message_editor.update(cx, |editor, cx| {
-                            editor.set_placeholder_text(&new_placeholder, window, cx);
+                            editor.set_placeholder_text(new_placeholder, window, cx);
                         });
                     });
                 }
@@ -3336,22 +3336,24 @@ fn native_available_skills(
         .collect()
 }
 
-fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
+/// Returned unresolved so that the editor holding it can lay it out again when the
+/// interface locale changes.
+fn placeholder_text(agent_name: &str, has_commands: bool) -> i18n::LocalizedString {
     if agent_name == agent::ZED_AGENT_ID.as_ref() {
-        String::from(t!(
+        t!(
             "Message the {$agent}, @ to include context, / for commands",
             agent = agent_name.to_string()
-        ))
+        )
     } else if has_commands {
-        String::from(t!(
+        t!(
             "Message {$agent} — @ to include context, / for commands",
             agent = agent_name.to_string()
-        ))
+        )
     } else {
-        String::from(t!(
+        t!(
             "Message {$agent} — @ to include context",
             agent = agent_name.to_string()
-        ))
+        )
     }
 }
 

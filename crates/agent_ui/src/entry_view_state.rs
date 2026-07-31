@@ -258,7 +258,7 @@ impl EntryViewState {
                             self.thread_store.clone(),
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
-                            &t!("Edit message － @ to include context").resolve(),
+                            t!("Edit message － @ to include context"),
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
                                 max_lines: None,

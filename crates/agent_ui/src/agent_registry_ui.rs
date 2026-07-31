@@ -95,7 +95,7 @@ impl AgentRegistryPage {
             let registry_store = AgentRegistryStore::global(cx);
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text(&t!("Search agents...").resolve(), window, cx);
+                input.set_localized_placeholder_text(t!("Search agents..."), window, cx);
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();

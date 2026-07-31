@@ -7905,6 +7905,7 @@ impl Element for EditorElement {
         window.with_rem_size(rem_size, |window| {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), window, cx);
+                editor.rebuild_placeholder_if_stale(window, cx);
 
                 let layout_id = match editor.mode {
                     EditorMode::SingleLine => {
