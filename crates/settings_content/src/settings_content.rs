@@ -276,7 +276,7 @@ pub struct SettingsContent {
     /// shown in English.
     ///
     /// Default: "en-US"
-    pub ui_language: Option<String>,
+    pub ui_language: Option<UiLanguage>,
 
     /// Whether or not to enable Vim mode.
     ///
@@ -306,6 +306,15 @@ pub struct SettingsContent {
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
 }
+
+/// A BCP 47 language tag naming the language Zed renders its interface in.
+///
+/// A distinct type rather than a plain `String` so that the settings interface
+/// offers the languages that have a catalog instead of a free-text field.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct UiLanguage(pub Arc<str>);
 
 /// Configuration for developer-oriented instrumentation tools that collect
 /// diagnostic data about a running Zed instance.

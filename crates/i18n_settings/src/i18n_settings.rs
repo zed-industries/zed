@@ -23,7 +23,8 @@ impl Settings for UiLanguageSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let configured = content
             .ui_language
-            .as_deref()
+            .as_ref()
+            .map(|language| language.0.as_ref())
             .expect("ui_language must have a default in default.json");
 
         let locale = configured.parse().unwrap_or_else(|error| {
