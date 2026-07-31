@@ -7553,6 +7553,11 @@ impl Sidebar {
                             }),
                     )
             })
+            // When there are no open projects, the flex-growing filter input above is not
+            // rendered, so nothing pushes the window controls to the far edge of the
+            // header. Add an explicit spacer to keep them flush with the sidebar's edge,
+            // matching the layout used when projects are open.
+            .when(no_open_projects, |this| this.child(div().flex_1()))
             .when(right_window_controls, |this| {
                 this.children(Self::render_right_window_controls(window, cx))
             })
