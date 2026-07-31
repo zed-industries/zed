@@ -1076,6 +1076,8 @@ pub struct Window {
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
+    is_resizable: bool,
+    is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -1589,13 +1591,10 @@ impl Window {
 
                 // Throttle frame rate based on conditions:
                 // - Thermal pressure (Serious/Critical): cap to ~60fps
-                // - Inactive window (not focused): cap to ~30fps to save energy,
-                //   unless input is arriving at a high rate (e.g. scrolling an
-                //   unfocused window, which is delivered to the window under
-                //   the pointer).
-                let min_frame_interval = if !force_render
-                    && !request_frame_options.require_presentation
-                    && next_frame_callbacks.borrow().is_empty()
+                // - Inactive window (not focused): cap to ~30fps to save energy
+                let min_frame_interval = if request_frame_options.require_presentation
+                    || (!request_frame_options.force_render
+                        && next_frame_callbacks.borrow().is_empty())
                 {
                     None
                 } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
@@ -1688,11 +1687,19 @@ impl Window {
             }
         }));
         platform_window.on_appearance_changed(Box::new({
-            let mut cx = cx.to_async();
+            let cx = cx.to_async();
+            let foreground_executor = cx.foreground_executor().clone();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
-                    .log_err();
+                let mut cx = cx.clone();
+                // Defer the update because changing the AppKit appearance may
+                // synchronously invoke this callback while App is already borrowed.
+                foreground_executor
+                    .spawn(async move {
+                        handle
+                            .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
+                            .log_err();
+                    })
+                    .detach();
             }
         }));
         platform_window.on_button_layout_changed(Box::new({
@@ -1824,6 +1831,8 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
+            is_resizable,
+            is_minimizable,
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -2132,9 +2141,11 @@ impl Window {
         self.platform_window.set_exclusive_edge(edge);
     }
 
-    /// Start a window resize operation (Wayland)
+    /// Start an interactive window resize operation if this window is resizable.
     pub fn start_window_resize(&self, edge: ResizeEdge) {
-        self.platform_window.start_window_resize(edge);
+        if self.is_resizable {
+            self.platform_window.start_window_resize(edge);
+        }
     }
 
     /// Linux (wayland) only: Set the window's input region, the area that receives pointer
@@ -2519,7 +2530,17 @@ impl Window {
         self.platform_window.window_decorations()
     }
 
-    /// Returns which window controls are currently visible (Wayland)
+    /// Returns whether this window is resizable.
+    pub fn is_resizable(&self) -> bool {
+        self.is_resizable
+    }
+
+    /// Returns whether this window is minimizable.
+    pub fn is_minimizable(&self) -> bool {
+        self.is_minimizable
+    }
+
+    /// Returns the controls supported by the platform.
     pub fn window_controls(&self) -> WindowControls {
         self.platform_window.window_controls()
     }
@@ -4495,6 +4516,21 @@ impl Window {
         Ok(())
     }
 
+    /// Returns whether every frame of an image is present in the sprite atlas.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_image_atlas_entry(&self, data: &RenderImage) -> bool {
+        data.frame_count() > 0
+            && (0..data.frame_count()).all(|frame_index| {
+                self.sprite_atlas.contains(
+                    &RenderImageParams {
+                        image_id: data.id,
+                        frame_index,
+                    }
+                    .into(),
+                )
+            })
+    }
+
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
@@ -4933,12 +4969,14 @@ impl Window {
             PlatformInput::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, paths } => {
                     self.mouse_position = position;
-                    if cx.active_drag.is_none() {
+                    let source_window = self.handle.window_id();
+                    if !cx.restore_platform_drag(source_window) && cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
+                            external_payload_source: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -4966,8 +5004,16 @@ impl Window {
                     })
                 }
                 FileDropEvent::Exited => {
-                    cx.active_drag.take();
+                    if !cx.hand_restored_drag_to_platform(self.handle.window_id()) {
+                        cx.active_drag.take();
+                    }
+                    self.refresh();
                     PlatformInput::FileDrop(FileDropEvent::Exited)
+                }
+                FileDropEvent::Ended => {
+                    cx.end_platform_drag(self.handle.window_id());
+                    self.refresh();
+                    PlatformInput::FileDrop(FileDropEvent::Ended)
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
@@ -4979,6 +5025,10 @@ impl Window {
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
         }
+
+        // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
+        // is the last chance for drag listeners to see the pointer leave and reset their state.
+        self.promote_external_drag_to_platform(&event, cx);
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
@@ -4993,6 +5043,36 @@ impl Window {
         DispatchEventResult {
             propagate: cx.propagate_event,
             default_prevented: self.default_prevented,
+        }
+    }
+
+    fn promote_external_drag_to_platform(&mut self, event: &PlatformInput, cx: &mut App) {
+        let PlatformInput::MouseMove(mouse_move) = event else {
+            return;
+        };
+        if mouse_move.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if Bounds::new(Point::default(), self.viewport_size).contains(&mouse_move.position) {
+            return;
+        }
+        if !self.platform_window.can_start_external_drag() {
+            return;
+        }
+        let Some(payload_source) = cx
+            .active_drag
+            .as_mut()
+            .and_then(|drag| drag.external_payload_source.take())
+        else {
+            return;
+        };
+        let Some(payload) = payload_source(self, cx) else {
+            return;
+        };
+        if self.platform_window.start_external_drag(&payload)
+            && cx.hand_active_drag_to_platform(self.handle.window_id())
+        {
+            self.refresh();
         }
     }
 
@@ -5299,9 +5379,17 @@ impl Window {
         }
     }
 
+    /// Pending input that can still complete a binding. Input left over from a previous focus can
+    /// never complete one.
+    fn active_pending_input(&self) -> Option<&PendingInput> {
+        self.pending_input
+            .as_ref()
+            .filter(|pending_input| pending_input.focus == self.focus)
+    }
+
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.pending_input.is_some()
+        self.active_pending_input().is_some()
     }
 
     pub(crate) fn clear_pending_keystrokes(&mut self) {
@@ -5310,8 +5398,7 @@ impl Window {
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
     pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
-        self.pending_input
-            .as_ref()
+        self.active_pending_input()
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
@@ -5807,7 +5894,8 @@ impl Window {
     /// Perform titlebar double-click action.
     /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
-        self.platform_window.titlebar_double_click();
+        self.platform_window
+            .titlebar_double_click(self.is_resizable, self.is_minimizable);
     }
 
     /// Gets the window's title at the platform level.
@@ -6670,12 +6758,19 @@ pub fn outline(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        path::PathBuf,
+        rc::Rc,
+    };
 
     use crate::{
-        AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement,
-        ParentElement, Pixels, Render, Styled, TestAppContext, Window, WindowOptions, canvas, div,
-        px, size,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
+        InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+        MouseMoveEvent, ParentElement, Pixels, Point, Render, StatefulInteractiveElement as _,
+        Styled, TestAppContext, Window, WindowAppearance, WindowOptions, canvas, div, point, px,
+        size,
     };
 
     struct EmptyView;
@@ -6734,6 +6829,31 @@ mod tests {
         // subsequent draws of both windows work against a fresh arena.
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_appearance_change_runs_after_app_update(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let observed_appearance = Rc::new(Cell::new(None));
+        let _subscription = window
+            .update(cx, {
+                let observed_appearance = observed_appearance.clone();
+                move |_, window, _| {
+                    window.observe_window_appearance(move |window, _| {
+                        observed_appearance.set(Some(window.appearance()));
+                    })
+                }
+            })
+            .unwrap();
+        let test_window = cx.test_window(window.into());
+
+        cx.update(|_| {
+            test_window.simulate_appearance_change(WindowAppearance::Dark);
+            assert_eq!(observed_appearance.get(), None);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(observed_appearance.get(), Some(WindowAppearance::Dark));
     }
 
     struct RootView {
@@ -6799,6 +6919,312 @@ mod tests {
         .unwrap();
 
         assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
+    }
+
+    struct FileDragView {
+        path: PathBuf,
+        observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+        observed_drops: Rc<RefCell<Vec<PathBuf>>>,
+    }
+
+    impl Render for FileDragView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("file-drag")
+                .size_full()
+                .on_drag(self.path.clone(), |_, _, _, cx| cx.new(|_| Empty))
+                .external_drag_payload(|path: &PathBuf, _, _| {
+                    Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                        path.clone(),
+                        true,
+                    )])))
+                })
+                .on_drag_move({
+                    let observed_drag_moves = self.observed_drag_moves.clone();
+                    move |event: &DragMoveEvent<PathBuf>, _, _| {
+                        observed_drag_moves.borrow_mut().push(event.event.position);
+                    }
+                })
+                .on_drop({
+                    let observed_drops = self.observed_drops.clone();
+                    move |path: &PathBuf, _, _| observed_drops.borrow_mut().push(path.clone())
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn file_drag_is_promoted_once_and_restored_in_source_window(cx: &mut TestAppContext) {
+        struct Drag {
+            window: AnyWindowHandle,
+            observed_drag_moves: Rc<RefCell<Vec<Point<Pixels>>>>,
+            observed_drops: Rc<RefCell<Vec<PathBuf>>>,
+        }
+
+        fn start_drag(cx: &mut TestAppContext, path: PathBuf, platform_result: bool) -> Drag {
+            let observed_drag_moves = Rc::new(RefCell::new(Vec::new()));
+            let observed_drops = Rc::new(RefCell::new(Vec::new()));
+            let window: AnyWindowHandle = cx
+                .add_window({
+                    let observed_drag_moves = observed_drag_moves.clone();
+                    let observed_drops = observed_drops.clone();
+                    move |_, _| FileDragView {
+                        path,
+                        observed_drag_moves,
+                        observed_drops,
+                    }
+                })
+                .into();
+            cx.test_window(window)
+                .set_start_external_drag_result(platform_result);
+
+            let update_result = cx.update_window(window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(10.), px(10.)),
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(20.), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(cx.active_drag.is_some());
+            });
+            assert!(
+                update_result.is_ok(),
+                "failed to start drag: {update_result:?}"
+            );
+
+            assert!(cx.test_window(window).external_drag_files().is_empty());
+            Drag {
+                window,
+                observed_drag_moves,
+                observed_drops,
+            }
+        }
+
+        let successful_path = PathBuf::from("/tmp/successful-drag");
+        let successful = start_drag(cx, successful_path.clone(), true);
+        let outside_position = point(px(-1.), px(20.));
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to promote drag: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(successful.window).external_drag_files(),
+            [(successful_path.clone(), true)]
+        );
+        // Views must still see the move that leaves the window, otherwise they never learn to tear
+        // down the drag state they built up while the pointer was inside.
+        assert_eq!(
+            successful.observed_drag_moves.borrow().last(),
+            Some(&outside_position)
+        );
+
+        let destination: AnyWindowHandle = cx.add_window(|_, _| EmptyView).into();
+        let reentry_position = point(px(30.), px(30.));
+        let external_paths = || ExternalPaths([successful_path.clone()].into_iter().collect());
+        let update_result = cx.update_window(destination, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to handle drag in destination window: {update_result:?}"
+        );
+
+        let update_result = cx.update_window(successful.window, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+            assert_eq!(
+                successful.observed_drag_moves.borrow().last(),
+                Some(&reentry_position)
+            );
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+
+            window.dispatch_event(
+                FileDropEvent::Submit {
+                    position: reentry_position,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert_eq!(
+                successful.observed_drops.borrow().as_slice(),
+                std::slice::from_ref(&successful_path)
+            );
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: external_paths(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to restore drag in source window: {update_result:?}"
+        );
+
+        let cancelled_path = PathBuf::from("/tmp/cancelled-drag");
+        let cancelled = start_drag(cx, cancelled_path.clone(), true);
+        let update_result = cx.update_window(cancelled.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: reentry_position,
+                    paths: ExternalPaths([cancelled_path].into_iter().collect()),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+            );
+            assert!(cx.stop_active_drag(window));
+            assert!(cx.active_drag.is_none());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to cancel restored drag: {update_result:?}"
+        );
+        assert!(!cx.update(|cx| cx.end_platform_drag(cancelled.window.window_id())));
+
+        let removed_path = PathBuf::from("/tmp/removed-window-drag");
+        let removed = start_drag(cx, removed_path, true);
+        let removed_window_id = removed.window.window_id();
+        let update_result = cx.update_window(removed.window, |_, window, cx| {
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: outside_position,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+            window.remove_window();
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to remove drag source window: {update_result:?}"
+        );
+        assert!(!cx.update(|cx| cx.end_platform_drag(removed_window_id)));
+
+        let failed_path = PathBuf::from("/tmp/failed-drag");
+        let failed = start_drag(cx, failed_path.clone(), false);
+        let update_result = cx.update_window(failed.window, |_, window, cx| {
+            for x_position in [-1., -2.] {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(x_position), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            assert!(cx.active_drag.is_some());
+        });
+        assert!(
+            update_result.is_ok(),
+            "failed to retain drag after platform failure: {update_result:?}"
+        );
+        assert_eq!(
+            cx.test_window(failed.window).external_drag_files(),
+            [(failed_path, true)]
+        );
     }
 
     struct FocusForwarder {

@@ -194,7 +194,7 @@ impl Clipboard {
                 .map(|text| text.as_bytes().to_vec())
         };
         if let Some(bytes) = bytes {
-            self.send_internal(fd, bytes);
+            self.send_bytes(fd, bytes);
         }
     }
 
@@ -204,7 +204,7 @@ impl Clipboard {
             .as_ref()
             .and_then(|contents| contents.text())
         {
-            self.send_internal(fd, text.as_bytes().to_owned());
+            self.send_bytes(fd, text.as_bytes().to_owned());
         }
     }
 
@@ -244,7 +244,7 @@ impl Clipboard {
         Some(item)
     }
 
-    fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {
+    pub fn send_bytes(&self, fd: OwnedFd, bytes: Vec<u8>) {
         let mut written = 0;
         self.loop_handle
             .insert_source(
