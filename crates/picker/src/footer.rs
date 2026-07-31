@@ -1,3 +1,4 @@
+use i18n::t;
 use std::rc::Rc;
 
 use gpui::{Action, FocusHandle, Focusable};
@@ -141,7 +142,7 @@ impl<D: PickerDelegate> Picker<D> {
 
         h_flex()
             .child(
-                Button::new("picker-preview-toggle", "Preview")
+                Button::new("picker-preview-toggle", t!("Preview"))
                     .when(preview_visible, |this| this.color(Color::Accent))
                     .key_binding(
                         KeyBinding::for_action_in(&TogglePreview, &focus_handle, cx)
@@ -198,12 +199,17 @@ impl<D: PickerDelegate> Picker<D> {
         PopoverMenu::new("picker-actions-menu")
             .with_handle(self.actions_menu_handle.clone())
             .trigger(
-                Button::new("picker-actions-trigger", "Actions…")
-                    .key_binding(
-                        KeyBinding::for_action_in(&ToggleActionsMenu, &focus_handle, cx)
-                            .size(rems_from_px(12.)),
-                    )
-                    .selected_style(ui::ButtonStyle::Tinted(ui::TintColor::Accent)),
+                Button::new(
+                    "picker-actions-trigger",
+                    // Explicit key: several menus spell this "Actions", which derives
+                    // the same key.
+                    t!(key = "picker-actions", "Actions…"),
+                )
+                .key_binding(
+                    KeyBinding::for_action_in(&ToggleActionsMenu, &focus_handle, cx)
+                        .size(rems_from_px(12.)),
+                )
+                .selected_style(ui::ButtonStyle::Tinted(ui::TintColor::Accent)),
             )
             .menu(move |window, cx| {
                 let actions = Rc::clone(&actions);

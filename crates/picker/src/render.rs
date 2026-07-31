@@ -1,4 +1,5 @@
 use gpui::{KeyContext, canvas};
+use i18n::t;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -134,7 +135,12 @@ impl<D: PickerDelegate> Picker<D> {
             .icon_size(IconSize::Small)
             .toggle_state(active)
             .tooltip(move |_window, cx| {
-                Tooltip::for_action_in("Toggle Multi Select", &ToggleMultiSelect, &focus_handle, cx)
+                Tooltip::for_action_in(
+                    t!("Toggle Multi Select"),
+                    &ToggleMultiSelect,
+                    &focus_handle,
+                    cx,
+                )
             })
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(ToggleMultiSelect.boxed_clone(), cx);

@@ -6,6 +6,7 @@ use gpui::{
     Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
+use i18n::t;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -213,7 +214,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str>;
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        Some("No matches".into())
+        Some(t!("No matches").into())
     }
     fn update_matches(
         &mut self,

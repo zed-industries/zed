@@ -13713,6 +13713,7 @@ dependencies = [
  "db",
  "editor",
  "gpui",
+ "i18n",
  "language",
  "menu",
  "project",

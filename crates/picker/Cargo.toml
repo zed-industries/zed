@@ -20,6 +20,7 @@ anyhow.workspace = true
 db.workspace = true
 language.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 menu.workspace = true
 project.workspace = true
 schemars.workspace = true
