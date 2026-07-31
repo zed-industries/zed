@@ -20396,6 +20396,7 @@ dependencies = [
  "fuzzy",
  "git_ui",
  "gpui",
+ "i18n",
  "indoc",
  "itertools 0.14.0",
  "language",

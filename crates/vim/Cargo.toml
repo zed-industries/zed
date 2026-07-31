@@ -28,6 +28,7 @@ env_logger.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true

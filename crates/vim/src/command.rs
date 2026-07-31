@@ -8,9 +8,10 @@ use editor::{
 };
 use futures::AsyncWriteExt as _;
 use gpui::{
-    Action, App, AppContext as _, Context, Global, Keystroke, Task, TaskExt, WeakEntity, Window,
-    actions,
+    Action, App, AppContext as _, Context, Global, Keystroke, PromptButton, Task, TaskExt,
+    WeakEntity, Window, actions,
 };
+use i18n::t;
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -340,9 +341,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |_, _: &ArgumentRequired, window, cx| {
         let _ = window.prompt(
             gpui::PromptLevel::Critical,
-            "Argument required",
+            &t!("Argument required").resolve(),
             None,
-            &["Cancel"],
+            &[PromptButton::cancel(t!("Cancel"))],
             cx,
         );
     });
@@ -377,9 +378,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     else {
                         let _ = window.prompt(
                             gpui::PromptLevel::Warning,
-                            "No file name",
-                            Some("Partial buffer write requires file name."),
-                            &["Cancel"],
+                            &t!("No file name").resolve(),
+                            Some(&t!("Partial buffer write requires file name.").resolve()),
+                            &[PromptButton::cancel(t!("Cancel"))],
                             cx,
                         );
                         return;
@@ -407,9 +408,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     if Some(SaveIntent::Overwrite) != action.save_intent {
                         let _ = window.prompt(
                             gpui::PromptLevel::Warning,
-                            "Use ! to write partial buffer",
-                            Some("Overwriting the current file with selected buffer content requires '!'."),
-                            &["Cancel"],
+                            &t!("Use ! to write partial buffer").resolve(),
+                            Some(&t!(
+                                "Overwriting the current file with selected buffer content requires '!'."
+                            )
+                            .resolve()),
+                            &[PromptButton::cancel(t!("Cancel"))],
                             cx,
                         );
                         return;
@@ -433,11 +437,18 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         let rx = (worktree.entry_for_path(&path).is_some() && Some(SaveIntent::Overwrite) != action.save_intent).then(|| {
                             window.prompt(
                                 gpui::PromptLevel::Warning,
-                                &format!("{path:?} already exists. Do you want to replace it?"),
-                                Some(
-                                    "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
-                                ),
-                                &["Replace", "Cancel"],
+                                &t!(
+                                    "{$path} already exists. Do you want to replace it?",
+                                    path = format!("{path:?}")
+                                )
+                                .resolve(),
+                                Some(&t!(
+                                    "A file or folder with the same name already exists. Replacing it will overwrite its current contents."
+                                ).resolve()),
+                                &[
+                                    PromptButton::new(t!("Replace")),
+                                    PromptButton::cancel(t!("Cancel")),
+                                ],
                                 cx
                             )
                         });
@@ -510,15 +521,18 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             {
                 let answer = window.prompt(
                     gpui::PromptLevel::Critical,
-                    &format!(
-                        "{} already exists. Do you want to replace it?",
-                        project_path.path.display(path_style)
-                    ),
-                    Some(
-                        "A file or folder with the same name already exists. \
-                        Replacing it will overwrite its current contents.",
-                    ),
-                    &["Replace", "Cancel"],
+                    &t!(
+                        "{$path} already exists. Do you want to replace it?",
+                        path = project_path.path.display(path_style).to_string()
+                    )
+                    .resolve(),
+                    Some(&t!(
+                        "A file or folder with the same name already exists. Replacing it will overwrite its current contents."
+                    ).resolve()),
+                    &[
+                        PromptButton::new(t!("Replace")),
+                        PromptButton::cancel(t!("Cancel")),
+                    ],
                     cx,
                 );
                 cx.spawn_in(window, async move |editor, cx| {
@@ -576,9 +590,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         fn err(s: String, window: &mut Window, cx: &mut Context<Editor>) {
             let _ = window.prompt(
                 gpui::PromptLevel::Critical,
-                &format!("Invalid argument: {}", s),
+                &t!("Invalid argument: {$argument}", argument = s).resolve(),
                 None,
-                &["Cancel"],
+                &[PromptButton::cancel(t!("Cancel"))],
                 cx,
             );
         }
