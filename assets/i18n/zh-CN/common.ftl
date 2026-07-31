@@ -8,12 +8,11 @@
 # zed.ftl, the title bar owns its call-quality terms in title_bar.ftl. This file
 # is for the plain interface vocabulary that belongs to no one crate.
 #
-# A key earns a place here when it is marked by four or more crates, is a bare
-# word with no placeables, and has no owner in that sense. That leaves the
-# application-menu items (Copy, Paste, Cut, Save, Settings, Zoom In, Zoom Out)
-# in zed.ftl, the named workspace actions (Copy Path, Copy Relative Path, Open
-# in Terminal) in workspace.ftl, and message templates like `error-error`
-# wherever they are raised.
+# A key earns a place here when several crates mark it and none of them owns it.
+# That leaves the application-menu items (Copy, Paste, Cut, Save, Settings, Zoom
+# In, Zoom Out) in zed.ftl, the named workspace actions (Copy Path, Copy
+# Relative Path, Open in Terminal) in workspace.ftl, and message templates like
+# `error-error` wherever they are raised.
 
 ## Confirmation and dismissal
 

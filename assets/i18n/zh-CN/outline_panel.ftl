@@ -1,7 +1,6 @@
 # Simplified Chinese (zh-CN) catalog for the outline panel.
 #
-# The panel's persistence key and its dock icon tooltip are not localized: the
-# former is stored on disk, the latter is `&'static str` in the `Panel` trait.
+# The panel's persistence key is not localized: it is stored on disk.
 
 search-buffer-symbols = 搜索缓冲区符号…
 searching-label = 正在搜索：

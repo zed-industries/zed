@@ -58,7 +58,7 @@ landing-match-whole-words = 全字匹配
 
 ## 文本查找器操作菜单
 
-split-menu-header = 分栏…
+split-menu-header = 拆分…
 up = 上侧
 down = 下侧
 open-selected-file = 打开文件
