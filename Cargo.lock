@@ -9072,6 +9072,7 @@ dependencies = [
  "file_icons",
  "fs",
  "gpui",
+ "i18n",
  "language",
  "log",
  "menu",
