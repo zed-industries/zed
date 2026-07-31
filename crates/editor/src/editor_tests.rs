@@ -35072,7 +35072,10 @@ async fn test_indent_after_input_for_bash(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     let language = languages::language("bash", tree_sitter_bash::LANGUAGE.into());
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+        buffer.set_sync_parse_timeout(None);
+    });
 
     // test indents on comment insert
     cx.set_state(indoc! {"
