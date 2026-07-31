@@ -20,7 +20,7 @@ overridden-by-dev-extension = 已被开发版扩展覆盖。
 incompatible = 不兼容
 v-version-is-not-compatible-with-this-version-of-zed = v{ $version } 与当前版本的 Zed 不兼容。
 
-## 分类筛选
+## 分类（筛选行的按钮与每张扩展卡片上的标签共用）
 
 extension-category-themes = 主题
 extension-category-icon-themes = 图标主题

@@ -298,7 +298,7 @@ pub fn init(cx: &mut App) {
 }
 
 /// A stable English identifier, used to build the filter button's element id.
-/// Use [`extension_provides_localized_label`] for the button's text.
+/// Use [`extension_provides_localized_label`] for anything the user reads.
 fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     match provides {
         ExtensionProvides::Themes => "Themes",
@@ -956,7 +956,12 @@ impl ExtensionsPage {
                                                     _ => {}
                                                 }
 
-                                                Some(Chip::new(extension_provides_label(*provides)))
+                                                // `Chip` derives its element id from the label,
+                                                // and the localized category names are all
+                                                // distinct, so sibling chips stay unique.
+                                                Some(Chip::new(extension_provides_localized_label(
+                                                    *provides,
+                                                )))
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
