@@ -57,7 +57,16 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = headless;
+        gpui_openharmony::current_platform()
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(target_env = "ohos")
+    ))]
     {
         gpui_linux::current_platform(headless)
     }
