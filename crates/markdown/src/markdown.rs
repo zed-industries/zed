@@ -2580,10 +2580,6 @@ impl Element for MarkdownElement {
                                 let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
                                     .id(("markdown-table-scrollbar", range.start))
                                     .tracked_scroll_handle(&scroll_handle)
-                                    .with_track_along(
-                                        ScrollAxes::Horizontal,
-                                        cx.theme().colors().editor_background,
-                                    )
                                     .notify_content();
 
                                 div()
