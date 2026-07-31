@@ -8,6 +8,7 @@ use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, ParentElement, Render, Task, WeakEntity, Window, actions,
 };
+use i18n::t;
 use language::Buffer;
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -60,7 +61,7 @@ impl EncodingSelector {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
-                    "Save file to change encoding",
+                    String::from(t!("Save file to change encoding")),
                 ),
                 cx,
             );
@@ -70,7 +71,7 @@ impl EncodingSelector {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
-                    "Cannot change encoding during collaboration",
+                    String::from(t!("Cannot change encoding during collaboration")),
                 ),
                 cx,
             );
@@ -80,7 +81,7 @@ impl EncodingSelector {
             workspace.show_toast(
                 Toast::new(
                     NotificationId::unique::<EncodingSelector>(),
-                    "Cannot change encoding of remote server file",
+                    String::from(t!("Cannot change encoding of remote server file")),
                 ),
                 cx,
             );
@@ -225,7 +226,7 @@ impl PickerDelegate for EncodingSelectorDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Reopen with encoding...".into()
+        t!("Reopen with encoding...").resolve().as_ref().into()
     }
 
     fn match_count(&self) -> usize {

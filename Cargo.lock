@@ -5973,6 +5973,7 @@ dependencies = [
  "encoding_rs",
  "fuzzy",
  "gpui",
+ "i18n",
  "language",
  "picker",
  "project",

@@ -17,6 +17,7 @@ editor.workspace = true
 encoding_rs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 language.workspace = true
 picker.workspace = true
 project.workspace = true
