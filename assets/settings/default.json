@@ -25,6 +25,9 @@
   // 8. "Cursor"
   // 9. "None"
   "base_keymap": "Zed",
+  // Time to wait in milliseconds before resolving a keybinding that is also
+  // the prefix of a longer keybinding.
+  "keybinding_sequence_timeout_ms": 1000,
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.

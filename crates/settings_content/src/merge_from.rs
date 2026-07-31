@@ -52,6 +52,7 @@ merge_from_overwrites!(
     char,
     std::num::NonZeroUsize,
     std::num::NonZeroU32,
+    std::num::NonZeroU64,
     String,
     std::sync::Arc<str>,
     std::path::PathBuf,
