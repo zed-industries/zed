@@ -384,7 +384,11 @@ impl ProjectSearch {
         })
     }
 
-    fn remove_stale_buffers(&mut self, workspace: Option<&Entity<Workspace>>, cx: &mut Context<Self>) {
+    fn remove_stale_buffers(
+        &mut self,
+        workspace: Option<&Entity<Workspace>>,
+        cx: &mut Context<Self>,
+    ) {
         let stale_buffer_ids = self
             .excerpts
             .read(cx)
@@ -395,7 +399,17 @@ impl ProjectSearch {
                 if let Some(file) = buffer_ctx.file() {
                     file.disk_state().is_deleted()
                 } else if let Some(workspace) = workspace {
-                    !workspace.read(cx).items_of_type::<Editor>(cx).any(|editor| editor.read(cx).buffer().read(cx).buffer(buffer_ctx.remote_id()).is_some())
+                    !workspace
+                        .read(cx)
+                        .items_of_type::<Editor>(cx)
+                        .any(|editor| {
+                            editor
+                                .read(cx)
+                                .buffer()
+                                .read(cx)
+                                .buffer(buffer_ctx.remote_id())
+                                .is_some()
+                        })
                 } else {
                     false
                 }
@@ -1049,13 +1063,17 @@ impl ProjectSearchView {
         };
 
         if let Some(workspace) = workspace.upgrade() {
-            subscriptions.push(cx.observe_in(&workspace, window, |this, workspace, _window, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    this.entity.update(cx, |project_search, cx| {
-                        project_search.remove_stale_buffers(Some(&workspace), cx);
-                    });
-                }
-            }));
+            subscriptions.push(cx.subscribe_in(
+                &workspace,
+                window,
+                |this, workspace, event, _window, cx| {
+                    if let workspace::Event::ItemRemoved { .. } = event {
+                        this.entity.update(cx, |project_search, cx| {
+                            project_search.remove_stale_buffers(Some(workspace), cx);
+                        });
+                    }
+                },
+            ));
         }
 
         {
