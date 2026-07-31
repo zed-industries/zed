@@ -1,9 +1,11 @@
 //! Which-key support for Zed.
 
+mod pending_keystrokes_indicator;
 mod which_key_modal;
 mod which_key_settings;
 
 use gpui::{App, Keystroke};
+pub use pending_keystrokes_indicator::PendingKeystrokesIndicator;
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
 use util::ResultExt;
