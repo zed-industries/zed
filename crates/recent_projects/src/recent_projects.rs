@@ -795,9 +795,6 @@ impl RecentProjects {
                         .get(hit.candidate_id)
                         .cloned()
                     {
-                        if picker.delegate.is_active_project_group(&key, cx) {
-                            return;
-                        }
                         picker.delegate.remove_project_group(key, window, cx);
                         let query = picker.query(cx);
                         picker.update_matches(query, window, cx);
