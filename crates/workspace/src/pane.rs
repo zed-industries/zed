@@ -28,7 +28,6 @@ use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
 use parking_lot::Mutex;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
-use remote::RemoteConnectionOptions;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -4069,11 +4068,7 @@ impl Pane {
                     return (true, false);
                 }
                 if project.is_via_remote_server() {
-                    let is_wsl = matches!(
-                        project.remote_connection_options(cx),
-                        Some(RemoteConnectionOptions::Wsl(_))
-                    );
-                    if !is_wsl {
+                    if !project.is_via_wsl(cx) {
                         workspace.show_error(
                             "Cannot drop local files on a remote SSH/Docker project",
                             cx,
@@ -4094,29 +4089,7 @@ impl Pane {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
                 let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
-                    let paths = if needs_wsl_translation {
-                        let mut translated = Vec::with_capacity(paths.len());
-                        for path in &paths {
-                            log::info!("dropped Windows path {}", path.display());
-                            let fut = project.read_with(cx, |project, cx| {
-                                project.try_windows_path_to_wsl(path, cx)
-                            });
-                            match fut.await {
-                                Ok(wsl_path) => {
-                                    log::info!("translated to WSL path {}", wsl_path.display());
-                                    translated.push(wsl_path);
-                                }
-                                Err(e) => log::warn!(
-                                    "wslpath failed for {}: {e:#}, dropping this path",
-                                    path.display()
-                                ),
-                            }
-                        }
-                        translated
-                    } else {
-                        paths
-                    };
-
+                    // `fs` is the host's file system even for remote projects, so probe the paths as they were dropped, before translating them to the remote's path style.
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
                         is_file_checks.push(fs.is_file(path))
@@ -4132,6 +4105,40 @@ impl Pane {
                     if !has_files_to_open {
                         split_direction = None;
                     }
+
+                    let paths = if needs_wsl_translation {
+                        let mut translated = Vec::with_capacity(paths.len());
+                        for path in &paths {
+                            log::debug!("dropped Windows path {}", path.display());
+                            let fut = project.read_with(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(path, cx)
+                            });
+                            match fut.await {
+                                Ok(wsl_path) => {
+                                    log::debug!("translated to WSL path {}", wsl_path.display());
+                                    translated.push(wsl_path);
+                                }
+                                Err(e) => log::warn!(
+                                    "wslpath failed for {}: {e:#}, dropping this path",
+                                    path.display()
+                                ),
+                            }
+                        }
+                        if translated.is_empty() && !paths.is_empty() {
+                            workspace
+                                .update_in(cx, |workspace, _, cx| {
+                                    workspace.show_error(
+                                        "Could not translate the dropped paths into WSL paths",
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            return;
+                        }
+                        translated
+                    } else {
+                        paths
+                    };
 
                     if let Ok((open_task, to_pane)) =
                         workspace.update_in(cx, |workspace, window, cx| {
@@ -4349,7 +4356,11 @@ impl Render for Pane {
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
-        let is_local = project.read(cx).is_local();
+        // WSL remotes accept dropped host files too, since their paths can be translated with `wslpath`; see `Pane::handle_external_paths_drop`.
+        let accepts_external_paths = {
+            let project = project.read(cx);
+            project.is_local() || project.is_via_wsl(cx)
+        };
 
         v_flex()
             .key_context(key_context)
@@ -4524,7 +4535,7 @@ impl Render for Pane {
                     .overflow_hidden()
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
-                    .when(is_local, |div| {
+                    .when(accepts_external_paths, |div| {
                         div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     })
                     .map(|div| {
@@ -4575,7 +4586,7 @@ impl Render for Pane {
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<DraggedSelection>("", |style| style.visible())
-                            .when(is_local, |div| {
+                            .when(accepts_external_paths, |div| {
                                 div.group_drag_over::<ExternalPaths>("", |style| style.visible())
                             })
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
