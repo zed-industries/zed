@@ -124,7 +124,11 @@ impl Drop for Annotation<'_> {
 
 struct DirectComposition {
     comp_device: IDCompositionDevice,
+    // Keep these COM objects alive for the lifetime of the visual tree. They
+    // are not otherwise read after the tree is attached to the target.
+    #[allow(dead_code)]
     comp_target: IDCompositionTarget,
+    #[allow(dead_code)]
     root_visual: IDCompositionVisual,
     base_visual: IDCompositionVisual,
     portal_container: IDCompositionVisual,

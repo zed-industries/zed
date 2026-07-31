@@ -355,8 +355,8 @@ impl WindowsPlatform {
     }
 }
 
-fn translate_accelerator(msg: &MSG) -> Option<()> {
-    if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
+fn translate_accelerator(msg: &MSG, is_gpui_window: bool) -> Option<()> {
+    if !is_gpui_window || (msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN) {
         return None;
     }
 
@@ -419,7 +419,12 @@ impl Platform for WindowsPlatform {
         let mut msg = MSG::default();
         unsafe {
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                if translate_accelerator(&msg).is_none() {
+                let is_gpui_window = self
+                    .raw_window_handles
+                    .read()
+                    .iter()
+                    .any(|handle| handle.as_raw() == msg.hwnd);
+                if translate_accelerator(&msg, is_gpui_window).is_none() {
                     _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
@@ -1010,8 +1015,17 @@ impl WindowsPlatformInner {
                     // then quit out of foreground work to allow us to process other gpui events first before returning back to foreground task work
                     // if we don't we might not for example process window quit events
                     let mut msg = MSG::default();
-                    let process_message = |msg: &_| {
-                        if translate_accelerator(msg).is_none() {
+                    let process_message = |msg: &MSG| {
+                        let is_gpui_window = self
+                            .raw_window_handles
+                            .upgrade()
+                            .is_some_and(|handles| {
+                                handles
+                                    .read()
+                                    .iter()
+                                    .any(|handle| handle.as_raw() == msg.hwnd)
+                            });
+                        if translate_accelerator(msg, is_gpui_window).is_none() {
                             _ = unsafe { TranslateMessage(msg) };
                             unsafe { DispatchMessageW(msg) };
                         }
