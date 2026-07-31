@@ -34,7 +34,8 @@ mod key;
 mod localized;
 
 pub use catalog::{
-    DEFAULT_LOCALE, add_ftl, available_locales, current_locale, generation, reset, set_locale,
+    DEFAULT_LOCALE, DISPLAY_NAME_KEY, add_ftl, available_locales, current_locale, display_label,
+    display_name, generation, reset, set_locale,
 };
 pub use key::{derive_key, derive_key_leaked};
 pub use localized::{ArgValue, LocalizedString};

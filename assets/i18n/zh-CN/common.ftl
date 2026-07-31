@@ -14,6 +14,13 @@
 # Relative Path, Open in Terminal) in workspace.ftl, and message templates like
 # `error-error` wherever they are raised.
 
+## Locale metadata
+
+# Read by the locale selector rather than through a `t!` call site, so it has no
+# English literal behind it. Written in this locale's own language, because a
+# language list names each language in its own words.
+locale-display-name = 简体中文
+
 ## Confirmation and dismissal
 
 ok = 确定

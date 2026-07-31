@@ -142,6 +142,53 @@ pub fn available_locales() -> Vec<LanguageIdentifier> {
     })
 }
 
+/// The key a catalog defines to name its own language, in that language.
+///
+/// It is not derived from any `t!` call site, so `script/i18n-coverage` treats it
+/// as reserved rather than orphaned.
+pub const DISPLAY_NAME_KEY: &str = "locale-display-name";
+
+/// The name `locale` gives its own language, for listing it in the interface.
+///
+/// Read from that locale's own catalog rather than the active one, because a
+/// language list shows each language in its own words: `zh-CN` stays 简体中文
+/// whether the interface is currently Chinese or English. Returns `None` when the
+/// locale has no catalog, or its catalog does not define [`DISPLAY_NAME_KEY`].
+pub fn display_name(locale: &LanguageIdentifier) -> Option<String> {
+    let guard = STATE.read();
+    let bundle = guard.as_ref()?.catalogs.get(locale)?;
+    let pattern = bundle.get_message(DISPLAY_NAME_KEY)?.value()?;
+
+    let mut errors = Vec::new();
+    let formatted = bundle.format_pattern(pattern, None, &mut errors);
+    if !errors.is_empty() {
+        log::warn!("i18n: errors formatting {DISPLAY_NAME_KEY:?} for {locale}: {errors:?}");
+    }
+    Some(formatted.into_owned())
+}
+
+/// The name to list `locale` under when offering a choice of languages: the name
+/// its catalog gives its own language, followed by the tag that names it in
+/// settings, as in `简体中文 (zh-CN)`.
+///
+/// Carrying both means a query for either the language's own name or its tag finds
+/// it. A locale whose catalog does not name itself is listed by its tag alone. The
+/// source locale is listed as English, the language its literals are written in,
+/// since it has no catalog to name itself.
+pub fn display_label(locale: &LanguageIdentifier) -> String {
+    let tag = locale.to_string();
+    let name = if tag == DEFAULT_LOCALE {
+        Some(String::from("English"))
+    } else {
+        display_name(locale)
+    };
+
+    match name {
+        Some(name) => format!("{name} ({tag})"),
+        None => tag,
+    }
+}
+
 /// A counter that changes whenever resolution results could change.
 ///
 /// The UI layer observes this to decide when localized text needs re-rendering,
@@ -301,6 +348,51 @@ mod tests {
 
         set_locale(locale("zh-CN"));
         assert_eq!(lookup("zoom-in", None).as_deref(), Some("放大"));
+    }
+
+    #[test]
+    fn reads_the_name_a_catalog_gives_its_own_language() {
+        let _guard = lock_for_test();
+        reset();
+        add_ftl(
+            &locale("zh-CN"),
+            "locale-display-name = 简体中文\nzoom-in = 放大\n".to_owned(),
+        )
+        .unwrap();
+        add_ftl(&locale("ja"), "zoom-in = 拡大\n".to_owned()).unwrap();
+
+        // Read from the locale's own catalog, so the answer does not depend on
+        // which locale happens to be active.
+        for active in ["en-US", "zh-CN", "ja"] {
+            set_locale(locale(active));
+            assert_eq!(
+                display_name(&locale("zh-CN")).as_deref(),
+                Some("简体中文"),
+                "while {active} was active"
+            );
+        }
+
+        // A catalog that does not name itself, and a locale with no catalog.
+        assert_eq!(display_name(&locale("ja")), None);
+        assert_eq!(display_name(&locale("en-US")), None);
+    }
+
+    #[test]
+    fn labels_a_locale_with_its_own_name_and_its_tag() {
+        let _guard = lock_for_test();
+        reset();
+        add_ftl(
+            &locale("zh-CN"),
+            "locale-display-name = 简体中文\n".to_owned(),
+        )
+        .unwrap();
+        add_ftl(&locale("ja"), "zoom-in = 拡大\n".to_owned()).unwrap();
+
+        assert_eq!(display_label(&locale("zh-CN")), "简体中文 (zh-CN)");
+        // The source locale names itself, having no catalog to do it.
+        assert_eq!(display_label(&locale("en-US")), "English (en-US)");
+        // A catalog that does not name itself falls back to its tag alone.
+        assert_eq!(display_label(&locale("ja")), "ja");
     }
 
     #[test]

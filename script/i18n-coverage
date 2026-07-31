@@ -11,6 +11,9 @@ Reports, per locale:
   * orphaned  — defined in the catalog but no longer marked in the sources
   * collision — distinct English strings that derive the same key
 
+A few keys are read by the runtime rather than derived from a `t!` call site, such
+as the one naming a locale's own language; see `RESERVED_KEYS`.
+
 Comments and `#[cfg(test)]` items are ignored, so documentation examples and test
 fixtures are not mistaken for real call sites.
 
@@ -49,6 +52,11 @@ FTL_MESSAGE = re.compile(r"^([a-zA-Z][a-zA-Z0-9_-]*)\s*=", re.MULTILINE)
 CFG_TEST = re.compile(r"#\[cfg\(test\)\]")
 
 IDENTIFIER_CHARS = re.compile(r"[A-Za-z0-9_]")
+
+# Keys a catalog defines for the runtime to read directly rather than through a
+# `t!` call site. They have no English literal to derive from, so they are neither
+# missing when absent nor orphaned when present. Keep in sync with `i18n`.
+RESERVED_KEYS = frozenset({"locale-display-name"})
 
 
 def derive_key(source: str) -> str:
@@ -376,7 +384,7 @@ def main() -> int:
     for locale_dir in locale_dirs:
         catalog = collect_catalog_keys(locale_dir)
         missing = sorted(set(marked) - catalog)
-        orphaned = sorted(catalog - set(marked))
+        orphaned = sorted(catalog - set(marked) - RESERVED_KEYS)
         translated = len(marked) - len(missing)
         percent = 100.0 * translated / len(marked)
 
