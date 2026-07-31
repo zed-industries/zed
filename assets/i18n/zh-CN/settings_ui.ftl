@@ -1314,3 +1314,6 @@ default-permission = 默认权限
 controls-the-default-behavior-for-all-tool-actions-per-tool-rules-and-patterns-can-override-this = 控制所有工具操作的默认行为。单个工具的规则与正则可以覆盖此设置。
 default-action = 默认操作
 action-to-take-when-no-patterns-match = 没有规则匹配时执行的操作。
+interface-language = 界面语言
+the-language-zed-renders-its-interface-in-text-that-has-no-translation-for-the-selected-language-is-shown-in-english = Zed 渲染界面所用的语言。所选语言没有译文的文本会显示英文。
+search-language = 搜索语言…

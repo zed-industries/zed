@@ -55,8 +55,8 @@ use zed_actions::{
 
 use crate::components::{
     EnumVariantDropdown, NumberField, NumberFieldMode, NumberFieldType, SettingsInputField,
-    SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
-    text_field_a11y_state, theme_picker,
+    SettingsSectionHeader, font_picker, icon_theme_picker, locale_picker,
+    render_ollama_model_picker, text_field_a11y_state, theme_picker,
 };
 use crate::pages::{
     CustomAgentForm, LlmProviderForm, McpServerForm, render_input_audio_device_dropdown,
@@ -632,6 +632,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
         .add_basic_renderer::<settings::IconThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::IconThemeName>(render_icon_theme_picker)
+        .add_basic_renderer::<settings::UiLanguage>(render_locale_picker)
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
@@ -5191,6 +5192,70 @@ fn render_theme_picker(
                                 (field.write)(
                                     settings,
                                     Some(settings::ThemeName(theme_name.into())),
+                                    app,
+                                );
+                            },
+                        )
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                    window,
+                    cx,
+                )
+            }))
+        })
+        .anchor(gpui::Anchor::TopLeft)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .with_handle(handle)
+        .into_any_element()
+}
+
+fn render_locale_picker(
+    field: SettingField<settings::UiLanguage>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    title: &LocalizedString,
+    description: &LocalizedString,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    // Falling back to the active locale rather than the default one, so the
+    // trigger agrees with what the interface is actually showing.
+    let current_locale = value
+        .and_then(|language| language.0.parse().ok())
+        .unwrap_or_else(i18n::current_locale);
+    let current_tag: SharedString = current_locale.to_string().into();
+    let current_label: SharedString = i18n::display_label(&current_locale).into();
+
+    let handle = ui::PopoverMenuHandle::default();
+    PopoverMenu::new("locale-picker")
+        .trigger(wire_picker_trigger_a11y(
+            render_picker_trigger_button("locale_picker_trigger".into(), current_label)
+                .aria_label(title.clone())
+                .when(!description.fallback().is_empty(), |this| {
+                    this.aria_description(description.clone())
+                }),
+            handle.clone(),
+        ))
+        .menu(move |window, cx| {
+            Some(cx.new(|cx| {
+                let file = file.clone();
+                let current_tag = current_tag.clone();
+                locale_picker(
+                    current_tag,
+                    move |tag, window, cx| {
+                        update_settings_file(
+                            file.clone(),
+                            field.json_path,
+                            window,
+                            cx,
+                            move |settings, app| {
+                                (field.write)(
+                                    settings,
+                                    Some(settings::UiLanguage(tag.as_ref().into())),
                                     app,
                                 );
                             },

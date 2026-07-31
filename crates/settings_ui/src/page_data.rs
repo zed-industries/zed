@@ -143,6 +143,22 @@ fn general_page(cx: &App) -> SettingsPage {
         vec![
             SettingsPageItem::SectionHeader(t!("General Settings")),
             SettingsPageItem::SettingItem(SettingItem {
+                title: t!("Interface Language"),
+                description: t!(
+                    "The language Zed renders its interface in. Text that has no translation for the selected language is shown in English."
+                ),
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("ui_language"),
+                    pick: |settings_content| settings_content.ui_language.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.ui_language = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: t!("Accessible Mode"),
                 description: t!(
                     "Optimize Zed's interface for assistive technology such as screen readers. When enabled, otherwise-collapsed controls stay expanded and keyboard-reachable."
