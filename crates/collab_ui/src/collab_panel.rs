@@ -396,7 +396,9 @@ impl CollabPanel {
                 &channel_name_editor,
                 window,
                 |this: &mut Self, _, event, window, cx| {
-                    if let editor::EditorEvent::Blurred = event {
+                    if let editor::EditorEvent::Blurred = event
+                        && window.is_window_active()
+                    {
                         if let Some(state) = &this.channel_editing_state
                             && state.pending_name().is_some()
                         {
@@ -2130,9 +2132,7 @@ impl CollabPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut finder = ContactFinder::new(self.user_store.clone(), window, cx);
-                    finder.set_query(self.filter_editor.read(cx).text(cx), window, cx);
-                    finder
+                    ContactFinder::new(self.user_store.clone(), window, cx)
                 });
             });
         }
