@@ -6,8 +6,8 @@ This script is run by a GitHub Actions workflow when a new issue is opened. It:
 1. Checks eligibility (bug/crash type or untyped, non-staff author)
 2. Detects relevant areas using Claude + the area label taxonomy
 3. Parses known "duplicate magnets" from tracking issue #46355
-4. Searches for similar issues — open (area searches cover 120 days) and recently closed (last 90 days) —
-   and Discussions (feature requests / open-ended topics)
+4. Searches for similar issues — open (including long-lived, recently active issues) and recently
+   closed (last 90 days) — and Discussions (feature requests / open-ended topics)
 5. Asks Claude to sort open candidates into likely and possible duplicates, surface
    recently closed issues that may be useful triage context, and flag discussions the
    issue may duplicate
@@ -597,15 +597,45 @@ def rank_search_candidates(candidates):
     def rank(candidate):
         matched_searches = candidate["matched_searches"]
         return (
-            "error_pattern" in matched_searches,
             len(matched_searches) > 1,
+            "semantic_query" in matched_searches,
             "title_keywords" in matched_searches,
+            "error_pattern" in matched_searches,
+            "popular_area" in matched_searches,
             len(matched_searches),
             -candidate.get("best_match_rank", 1000),
-            candidate.get("created_at", ""),
+            candidate.get("updated_at", ""),
         )
 
     return sorted(candidates, key=rank, reverse=True)
+
+
+def select_search_candidates(candidates, limit):
+    """Select candidates while preserving capacity for each retrieval channel."""
+    selected = []
+    selected_keys = set()
+    reserved = (
+        ("semantic_query", max(2, limit // 3)),
+        ("error_pattern", max(1, limit // 10)),
+        ("title_keywords", max(1, limit // 6)),
+        ("popular_area", max(1, limit // 5)),
+        ("area_label", max(1, limit // 6)),
+    )
+
+    def add(candidate):
+        if candidate["key"] not in selected_keys and len(selected) < limit:
+            selected.append(candidate)
+            selected_keys.add(candidate["key"])
+
+    for search_type, quota in reserved:
+        matching = [candidate for candidate in candidates if search_type in candidate["matched_searches"]]
+        for candidate in matching[:quota]:
+            add(candidate)
+
+    for candidate in candidates:
+        add(candidate)
+
+    return selected
 
 
 def extract_error_snippet(body):
@@ -621,11 +651,10 @@ def extract_error_snippet(body):
     return snippet
 
 
-def search_for_similar_issues(issue, detected_areas, search_queries, max_searches_per_state=10):
+def search_for_similar_issues(issue, detected_areas, search_queries, max_searches_per_state=12):
     """Search for similar open issues and issues closed within the last 90 days."""
     log("Searching for similar issues")
 
-    one_hundred_twenty_days_ago = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d")
     ninety_days_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 
     title_keywords = [word for word in issue["title"].split() if word.lower() not in STOPWORDS and len(word) > 2]
@@ -633,28 +662,25 @@ def search_for_similar_issues(issue, detected_areas, search_queries, max_searche
 
     error_snippet = extract_error_snippet(issue["body"])
 
-    def build_queries(base, area_window=None):
+    def build_queries(base):
         queries = [("semantic_query", f"{base} {query}") for query in search_queries]
         if keywords_query and keywords_query not in search_queries:
             queries.append(("title_keywords", f"{base} {keywords_query}"))
         if error_snippet:
             queries.append(("error_pattern", f'{base} in:body "{error_snippet}"'))
-        for area in detected_areas:
-            area_q = f'{base} label:"area:{area}"'
-            if area_window:
-                area_q += f" created:>{area_window}"
-            queries.append(("area_label", area_q))
+        queries.extend(("area_label", f'{base} label:"area:{area}"') for area in detected_areas)
         return queries
 
-    open_queries = build_queries(
-        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open",
-        area_window=one_hundred_twenty_days_ago,
+    open_queries = build_queries(f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open")
+    open_queries.extend(
+        ("popular_area", f'repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open label:"area:{area}"')
+        for area in detected_areas
     )
     # closed pass: filter by close date so we catch issues closed recently regardless of
     # when they were opened. closed:> already restricts the result set, so the per-query
     # area window is unnecessary.
     closed_queries = build_queries(
-        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{ninety_days_ago}",
+        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{ninety_days_ago}"
     )
 
     seen_issues = {}
@@ -665,7 +691,12 @@ def search_for_similar_issues(issue, detected_areas, search_queries, max_searche
         for search_type, query in queries:
             log(f"  Search ({state_label} / {search_type}): {query}")
             try:
-                sort = "created" if search_type == "area_label" else None
+                if search_type == "popular_area":
+                    sort = "reactions"
+                elif state_label == "open" and search_type == "area_label":
+                    sort = "updated"
+                else:
+                    sort = None
                 results = github_search_issues(query, per_page=50, sort=sort)
                 for result_rank, item in enumerate(results):
                     number = item["number"]
@@ -675,7 +706,7 @@ def search_for_similar_issues(issue, detected_areas, search_queries, max_searche
                     if existing:
                         if search_type not in existing["matched_searches"]:
                             existing["matched_searches"].append(search_type)
-                        if search_type != "area_label":
+                        if search_type not in ("area_label", "popular_area"):
                             existing["best_match_rank"] = min(existing["best_match_rank"], result_rank)
                         continue
                     body = item.get("body") or ""
@@ -688,10 +719,13 @@ def search_for_similar_issues(issue, detected_areas, search_queries, max_searche
                         "state": item.get("state", ""),
                         "state_reason": item.get("state_reason"),
                         "created_at": item.get("created_at", ""),
+                        "updated_at": item.get("updated_at", ""),
                         "body_preview": body[:3000],
                         "source": "issue_search",
                         "matched_searches": [search_type],
-                        "best_match_rank": result_rank if search_type != "area_label" else 1000,
+                        "best_match_rank": (
+                            result_rank if search_type not in ("area_label", "popular_area") else 1000
+                        ),
                     }
             except requests.RequestException as e:
                 log(f"  Search failed: {e}")
@@ -794,7 +828,12 @@ def analyze_duplicates(anthropic_key, issue, candidates):
         if candidate["kind"] == "discussion" and candidate["state"] == "open"
     ]
 
-    selected_candidates = magnets[:10] + open_issues[:30] + closed_issues[:10] + open_discussions[:10]
+    selected_candidates = (
+        magnets[:10]
+        + select_search_candidates(open_issues, 30)
+        + select_search_candidates(closed_issues, 10)
+        + open_discussions[:10]
+    )
     if not selected_candidates:
         return {"likely_matches": [], "possible_matches": [], "related_closed_candidates": []}
 
