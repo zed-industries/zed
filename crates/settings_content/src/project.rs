@@ -186,6 +186,16 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    /// Whether to let this language server ask Zed to watch files on its behalf
+    /// (`workspace/didChangeWatchedFiles`).
+    ///
+    /// Some language servers register a very large number of watchers in big
+    /// workspaces, which can make Zed slow. Setting this to `false` makes Zed
+    /// advertise `workspace.didChangeWatchedFiles.dynamicRegistration: false`, so
+    /// servers that support it fall back to watching files themselves.
+    ///
+    /// Default: true
+    pub enable_file_watchers: Option<bool>,
     pub fetch: Option<FetchSettings>,
 }
 
@@ -196,6 +206,7 @@ impl Default for LspSettings {
             initialization_options: None,
             settings: None,
             enable_lsp_tasks: true,
+            enable_file_watchers: None,
             fetch: None,
         }
     }

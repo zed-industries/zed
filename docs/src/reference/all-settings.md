@@ -1827,6 +1827,7 @@ The following settings can be overridden for specific language servers:
 
 - `initialization_options`
 - `settings`
+- `enable_file_watchers`
 
 To override configuration for a language server, add an entry for that language server's name to the `lsp` value.
 
@@ -1859,6 +1860,21 @@ While other options may be changed at a runtime and should be placed under `sett
           "keyOrdering": true // Enforces alphabetical ordering of keys in maps
         }
       }
+    }
+  }
+}
+```
+
+`enable_file_watchers` controls whether a language server may ask Zed to watch files
+on its behalf (`workspace/didChangeWatchedFiles`). Some servers register a very large
+number of watchers in big workspaces, which can make Zed slow; setting this to `false`
+makes servers that support it watch files themselves instead:
+
+```json [settings]
+{
+  "lsp": {
+    "roslyn": {
+      "enable_file_watchers": false
     }
   }
 }

@@ -269,6 +269,29 @@ Language servers are automatically downloaded or launched if found in your path,
   }
 ```
 
+#### File watching
+
+Language servers can ask Zed to watch files on their behalf via
+[`workspace/didChangeWatchedFiles`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_didChangeWatchedFiles).
+A few servers register a very large number of watchers in big workspaces — Roslyn, for
+example, registers several per project, which adds up to thousands in a solution with
+hundreds of projects — and that can make Zed slow to open and edit files.
+
+If you hit this, you can tell Zed not to offer file watching to a particular server:
+
+```json [settings]
+  "lsp": {
+    "roslyn": {
+      "enable_file_watchers": false
+    }
+  }
+```
+
+Zed then advertises `workspace.didChangeWatchedFiles.dynamicRegistration: false`, and
+servers that respect it fall back to watching files themselves. Servers that rely on Zed
+for file watching may stop noticing changes made outside the editor, so only reach for
+this when a server is causing you trouble.
+
 ### Enabling or Disabling Language Servers
 
 You can toggle language server support globally or per-language:

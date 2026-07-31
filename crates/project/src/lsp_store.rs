@@ -271,6 +271,7 @@ struct UnifiedLanguageServer {
 struct LanguageServerSeedSettings {
     binary: Option<BinarySettings>,
     initialization_options: Option<serde_json::Value>,
+    enable_file_watchers: Option<bool>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -378,6 +379,7 @@ impl LocalLspStore {
             settings: LanguageServerSeedSettings {
                 binary: disposition.settings.binary.clone(),
                 initialization_options: disposition.settings.initialization_options.clone(),
+                enable_file_watchers: disposition.settings.enable_file_watchers,
             },
             toolchain: disposition.toolchain.clone(),
         };
@@ -428,6 +430,7 @@ impl LocalLspStore {
         let worktree_abs_path = worktree.abs_path();
         let toolchain = key.toolchain.clone();
         let override_options = settings.initialization_options.clone();
+        let enable_file_watchers = settings.enable_file_watchers.unwrap_or(true);
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
 
@@ -582,7 +585,15 @@ impl LocalLspStore {
                             cx,
                         );
                         params.initialization_options = initialization_options;
-                        adapter.adapter.prepare_initialize_params(params, cx)
+                        let mut params = adapter.adapter.prepare_initialize_params(params, cx)?;
+                        if !enable_file_watchers
+                            && let Some(workspace) = params.capabilities.workspace.as_mut()
+                            && let Some(did_change_watched_files) =
+                                workspace.did_change_watched_files.as_mut()
+                        {
+                            did_change_watched_files.dynamic_registration = Some(false);
+                        }
+                        anyhow::Ok(params)
                     })?;
 
                     Self::setup_lsp_messages(
@@ -5796,6 +5807,7 @@ impl LspStore {
                                         .settings
                                         .initialization_options
                                         .clone(),
+                                    enable_file_watchers: disposition.settings.enable_file_watchers,
                                 },
                                 toolchain: local.toolchain_store.read(cx).active_toolchain(
                                     path.worktree_id,

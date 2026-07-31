@@ -1737,6 +1737,90 @@ async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::Tes
     );
 }
 
+#[gpui::test]
+async fn test_advertised_file_watcher_registration_capability(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    assert_eq!(
+        advertised_file_watcher_dynamic_registration(None, cx).await,
+        Some(true),
+        "file watcher registration should be advertised by default"
+    );
+    assert_eq!(
+        advertised_file_watcher_dynamic_registration(Some(true), cx).await,
+        Some(true),
+    );
+    assert_eq!(
+        advertised_file_watcher_dynamic_registration(Some(false), cx).await,
+        Some(false),
+        "`enable_file_watchers: false` should tell the server that Zed will not watch files for it"
+    );
+}
+
+/// Starts a language server with the given `lsp.the-language-server.enable_file_watchers`
+/// setting and returns the `workspace.didChangeWatchedFiles.dynamicRegistration` client
+/// capability that Zed advertised to it.
+async fn advertised_file_watcher_dynamic_registration(
+    enable_file_watchers: Option<bool>,
+    cx: &mut gpui::TestAppContext,
+) -> Option<bool> {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.lsp.0.insert(
+                    "the-language-server".into(),
+                    settings::LspSettings {
+                        enable_file_watchers,
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let (capabilities_tx, mut capabilities_rx) = futures::channel::mpsc::unbounded();
+    let _fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            initializer: Some(Box::new(move |fake_server| {
+                let capabilities_tx = capabilities_tx.clone();
+                fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                    move |params, _| {
+                        capabilities_tx.unbounded_send(params.capabilities).ok();
+                        async move { Ok(lsp::InitializeResult::default()) }
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    capabilities_rx
+        .next()
+        .await
+        .expect("language server should have been initialized")
+        .workspace
+        .and_then(|workspace| workspace.did_change_watched_files)
+        .and_then(|watched_files| watched_files.dynamic_registration)
+}
+
 async fn setup_dynamic_registration_test(
     cx: &mut gpui::TestAppContext,
     capabilities: lsp::ServerCapabilities,
