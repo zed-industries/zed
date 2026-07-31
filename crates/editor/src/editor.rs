@@ -97,11 +97,12 @@ pub(crate) use edit_prediction::{
 pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
-    CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
-    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
-    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
-    ui_scrollbar_settings_from_raw,
+    BreadcrumbNavigationMode, CompletionDetailAlignment, CompletionMenuItemKind,
+    CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode, EditorSettings,
+    EditorSettingsScrollbarProxy, OpenResultsIn, ScrollBeyondLastLine, ScrollbarAxes,
+    SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
 };
+use element::BreadcrumbDirectoryBrowser;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
@@ -206,7 +207,7 @@ use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
     InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
-    ProjectItem, ProjectPath, ProjectTransaction,
+    ProjectItem, ProjectPath, ProjectTransaction, WorktreeId,
     bookmark_store::BookmarkStore,
     debugger::{
         breakpoint_store::{
@@ -256,11 +257,12 @@ use theme::{
 };
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
-    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
-    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
+    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding,
+    PopoverMenuHandle, Tooltip, prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container,
+    utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
-use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, rel_path::RelPath};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
@@ -1125,6 +1127,28 @@ pub struct Editor {
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
+    breadcrumb_navigation: Option<BreadcrumbNavigation>,
+    /// Shared across every breadcrumb directory segment (see `render_breadcrumb_directory_segment`)
+    /// so exactly one breadcrumb dropdown can be open at a time, and so
+    /// [`Editor::navigate_breadcrumb_to`] can re-anchor the popover under the newly active segment
+    /// after the bar re-renders, instead of leaving it under the segment the user actually clicked.
+    breadcrumb_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+    /// Suppresses [`Editor::clear_breadcrumb_navigation`] while [`Editor::navigate_breadcrumb_to`]
+    /// is swapping the open popover from the old active segment to the new one: dismissing the old
+    /// one fires its dismiss-on-blur subscription, which would otherwise wipe the navigation state
+    /// `navigate_breadcrumb_to` just set.
+    ///
+    /// Not subsumed by `clear_breadcrumb_navigation`'s own identity check, which only rejects a
+    /// stale dismissal whose identity *differs* from the current navigation. In
+    /// [`BreadcrumbNavigationMode::Siblings`], a dropdown lists the active segment among its own
+    /// siblings, so re-choosing that same row resolves right back to the identity that was already
+    /// active: `navigate_breadcrumb_to` re-sets `breadcrumb_navigation` to a value with the same
+    /// `(worktree_id, active_path)` it already had, and the stale dismissal that follows then
+    /// carries that identity too. The identity check can't distinguish that genuine case from a
+    /// same-path re-selection still in flight; this flag breaks the tie by timing instead. See
+    /// `test_reanchoring_guard_survives_same_identity_reselection` for the scenario reproduced
+    /// (and for confirmation that removing this guard makes that test fail).
+    breadcrumb_reanchoring: bool,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
@@ -2445,6 +2469,9 @@ impl Editor {
             in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
+            breadcrumb_navigation: None,
+            breadcrumb_popover_handle: PopoverMenuHandle::default(),
+            breadcrumb_reanchoring: false,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
@@ -10965,6 +10992,180 @@ impl Editor {
         }
     }
 
+    /// The breadcrumb bar's navigation session: which directory segment produced the currently
+    /// open dropdown, and whether choosing a row inside it has replaced the bar with that
+    /// directory's own path (see [`Editor::navigate_breadcrumb_to`]). Lives exactly as long as
+    /// the popover session — reset by [`Editor::clear_breadcrumb_navigation`] on dismiss.
+    pub(crate) fn breadcrumb_navigation(&self) -> Option<&BreadcrumbNavigation> {
+        self.breadcrumb_navigation.as_ref()
+    }
+
+    /// The handle every breadcrumb directory segment's `PopoverMenu` shares while it is the active
+    /// segment (see `render_breadcrumb_directory_segment`), so exactly one instance is ever wired
+    /// up to open/close it programmatically at a time.
+    pub(crate) fn breadcrumb_popover_handle(
+        &self,
+    ) -> PopoverMenuHandle<BreadcrumbDirectoryBrowser> {
+        self.breadcrumb_popover_handle.clone()
+    }
+
+    /// Marks `path`'s segment as active because its dropdown just opened, without otherwise
+    /// changing what the breadcrumb bar shows (still the current file's full path and symbols) —
+    /// unless `path` is already the active, navigated-to segment (reopening it, whether by a
+    /// direct click or the re-anchor in `navigate_breadcrumb_to`), in which case `navigated` stays
+    /// `true` so the bar doesn't flicker back to the real file's path just because its own dropdown
+    /// reopened.
+    ///
+    /// `path` must identify the segment itself, not whatever directory its dropdown lists — see
+    /// `BreadcrumbSegmentTarget::Directory::mark_current_path` for why those differ and how
+    /// callers compute the segment's own identity (`own_path`). Passing the listing path here
+    /// instead mismatches every place that compares against `active_path` expecting the
+    /// segment's own identity (`is_active_segment`, the `navigated`-preserving check above, and
+    /// this segment becoming the target `navigate_breadcrumb_to`'s re-anchor reopens under).
+    ///
+    /// Always resets [`BreadcrumbNavigation::descend_into_active_path`] to `false`: this fires on
+    /// every dropdown opening, direct click or programmatic re-anchor alike, and it's specifically
+    /// the *next* opening after a `navigate_breadcrumb_to` — not this one — that should list
+    /// siblings again instead of continuing to descend. The re-anchor's own reopen already froze
+    /// the children listing it needs into the `BreadcrumbDirectoryBrowser` it's about to construct
+    /// before this call can affect it — see `render_breadcrumb_directory_segment`.
+    ///
+    /// This is only ever reached from a `PopoverMenu`'s `menu()` builder (see
+    /// `render_breadcrumb_directory_segment`), which `PopoverMenu` invokes either from a trigger's
+    /// raw `on_click` (installed directly by `PopoverMenu::trigger`, not through a `cx.listener`,
+    /// so no entity is leased while it runs) or from `PopoverMenuHandle::show`, which
+    /// `navigate_breadcrumb_to` only ever calls from a `window.on_next_frame` callback — also not
+    /// nested inside any entity update. So unlike the hazard fixed in `navigate_breadcrumb_to`,
+    /// `hide` below can stay synchronous: keep it that way, and keep this method itself out of any
+    /// `Entity::update`/`cx.listener` callback, or that invariant breaks.
+    pub(crate) fn open_breadcrumb_navigation(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        cx: &mut Context<Self>,
+    ) {
+        // At most one breadcrumb dropdown is ever open at a time: the shared handle always
+        // reflects whichever segment last became active, so hiding it here closes that segment's
+        // popover before this one opens, covering both a direct click on a different segment and
+        // the programmatic re-anchor below.
+        self.breadcrumb_popover_handle.hide(cx);
+
+        let navigated = self
+            .breadcrumb_navigation
+            .as_ref()
+            .is_some_and(|navigation| {
+                navigation.navigated
+                    && navigation.worktree_id == worktree_id
+                    && navigation.active_path == path
+            });
+        self.breadcrumb_navigation = Some(BreadcrumbNavigation {
+            worktree_id,
+            active_path: path,
+            navigated,
+            descend_into_active_path: false,
+        });
+        cx.emit(EditorEvent::BreadcrumbsChanged);
+    }
+
+    /// Replaces the breadcrumb bar with `path` — root through `path`, symbols dropped — because a
+    /// directory row was chosen inside an open dropdown. Also re-anchors the popover: the segment
+    /// that produced the now-open dropdown moved (from the segment the user clicked, to `path`'s
+    /// own segment further along the bar), so the open dropdown is dismissed and reopened under
+    /// wherever `path`'s segment ends up once the bar re-renders with it marked active, mirroring
+    /// IntelliJ's navigation bar reopening exactly where a direct click on that segment would have.
+    ///
+    /// This is reached from [`BreadcrumbDirectoryBrowser::choose`], which runs inside a
+    /// `cx.listener` on the browser entity — i.e. that entity's lease is still on the stack here.
+    /// `PopoverMenuHandle::hide`/`show` update that same entity (it's the shared handle for the
+    /// active segment, and the browser being chosen from is always the active segment's), so
+    /// calling them directly would double-lease it and panic (see `entity_map.rs`'s "cannot
+    /// update ... while it is already being updated"). `cx.defer_in` runs its callback only once
+    /// the outermost `App::update` on the stack finishes (see `App::finish_update`), i.e. after
+    /// the browser's own `cx.listener` update has returned the entity to the app — so by the time
+    /// this body runs, the lease is gone and `hide`/`show` are safe.
+    pub(crate) fn navigate_breadcrumb_to(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.breadcrumb_navigation = Some(BreadcrumbNavigation {
+            worktree_id,
+            active_path: path,
+            navigated: true,
+            descend_into_active_path: true,
+        });
+        cx.emit(EditorEvent::BreadcrumbsChanged);
+
+        self.breadcrumb_reanchoring = true;
+        let handle = self.breadcrumb_popover_handle.clone();
+
+        cx.defer_in(window, move |_editor, window, cx| {
+            handle.hide(cx);
+
+            // The handle only points at `path`'s segment once the bar has re-rendered with it
+            // marked active (see `render_breadcrumb_text`); a single `on_next_frame` runs before
+            // that re-render's own deferred popover elements are wired up (the same reason
+            // `show_menu` nests two calls when focusing a freshly opened menu), so this nests two
+            // as well. Neither frame is nested inside any entity update, so `handle.show` here
+            // can't hit the same re-entrancy hazard `hide` above was just deferred to avoid.
+            let editor = cx.entity().downgrade();
+            window.on_next_frame(move |window, _cx| {
+                window.on_next_frame(move |window, cx| {
+                    handle.show(window, cx);
+                    editor
+                        .update(cx, |editor, _| editor.breadcrumb_reanchoring = false)
+                        .ok();
+                });
+            });
+        });
+    }
+
+    /// Ends the breadcrumb navigation session, reverting the bar to the current file's path and
+    /// symbols. Called when a directory dropdown is dismissed (`Escape`, clicking outside, or
+    /// clicking into the editor). A no-op while `navigate_breadcrumb_to` is re-anchoring the
+    /// popover — see `breadcrumb_reanchoring` — and, more importantly, a no-op unless `path`
+    /// identifies the segment that's still actually active.
+    ///
+    /// `worktree_id`/`path` must identify the dismissing segment itself (its own identity, the
+    /// same value `open_breadcrumb_navigation` was called with when this popover opened — see
+    /// `BreadcrumbSegmentTarget::Directory::mark_current_path` for why that's not always the
+    /// directory the dropdown *lists*), not just be threaded through for logging. `cx.emit`'s
+    /// effects — including the `DismissEvent` a
+    /// `PopoverMenuHandle::hide` call emits on the browser entity it targets — are queued and only
+    /// flush once the outermost `App::update` on the stack returns (see `App::finish_update`), not
+    /// synchronously. So a segment's own dismissal, triggered by *this* popover being hidden to
+    /// make room for a different one, can land here only after that other segment has already
+    /// opened and become the new active one: `open_breadcrumb_navigation` calls
+    /// `self.breadcrumb_popover_handle.hide` on whatever was previously active before overwriting
+    /// `self.breadcrumb_navigation` with the new segment's identity, but the hidden popover's own
+    /// dismiss subscription doesn't actually run until later — after that overwrite already
+    /// happened. Blindly clearing here, the way this used to work, would then wipe out the new
+    /// segment's state out from under it. Comparing identity instead — the same fix already
+    /// applied to `open_breadcrumb_navigation`'s `navigated`-preserving check — makes a
+    /// now-stale dismissal for a segment that's no longer active a no-op, and a genuine dismissal
+    /// of the still-active segment behave exactly as before.
+    pub(crate) fn clear_breadcrumb_navigation(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: &Arc<RelPath>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.breadcrumb_reanchoring {
+            return;
+        }
+        let is_current = self
+            .breadcrumb_navigation
+            .as_ref()
+            .is_some_and(|navigation| {
+                navigation.worktree_id == worktree_id && &navigation.active_path == path
+            });
+        if is_current && self.breadcrumb_navigation.take().is_some() {
+            cx.emit(EditorEvent::BreadcrumbsChanged);
+        }
+    }
+
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {
         let multi_buffer = self.buffer().read(cx);
         // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
@@ -11824,6 +12025,25 @@ impl Deref for EditorSnapshot {
     fn deref(&self) -> &Self::Target {
         &self.display_snapshot
     }
+}
+
+/// See [`Editor::breadcrumb_navigation`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BreadcrumbNavigation {
+    pub worktree_id: WorktreeId,
+    pub active_path: Arc<RelPath>,
+    pub navigated: bool,
+    /// True only for the one render right after [`Editor::navigate_breadcrumb_to`] set this
+    /// session (choosing a directory row), until [`Editor::open_breadcrumb_navigation`] — reached
+    /// either by the popover's re-anchor reopening under `active_path`'s own segment, or by a
+    /// later, genuine direct click on some segment — resets it back to `false`. In
+    /// [`BreadcrumbNavigationMode::Siblings`], `render_breadcrumb_text` reads this to decide
+    /// whether `active_path`'s own segment lists its own children (continuing to descend, the way
+    /// choosing a row is documented to behave) or its parent's children (siblings, the way
+    /// clicking a bar segment behaves) — see `breadcrumb_path_segments`. Ignored in
+    /// [`BreadcrumbNavigationMode::DrillDown`], where every segment always lists its own children
+    /// regardless.
+    pub descend_into_active_path: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

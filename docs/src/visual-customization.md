@@ -269,6 +269,9 @@ TBD: Centered layout related settings
   // Editor toolbar related settings
   "toolbar": {
     "breadcrumbs": true, // Whether to show breadcrumbs.
+    "breadcrumb_file_icons": true, // Whether to show file icons in breadcrumb directory dropdowns.
+    "breadcrumb_folder_icons": true, // Whether to show folder icons or chevrons for directories in breadcrumb directory dropdowns.
+    "breadcrumb_navigation_mode": "drill_down", // "drill_down" lists a clicked segment's children (IntelliJ-style); "siblings" lists its parent's contents instead (VS Code/Cursor-style).
     "quick_actions": true, // Whether to show quick action buttons.
     "selections_menu": true, // Whether to show the Selections menu
     "agent_review": true, // Whether to show agent review buttons

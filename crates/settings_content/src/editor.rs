@@ -358,6 +358,37 @@ impl RelativeLineNumbers {
     }
 }
 
+/// How clicking a breadcrumb path segment navigates the directory tree.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BreadcrumbNavigationMode {
+    /// Clicking a segment lists its children, drilling further into the tree — the convention
+    /// IntelliJ's navigation bar uses. Each segment owns the arrow on its right, since it reads
+    /// as "and inside this, the next thing." The leading project-root segment is included, since
+    /// it's the only way to reach top-level siblings.
+    #[default]
+    DrillDown,
+    /// Clicking a segment lists its parent's contents — the segment and its siblings — instead
+    /// of its children, the convention VS Code's and Cursor's breadcrumbs use. Each segment owns
+    /// the arrow on its left, pointing at the element whose alternatives the dropdown offers. The
+    /// leading project-root segment is omitted: it's unnecessary, since clicking any top-level
+    /// segment already offers every other one alongside it.
+    Siblings,
+}
+
 // Toolbar related settings
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
@@ -366,6 +397,20 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+    /// Whether to show file icons in the breadcrumb path segment's directory
+    /// dropdowns.
+    ///
+    /// Default: true
+    pub breadcrumb_file_icons: Option<bool>,
+    /// Whether to show folder icons or chevrons for directories in the
+    /// breadcrumb path segment's directory dropdowns.
+    ///
+    /// Default: true
+    pub breadcrumb_folder_icons: Option<bool>,
+    /// How clicking a breadcrumb path segment navigates the directory tree.
+    ///
+    /// Default: drill_down
+    pub breadcrumb_navigation_mode: Option<BreadcrumbNavigationMode>,
     /// Whether to display quick action buttons in the editor toolbar.
     ///
     /// Default: true

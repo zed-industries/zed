@@ -4,11 +4,11 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DelayMs,
-    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
-    GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder,
-    MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine, ScrollbarDiagnostics,
-    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    BreadcrumbNavigationMode, CodeLens, CompletionDetailAlignment, CompletionMenuItemKind,
+    CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn, DocumentColorsRenderMode,
+    DoubleClickInMultibuffer, GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb,
+    MinimapThumbBorder, MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine,
+    ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -95,6 +95,9 @@ pub struct StickyScroll {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Toolbar {
     pub breadcrumbs: bool,
+    pub breadcrumb_file_icons: bool,
+    pub breadcrumb_folder_icons: bool,
+    pub breadcrumb_navigation_mode: BreadcrumbNavigationMode,
     pub quick_actions: bool,
     pub selections_menu: bool,
     pub agent_review: bool,
@@ -227,6 +230,9 @@ impl Settings for EditorSettings {
             hover_popover_hiding_delay: editor.hover_popover_hiding_delay.unwrap(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
+                breadcrumb_file_icons: toolbar.breadcrumb_file_icons.unwrap(),
+                breadcrumb_folder_icons: toolbar.breadcrumb_folder_icons.unwrap(),
+                breadcrumb_navigation_mode: toolbar.breadcrumb_navigation_mode.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
                 selections_menu: toolbar.selections_menu.unwrap(),
                 agent_review: toolbar.agent_review.unwrap(),
