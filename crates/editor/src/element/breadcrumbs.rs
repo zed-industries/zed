@@ -445,8 +445,9 @@ fn breadcrumb_directory_children(
 }
 
 /// Which icon source a breadcrumb directory dropdown row should draw from, given
-/// `toolbar.breadcrumb_file_icons`/`toolbar.breadcrumb_folder_icons` and whether the row is a
-/// directory. Mirrors the project/git/outline panels: turning folder icons off falls back to a
+/// `project_panel.file_icons`/`project_panel.folder_icons` (see
+/// [`BreadcrumbDirectoryListingSettings`]) and whether the row is a directory. Mirrors the
+/// project/git/outline panels: turning folder icons off falls back to a
 /// chevron rather than hiding the icon slot entirely (see
 /// `crates/project_panel/src/project_panel.rs`'s `EntryKind` icon match), while turning file
 /// icons off just leaves files with no icon. Factored out as pure selection logic — with no
@@ -477,22 +478,25 @@ fn breadcrumb_entry_icon_source(
     }
 }
 
-/// Mirrors the project panel's directory ordering and gitignore visibility settings
-/// (`project_panel.sort_mode`, `project_panel.sort_order`, `project_panel.hide_gitignore`) so the
-/// breadcrumb dropdown's listing agrees with the panel's, including when the user changes those
-/// settings — see `cmp_worktree_entries` and its `hide_gitignore` uses in
-/// `crates/project_panel/src/project_panel.rs`.
+/// Mirrors a subset of `project_panel`'s settings — ordering (`sort_mode`, `sort_order`),
+/// visibility (`hide_gitignore`, `hide_hidden`) and icon display (`file_icons`, `folder_icons`)
+/// — so the breadcrumb dropdown's listing agrees with the panel's, including when the user
+/// changes those settings — see `cmp_worktree_entries` and the `hide_gitignore`/`hide_hidden`
+/// uses in `crates/project_panel/src/project_panel.rs`.
 ///
 /// This can't just call into `project_panel::ProjectPanelSettings` and reuse its already-resolved
 /// fields: `project_panel` depends on `editor` (for `entry_git_aware_label_color`, reused below),
 /// so `editor` depending back on `project_panel` for this would be circular. Reading the same
-/// `project_panel` section of `SettingsContent` a second time, independently, keeps the ordering
+/// `project_panel` section of `SettingsContent` a second time, independently, keeps this dropdown
 /// in sync with the panel without inverting that dependency.
 #[derive(Clone, Copy, settings::RegisterSetting)]
 struct BreadcrumbDirectoryListingSettings {
     sort_mode: settings::ProjectPanelSortMode,
     sort_order: settings::ProjectPanelSortOrder,
     hide_gitignore: bool,
+    hide_hidden: bool,
+    file_icons: bool,
+    folder_icons: bool,
 }
 
 impl settings::Settings for BreadcrumbDirectoryListingSettings {
@@ -502,6 +506,9 @@ impl settings::Settings for BreadcrumbDirectoryListingSettings {
             sort_mode: project_panel.sort_mode.unwrap(),
             sort_order: project_panel.sort_order.unwrap(),
             hide_gitignore: project_panel.hide_gitignore.unwrap(),
+            hide_hidden: project_panel.hide_hidden.unwrap(),
+            file_icons: project_panel.file_icons.unwrap(),
+            folder_icons: project_panel.folder_icons.unwrap(),
         }
     }
 }
@@ -518,8 +525,9 @@ struct BreadcrumbDirectoryEntry {
 
 /// Lists `path`'s direct children for a [`BreadcrumbDirectoryBrowser`] to render, plus whether the
 /// listing was truncated. Entries gitignored by Git are dropped entirely when
-/// `project_panel.hide_gitignore` is set, matching the project panel; otherwise they're kept and
-/// [`BreadcrumbDirectoryBrowser::render_entry`] colors them the same way the panel does.
+/// `project_panel.hide_gitignore` is set, and hidden (dotfile) entries are dropped entirely when
+/// `project_panel.hide_hidden` is set, matching the project panel; ignored entries that are kept
+/// are colored by [`BreadcrumbDirectoryBrowser::render_entry`] the same way the panel does.
 fn breadcrumb_directory_entries(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,
@@ -531,6 +539,7 @@ fn breadcrumb_directory_entries(
         .snapshot()
         .child_entries(path)
         .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
+        .filter(|entry| !settings.hide_hidden || !entry.is_hidden)
         .cloned()
         .collect::<Vec<_>>();
     entries.sort_by(|a, b| {
@@ -776,10 +785,9 @@ impl EventEmitter<DismissEvent> for BreadcrumbDirectoryBrowser {}
 
 impl Render for BreadcrumbDirectoryBrowser {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let show_file_icons = EditorSettings::get_global(cx).toolbar.breadcrumb_file_icons;
-        let show_folder_icons = EditorSettings::get_global(cx)
-            .toolbar
-            .breadcrumb_folder_icons;
+        let listing_settings = BreadcrumbDirectoryListingSettings::get_global(cx);
+        let show_file_icons = listing_settings.file_icons;
+        let show_folder_icons = listing_settings.folder_icons;
         let (entries, truncated) = self
             .worktree(cx)
             .map(|worktree| breadcrumb_directory_entries(&worktree, &self.current_path, cx))
@@ -3329,6 +3337,62 @@ mod tests {
                 .iter()
                 .any(|entry| entry.name.as_ref() == "kept.txt"),
             "non-ignored entries stay listed"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_entries_honors_hide_hidden_setting(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use util::path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".hidden": "",
+                "kept.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        cx.run_until_parked();
+
+        // `hide_hidden` defaults to `false`: the dotfile is still listed, matching the project
+        // panel's default of showing hidden entries.
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert!(
+            entries.iter().any(|entry| entry.name.as_ref() == ".hidden"),
+            "hidden entry is shown by default"
+        );
+
+        // Setting `project_panel.hide_hidden` — the same setting the panel itself reads — removes
+        // it from the listing entirely, keeping the two views in agreement about what exists (see
+        // `BreadcrumbDirectoryListingSettings`'s doc comment).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project_panel.get_or_insert_default().hide_hidden = Some(true);
+                });
+            });
+        });
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert!(
+            !entries.iter().any(|entry| entry.name.as_ref() == ".hidden"),
+            "hide_hidden should drop the hidden entry entirely, not just dim it",
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.name.as_ref() == "kept.txt"),
+            "non-hidden entries stay listed"
         );
     }
 }

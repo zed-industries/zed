@@ -1669,8 +1669,6 @@ When trusted, project settings are synchronized automatically, language and MCP 
 {
   "toolbar": {
     "breadcrumbs": true,
-    "breadcrumb_file_icons": true,
-    "breadcrumb_folder_icons": true,
     "breadcrumb_navigation_mode": "drill_down",
     "quick_actions": true,
     "selections_menu": true,

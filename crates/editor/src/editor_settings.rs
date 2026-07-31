@@ -95,8 +95,6 @@ pub struct StickyScroll {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Toolbar {
     pub breadcrumbs: bool,
-    pub breadcrumb_file_icons: bool,
-    pub breadcrumb_folder_icons: bool,
     pub breadcrumb_navigation_mode: BreadcrumbNavigationMode,
     pub quick_actions: bool,
     pub selections_menu: bool,
@@ -230,8 +228,6 @@ impl Settings for EditorSettings {
             hover_popover_hiding_delay: editor.hover_popover_hiding_delay.unwrap(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
-                breadcrumb_file_icons: toolbar.breadcrumb_file_icons.unwrap(),
-                breadcrumb_folder_icons: toolbar.breadcrumb_folder_icons.unwrap(),
                 breadcrumb_navigation_mode: toolbar.breadcrumb_navigation_mode.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
                 selections_menu: toolbar.selections_menu.unwrap(),

@@ -397,16 +397,6 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
-    /// Whether to show file icons in the breadcrumb path segment's directory
-    /// dropdowns.
-    ///
-    /// Default: true
-    pub breadcrumb_file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the
-    /// breadcrumb path segment's directory dropdowns.
-    ///
-    /// Default: true
-    pub breadcrumb_folder_icons: Option<bool>,
     /// How clicking a breadcrumb path segment navigates the directory tree.
     ///
     /// Default: drill_down

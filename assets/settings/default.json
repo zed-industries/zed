@@ -539,12 +539,6 @@
   "toolbar": {
     // Whether to show breadcrumbs.
     "breadcrumbs": true,
-    // Whether to show file icons in the breadcrumb path segment's directory
-    // dropdowns.
-    "breadcrumb_file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the
-    // breadcrumb path segment's directory dropdowns.
-    "breadcrumb_folder_icons": true,
     // How clicking a breadcrumb path segment navigates the directory tree:
     // "drill_down" lists the clicked segment's children (IntelliJ-style), "siblings"
     // lists its parent's contents instead (VS Code/Cursor-style).

@@ -2727,7 +2727,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn toolbar_section() -> [SettingsPageItem; 9] {
+    fn toolbar_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2750,56 +2750,6 @@ fn editor_page() -> SettingsPage {
                             .toolbar
                             .get_or_insert_default()
                             .breadcrumbs = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Breadcrumb File Icons",
-                description: "Show file icons in the breadcrumb path segment's directory dropdowns.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("toolbar.breadcrumb_file_icons"),
-                    pick: |settings_content| {
-                        settings_content
-                            .editor
-                            .toolbar
-                            .as_ref()?
-                            .breadcrumb_file_icons
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .editor
-                            .toolbar
-                            .get_or_insert_default()
-                            .breadcrumb_file_icons = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Breadcrumb Folder Icons",
-                description: "Show folder icons or chevrons for directories in the breadcrumb path segment's directory dropdowns.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("toolbar.breadcrumb_folder_icons"),
-                    pick: |settings_content| {
-                        settings_content
-                            .editor
-                            .toolbar
-                            .as_ref()?
-                            .breadcrumb_folder_icons
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .editor
-                            .toolbar
-                            .get_or_insert_default()
-                            .breadcrumb_folder_icons = value;
                     },
                 }),
                 metadata: None,
