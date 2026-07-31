@@ -4008,13 +4008,16 @@ mod test {
                 < post_start_script.find("printf '%s'").unwrap(),
             "postStartCommand marker must be written only after the command succeeds"
         );
-        assert_eq!(docker_exec_commands[1]._inner_command.get_program(), "echo");
+        assert_eq!(
+            docker_exec_commands[1]._inner_command.get_program(),
+            "/bin/sh"
+        );
         assert_eq!(
             docker_exec_commands[1]
                 ._inner_command
                 .get_args()
                 .collect::<Vec<_>>(),
-            vec![OsStr::new("post-attach")]
+            vec![OsStr::new("-c"), OsStr::new("echo post-attach")]
         );
     }
 
