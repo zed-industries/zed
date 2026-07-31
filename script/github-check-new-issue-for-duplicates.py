@@ -356,6 +356,64 @@ def format_taxonomy_for_claude(area_labels):
     return "\n".join(sorted(lines))
 
 
+SEARCH_QUERY_TOOL = {
+    "name": "report_search_queries",
+    "description": "Report concise GitHub search queries for finding duplicate reports.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 3,
+            },
+        },
+        "required": ["queries"],
+    },
+}
+
+
+def generate_search_queries(anthropic_key, issue):
+    """Use Claude to derive a few concise searches from the issue's title and body."""
+    log("Generating search queries with Claude")
+    system_prompt = """Generate 1-3 concise GitHub search queries for finding earlier reports of the
+same underlying bug or request. Each query should contain 2-5 terms that are likely to appear in a
+canonical issue's title or body. Use the report body as well as its title, include distinctive terms
+such as error codes or requested mechanisms, and vary vocabulary when useful. Do not include GitHub
+qualifiers such as repo:, is:, label:, or in:, and do not wrap terms in quotes."""
+    user_content = f"""# Issue Title
+{issue['title']}
+
+# Issue Body
+{issue['body'][:4000]}"""
+    try:
+        response = call_claude_tool(
+            anthropic_key,
+            system_prompt,
+            user_content,
+            SEARCH_QUERY_TOOL,
+            max_tokens=300,
+        )
+    except (requests.RequestException, ValueError) as error:
+        log(f"  Search query generation failed ({error}); falling back to title and area searches")
+        return []
+
+    queries = []
+    for query in response.get("queries", []):
+        if not isinstance(query, str) or re.search(
+            r"\b(?:repo|is|label|state|created|updated|closed|in):", query, re.IGNORECASE
+        ):
+            continue
+        terms = re.findall(r"[A-Za-z0-9][A-Za-z0-9_./+#'-]*", query)
+        normalized = " ".join(terms[:5])
+        if normalized and normalized not in queries:
+            queries.append(normalized)
+
+    log(f"  Generated search queries: {queries}")
+    return queries
+
+
 def detect_areas(anthropic_key, issue, area_labels):
     """Use Claude to detect which area labels apply to the issue.
 
@@ -550,7 +608,20 @@ def rank_search_candidates(candidates):
     return sorted(candidates, key=rank, reverse=True)
 
 
-def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
+def extract_error_snippet(body):
+    match = re.search(
+        r"(?i:(?:\berror\b|\bfailed\b)[ \t]*:[ \t]+|\bpanicked at[ \t]+)([^\r\n]{5,90})",
+        body,
+    )
+    if not match:
+        return None
+    snippet = match.group(1).strip()
+    if snippet.startswith(("#", "<", "```")):
+        return None
+    return snippet
+
+
+def search_for_similar_issues(issue, detected_areas, search_queries, max_searches_per_state=10):
     """Search for similar open issues and issues closed within the last 90 days."""
     log("Searching for similar issues")
 
@@ -560,14 +631,11 @@ def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
     title_keywords = [word for word in issue["title"].split() if word.lower() not in STOPWORDS and len(word) > 2]
     keywords_query = " ".join(title_keywords) if title_keywords else None
 
-    # error pattern search: capture 5–90 chars after keyword, colon optional
-    error_pattern = r"(?i:\b(?:error|panicked|panic|failed)\b)\s*:?\s*([^\n]{5,90})"
-    error_match = re.search(error_pattern, issue["body"])
-    error_snippet = error_match.group(1).strip() if error_match else None
+    error_snippet = extract_error_snippet(issue["body"])
 
     def build_queries(base, area_window=None):
-        queries = []
-        if keywords_query:
+        queries = [("semantic_query", f"{base} {query}") for query in search_queries]
+        if keywords_query and keywords_query not in search_queries:
             queries.append(("title_keywords", f"{base} {keywords_query}"))
         if error_snippet:
             queries.append(("error_pattern", f'{base} in:body "{error_snippet}"'))
@@ -633,7 +701,7 @@ def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
     return similar_issues
 
 
-def search_discussions(issue, detected_areas, max_searches=4):
+def search_discussions(issue, detected_areas, search_queries, max_searches=6):
     """Search Discussions for a topic/request the new issue may duplicate.
 
     Discussions are not in the REST search API, so this uses GraphQL search(type: DISCUSSION).
@@ -644,13 +712,16 @@ def search_discussions(issue, detected_areas, max_searches=4):
     log("Searching discussions")
     title_keywords = [w for w in issue["title"].split() if w.lower() not in STOPWORDS and len(w) > 2]
     keywords_query = " ".join(title_keywords) if title_keywords else None
-    if not keywords_query:
+    if not search_queries and not keywords_query:
         return []
 
     base = f"repo:{REPO_OWNER}/{REPO_NAME} is:open"
-    queries = [("title_keywords", f"{base} {keywords_query}")]
-    for area in detected_areas:
-        queries.append(("area_label", f'{base} {keywords_query} label:"area:{area}"'))
+    queries = [("semantic_query", f"{base} {query}") for query in search_queries]
+    if keywords_query and keywords_query not in search_queries:
+        queries.append(("title_keywords", f"{base} {keywords_query}"))
+    if keywords_query:
+        for area in detected_areas:
+            queries.append(("area_label", f'{base} {keywords_query} label:"area:{area}"'))
 
     gql = """
     query($q: String!) {
@@ -1208,12 +1279,13 @@ if __name__ == "__main__":
     detected_areas = detect_areas(anthropic_key, issue, fetch_area_labels())
 
     # search for potential duplicates and related closed issues
+    search_queries = generate_search_queries(anthropic_key, issue)
     all_magnets = parse_duplicate_magnets()
     relevant_magnets = filter_magnets_by_areas(all_magnets, detected_areas)
     magnet_candidates = relevant_magnets[:10]
     enrich_magnets(magnet_candidates)
-    search_results = search_for_similar_issues(issue, detected_areas)
-    discussion_results = search_discussions(issue, detected_areas)
+    search_results = search_for_similar_issues(issue, detected_areas, search_queries)
+    discussion_results = search_discussions(issue, detected_areas, search_queries)
     candidates = magnet_candidates + search_results + discussion_results
     candidates = filter_author_referenced_candidates(issue, candidates)
 
