@@ -290,24 +290,58 @@ impl SymbolIndexManager {
             use futures::stream::{self, StreamExt};
 
             let background = cx.background_executor().clone();
+
+            // Group files by extension and load each language once,
+            // mirroring the initial scan strategy.
+            let mut by_extension: HashMap<String, Vec<(SymbolLocation, PathBuf)>> =
+                HashMap::new();
+            for file in to_index {
+                let ext = file
+                    .1
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                by_extension.entry(ext).or_default().push(file);
+            }
+
+            let mut grammar_cache: HashMap<String, Option<Arc<Grammar>>> = HashMap::new();
+            for (ext, files) in &by_extension {
+                if files.is_empty() {
+                    continue;
+                }
+                let sample_path = files[0].1.clone();
+                let language = match languages.load_language_for_file_path(&sample_path).await {
+                    Ok(language) => language,
+                    Err(_) => continue,
+                };
+                let grammar = match language.grammar() {
+                    Some(g) if g.outline_config.is_some() => Some(g.clone()),
+                    _ => None,
+                };
+                grammar_cache.insert(ext.clone(), grammar);
+            }
+
+            // Flatten back with pre-resolved grammars.
+            let mut file_list_with_grammar: Vec<(SymbolLocation, PathBuf, Arc<Grammar>)> =
+                Vec::new();
+            for (ext, files) in by_extension {
+                let grammar = match grammar_cache.get(&ext) {
+                    Some(Some(g)) => g.clone(),
+                    _ => continue,
+                };
+                for (location, abs_path) in files {
+                    file_list_with_grammar.push((location, abs_path, grammar.clone()));
+                }
+            }
+
             let mut batch: Vec<(SymbolLocation, Vec<symbol_index::ExtractedSymbol>)> = Vec::new();
 
-            let mut results = stream::iter(to_index)
-                .map(|(location, abs_path)| {
-                    let languages = languages.clone();
+            let mut results = stream::iter(file_list_with_grammar)
+                .map(|(location, abs_path, grammar)| {
                     let fs = fs.clone();
                     let background = background.clone();
                     async move {
-                        let language =
-                            match languages.load_language_for_file_path(&abs_path).await {
-                                Ok(language) => language,
-                                Err(_) => return (abs_path, None),
-                            };
-                        let grammar = match language.grammar() {
-                            Some(g) if g.outline_config.is_some() => g.clone(),
-                            _ => return (abs_path, None),
-                        };
-
                         let abs_path_for_io = abs_path.clone();
                         let extracted = background
                             .spawn(async move {
