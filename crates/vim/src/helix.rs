@@ -4035,7 +4035,7 @@ mod test {
                 store.update_user_settings(cx, |settings| {
                     settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
                         colors: ThemeColorsContent {
-                            vim_helix_jump_label_foreground: Some("#00ff00".to_string()),
+                            vim_helix_jump_label_foreground: Some("#00ff00".into()),
                             ..Default::default()
                         },
                         ..Default::default()

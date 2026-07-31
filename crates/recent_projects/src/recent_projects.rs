@@ -787,9 +787,6 @@ impl RecentProjects {
                         .get(hit.candidate_id)
                         .cloned()
                     {
-                        if picker.delegate.is_active_project_group(&key, cx) {
-                            return;
-                        }
                         picker.delegate.remove_project_group(key, window, cx);
                         let query = picker.query(cx);
                         picker.update_matches(query, window, cx);
@@ -1413,37 +1410,34 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }),
                         )
                     })
-                    .when(!is_active, |this| {
-                        this.child(
-                            IconButton::new("remove_open_project", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip({
-                                    let focus_handle = self.focus_handle.clone();
-                                    move |_, cx| {
-                                        Tooltip::for_action_in(
-                                            "Remove Project from Window",
-                                            &RemoveSelected,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    }
+                    .child(
+                        IconButton::new("remove_open_project", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = self.focus_handle.clone();
+                                move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove Project from Window",
+                                        &RemoveSelected,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click({
+                                cx.listener(move |picker, _, window, cx| {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    picker.delegate.remove_project_group(
+                                        project_group_key.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                    let query = picker.query(cx);
+                                    picker.update_matches(query, window, cx);
                                 })
-                                .on_click({
-                                    let project_group_key = project_group_key.clone();
-                                    cx.listener(move |picker, _, window, cx| {
-                                        cx.stop_propagation();
-                                        window.prevent_default();
-                                        picker.delegate.remove_project_group(
-                                            project_group_key.clone(),
-                                            window,
-                                            cx,
-                                        );
-                                        let query = picker.query(cx);
-                                        picker.update_matches(query, window, cx);
-                                    })
-                                }),
-                        )
-                    })
+                            }),
+                    )
                     .into_any_element();
 
                 Some(
