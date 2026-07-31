@@ -1,3 +1,4 @@
+use i18n::t;
 use settings::{Settings, SettingsStore};
 
 use gpui::{
@@ -286,7 +287,7 @@ impl SystemWindowTabs {
                 let merge_tabs = tabs.clone();
 
                 ContextMenu::build(window, cx, move |mut menu, _window_, _cx| {
-                    menu = menu.entry("Close Tab", None, move |window, cx| {
+                    menu = menu.entry(t!("Close Tab"), None, move |window, cx| {
                         Self::handle_right_click_action(
                             cx,
                             window,
@@ -298,7 +299,7 @@ impl SystemWindowTabs {
                         );
                     });
 
-                    menu = menu.entry("Close Other Tabs", None, move |window, cx| {
+                    menu = menu.entry(t!("Close Other Tabs"), None, move |window, cx| {
                         Self::handle_right_click_action(
                             cx,
                             window,
@@ -310,7 +311,7 @@ impl SystemWindowTabs {
                         );
                     });
 
-                    menu = menu.entry("Move Tab to New Window", None, move |window, cx| {
+                    menu = menu.entry(t!("Move Tab to New Window"), None, move |window, cx| {
                         Self::handle_right_click_action(
                             cx,
                             window,
@@ -326,7 +327,7 @@ impl SystemWindowTabs {
                         );
                     });
 
-                    menu = menu.entry("Show All Tabs", None, move |window, cx| {
+                    menu = menu.entry(t!("Show All Tabs"), None, move |window, cx| {
                         Self::handle_right_click_action(
                             cx,
                             window,
