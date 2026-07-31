@@ -9,6 +9,7 @@ use futures::FutureExt as _;
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
+use i18n::t;
 use language::LanguageName;
 
 use log::Level;
@@ -2959,15 +2960,15 @@ fn image_fallback_element(
         .filter(|alt| !alt.is_empty())
         .unwrap_or_else(|| dest_url.clone());
 
-    let label = format!("Failed to Load: {link_label}");
+    let label = t!("Failed to Load: {$link}", link = link_label);
 
     div()
         .id("image-fallback")
         .min_w_0()
         .child(Label::new(label).color(Color::Warning).underline())
-        .tooltip(Tooltip::text(
-            "Image failed to load. Open `zed: log` for more details.",
-        ))
+        .tooltip(Tooltip::text(t!(
+            "Image failed to load. Open `zed: log` for more details."
+        )))
         .when(open_image_url_on_click, |this| {
             this.cursor_pointer()
                 .on_click(move |_, _, cx| cx.open_url(&dest_url))
@@ -3030,9 +3031,9 @@ fn render_wrap_code_block_button(
     markdown: Entity<Markdown>,
 ) -> impl IntoElement {
     let (icon, tooltip) = if is_wrapped {
-        (IconName::TextUnwrap, "Unwrap Content")
+        (IconName::TextUnwrap, t!("Unwrap Content"))
     } else {
-        (IconName::TextWrap, "Wrap Content")
+        (IconName::TextWrap, t!("Wrap Content"))
     };
     let button_id = ElementId::NamedChild(
         Arc::new(ElementId::from(("wrap-code-block", markdown.entity_id()))),

@@ -24,6 +24,7 @@ base64.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 html5ever.workspace = true
 language.workspace = true
 linkify.workspace = true

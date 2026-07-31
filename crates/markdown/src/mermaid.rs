@@ -3,6 +3,7 @@ use gpui::{
     Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
     StyledText, Task, img, pulsating_between,
 };
+use i18n::t;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
@@ -402,7 +403,7 @@ pub(crate) fn render_mermaid_diagram(
                     .child(render_mermaid_code_view(&parsed.contents.contents))
                     .child(
                         div().absolute().top_1().right_2().child(
-                            Label::new("Rendering...")
+                            Label::new(t!("Rendering..."))
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted)
                                 .with_animation(
@@ -434,7 +435,7 @@ fn render_mermaid_image(
     source_offset: usize,
 ) -> AnyElement {
     let image = img(ImageSource::Render(render_image))
-        .with_fallback(|| Label::new("Failed to Load Mermaid Diagram").into_any_element());
+        .with_fallback(|| Label::new(t!("Failed to Load Mermaid Diagram")).into_any_element());
 
     if allow_overflow_x {
         div()
@@ -474,7 +475,7 @@ fn render_mermaid_tab_header(
         .gap_0p5()
         .mb_2p5()
         .child(
-            Button::new(preview_id, "Preview")
+            Button::new(preview_id, t!("Preview"))
                 .label_size(LabelSize::Small)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .toggle_state(!showing_code)
@@ -488,7 +489,7 @@ fn render_mermaid_tab_header(
                 }),
         )
         .child(
-            Button::new(code_id, "Code")
+            Button::new(code_id, t!("Code"))
                 .label_size(LabelSize::Small)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .toggle_state(showing_code)
