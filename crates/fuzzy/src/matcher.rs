@@ -322,7 +322,7 @@ impl<'a> Matcher<'a> {
 
 #[cfg(test)]
 mod tests {
-    use util::rel_path::{RelPath, rel_path};
+    use path::rel_path::{RelPath, rel_path};
 
     use crate::{PathMatch, PathMatchCandidate};
 

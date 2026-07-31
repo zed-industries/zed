@@ -1784,7 +1784,7 @@ impl PlatformWindow for MacWindow {
             .detach()
     }
 
-    fn titlebar_double_click(&self) {
+    fn titlebar_double_click(&self, is_resizable: bool, is_minimizable: bool) {
         let this = self.0.lock();
         let window = this.native_window;
         let closed = this.closed.clone();
@@ -1814,17 +1814,25 @@ impl PlatformWindow for MacWindow {
                                 // "Do Nothing" selected, so do no action
                             }
                             "Minimize" => {
-                                window.miniaturize_(nil);
+                                if is_minimizable {
+                                    window.miniaturize_(nil);
+                                }
                             }
                             "Maximize" => {
-                                window.zoom_(nil);
+                                if is_resizable {
+                                    window.zoom_(nil);
+                                }
                             }
                             "Fill" => {
                                 // There is no documented API for "Fill" action, so we'll just zoom the window
-                                window.zoom_(nil);
+                                if is_resizable {
+                                    window.zoom_(nil);
+                                }
                             }
                             _ => {
-                                window.zoom_(nil);
+                                if is_resizable {
+                                    window.zoom_(nil);
+                                }
                             }
                         }
                     }
@@ -3070,45 +3078,42 @@ fn is_drag_from_this_window(this: &Object, dragging_info: id) -> bool {
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
-    if is_drag_from_this_window(this, dragging_info) {
-        return NSDragOperationNone;
-    }
+    let is_source_window = is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
     if let Some(event) = paths.map(|paths| FileDropEvent::Entered { position, paths })
         && send_file_drop_event(window_state, event)
     {
+        if is_source_window {
+            return NSDragOperationMove;
+        }
         return NSDragOperationCopy;
     }
     NSDragOperationNone
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
-    if is_drag_from_this_window(this, dragging_info) {
-        return NSDragOperationNone;
-    }
+    let is_source_window = is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
-        NSDragOperationCopy
+        if is_source_window {
+            NSDragOperationMove
+        } else {
+            NSDragOperationCopy
+        }
     } else {
         NSDragOperationNone
     }
 }
 
-extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
-    if is_drag_from_this_window(this, dragging_info) {
-        return;
-    }
+extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
-    if is_drag_from_this_window(this, dragging_info) {
-        return NO;
-    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
@@ -3166,9 +3171,12 @@ extern "C" fn dragging_session_ended(
     // SAFETY: AppKit invokes this selector on the GPUIWindow instance registered in build_classes,
     // which always has WINDOW_STATE_IVAR initialized to the owning MacWindowState.
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
-    lock.synthetic_drag_counter += 1;
-    lock.last_left_mouse_down_event = None;
+    {
+        let mut lock = window_state.lock();
+        lock.synthetic_drag_counter += 1;
+        lock.last_left_mouse_down_event = None;
+    }
+    send_file_drop_event(window_state, FileDropEvent::Ended);
 }
 
 async fn synthetic_drag(
@@ -3202,7 +3210,7 @@ fn send_file_drop_event(
 ) -> bool {
     let external_files_dragged = match file_drop_event {
         FileDropEvent::Entered { .. } => Some(true),
-        FileDropEvent::Exited => Some(false),
+        FileDropEvent::Exited | FileDropEvent::Ended => Some(false),
         _ => None,
     };
 
