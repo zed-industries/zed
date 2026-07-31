@@ -11,12 +11,12 @@ use gpui::{
     Focusable, KeyContext, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
     actions, pulsating_between,
 };
+use i18n::{LocalizedString, t};
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
 use open_path_prompt::OpenPathDelegate;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
-    borrow::Cow,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -175,22 +175,24 @@ impl AddToolchainState {
                                 .p_1()
                                 .justify_between()
                                 .gap_2()
-                                .child(Label::new("Select Toolchain Path").color(Color::Muted).map(
-                                    |this| {
-                                        if is_loading {
-                                            this.with_animation(
-                                                "select-toolchain-label",
-                                                Animation::new(Duration::from_secs(2))
-                                                    .repeat()
-                                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                                |label, delta| label.alpha(delta),
-                                            )
-                                            .into_any()
-                                        } else {
-                                            this.into_any_element()
-                                        }
-                                    },
-                                ))
+                                .child(
+                                    Label::new(t!("Select Toolchain Path"))
+                                        .color(Color::Muted)
+                                        .map(|this| {
+                                            if is_loading {
+                                                this.with_animation(
+                                                    "select-toolchain-label",
+                                                    Animation::new(Duration::from_secs(2))
+                                                        .repeat()
+                                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                                    |label, delta| label.alpha(delta),
+                                                )
+                                                .into_any()
+                                            } else {
+                                                this.into_any_element()
+                                            }
+                                        }),
+                                )
                                 .when_some(error, |this, error| {
                                     this.child(Label::new(error).color(Color::Error))
                                 }),
@@ -373,6 +375,28 @@ impl AddToolchainState {
     }
 }
 
+/// The scope's user-facing name. Kept here rather than on `ToolchainScope` so
+/// that `language_core`, which has no UI, stays free of catalog lookups.
+fn scope_label(scope: &ToolchainScope) -> LocalizedString {
+    match scope {
+        // Explicit keys: "project" and "global" already name settings scopes
+        // elsewhere, and derive the same keys as these.
+        ToolchainScope::Subproject(_, _) => t!(key = "toolchain-scope-subproject", "Subproject"),
+        ToolchainScope::Project => t!(key = "toolchain-scope-project", "Project"),
+        ToolchainScope::Global => t!(key = "toolchain-scope-global", "Global"),
+    }
+}
+
+fn scope_description(scope: &ToolchainScope) -> LocalizedString {
+    match scope {
+        ToolchainScope::Subproject(_, _) => {
+            t!("Available only in the subproject you're currently in.")
+        }
+        ToolchainScope::Project => t!("Available in all locations in your current project."),
+        ToolchainScope::Global => t!("Available in all of your projects on this machine."),
+    }
+}
+
 impl Focusable for State {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
@@ -435,7 +459,7 @@ impl Render for AddToolchainState {
                             .child(
                                 v_flex()
                                     .child(
-                                        Label::new("Scope")
+                                        Label::new(t!("Scope"))
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                             .mt_1()
@@ -444,8 +468,8 @@ impl Render for AddToolchainState {
                                     .child(List::new().children(
                                         scope_options.iter().enumerate().map(|(i, scope)| {
                                             let is_selected = *scope == scope_picker.selected_scope;
-                                            let label = scope.label();
-                                            let description = scope.description();
+                                            let label = scope_label(scope);
+                                            let description = scope_description(scope);
                                             let scope_clone_for_action = scope.clone();
                                             let scope_clone_for_click = scope.clone();
 
@@ -818,15 +842,19 @@ impl ToolchainSelectorDelegate {
                         )
                     })
                     .await?;
-                let pretty_path = {
-                    if relative_path.is_empty() {
-                        Cow::Borrowed("worktree root")
-                    } else {
-                        Cow::Owned(format!("`{}`", relative_path.display(path_style)))
-                    }
+                let pretty_path = if relative_path.is_empty() {
+                    String::from(t!("worktree root"))
+                } else {
+                    format!("`{}`", relative_path.display(path_style))
                 };
-                let placeholder_text =
-                    format!("Select a {} for {pretty_path}…", meta.term.to_lowercase(),).into();
+                let placeholder_text = t!(
+                    "Select a {$term} for {$path}…",
+                    term = meta.term.to_lowercase(),
+                    path = pretty_path
+                )
+                .resolve()
+                .as_ref()
+                .into();
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.relative_path = relative_path;
                     this.delegate.placeholder_text = placeholder_text;
@@ -864,7 +892,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-        let placeholder_text = "Select a toolchain…".to_string().into();
+        let placeholder_text = t!("Select a toolchain…").resolve().as_ref().into();
         Self {
             toolchain_selector,
             candidates: Default::default(),
@@ -1147,7 +1175,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("select", "Select")
+                            Button::new("select", t!("Select"))
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &self.focus_handle,
