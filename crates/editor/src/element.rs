@@ -39,7 +39,7 @@ use crate::{
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
-use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage};
+use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::GitSummary};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DismissEvent, DispatchPhase,
@@ -7197,32 +7197,69 @@ fn breadcrumb_entry_icon_source(
     }
 }
 
+/// Mirrors the project panel's directory ordering and gitignore visibility settings
+/// (`project_panel.sort_mode`, `project_panel.sort_order`, `project_panel.hide_gitignore`) so the
+/// breadcrumb dropdown's listing agrees with the panel's, including when the user changes those
+/// settings — see `cmp_worktree_entries` and its `hide_gitignore` uses in
+/// `crates/project_panel/src/project_panel.rs`.
+///
+/// This can't just call into `project_panel::ProjectPanelSettings` and reuse its already-resolved
+/// fields: `project_panel` depends on `editor` (for `entry_git_aware_label_color`, reused below),
+/// so `editor` depending back on `project_panel` for this would be circular. Reading the same
+/// `project_panel` section of `SettingsContent` a second time, independently, keeps the ordering
+/// in sync with the panel without inverting that dependency.
+#[derive(Clone, Copy, settings::RegisterSetting)]
+struct BreadcrumbDirectoryListingSettings {
+    sort_mode: settings::ProjectPanelSortMode,
+    sort_order: settings::ProjectPanelSortOrder,
+    hide_gitignore: bool,
+}
+
+impl settings::Settings for BreadcrumbDirectoryListingSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let project_panel = content.project_panel.clone().unwrap();
+        Self {
+            sort_mode: project_panel.sort_mode.unwrap(),
+            sort_order: project_panel.sort_order.unwrap(),
+            hide_gitignore: project_panel.hide_gitignore.unwrap(),
+        }
+    }
+}
+
 /// A single row in a [`BreadcrumbDirectoryBrowser`] listing: `path`'s direct children, ready to
-/// render, already sorted (directories first, then alphabetical) and truncated to
-/// `MAX_BREADCRUMB_MENU_ENTRIES`.
+/// render, already sorted the same way the project panel orders siblings (see
+/// [`BreadcrumbDirectoryListingSettings`]) and truncated to `MAX_BREADCRUMB_MENU_ENTRIES`.
 struct BreadcrumbDirectoryEntry {
     name: SharedString,
     path: Arc<RelPath>,
     is_dir: bool,
+    is_ignored: bool,
 }
 
 /// Lists `path`'s direct children for a [`BreadcrumbDirectoryBrowser`] to render, plus whether the
-/// listing was truncated.
+/// listing was truncated. Entries gitignored by Git are dropped entirely when
+/// `project_panel.hide_gitignore` is set, matching the project panel; otherwise they're kept and
+/// [`BreadcrumbDirectoryBrowser::render_entry`] colors them the same way the panel does.
 fn breadcrumb_directory_entries(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,
     cx: &App,
 ) -> (Vec<BreadcrumbDirectoryEntry>, bool) {
+    let settings = BreadcrumbDirectoryListingSettings::get_global(cx);
     let mut entries = worktree
         .read(cx)
         .snapshot()
         .child_entries(path)
+        .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
         .cloned()
         .collect::<Vec<_>>();
     entries.sort_by(|a, b| {
-        b.is_dir()
-            .cmp(&a.is_dir())
-            .then_with(|| a.path.as_unix_str().cmp(b.path.as_unix_str()))
+        util::paths::compare_rel_paths_by(
+            (&*a.path, a.is_file()),
+            (&*b.path, b.is_file()),
+            settings.sort_mode.into(),
+            settings.sort_order.into(),
+        )
     });
     let truncated = entries.len() > MAX_BREADCRUMB_MENU_ENTRIES;
     entries.truncate(MAX_BREADCRUMB_MENU_ENTRIES);
@@ -7235,6 +7272,7 @@ fn breadcrumb_directory_entries(
                 name: name.into(),
                 path: entry.path.clone(),
                 is_dir: entry.is_dir(),
+                is_ignored: entry.is_ignored,
             })
         })
         .collect();
@@ -7420,6 +7458,16 @@ impl BreadcrumbDirectoryBrowser {
             })
             .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
 
+        // Colors ignored entries the same way the project panel does — see
+        // `entry_git_aware_label_color`'s doc comment. Passed `GitSummary::UNCHANGED` rather than
+        // this entry's real tracked/conflict/untracked status: `Worktree::child_entries` (unlike
+        // the panel's own `GitTraversal`) doesn't join per-entry git status onto `Entry`, and
+        // computing it separately just for this dropdown's coloring would duplicate the panel's
+        // traversal for a detail that matters far less here than the ignored-or-not distinction,
+        // which is already on hand as `Entry::is_ignored`.
+        let label_color =
+            crate::items::entry_git_aware_label_color(GitSummary::UNCHANGED, entry.is_ignored, is_active);
+
         let entry_path = entry.path.clone();
         let is_dir = entry.is_dir;
         ListItem::new(SharedString::from(format!(
@@ -7428,7 +7476,7 @@ impl BreadcrumbDirectoryBrowser {
         )))
         .toggle_state(is_active)
         .start_slot(icon)
-        .child(Label::new(entry.name))
+        .child(Label::new(entry.name).color(label_color))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.choose(entry_path.clone(), is_dir, window, cx);
         }))
@@ -12955,6 +13003,129 @@ mod tests {
                 "a/b",
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_entries_sorts_like_project_panel(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use util::path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "Apple": { "leaf.txt": "" },
+                "banana.txt": "",
+                "Cherry.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().clone()
+        });
+        cx.run_until_parked();
+
+        // Default settings (`sort_mode: directories_first`, `sort_order: default`) match the
+        // project panel's own default: the directory first, then files in case-insensitive
+        // natural order.
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
+            vec!["Apple", "banana.txt", "Cherry.txt"],
+        );
+
+        // Reusing `util::paths::compare_rel_paths_by` (see `BreadcrumbDirectoryListingSettings`)
+        // means changing `project_panel.sort_mode`/`sort_order` changes our ordering exactly the
+        // way it changes the panel's: files first, compared by raw Unicode codepoint — so the
+        // uppercase `Cherry.txt` sorts before lowercase `banana.txt`, and the directory moves
+        // last.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let project_panel = settings.project_panel.get_or_insert_default();
+                    project_panel.sort_mode = Some(settings::ProjectPanelSortMode::FilesFirst);
+                    project_panel.sort_order = Some(settings::ProjectPanelSortOrder::Unicode);
+                });
+            });
+        });
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert_eq!(
+            entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
+            vec!["Cherry.txt", "banana.txt", "Apple"],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_entries_honors_hide_gitignore_setting(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use util::path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "ignored.txt",
+                "kept.txt": "",
+                "ignored.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().clone()
+        });
+        cx.run_until_parked();
+
+        // `hide_gitignore` defaults to `false`: the ignored entry is still listed, matching
+        // `entry.is_ignored` on `worktree::Entry` so the caller can still color it, mirroring the
+        // project panel's default of showing gitignored entries dimmed rather than hidden.
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let ignored_entry = entries
+            .iter()
+            .find(|entry| entry.name.as_ref() == "ignored.txt")
+            .expect("gitignored entry is shown, not hidden, by default");
+        assert!(ignored_entry.is_ignored);
+
+        // Setting `project_panel.hide_gitignore` — the same setting the panel itself reads —
+        // removes it from the listing entirely, keeping the two views in agreement about what
+        // exists (see `BreadcrumbDirectoryListingSettings`'s doc comment).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project_panel.get_or_insert_default().hide_gitignore = Some(true);
+                });
+            });
+        });
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.name.as_ref() == "ignored.txt"),
+            "hide_gitignore should drop the ignored entry entirely, not just dim it",
+        );
+        assert!(
+            entries.iter().any(|entry| entry.name.as_ref() == "kept.txt"),
+            "non-ignored entries stay listed"
+        );
     }
 
     enum PrimaryNavigationOverlay {}
