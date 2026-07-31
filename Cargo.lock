@@ -6448,6 +6448,7 @@ dependencies = [
  "fs",
  "fuzzy",
  "gpui",
+ "i18n",
  "language",
  "log",
  "num-format",
