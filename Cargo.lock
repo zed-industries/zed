@@ -11707,6 +11707,7 @@ dependencies = [
  "component",
  "futures-lite 1.13.0",
  "gpui",
+ "i18n",
  "rpc",
  "sum_tree",
  "time",
