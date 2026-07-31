@@ -18088,6 +18088,7 @@ version = "0.1.0"
 dependencies = [
  "file_icons",
  "gpui",
+ "i18n",
  "language",
  "multi_buffer",
  "ui",
