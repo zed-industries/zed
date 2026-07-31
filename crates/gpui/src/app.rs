@@ -3071,20 +3071,24 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_restart_preserves_restart_arguments(cx: &mut TestAppContext) {
+    async fn test_restart_preserves_path_and_arguments(cx: &mut TestAppContext) {
         #[cfg(unix)]
         let user_data_dir = OsString::from_vec(b"/tmp/zed data/\xff".to_vec());
         #[cfg(not(unix))]
         let user_data_dir = OsString::from("C:\\zed data");
         let arguments = vec![OsString::from("--user-data-dir"), user_data_dir];
+        let restart_path = PathBuf::from("updated-zed");
         let _application =
             super::Application(cx.app.clone()).with_restart_arguments(arguments.clone());
         let restart = cx.expect_restart();
 
-        cx.update(|cx| cx.restart());
+        cx.update(|cx| {
+            cx.set_restart_path(restart_path.clone());
+            cx.restart();
+        });
 
         let (path, restart_arguments) = restart.await.expect("restart was not requested");
-        assert_eq!(path, None::<PathBuf>);
+        assert_eq!(path, Some(restart_path));
         assert_eq!(restart_arguments, arguments);
     }
 }

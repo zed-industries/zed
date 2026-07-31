@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
+    os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{
@@ -371,6 +372,39 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     (result.0 == 0).then_some(())
 }
 
+fn encode_restart_arguments(arguments: &[OsString]) -> OsString {
+    // `Start-Process` accepts a single native command line, so quote each argument according to
+    // the Windows argv parsing rules before passing the complete string through the environment.
+    let mut encoded = Vec::new();
+
+    for (index, argument) in arguments.iter().enumerate() {
+        if index > 0 {
+            encoded.push(b' ' as u16);
+        }
+        encoded.push(b'"' as u16);
+
+        let mut backslash_count = 0;
+        for code_unit in argument.encode_wide() {
+            if code_unit == b'\\' as u16 {
+                backslash_count += 1;
+            } else {
+                if code_unit == b'"' as u16 {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2 + 1));
+                } else {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count));
+                }
+                backslash_count = 0;
+                encoded.push(code_unit);
+            }
+        }
+
+        encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2));
+        encoded.push(b'"' as u16);
+    }
+
+    OsString::from_wide(&encoded)
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -436,7 +470,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
@@ -444,24 +478,20 @@ impl Platform for WindowsPlatform {
         let script = r#"
             $pidToWaitFor = $env:ZED_RESTART_PID
             $exePath = $env:ZED_RESTART_EXECUTABLE
-            $argumentCount = [int]$env:ZED_RESTART_ARGUMENT_COUNT
-            $arguments = @(
-                for ($index = 0; $index -lt $argumentCount; $index++) {
-                    [Environment]::GetEnvironmentVariable("ZED_RESTART_ARGUMENT_$index")
-                }
-            )
+            $argumentList = $env:ZED_RESTART_ARGUMENTS
 
             [Environment]::SetEnvironmentVariable("ZED_RESTART_PID", $null)
             [Environment]::SetEnvironmentVariable("ZED_RESTART_EXECUTABLE", $null)
-            [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENT_COUNT", $null)
-            for ($index = 0; $index -lt $argumentCount; $index++) {
-                [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENT_$index", $null)
-            }
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENTS", $null)
 
             while ($true) {
                 $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
                 if (-not $process) {
-                    & $exePath @arguments
+                    if ([string]::IsNullOrEmpty($argumentList)) {
+                        Start-Process -FilePath $exePath
+                    } else {
+                        Start-Process -FilePath $exePath -ArgumentList $argumentList
+                    }
                     break
                 }
                 Start-Sleep -Seconds 0.1
@@ -480,17 +510,13 @@ impl Platform for WindowsPlatform {
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
                 let mut command = new_std_command(get_windows_system_shell());
-                // A string-valued PowerShell `-Command` consumes following arguments as command
-                // text, so use the child environment to preserve argument boundaries and quoting.
+                let arguments = encode_restart_arguments(&arguments);
                 command
                     .arg("-command")
                     .arg(script)
                     .env("ZED_RESTART_PID", pid.to_string())
                     .env("ZED_RESTART_EXECUTABLE", app_path)
-                    .env("ZED_RESTART_ARGUMENT_COUNT", arguments.len().to_string());
-                for (index, argument) in arguments.into_iter().enumerate() {
-                    command.env(format!("ZED_RESTART_ARGUMENT_{index}"), argument);
-                }
+                    .env("ZED_RESTART_ARGUMENTS", arguments);
                 let restart_process = command.spawn();
 
                 match restart_process {
@@ -1511,8 +1537,28 @@ unsafe extern "system" fn window_procedure(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
+
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
+
+    use super::encode_restart_arguments;
+
+    #[test]
+    fn test_encode_restart_arguments() {
+        assert_eq!(encode_restart_arguments(&[]), OsStr::new(""));
+        assert_eq!(
+            encode_restart_arguments(&[
+                OsString::from("--user-data-dir"),
+                OsString::from(r"C:\Zed Data"),
+            ]),
+            OsStr::new(r#""--user-data-dir" "C:\Zed Data""#)
+        );
+        assert_eq!(
+            encode_restart_arguments(&[OsString::from(r"C:\")]),
+            OsStr::new(r#""C:\\""#)
+        );
+    }
 
     #[test]
     fn test_clipboard() {
