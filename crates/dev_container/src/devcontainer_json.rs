@@ -278,6 +278,13 @@ impl DevContainer {
         }
     }
 
+    pub(crate) fn override_command(&self) -> bool {
+        self.override_command.unwrap_or(!matches!(
+            self.build_type(),
+            DevContainerBuildType::DockerCompose
+        ))
+    }
+
     pub(crate) fn validate_devcontainer_contents(&self) -> Result<(), DevContainerError> {
         match self.build_type() {
             DevContainerBuildType::Image(_) => Ok(()),
@@ -633,6 +640,39 @@ mod test {
             ZedCustomizationsWrapper, deserialize_devcontainer_json,
         },
     };
+
+    #[test]
+    fn override_command_defaults_depend_on_build_type() {
+        let image = deserialize_devcontainer_json(r#"{"image":"ubuntu"}"#).expect("image config");
+        assert!(image.override_command());
+
+        let dockerfile = deserialize_devcontainer_json(r#"{"build":{"dockerfile":"Dockerfile"}}"#)
+            .expect("Dockerfile config");
+        assert!(dockerfile.override_command());
+
+        let compose = deserialize_devcontainer_json(
+            r#"{"dockerComposeFile":"compose.yaml","service":"app"}"#,
+        )
+        .expect("Compose config");
+        assert!(!compose.override_command());
+    }
+
+    #[test]
+    fn explicit_override_command_takes_precedence_over_build_type_default() {
+        let image = deserialize_devcontainer_json(r#"{"image":"ubuntu","overrideCommand":false}"#)
+            .expect("image config");
+        assert!(!image.override_command());
+
+        let compose = deserialize_devcontainer_json(
+            r#"{
+                "dockerComposeFile":"compose.yaml",
+                "service":"app",
+                "overrideCommand":true
+            }"#,
+        )
+        .expect("Compose config");
+        assert!(compose.override_command());
+    }
 
     #[test]
     fn should_deserialize_customizations_with_unknown_keys() {
