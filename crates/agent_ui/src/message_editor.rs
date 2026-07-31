@@ -1448,6 +1448,12 @@ impl MessageEditor {
         };
 
         let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(false));
+        let head_ref = repo
+            .read(cx)
+            .branch_list
+            .iter()
+            .find(|branch| branch.is_head)
+            .map(|branch| branch.name().to_owned());
         let editor = self.editor.clone();
         let mention_set = self.mention_set.clone();
         let weak_workspace = self.workspace.clone();
@@ -1460,6 +1466,15 @@ impl MessageEditor {
                     .and_then(|r| r.ok())
                     .flatten()
                     .ok_or_else(|| anyhow!("Could not determine default branch"))?;
+
+                let is_head = head_ref
+                    .as_ref()
+                    .is_some_and(|head| head == base_ref.as_ref());
+                let crease_name: SharedString = if is_head {
+                    "Working Changes".into()
+                } else {
+                    format!("Branch Diff (vs {})", base_ref).into()
+                };
 
                 cx.update(|window, cx| {
                     let mention_uri = MentionUri::GitDiff {
@@ -1486,7 +1501,7 @@ impl MessageEditor {
                     let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                         text_anchor,
                         content_len,
-                        mention_uri.name().into(),
+                        crease_name,
                         mention_uri.icon_path(cx),
                         mention_uri.tooltip_text(),
                         Some(mention_uri.clone()),
