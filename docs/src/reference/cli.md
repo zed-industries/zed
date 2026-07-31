@@ -85,6 +85,8 @@ Reuse an existing window, replacing its current workspace with the new paths:
 zed -r ~/projects/different-project
 ```
 
+By default (without `-n`, `-a`, or `-r`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
+
 ### `--diff <OLD_PATH> <NEW_PATH>`
 
 Open a diff view comparing two files. Can be specified multiple times:
@@ -124,6 +126,62 @@ Print Zed's version and exit:
 zed --version
 ```
 
+### `--completions <SHELL>`
+
+Generate shell completions for the `zed` CLI:
+
+#### Bash
+
+Add to `~/.bashrc`:
+
+```bash
+eval "$(zed --completions bash)"
+```
+
+#### Elvish
+
+Add to `~/.config/elvish/rc.elv`:
+
+```elvish
+set edit:completion:arg-completer[zed] = { |@args|
+    eval (zed --completions elvish | slurp)
+    $edit:completion:arg-completer[zed] $@args
+}
+```
+
+#### Fish
+
+Add to `~/.config/fish/config.fish`:
+
+```fish
+zed --completions fish | source
+```
+
+#### Nushell
+
+Add to `~/.config/nushell/config.nu`:
+
+```nu
+mkdir ($nu.data-dir | path join "vendor/autoload")
+^zed --completions nushell | save --force ($nu.data-dir | path join "vendor/autoload/zed.nu")
+```
+
+#### Powershell
+
+Add to `$PROFILE`:
+
+```powershell
+(&zed --completions powershell) | Out-String | Invoke-Expression
+```
+
+#### Zsh
+
+Add to `~/.zshrc`:
+
+```zsh
+eval "$(zed --completions zsh)"
+```
+
 ### `--uninstall`
 
 Uninstall Zed and remove all related files (macOS and Linux only):
@@ -154,11 +212,15 @@ This creates a temporary file with the stdin content and opens it in Zed.
 
 ## URL Handling
 
-The CLI can open `zed://`, `http://`, and `https://` URLs:
+The CLI can open `zed://`, `file://`, and `ssh://` URLs:
 
 ```sh
 zed zed://settings
-zed https://github.com/zed-industries/zed
+zed file:///Users/whatever/.zshrc
+zed ssh://me@example.com/abs/path
+zed ssh://me@example.com:/abs/path
+zed ssh://me@example.com/~/project
+zed ssh://me@example.com:~/project
 ```
 
 ## Using Zed as Your Default Editor

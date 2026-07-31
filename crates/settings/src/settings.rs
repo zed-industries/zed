@@ -2,6 +2,7 @@ mod base_keymap_setting;
 mod content_into_gpui;
 mod editable_setting_control;
 mod editorconfig_store;
+mod granted_write_path;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -37,6 +38,7 @@ pub use editable_setting_control::*;
 pub use editorconfig_store::{
     Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
 };
+pub use granted_write_path::GrantedWritePath;
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -155,6 +157,17 @@ pub fn vim_keymap() -> Cow<'static, str> {
     asset_str::<SettingsAssets>(VIM_KEYMAP_PATH)
 }
 
+/// Specific keybinding overrides. Loaded after the base keymap so they win over
+/// conflicting base-keymap (and default `Editor`) bindings for the same chords,
+/// while still allowing user keymaps (loaded last) to override them. Shared
+/// across features - prefer adding a context block here over creating another
+/// override keymap file.
+#[cfg(target_os = "macos")]
+pub const SPECIFIC_OVERRIDES_KEYMAP_PATH: &str = "keymaps/specific-overrides-macos.json";
+
+#[cfg(not(target_os = "macos"))]
+pub const SPECIFIC_OVERRIDES_KEYMAP_PATH: &str = "keymaps/specific-overrides.json";
+
 pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")
 }
@@ -173,6 +186,10 @@ pub fn initial_keymap_content() -> Cow<'static, str> {
 
 pub fn initial_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_tasks.json")
+}
+
+pub fn initial_worktree_setup_tasks_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_worktree_setup_tasks.json")
 }
 
 pub fn initial_debug_tasks_content() -> Cow<'static, str> {

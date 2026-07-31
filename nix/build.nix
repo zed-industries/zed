@@ -38,6 +38,7 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
+  lld,
   libx11,
   libxcb,
   nodejs_22,
@@ -137,6 +138,8 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+        # Provides `ld64.lld` for clang's `-fuse-ld=lld`.
+        lld
         (cargo-bundle.overrideAttrs (
           new: old: {
             version = "0.6.1-zed";
@@ -246,6 +249,11 @@ let
         }";
 
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
+      }
+      // lib.optionalAttrs stdenv'.hostPlatform.isDarwin {
+        # Link with lld on Darwin. nixpkgs' classic open-source ld64 fails to insert
+        # ARM64 branch thunks for this binary, producing `b(l) ARM64 branch out of range`.
+        NIX_CFLAGS_LINK = "-fuse-ld=lld";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
@@ -302,6 +310,13 @@ in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
+
+    # Expose the crane builder and shared arguments so other derivations (e.g.
+    # the docs preprocessor in the devshell) can build sibling workspace crates
+    # without duplicating all of the build inputs and environment setup.
+    passthru = {
+      inherit craneLib commonArgs cargoArtifacts;
+    };
 
     dontUseCmakeConfigure = true;
 

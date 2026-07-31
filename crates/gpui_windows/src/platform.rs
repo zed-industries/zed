@@ -9,9 +9,9 @@ use std::{
     },
 };
 
-use ::util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
+use gpui_util::{ResultExt, get_windows_system_shell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -21,7 +21,7 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -45,7 +45,11 @@ pub struct WindowsPlatform {
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
+    suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
+    has_package_identity: bool,
+    app_identity: RefCell<Option<(String, String)>>,
+    system_notifications: RefCell<SystemNotificationState>,
 }
 
 struct WindowsPlatformInner {
@@ -65,6 +69,9 @@ pub(crate) struct WindowsPlatformState {
     pub(crate) current_cursor: Cell<Option<HCURSOR>>,
     /// Shared with each window so `WM_SETCURSOR` can read it directly.
     pub(crate) cursor_visible: Arc<AtomicBool>,
+    /// Shared with each window to coordinate draws across windows on the UI
+    /// thread; see [`DrawCoordinator`].
+    pub(crate) draw_coordinator: Rc<DrawCoordinator>,
     directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
@@ -77,6 +84,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl WindowsPlatformState {
@@ -90,6 +98,7 @@ impl WindowsPlatformState {
             jump_list: RefCell::new(jump_list),
             current_cursor: Cell::new(current_cursor),
             cursor_visible: Arc::new(AtomicBool::new(true)),
+            draw_coordinator: Rc::new(DrawCoordinator::new()),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
@@ -193,9 +202,13 @@ impl WindowsPlatform {
             foreground_executor,
             text_system,
             direct_write_text_system,
+            suspend_resume_notification: RefCell::new(None),
             disable_direct_composition,
+            has_package_identity: has_package_identity(),
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
+            app_identity: RefCell::new(None),
+            system_notifications: RefCell::new(SystemNotificationState::new()),
         })
     }
 
@@ -230,6 +243,7 @@ impl WindowsPlatform {
             disable_direct_composition: self.disable_direct_composition,
             directx_devices: self.inner.state.directx_devices.borrow().clone().unwrap(),
             invalidate_devices: self.invalidate_devices.clone(),
+            draw_coordinator: self.inner.state.draw_coordinator.clone(),
         }
     }
 
@@ -414,17 +428,6 @@ impl Platform for WindowsPlatform {
 
         self.inner
             .with_callback(|callbacks| &callbacks.quit, |callback| callback());
-
-        // Bypass the CRT exit logic, which runs atexit handlers before calling ExitProcess.
-        // aws-lc registers an atexit handler that intentionally acquires a lock without releasing it.
-        // aws-lc also has thread_local objects which acquire this lock in their destructor.
-        // Destructors for thread_locals run under the loader lock, so there is a race condition
-        // where, if a thread exits after atexit handlers have run, the TLS destructors will block
-        // indefinitely on this lock while holding the loader lock. Since ExitProcess also requires
-        // the loader lock, process teardown will deadlock.
-        unsafe {
-            windows::Win32::System::Threading::ExitProcess(0);
-        }
     }
 
     fn quit(&self) {
@@ -467,11 +470,10 @@ impl Platform for WindowsPlatform {
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process =
-                    ::util::command::new_std_command(::util::shell::get_windows_system_shell())
-                        .arg("-command")
-                        .arg(script)
-                        .spawn();
+                let restart_process = new_std_command(get_windows_system_shell())
+                    .arg("-command")
+                    .arg(script)
+                    .spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
@@ -629,6 +631,66 @@ impl Platform for WindowsPlatform {
         self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.callbacks.system_wake.set(Some(callback));
+        let mut notification = self.suspend_resume_notification.borrow_mut();
+        if notification.is_none() {
+            *notification = unsafe {
+                // SAFETY: self.handle is the platform window receiving WM_POWERBROADCAST.
+                RegisterSuspendResumeNotification(
+                    HANDLE(self.handle.0),
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                )
+                .log_err()
+            };
+        }
+    }
+
+    fn set_app_identity(&self, identifier: &str, name: &str) {
+        // If the process has package identity, it's automatally granted an AUMID by the system.
+        if self.has_package_identity {
+            return;
+        }
+
+        let identifier_utf16 = windows::core::HSTRING::from(identifier);
+        // SAFETY: `identifier_utf16` outlives the call and is null-terminated.
+        if let Err(error) = unsafe {
+            windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
+                windows::core::PCWSTR(identifier_utf16.as_ptr()),
+            )
+        } {
+            log::warn!("failed to set the process AppUserModelID: {error}");
+        }
+        *self.app_identity.borrow_mut() = Some((identifier.to_string(), name.to_string()));
+    }
+
+    fn show_system_notification(&self, notification: gpui::SystemNotification) {
+        let app_identity = self.app_identity.borrow().clone();
+        self.system_notifications
+            .borrow_mut()
+            .show(
+                self.has_package_identity,
+                app_identity
+                    .as_ref()
+                    .map(|(identifier, name)| (identifier.as_str(), name.as_str())),
+                notification,
+            )
+            .log_err();
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        self.system_notifications.borrow_mut().dismiss(tag);
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
+    ) {
+        self.system_notifications
+            .borrow_mut()
+            .on_response(&self.foreground_executor, callback);
+    }
+
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
         *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
@@ -724,6 +786,15 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
+        // CredWriteW rejects larger blobs with the opaque RPC error
+        // 0x800706F7 "The stub received bad data", so fail with a clear
+        // message instead.
+        if password.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
+            return Task::ready(Err(anyhow!(
+                "credential for {url} is {} bytes, which exceeds the Windows Credential Manager limit of {CRED_MAX_CREDENTIAL_BLOB_SIZE} bytes",
+                password.len()
+            )));
+        }
         let password = password.to_vec();
         let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
         let mut target_name = windows_credentials_target_name(url)
@@ -883,6 +954,7 @@ impl WindowsPlatformInner {
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -1019,6 +1091,13 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
+    fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
+            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+        }
+        Some(1)
+    }
+
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         let directx_devices = lparam.0 as *const DirectXDevices;
         let directx_devices = unsafe { &*directx_devices };
@@ -1032,6 +1111,10 @@ impl WindowsPlatformInner {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {
+                // SAFETY: notification was returned by RegisterSuspendResumeNotification.
+                UnregisterSuspendResumeNotification(notification).log_err();
+            }
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();
@@ -1054,6 +1137,8 @@ pub(crate) struct WindowCreationInfo {
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
     pub(crate) invalidate_devices: Arc<AtomicBool>,
+    /// Shared with [`WindowsPlatformState::draw_coordinator`] and every other window.
+    pub(crate) draw_coordinator: Rc<DrawCoordinator>,
 }
 
 struct PlatformWindowCreateContext {
@@ -1064,6 +1149,24 @@ struct PlatformWindowCreateContext {
     main_receiver: Option<PriorityQueueReceiver<RunnableVariant>>,
     directx_devices: Option<DirectXDevices>,
     dispatcher: Option<Arc<WindowsDispatcher>>,
+}
+
+fn has_package_identity() -> bool {
+    let mut package_full_name_length = 0;
+    let result = unsafe {
+        windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName(
+            &mut package_full_name_length,
+            None,
+        )
+    };
+    if result == ERROR_INSUFFICIENT_BUFFER {
+        true
+    } else if result == APPMODEL_ERROR_NO_PACKAGE {
+        false
+    } else {
+        log::warn!("failed to determine whether the process has package identity: {result:?}");
+        false
+    }
 }
 
 fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
@@ -1186,8 +1289,8 @@ fn file_save_dialog(
             .context("failed to canonicalize directory")
             .log_err()
     {
-        let full_path = SanitizedPath::new(&full_path);
-        let full_path_string = full_path.to_string();
+        let full_path = dunce::simplified(&full_path);
+        let full_path_string = full_path.display().to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
         unsafe {

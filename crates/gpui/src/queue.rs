@@ -220,6 +220,11 @@ impl<T> PriorityQueueReceiver<T> {
         (sender, receiver)
     }
 
+    /// Returns whether the queue currently contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.state.queues.lock().is_empty()
+    }
+
     /// Tries to pop one element from the priority queue without blocking.
     ///
     /// This will early return if there are no elements in the queue.

@@ -1,6 +1,3 @@
-use alacritty_terminal::vte::ansi::{
-    CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
-};
 use collections::HashMap;
 use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
@@ -38,6 +35,7 @@ pub struct TerminalSettings {
     pub option_as_meta: bool,
     pub copy_on_select: bool,
     pub keep_selection_on_copy: bool,
+    pub open_links_in_mouse_mode: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
     pub flexible: bool,
@@ -108,6 +106,7 @@ impl settings::Settings for TerminalSettings {
             option_as_meta: user_content.option_as_meta.unwrap(),
             copy_on_select: user_content.copy_on_select.unwrap(),
             keep_selection_on_copy: user_content.keep_selection_on_copy.unwrap(),
+            open_links_in_mouse_mode: user_content.open_links_in_mouse_mode.unwrap(),
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),
             default_width: px(user_content.default_width.unwrap()),
@@ -160,26 +159,6 @@ impl From<settings::CursorShapeContent> for CursorShape {
             settings::CursorShapeContent::Underline => CursorShape::Underline,
             settings::CursorShapeContent::Bar => CursorShape::Bar,
             settings::CursorShapeContent::Hollow => CursorShape::Hollow,
-        }
-    }
-}
-
-impl From<CursorShape> for AlacCursorShape {
-    fn from(value: CursorShape) -> Self {
-        match value {
-            CursorShape::Block => AlacCursorShape::Block,
-            CursorShape::Underline => AlacCursorShape::Underline,
-            CursorShape::Bar => AlacCursorShape::Beam,
-            CursorShape::Hollow => AlacCursorShape::HollowBlock,
-        }
-    }
-}
-
-impl From<CursorShape> for AlacCursorStyle {
-    fn from(value: CursorShape) -> Self {
-        AlacCursorStyle {
-            shape: value.into(),
-            blinking: false,
         }
     }
 }

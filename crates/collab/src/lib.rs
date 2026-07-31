@@ -5,7 +5,6 @@ pub mod entities;
 pub mod env;
 pub mod executor;
 pub mod rpc;
-pub mod seed;
 pub mod services;
 
 use anyhow::Context as _;
@@ -17,10 +16,10 @@ use axum::{
 use db::Database;
 use executor::Executor;
 use serde::Deserialize;
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use util::ResultExt;
 
-use crate::services::{DatabaseUserService, UserService};
+use crate::services::{CloudUserService, UserService};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -122,9 +121,7 @@ impl std::error::Error for Error {}
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
-    pub seed_path: Option<PathBuf>,
     pub database_max_connections: u32,
-    pub api_token: String,
     pub livekit_server: Option<String>,
     pub livekit_key: Option<String>,
     pub livekit_secret: Option<String>,
@@ -140,6 +137,7 @@ pub struct Config {
     pub kinesis_access_key: Option<String>,
     pub kinesis_secret_key: Option<String>,
     pub zed_environment: Arc<str>,
+    pub zed_cloud_internal_api_key: String,
     pub zed_client_checksum_seed: Option<String>,
 }
 
@@ -171,20 +169,19 @@ impl Config {
             http_port: 0,
             database_url: "".into(),
             database_max_connections: 0,
-            api_token: "".into(),
             livekit_server: None,
             livekit_key: None,
             livekit_secret: None,
             rust_log: None,
             log_json: None,
             zed_environment: "test".into(),
+            zed_cloud_internal_api_key: "test-internal-api-key".into(),
             blob_store_url: None,
             blob_store_region: None,
             blob_store_access_key: None,
             blob_store_secret_key: None,
             blob_store_bucket: None,
             zed_client_checksum_seed: None,
-            seed_path: None,
             kinesis_region: None,
             kinesis_access_key: None,
             kinesis_secret_key: None,
@@ -254,7 +251,7 @@ impl AppState {
         let db = Arc::new(db);
         let this = Self {
             db: db.clone(),
-            http_client: Some(http_client),
+            http_client: Some(http_client.clone()),
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             executor,
@@ -263,7 +260,11 @@ impl AppState {
             } else {
                 None
             },
-            user_service: Arc::new(DatabaseUserService::new(db)),
+            user_service: Arc::new(CloudUserService::new(
+                http_client,
+                config.zed_cloud_url().to_string(),
+                config.zed_cloud_internal_api_key.clone(),
+            )),
             config,
         };
         Ok(Arc::new(this))
