@@ -1,15 +1,102 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, LazyLock},
+};
 
+use anyhow::Context as _;
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, MultiBufferOffset, ToPoint as _};
 use gpui::{App, AppContext as _, Context, Entity, Task, TaskExt, Window};
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
+use tree_sitter::{Query, StreamingIterator as _};
 use workspace::Workspace;
 
 mod modal;
 
 pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
+
+/// Inserts `new_task` (pretty-printed JSON object text) at the end of the top-level JSON
+/// array in the editor's buffer, creating the array if the buffer has none, and moves the
+/// cursor to the inserted task. The edit is left unsaved so callers decide whether to persist it.
+pub fn insert_task_json_into_editor(
+    editor: &mut Editor,
+    new_task: String,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> anyhow::Result<()> {
+    static LAST_ITEM_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(document (array (object) @object))", // TODO: use "." anchor to only match last object
+        )
+        .expect("Failed to create LAST_ITEM_QUERY")
+    });
+    static EMPTY_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(document (array) @array)",
+        )
+        .expect("Failed to create EMPTY_ARRAY_QUERY")
+    });
+
+    let content = editor.text(cx);
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let syntax_tree = parser
+        .parse(&content, None)
+        .context("could not parse tasks file")?;
+    let mut matches = cursor.matches(
+        &LAST_ITEM_QUERY,
+        syntax_tree.root_node(),
+        content.as_bytes(),
+    );
+
+    let mut last_offset = None;
+    while let Some(mat) = matches.next() {
+        if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
+            last_offset = Some(MultiBufferOffset(pos))
+        }
+    }
+    let mut edits = Vec::new();
+    let mut cursor_position = MultiBufferOffset(0);
+
+    if let Some(pos) = last_offset {
+        edits.push((pos..pos, format!(",\n{new_task}")));
+        cursor_position = pos + ",\n  ".len();
+    } else {
+        let mut matches = cursor.matches(
+            &EMPTY_ARRAY_QUERY,
+            syntax_tree.root_node(),
+            content.as_bytes(),
+        );
+
+        if let Some(mat) = matches.next() {
+            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
+                edits.push((
+                    MultiBufferOffset(pos)..MultiBufferOffset(pos),
+                    format!("\n{new_task}\n"),
+                ));
+                cursor_position = MultiBufferOffset(pos) + "\n  ".len();
+            }
+        } else {
+            edits.push((
+                MultiBufferOffset(0)..MultiBufferOffset(0),
+                format!("[\n{}\n]", new_task),
+            ));
+            cursor_position = MultiBufferOffset("[\n  ".len());
+        }
+    }
+    editor.transact(window, cx, |editor, window, cx| {
+        editor.edit(edits, cx);
+        let snapshot = editor.buffer().read(cx).read(cx);
+        let point = cursor_position.to_point(&snapshot);
+        drop(snapshot);
+        editor.go_to_singleton_buffer_point(point, window, cx);
+    });
+    Ok(())
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(

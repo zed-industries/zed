@@ -3120,6 +3120,13 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_short_alt_screen_stays_bottom_anchored_on_resize(cx: &mut TestAppContext) {
+        let (bounds, draw_size) = draw_standalone_terminal(b"\x1b[?1049h$ ", cx).await;
+        assert!(bounds.origin.y > px(0.));
+        assert_eq!(bounds.bottom(), draw_size.height);
+    }
+
+    #[gpui::test]
     async fn test_tab_content_shows_terminal_title_when_custom_title_directly_set_empty(
         cx: &mut TestAppContext,
     ) {

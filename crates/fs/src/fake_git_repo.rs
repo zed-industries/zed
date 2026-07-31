@@ -79,6 +79,7 @@ pub struct FakeGitRepositoryState {
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
+    pub commit_template: Option<GitCommitTemplate>,
 }
 
 impl FakeGitRepositoryState {
@@ -104,6 +105,7 @@ impl FakeGitRepositoryState {
             commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
+            commit_template: None,
         }
     }
 }
@@ -163,7 +165,7 @@ impl FakeGitRepository {
 
 impl GitRepository for FakeGitRepository {
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
-        async { Ok(None) }.boxed()
+        self.with_state_async(false, |state| Ok(state.commit_template.clone()))
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -1156,6 +1158,7 @@ impl GitRepository for FakeGitRepository {
 
     fn diff_stat(
         &self,
+        diff: git::repository::DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
@@ -1203,22 +1206,43 @@ impl GitRepository for FakeGitRepository {
 
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
-            let all_paths: HashSet<&RepoPath> = state
-                .head_contents
-                .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
-                .collect();
+            let (old_files, new_files) = match diff {
+                git::repository::DiffStatType::HeadToIndex => {
+                    (&state.head_contents, &state.index_contents)
+                }
+                git::repository::DiffStatType::HeadToWorktree => {
+                    (&state.head_contents, &worktree_files)
+                }
+                git::repository::DiffStatType::IndexToWorktree => {
+                    (&state.index_contents, &worktree_files)
+                }
+            };
+            let all_paths: HashSet<&RepoPath> = match diff {
+                git::repository::DiffStatType::HeadToIndex => state
+                    .head_contents
+                    .keys()
+                    .chain(state.index_contents.keys())
+                    .collect(),
+                git::repository::DiffStatType::HeadToWorktree => state
+                    .head_contents
+                    .keys()
+                    .chain(
+                        worktree_files
+                            .keys()
+                            .filter(|path| state.index_contents.contains_key(*path)),
+                    )
+                    .collect(),
+                git::repository::DiffStatType::IndexToWorktree => {
+                    state.index_contents.keys().collect()
+                }
+            };
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {
                     continue;
                 }
-                let head = state.head_contents.get(path);
-                let worktree = worktree_files.get(path);
-                match (head, worktree) {
+                let old_file = old_files.get(path);
+                let new_file = new_files.get(path);
+                match (old_file, new_file) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),
