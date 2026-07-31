@@ -11199,6 +11199,56 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_localized_placeholder_is_laid_out_again_for_a_new_locale(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _guard = i18n::lock_for_test();
+        init_test(cx, |_| {});
+
+        // A catalog holding only this key, so changing the locale cannot disturb
+        // what any other test in this binary asserts about English text.
+        i18n::reset();
+        i18n::add_ftl(
+            &"zh-CN".parse().expect("locale"),
+            "placeholder-under-test = 占位文本\n".to_owned(),
+        )
+        .expect("catalog parses");
+
+        let window = cx.add_window(|window, cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_localized_placeholder_text(i18n::t!("Placeholder under test"), window, cx);
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+
+        assert_eq!(
+            cx.update(|_, cx| editor.update(cx, |editor, cx| editor.placeholder_text(cx)))
+                .as_deref(),
+            Some("Placeholder under test"),
+            "with no catalog active the placeholder should read as the English literal"
+        );
+
+        i18n::set_locale("zh-CN".parse().expect("locale"));
+        // The text is laid out as a buffer rather than resolved per draw, so it
+        // changes when the element is laid out again — which is where the editor
+        // notices the locale moved on.
+        cx.draw(Default::default(), size(px(300.), px(50.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+
+        assert_eq!(
+            cx.update(|_, cx| editor.update(cx, |editor, cx| editor.placeholder_text(cx)))
+                .as_deref(),
+            Some("占位文本"),
+            "a localized placeholder should be laid out again for the new locale"
+        );
+
+        i18n::reset();
+    }
+
+    #[gpui::test]
     async fn test_point_for_position_clipped_rows(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 

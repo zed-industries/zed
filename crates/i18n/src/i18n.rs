@@ -33,6 +33,8 @@ mod catalog;
 mod key;
 mod localized;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use catalog::lock_for_test;
 pub use catalog::{
     DEFAULT_LOCALE, DISPLAY_NAME_KEY, add_ftl, available_locales, current_locale, display_label,
     display_name, generation, reset, set_locale,

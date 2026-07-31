@@ -10555,13 +10555,17 @@ dependencies = [
 name = "locale_selector"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "fs",
  "fuzzy",
  "gpui",
  "i18n",
  "picker",
+ "project",
+ "serde_json",
  "settings",
  "telemetry",
+ "theme",
  "ui",
  "util",
  "workspace",

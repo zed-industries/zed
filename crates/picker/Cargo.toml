@@ -37,5 +37,6 @@ util.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+i18n = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 settings.workspace = true

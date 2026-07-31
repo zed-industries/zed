@@ -12,6 +12,9 @@ workspace = true
 path = "src/i18n.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 fluent-bundle.workspace = true
 fluent-langneg.workspace = true

@@ -1591,6 +1591,7 @@ impl<D: PickerDelegate> Picker<D> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use i18n::t;
     use std::cell::Cell;
 
     struct TestDelegate {
@@ -1600,6 +1601,10 @@ mod tests {
         supports_multi_select: bool,
         selected_items: Vec<usize>,
         multi_confirmed: Rc<Cell<Option<Vec<usize>>>>,
+        /// How many times the picker has asked for the placeholder. A delegate
+        /// resolves it afresh on every call, so asking again is what makes the
+        /// placeholder follow a locale change.
+        placeholder_requests: Rc<Cell<usize>>,
     }
 
     impl TestDelegate {
@@ -1611,6 +1616,7 @@ mod tests {
                 supports_multi_select: false,
                 selected_items: Vec::new(),
                 multi_confirmed: Rc::new(Cell::new(None)),
+                placeholder_requests: Rc::new(Cell::new(0)),
             }
         }
 
@@ -1654,7 +1660,9 @@ mod tests {
         }
 
         fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-            "Test".into()
+            self.placeholder_requests
+                .set(self.placeholder_requests.get() + 1);
+            String::from(t!("Placeholder under test")).into()
         }
 
         fn update_matches(
@@ -1940,6 +1948,45 @@ mod tests {
                 "leaving the mode should clear the selection"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_placeholder_is_asked_for_again_when_the_locale_changes(cx: &mut TestAppContext) {
+        let _guard = i18n::lock_for_test();
+        init_test(cx);
+
+        // A catalog holding only this key, so changing the locale cannot disturb
+        // what any other test in this binary asserts about English text.
+        i18n::reset();
+        i18n::add_ftl(
+            &"zh-CN".parse().expect("locale"),
+            "placeholder-under-test = 占位文本\n".to_owned(),
+        )
+        .expect("catalog parses");
+
+        let delegate = TestDelegate::new(vec![true]);
+        let requests = delegate.placeholder_requests.clone();
+        let (picker, cx) =
+            cx.add_window_view(|window, cx| Picker::uniform_list(delegate, window, cx));
+        cx.run_until_parked();
+
+        let before = requests.get();
+        assert!(
+            before > 0,
+            "the picker should have asked for its placeholder while setting up"
+        );
+
+        i18n::set_locale("zh-CN".parse().expect("locale"));
+        picker.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert!(
+            requests.get() > before,
+            "a locale change should make the picker ask its delegate again, \
+             since that is what re-resolves the placeholder"
+        );
+
+        i18n::reset();
     }
 }
 

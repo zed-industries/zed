@@ -238,9 +238,11 @@ pub fn reset() {
 /// Serializes tests that touch the process-global catalog.
 ///
 /// Tests within a crate run on multiple threads, so any test that loads a catalog
-/// or changes the locale must hold this for the duration.
-#[cfg(test)]
-pub(crate) fn lock_for_test() -> parking_lot::MutexGuard<'static, ()> {
+/// or changes the locale must hold this for the duration. Reached from other
+/// crates through the `test-support` feature, since the catalog a test loads is
+/// visible to every other test in the same binary.
+#[cfg(any(test, feature = "test-support"))]
+pub fn lock_for_test() -> parking_lot::MutexGuard<'static, ()> {
     static TEST_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     TEST_LOCK.lock()
 }
