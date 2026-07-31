@@ -16,6 +16,7 @@ doctest = false
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 log.workspace = true
 picker.workspace = true
 serde.workspace = true
