@@ -82,6 +82,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     sync::atomic::{self, AtomicBool},
+    time::Duration,
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, deserialize_icon_theme};
@@ -434,6 +435,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 
     init_cursor_hide_mode(cx);
+    init_keybinding_sequence_timeout(cx);
     init_app_appearance(cx);
     init_reduce_motion(cx);
 
@@ -2060,6 +2062,25 @@ impl Settings for CursorHideModeSetting {
 
 fn init_cursor_hide_mode(cx: &mut App) {
     let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct KeybindingSequenceTimeoutSetting(Duration);
+
+impl Settings for KeybindingSequenceTimeoutSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(Duration::from_millis(
+            content.keybinding_sequence_timeout_ms.unwrap(),
+        ))
+    }
+}
+
+fn init_keybinding_sequence_timeout(cx: &mut App) {
+    let apply = |cx: &mut App| {
+        cx.set_keybinding_sequence_timeout(KeybindingSequenceTimeoutSetting::get_global(cx).0);
+    };
     apply(cx);
     cx.observe_global::<SettingsStore>(apply).detach();
 }

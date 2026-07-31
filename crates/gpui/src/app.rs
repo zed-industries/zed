@@ -74,6 +74,7 @@ mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
+const DEFAULT_KEYBINDING_SEQUENCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
@@ -705,6 +706,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) keybinding_sequence_timeout: Duration,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
     pub(crate) global_action_listeners:
@@ -826,6 +828,7 @@ impl App {
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                keybinding_sequence_timeout: DEFAULT_KEYBINDING_SEQUENCE_TIMEOUT,
                 keyboard_layout,
                 keyboard_mapper,
                 global_action_listeners: Default::default(),
@@ -2171,6 +2174,16 @@ impl App {
     /// Get all key bindings in the app.
     pub fn key_bindings(&self) -> Rc<RefCell<Keymap>> {
         self.keymap.clone()
+    }
+
+    /// Returns how long ambiguous keybinding sequences wait for another keystroke.
+    pub fn keybinding_sequence_timeout(&self) -> Duration {
+        self.keybinding_sequence_timeout
+    }
+
+    /// Sets how long ambiguous keybinding sequences wait for another keystroke.
+    pub fn set_keybinding_sequence_timeout(&mut self, timeout: Duration) {
+        self.keybinding_sequence_timeout = timeout;
     }
 
     /// Register a global handler for actions invoked via the keyboard. These handlers are run at

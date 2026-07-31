@@ -1558,7 +1558,7 @@ fn keymap_page() -> SettingsPage {
         ]
     }
 
-    fn base_keymap_section() -> [SettingsPageItem; 2] {
+    fn base_keymap_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Base Keymap"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1576,6 +1576,22 @@ fn keymap_page() -> SettingsPage {
                     should_do_titlecase: Some(false),
                     ..Default::default()
                 })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Keybinding Sequence Timeout",
+                description: "Time to wait in milliseconds before resolving an ambiguous keybinding sequence.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("keybinding_sequence_timeout_ms"),
+                    pick: |settings_content| {
+                        settings_content.keybinding_sequence_timeout_ms.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.keybinding_sequence_timeout_ms = value;
+                    },
+                }),
+                metadata: None,
                 files: USER,
             }),
         ]
