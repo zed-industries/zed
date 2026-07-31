@@ -442,9 +442,7 @@ impl<'de> Deserialize<'de> for LifecycleScript {
                 while let Some(key) = map.next_key::<String>()? {
                     let value: Value = map.next_value()?;
                     let script_args = match value {
-                        Value::String(s) => {
-                            LifecycleScript::shell_command(&s)
-                        }
+                        Value::String(s) => LifecycleScript::shell_command(&s),
                         Value::Array(arr) => {
                             let strings: Vec<String> = arr
                                 .into_iter()
@@ -1765,12 +1763,18 @@ mod test {
         "#;
 
         let result = deserialize_devcontainer_json(json);
-        assert!(result.is_ok(), "Deserialization should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Deserialization should succeed: {:?}",
+            result.err()
+        );
 
         let dc = result.unwrap();
         if let Some(script) = dc.post_create_command {
             let cmds = script.script_commands();
-            let cmd = cmds.get("default").expect("String command should have a 'default' key");
+            let cmd = cmds
+                .get("default")
+                .expect("String command should have a 'default' key");
             let args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
             assert_eq!(
                 cmd.get_program(),
@@ -1802,12 +1806,18 @@ mod test {
         "#;
 
         let result = deserialize_devcontainer_json(json);
-        assert!(result.is_ok(), "Deserialization should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Deserialization should succeed: {:?}",
+            result.err()
+        );
 
         let dc = result.unwrap();
         if let Some(script) = dc.post_create_command {
             let cmds = script.script_commands();
-            let cmd = cmds.get("default").expect("Array command should have a 'default' key");
+            let cmd = cmds
+                .get("default")
+                .expect("Array command should have a 'default' key");
             let args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
             assert_eq!(
                 cmd.get_program(),
