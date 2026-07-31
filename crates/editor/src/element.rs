@@ -6976,6 +6976,25 @@ pub(crate) fn breadcrumb_path_segments(
     (labels, targets)
 }
 
+/// Flattens `text` to a single display line by replacing newlines with spaces, for text that
+/// carries along a set of *byte-offset* highlight ranges (tree-sitter/LSP syntax highlighting, or
+/// a manually computed range like `apply_dirty_filename_style`'s bold-filename span) computed
+/// against the original, unflattened string. Byte-offset highlights are only still valid against
+/// the returned string because `'\n'` and `' '` both encode to exactly one UTF-8 byte, so the
+/// replacement can't shift any byte index — every other transform in this file that touches text
+/// with highlights attached must preserve that same "same byte length" invariant or recompute the
+/// ranges. Debug-asserts the invariant instead of only documenting it, so a future change to the
+/// replacement character (or to `'\n'` handling) fails a test instead of silently mis-highlighting.
+fn flatten_text_for_single_line_display(text: &str) -> String {
+    debug_assert_eq!(
+        '\n'.len_utf8(),
+        ' '.len_utf8(),
+        "replacement must be single-byte like the newline it replaces, or byte-offset highlights \
+         computed against the original text would need remapping"
+    );
+    text.replace('\n', " ")
+}
+
 /// Renders a breadcrumb symbol dropdown entry the same way the outline picker and outline panel
 /// render outline items: with `item.highlight_ranges` (tree-sitter/LSP syntax highlighting)
 /// applied to its text, so `fun resolveEnv` reads as code and the symbol's kind is legible from
@@ -7012,7 +7031,7 @@ fn render_outline_item_menu_row(
             this.child(div().size(IconSize::Small.rems()))
         })
         .child(
-            StyledText::new(item.text.replace('\n', " "))
+            StyledText::new(flatten_text_for_single_line_display(&item.text))
                 .with_default_highlights(&text_style, item.highlight_ranges.clone()),
         )
         .into_any_element()
@@ -7679,6 +7698,26 @@ fn collapse_breadcrumb_segments(
     (segments, symbol_segments, file_segment_index)
 }
 
+/// Whether the breadcrumb bar's leading path/file segment should offer any navigation
+/// (directory-splitting into a dropdown, or the whole-buffer symbol-listing fallback) at all.
+///
+/// `false` for two cases the maintainer review on #60282 called out by name:
+/// - `has_project_path: false` — an untitled/unsaved buffer, which has no location in a project
+///   for a dropdown to browse from.
+/// - `worktree_is_single_file: Some(true)` — a file opened outside any real worktree, which Zed
+///   represents as a worktree scoped to that one file (see [`project::Worktree::is_single_file`]);
+///   there's no directory tree to browse and no sibling to reach.
+///
+/// `worktree_is_single_file: None` (the worktree couldn't be resolved at all, e.g. removed
+/// mid-session) is treated as navigable, preserving the prior fallback-to-symbols behavior for
+/// that unrelated edge case rather than conflating "can't check" with "confirmed not navigable".
+fn breadcrumb_path_is_navigable(
+    has_project_path: bool,
+    worktree_is_single_file: Option<bool>,
+) -> bool {
+    has_project_path && !worktree_is_single_file.unwrap_or(false)
+}
+
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
@@ -7739,6 +7778,29 @@ pub fn render_breadcrumb_text(
                 .as_ref()
                 .map(|navigation| navigation.active_path.clone());
 
+            // A buffer with no project path at all (never saved) has no directory tree to
+            // browse and no location in a project for the leading segment to represent, so it
+            // must stay plain text rather than degrading to a whole-buffer symbol dropdown.
+            // Likewise a path that resolves into a worktree created just to hold one file opened
+            // outside any real project (see `Worktree::is_single_file`) has no siblings and no
+            // real root to split into — IntelliJ's navigation bar and VS Code's breadcrumbs both
+            // leave such files unclickable rather than offering a dropdown with nothing useful
+            // in it. A worktree that can't be resolved at all (removed mid-session) is treated
+            // as navigable, preserving the prior fallback-to-symbols behavior for that edge case.
+            let is_navigable = breadcrumb_path_is_navigable(
+                real_project_path.is_some(),
+                real_project_path.as_ref().and_then(|project_path| {
+                    editor_ref
+                        .project()
+                        .and_then(|project| {
+                            project
+                                .read(cx)
+                                .worktree_for_id(project_path.worktree_id, cx)
+                        })
+                        .map(|worktree| worktree.read(cx).is_single_file())
+                }),
+            );
+
             // Splitting the path requires knowing which worktree to name its root and list its
             // top-level entries from; falls back to the single unsplit path segment
             // `render_breadcrumb_text`'s caller already built otherwise (e.g. an unsaved buffer).
@@ -7749,7 +7811,8 @@ pub fn render_breadcrumb_text(
             // unsplit segment when more than one worktree is visible (via `resolve_file_path`'s
             // `include_root`); that doesn't double up here because this whole branch replaces
             // that segment's text wholesale via the `splice` below rather than reusing it.
-            if !segments.is_empty()
+            if is_navigable
+                && !segments.is_empty()
                 && let Some(project) = editor_ref.project()
             {
                 let split = if let Some(navigation) = navigation
@@ -7799,11 +7862,16 @@ pub fn render_breadcrumb_text(
                 }
             }
 
-            if !path_split {
+            if !path_split && is_navigable {
                 symbol_segments.push(Some(BreadcrumbSegmentTarget::Symbol {
                     buffer_id,
                     item: None,
                 }));
+            } else if !path_split {
+                // Not navigable (see `is_navigable`'s doc comment): leave this segment with no
+                // target at all so `render_breadcrumb_text` renders it as plain, unclickable
+                // text instead of wrapping it in a popover trigger.
+                symbol_segments.push(None);
             }
 
             if !navigated {
@@ -7889,7 +7957,7 @@ pub fn render_breadcrumb_text(
                     return with_separator(index, styled_element);
                 }
 
-                let label = StyledText::new(segment.text.replace('\n', " "))
+                let label = StyledText::new(flatten_text_for_single_line_display(&segment.text))
                     .with_default_highlights(&text_style, segment.highlights)
                     .into_any();
                 let label = with_separator(index, label);
@@ -8016,7 +8084,7 @@ fn apply_dirty_filename_style(
     text_style: &gpui::TextStyle,
     cx: &App,
 ) -> Option<gpui::AnyElement> {
-    let text = segment.text.replace('\n', " ");
+    let text = flatten_text_for_single_line_display(&segment.text);
 
     let filename_position = std::path::Path::new(segment.text.as_ref())
         .file_name()
@@ -11845,6 +11913,42 @@ mod tests {
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
+
+    #[test]
+    fn test_breadcrumb_path_is_navigable() {
+        // Untitled/unsaved buffer: no project path at all.
+        assert!(!breadcrumb_path_is_navigable(false, None));
+        assert!(!breadcrumb_path_is_navigable(false, Some(false)));
+
+        // File opened outside any real worktree — Zed represents it as a single-file worktree.
+        assert!(!breadcrumb_path_is_navigable(true, Some(true)));
+
+        // Ordinary file inside a real worktree.
+        assert!(breadcrumb_path_is_navigable(true, Some(false)));
+
+        // Worktree couldn't be resolved (e.g. removed mid-session): preserves the prior
+        // fallback-to-symbols behavior rather than assuming non-navigable.
+        assert!(breadcrumb_path_is_navigable(true, None));
+    }
+
+    #[test]
+    fn test_flatten_text_for_single_line_display_preserves_byte_offsets() {
+        // The whole point of `flatten_text_for_single_line_display` is that byte-offset
+        // highlight ranges computed against `original` stay valid against its return value —
+        // verify that directly rather than just trusting the debug-assert, by locating the same
+        // substring by byte offset in both strings.
+        let original = "fn outer() {\n    inner()\n}";
+        let flattened = flatten_text_for_single_line_display(original);
+
+        assert_eq!(flattened, "fn outer() {     inner() }");
+        assert_eq!(flattened.len(), original.len());
+
+        let inner_offset = original.find("inner").unwrap();
+        assert_eq!(
+            &flattened[inner_offset..inner_offset + "inner".len()],
+            "inner",
+        );
+    }
 
     #[test]
     fn test_breadcrumb_entry_icon_source() {
