@@ -19,6 +19,7 @@ file_icons.workspace = true
 fuzzy.workspace = true
 itertools.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true

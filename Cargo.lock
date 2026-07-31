@@ -18569,6 +18569,7 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
+ "i18n",
  "itertools 0.14.0",
  "language",
  "menu",
