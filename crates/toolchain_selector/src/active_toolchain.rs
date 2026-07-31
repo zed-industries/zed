@@ -1,4 +1,3 @@
-use i18n::t;
 use std::sync::Arc;
 
 use editor::Editor;
@@ -249,10 +248,7 @@ impl Render for ActiveToolchain {
                         });
                     }
                 }))
-                .tooltip(Tooltip::text(t!(
-                    "Select {$term}",
-                    term = self.term.clone()
-                ))),
+                .tooltip(Tooltip::text(crate::select_term_label(&self.term))),
         )
     }
 }

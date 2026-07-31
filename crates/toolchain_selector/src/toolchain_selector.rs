@@ -375,6 +375,46 @@ impl AddToolchainState {
     }
 }
 
+/// Names the "select a toolchain" affordance for a language's own term.
+///
+/// `ToolchainMetadata::term` is an English identifier: each language's toolchain
+/// lister supplies it from `crates/languages`, which is not localized. The terms
+/// Zed itself ships get a whole-sentence entry so a translation reads naturally;
+/// anything else keeps the term verbatim, which is right for a language name.
+pub fn select_term_label(term: &str) -> LocalizedString {
+    match term {
+        "Toolchain" => t!("Select Toolchain"),
+        "Virtual Environment" => t!("Select Virtual Environment"),
+        other => t!("Select {$term}", term = other.to_string()),
+    }
+}
+
+/// As [`select_term_label`], for the picker's placeholder, which names the file
+/// the toolchain applies to. English lowercases the term mid-sentence.
+fn select_term_for_path_placeholder(term: &str, path: String) -> LocalizedString {
+    match term {
+        "Toolchain" => t!("Select a toolchain for {$path}…", path = path),
+        "Virtual Environment" => t!("Select a virtual environment for {$path}…", path = path),
+        other => t!(
+            "Select a {$term} for {$path}…",
+            term = other.to_lowercase(),
+            path = path
+        ),
+    }
+}
+
+/// Names the "add a toolchain" button for a language's own term.
+fn add_term_label(term: &str) -> LocalizedString {
+    match term {
+        "Toolchain" => t!("Add Toolchain"),
+        "Virtual Environment" => t!("Add Virtual Environment"),
+        other => t!(
+            "Add {$term}",
+            term = other.to_case(convert_case::Case::Title)
+        ),
+    }
+}
+
 /// The scope's user-facing name. Kept here rather than on `ToolchainScope` so
 /// that `language_core`, which has no UI, stays free of catalog lookups.
 fn scope_label(scope: &ToolchainScope) -> LocalizedString {
@@ -816,11 +856,8 @@ impl ToolchainSelectorDelegate {
                     .await?;
                 let relative_path = this
                     .update(cx, |this, cx| {
-                        this.delegate.add_toolchain_text = format!(
-                            "Add {}",
-                            meta.term.as_ref().to_case(convert_case::Case::Title)
-                        )
-                        .into();
+                        this.delegate.add_toolchain_text =
+                            add_term_label(&meta.term).resolve().as_ref().into();
                         cx.notify();
                         this.delegate.relative_path.clone()
                     })
@@ -847,14 +884,10 @@ impl ToolchainSelectorDelegate {
                 } else {
                     format!("`{}`", relative_path.display(path_style))
                 };
-                let placeholder_text = t!(
-                    "Select a {$term} for {$path}…",
-                    term = meta.term.to_lowercase(),
-                    path = pretty_path
-                )
-                .resolve()
-                .as_ref()
-                .into();
+                let placeholder_text = select_term_for_path_placeholder(&meta.term, pretty_path)
+                    .resolve()
+                    .as_ref()
+                    .into();
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.relative_path = relative_path;
                     this.delegate.placeholder_text = placeholder_text;
@@ -906,7 +939,7 @@ impl ToolchainSelectorDelegate {
             _fetch_candidates_task,
             project,
             focus_handle: cx.focus_handle(),
-            add_toolchain_text: Arc::from("Add Toolchain"),
+            add_toolchain_text: Arc::from(t!("Add Toolchain").resolve().as_ref()),
         }
     }
     fn relativize_path(

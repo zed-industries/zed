@@ -65,26 +65,6 @@ pub enum ToolchainScope {
     Global,
 }
 
-impl ToolchainScope {
-    pub fn label(&self) -> &'static str {
-        match self {
-            ToolchainScope::Subproject(_, _) => "Subproject",
-            ToolchainScope::Project => "Project",
-            ToolchainScope::Global => "Global",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            ToolchainScope::Subproject(_, _) => {
-                "Available only in the subproject you're currently in."
-            }
-            ToolchainScope::Project => "Available in all locations in your current project.",
-            ToolchainScope::Global => "Available in all of your projects on this machine.",
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ToolchainMetadata {
     /// Returns a term which we should use in UI to refer to toolchains produced by a given `ToolchainLister`.
