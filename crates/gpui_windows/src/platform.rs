@@ -436,28 +436,37 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let script = format!(
-            r#"
-            $pidToWaitFor = {}
-            $exePath = "{}"
+        let script = r#"
+            $pidToWaitFor = $env:ZED_RESTART_PID
+            $exePath = $env:ZED_RESTART_EXECUTABLE
+            $argumentCount = [int]$env:ZED_RESTART_ARGUMENT_COUNT
+            $arguments = @(
+                for ($index = 0; $index -lt $argumentCount; $index++) {
+                    [Environment]::GetEnvironmentVariable("ZED_RESTART_ARGUMENT_$index")
+                }
+            )
 
-            while ($true) {{
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_PID", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_EXECUTABLE", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENT_COUNT", $null)
+            for ($index = 0; $index -lt $argumentCount; $index++) {
+                [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENT_$index", $null)
+            }
+
+            while ($true) {
                 $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
-                if (-not $process) {{
-                    Start-Process -FilePath $exePath
+                if (-not $process) {
+                    & $exePath @arguments
                     break
-                }}
+                }
                 Start-Sleep -Seconds 0.1
-            }}
-            "#,
-            pid,
-            app_path.display(),
-        );
+            }
+            "#;
 
         // Defer spawning to the foreground executor so it runs after the
         // current `AppCell` borrow is released. On Windows, `Command::spawn()`
@@ -470,10 +479,19 @@ impl Platform for WindowsPlatform {
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process = new_std_command(get_windows_system_shell())
+                let mut command = new_std_command(get_windows_system_shell());
+                // A string-valued PowerShell `-Command` consumes following arguments as command
+                // text, so use the child environment to preserve argument boundaries and quoting.
+                command
                     .arg("-command")
                     .arg(script)
-                    .spawn();
+                    .env("ZED_RESTART_PID", pid.to_string())
+                    .env("ZED_RESTART_EXECUTABLE", app_path)
+                    .env("ZED_RESTART_ARGUMENT_COUNT", arguments.len().to_string());
+                for (index, argument) in arguments.into_iter().enumerate() {
+                    command.env(format!("ZED_RESTART_ARGUMENT_{index}"), argument);
+                }
+                let restart_process = command.spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
