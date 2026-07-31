@@ -1,4 +1,5 @@
 use gpui::BackgroundExecutor;
+use path::{PathStyle, rel_path::RelPath};
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -8,7 +9,6 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use util::{paths::PathStyle, rel_path::RelPath};
 
 use nucleo::{Utf32Str, pattern::Atom};
 use unicode_segmentation::UnicodeSegmentation;
@@ -832,7 +832,7 @@ pub fn match_fixed_path_set(
         &AtomicBool::new(false),
     )
     .ok();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     matcher::return_matcher(matcher);
     results
 }
@@ -926,7 +926,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
 
@@ -934,8 +934,8 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 mod tests {
     use super::*;
     use gpui::BackgroundExecutor;
+    use path::rel_path::RelPathBuf;
     use std::sync::atomic::AtomicUsize;
-    use util::rel_path::RelPathBuf;
 
     fn match_path(path: &str, query: &str) -> Vec<PathMatch> {
         let path = RelPath::new_test(path);
