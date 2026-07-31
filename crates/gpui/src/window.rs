@@ -6832,6 +6832,25 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_window_reports_no_raw_handle_instead_of_panicking(cx: &mut TestAppContext) {
+        use raw_window_handle::{HandleError, HasDisplayHandle as _, HasWindowHandle as _};
+
+        let window = cx.add_window(|_, _| EmptyView);
+        window
+            .update(cx, |_, window, _| {
+                assert!(matches!(
+                    window.window_handle(),
+                    Err(HandleError::NotSupported)
+                ));
+                assert!(matches!(
+                    window.display_handle(),
+                    Err(HandleError::NotSupported)
+                ));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn test_appearance_change_runs_after_app_update(cx: &mut TestAppContext) {
         let window = cx.add_window(|_, _| EmptyView);
         let observed_appearance = Rc::new(Cell::new(None));
