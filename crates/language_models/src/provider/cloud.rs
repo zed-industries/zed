@@ -20,6 +20,7 @@ use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
+use feature_flags::FeatureFlagAppExt as _;
 use http_client::HttpClient as _;
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
@@ -27,7 +28,7 @@ pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use std::sync::Arc;
 use std::time::Duration;
 use ui::{TintColor, prelude::*};
-use websocket_client::NativeWebSocketClient;
+use websocket_client::{NativeWebSocketClient, WebSocketClient};
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
@@ -109,6 +110,7 @@ pub struct State {
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
     _provider_subscription: Subscription,
+    _feature_flags_subscription: Subscription,
     _cloud_reconnect_task: Task<()>,
 }
 
@@ -127,15 +129,32 @@ impl State {
         });
 
         let provider = cx.new(|cx| {
-            let http_client = client.http_client();
-            let websocket_client =
-                Arc::new(NativeWebSocketClient::new(http_client.proxy().cloned()));
             CloudModelProvider::new(
                 token_provider.clone(),
-                http_client,
+                client.http_client(),
                 Some(AppVersion::global(cx)),
             )
-            .with_websocket_client(websocket_client)
+        });
+
+        // The WebSocket transport is staff-only while it stabilizes, and
+        // staff status is only known once the server sends feature flags.
+        let feature_flags_subscription = cx.on_flags_ready({
+            let provider = provider.clone();
+            let http_client = client.http_client();
+            let mut websocket_enabled = false;
+            move |flags, cx| {
+                if flags.is_staff == websocket_enabled {
+                    return;
+                }
+                websocket_enabled = flags.is_staff;
+                let websocket_client = flags.is_staff.then(|| {
+                    Arc::new(NativeWebSocketClient::new(http_client.proxy().cloned()))
+                        as Arc<dyn WebSocketClient>
+                });
+                provider.update(cx, |provider, _cx| {
+                    provider.set_websocket_client(websocket_client)
+                });
+            }
         });
 
         let cloud_reconnect_task = cx.spawn({
@@ -189,6 +208,7 @@ impl State {
                     this.refresh_models(cx);
                 },
             ),
+            _feature_flags_subscription: feature_flags_subscription,
             _cloud_reconnect_task: cloud_reconnect_task,
         }
     }
@@ -614,7 +634,6 @@ mod tests {
     use super::*;
     use client::{Credentials, test::make_get_authenticated_user_response};
     use clock::FakeSystemClock;
-    use feature_flags::FeatureFlagAppExt as _;
     use gpui::TestAppContext;
     use http_client::{FakeHttpClient, Method, Response};
     use std::sync::{

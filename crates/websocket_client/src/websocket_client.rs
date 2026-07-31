@@ -3,12 +3,15 @@
 //! Provides a small [`WebSocketClient`]/[`WebSocketConnection`] abstraction so
 //! consumers (and their tests) don't depend on a concrete transport, plus
 //! [`NativeWebSocketClient`], an async-tungstenite implementation running on
-//! smol with rustls TLS. This is independent from the collab RPC connection in
-//! the `client` crate, which couples its WebSocket to the protobuf message
+//! smol with rustls TLS and support for tunneling through HTTP(S) and SOCKS
+//! proxies. This is independent from the collab RPC connection in the
+//! `client` crate, which couples its WebSocket to the protobuf message
 //! stream.
 
+mod proxy;
+
 use std::io;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
@@ -20,6 +23,8 @@ use futures::io::{AsyncRead, AsyncWrite};
 use http_client::http::HeaderMap;
 use smol::Async;
 use url::Url;
+
+use crate::proxy::AsyncReadWrite;
 
 /// The server rejected the auth token (HTTP 401).
 ///
@@ -64,8 +69,90 @@ pub enum WebSocketMessage {
 /// The code and reason a peer supplied when closing the connection.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WebSocketCloseFrame {
-    pub code: u16,
+    pub code: WebSocketCloseCode,
     pub reason: String,
+}
+
+/// Status code used to indicate why an endpoint is closing the WebSocket connection.
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+pub enum WebSocketCloseCode {
+    Normal,
+    Away,
+    Protocol,
+    Unsupported,
+    Status,
+    Abnormal,
+    Invalid,
+    Policy,
+    Size,
+    Extension,
+    Error,
+    Restart,
+    Again,
+    Tls,
+    Reserved(u16),
+    Iana(u16),
+    Library(u16),
+    Bad(u16),
+}
+
+impl From<u16> for WebSocketCloseCode {
+    /// Maps a raw close code to its variant using the same ranges as
+    /// Tungstenite, so frames arriving through non-Tungstenite transports
+    /// (e.g. test fakes) compare equal to ones from the real client.
+    fn from(code: u16) -> Self {
+        match code {
+            1000 => Self::Normal,
+            1001 => Self::Away,
+            1002 => Self::Protocol,
+            1003 => Self::Unsupported,
+            1005 => Self::Status,
+            1006 => Self::Abnormal,
+            1007 => Self::Invalid,
+            1008 => Self::Policy,
+            1009 => Self::Size,
+            1010 => Self::Extension,
+            1011 => Self::Error,
+            1012 => Self::Restart,
+            1013 => Self::Again,
+            1015 => Self::Tls,
+            1016..=2999 => Self::Reserved(code),
+            3000..=3999 => Self::Iana(code),
+            4000..=4999 => Self::Library(code),
+            _ => Self::Bad(code),
+        }
+    }
+}
+
+impl From<WebSocketCloseCode> for u16 {
+    fn from(code: WebSocketCloseCode) -> Self {
+        match code {
+            WebSocketCloseCode::Normal => 1000,
+            WebSocketCloseCode::Away => 1001,
+            WebSocketCloseCode::Protocol => 1002,
+            WebSocketCloseCode::Unsupported => 1003,
+            WebSocketCloseCode::Status => 1005,
+            WebSocketCloseCode::Abnormal => 1006,
+            WebSocketCloseCode::Invalid => 1007,
+            WebSocketCloseCode::Policy => 1008,
+            WebSocketCloseCode::Size => 1009,
+            WebSocketCloseCode::Extension => 1010,
+            WebSocketCloseCode::Error => 1011,
+            WebSocketCloseCode::Restart => 1012,
+            WebSocketCloseCode::Again => 1013,
+            WebSocketCloseCode::Tls => 1015,
+            WebSocketCloseCode::Reserved(code)
+            | WebSocketCloseCode::Iana(code)
+            | WebSocketCloseCode::Library(code)
+            | WebSocketCloseCode::Bad(code) => code,
+        }
+    }
+}
+
+impl std::fmt::Display for WebSocketCloseCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", u16::from(*self))
+    }
 }
 
 /// A WebSocket connection that can send and receive messages.
@@ -73,6 +160,14 @@ pub trait WebSocketConnection: Send {
     fn send(&mut self, message: WebSocketMessage) -> BoxFuture<'_, Result<()>>;
 
     fn receive(&mut self) -> BoxFuture<'_, Option<Result<WebSocketMessage>>>;
+
+    /// A header from the server's response to the upgrade request, or `None`
+    /// when the transport doesn't surface them. Callers must treat every
+    /// header as optional metadata rather than part of the connection's
+    /// contract.
+    fn upgrade_response_header(&self, _name: &str) -> Option<&str> {
+        None
+    }
 }
 
 /// Converts an `http(s)` URL into the corresponding `ws(s)` URL.
@@ -90,10 +185,11 @@ pub fn websocket_url_from_http(mut url: Url) -> Result<Url> {
     Ok(url)
 }
 
-/// A stream that may or may not be wrapped in TLS.
+/// A stream that may or may not be wrapped in TLS. The inner transport is
+/// boxed because it is either a direct TCP connection or a proxy tunnel.
 enum MaybeTlsStream {
-    Plain(Async<TcpStream>),
-    Tls(futures_rustls::client::TlsStream<Async<TcpStream>>),
+    Plain(Box<dyn AsyncReadWrite>),
+    Tls(futures_rustls::client::TlsStream<Box<dyn AsyncReadWrite>>),
 }
 
 impl AsyncRead for MaybeTlsStream {
@@ -137,16 +233,24 @@ impl AsyncWrite for MaybeTlsStream {
 }
 
 /// A [`WebSocketClient`] backed by async-tungstenite over a smol TCP stream
-/// with rustls TLS.
+/// with rustls TLS, tunneling through a proxy when one is configured.
 pub struct NativeWebSocketClient {
-    /// An explicitly configured proxy URL, taking precedence over the proxy
-    /// environment variables.
-    proxy: Option<Url>,
+    /// An explicitly configured proxy URL, taking precedence over proxy
+    /// environment variables for subsequent connection attempts.
+    configured_proxy: parking_lot::Mutex<Option<Url>>,
 }
 
 impl NativeWebSocketClient {
-    pub fn new(proxy: Option<Url>) -> Self {
-        Self { proxy }
+    pub fn new(configured_proxy: Option<Url>) -> Self {
+        Self {
+            configured_proxy: parking_lot::Mutex::new(configured_proxy),
+        }
+    }
+
+    /// Changes the configured proxy for subsequent connection attempts.
+    /// Existing connections are unaffected; reconnect to apply it.
+    pub fn set_proxy(&self, proxy: Option<Url>) {
+        *self.configured_proxy.lock() = proxy;
     }
 }
 
@@ -157,19 +261,8 @@ impl WebSocketClient for NativeWebSocketClient {
         headers: HeaderMap,
     ) -> BoxFuture<'static, Result<Box<dyn WebSocketConnection>>> {
         let url = url.to_string();
-        let proxy = self.proxy.clone().or_else(http_client::read_proxy_from_env);
+        let configured_proxy = self.configured_proxy.lock().clone();
         Box::pin(async move {
-            // Tunneling through a proxy is not supported yet, and users
-            // configure proxies in contexts where silently bypassing one
-            // would leak traffic. Refusing here lets callers fall back to
-            // their HTTP transport, which fully honors proxy settings.
-            if let Some(proxy) = proxy {
-                anyhow::bail!(
-                    "WebSocket connections through a proxy are not supported (proxy {})",
-                    proxy_for_logging(&proxy)
-                );
-            }
-
             let parsed = Url::parse(&url).context("failed to parse WebSocket URL")?;
             let host = parsed
                 .host_str()
@@ -179,17 +272,24 @@ impl WebSocketClient for NativeWebSocketClient {
                 .port_or_known_default()
                 .context("missing port in URL")?;
 
-            let address = smol::unblock({
-                let host = host.clone();
-                move || {
-                    (host.as_str(), port)
-                        .to_socket_addrs()?
-                        .next()
-                        .context("failed to resolve address")
-                }
-            })
-            .await?;
-            let tcp_stream = Async::<TcpStream>::connect(address).await?;
+            let tcp_stream: Box<dyn AsyncReadWrite> =
+                match proxy::proxy_for_host(configured_proxy, &host) {
+                    Some(proxy_url) => {
+                        log::info!(
+                            "connecting to WebSocket host {host} via proxy {}",
+                            proxy::proxy_for_logging(&proxy_url)
+                        );
+                        proxy::connect_proxy_stream(&proxy_url, &host, port).await?
+                    }
+                    None => {
+                        let address = proxy::resolve(&host, port)
+                            .await?
+                            .into_iter()
+                            .next()
+                            .context("failed to resolve address")?;
+                        Box::new(Async::<TcpStream>::connect(address).await?)
+                    }
+                };
 
             let stream = if parsed.scheme() == "wss" {
                 let connector =
@@ -217,7 +317,7 @@ impl WebSocketClient for NativeWebSocketClient {
                         .to_string(),
                 );
             }
-            let (ws_stream, _handshake_response) =
+            let (ws_stream, handshake_response) =
                 match async_tungstenite::client_async(ws_request, stream).await {
                     Ok(result) => result,
                     Err(async_tungstenite::tungstenite::Error::Http(response)) => {
@@ -243,24 +343,17 @@ impl WebSocketClient for NativeWebSocketClient {
 
             log::debug!("WebSocket connected to {url}");
 
-            Ok(Box::new(TungsteniteConnection { stream: ws_stream })
-                as Box<dyn WebSocketConnection>)
+            Ok(Box::new(TungsteniteConnection {
+                stream: ws_stream,
+                upgrade_response_headers: handshake_response.into_parts().0.headers,
+            }) as Box<dyn WebSocketConnection>)
         })
-    }
-}
-
-/// The proxy URL with any credentials omitted, safe to include in logs and
-/// error messages.
-fn proxy_for_logging(proxy: &Url) -> String {
-    let host = proxy.host_str().unwrap_or("<invalid>");
-    match proxy.port() {
-        Some(port) => format!("{}://{}:{}", proxy.scheme(), host, port),
-        None => format!("{}://{}", proxy.scheme(), host),
     }
 }
 
 struct TungsteniteConnection {
     stream: async_tungstenite::WebSocketStream<MaybeTlsStream>,
+    upgrade_response_headers: async_tungstenite::tungstenite::http::HeaderMap,
 }
 
 impl WebSocketConnection for TungsteniteConnection {
@@ -274,7 +367,7 @@ impl WebSocketConnection for TungsteniteConnection {
             WebSocketMessage::Pong(bytes) => Message::Pong(bytes.into()),
             WebSocketMessage::Close(close) => Message::Close(close.map(|frame| {
                 async_tungstenite::tungstenite::protocol::CloseFrame {
-                    code: frame.code.into(),
+                    code: u16::from(frame.code).into(),
                     reason: frame.reason.into(),
                 }
             })),
@@ -294,7 +387,7 @@ impl WebSocketConnection for TungsteniteConnection {
                     Message::Pong(bytes) => WebSocketMessage::Pong(bytes.to_vec()),
                     Message::Close(close) => {
                         WebSocketMessage::Close(close.map(|frame| WebSocketCloseFrame {
-                            code: frame.code.into(),
+                            code: u16::from(frame.code).into(),
                             reason: frame.reason.as_str().to_string(),
                         }))
                     }
@@ -308,6 +401,10 @@ impl WebSocketConnection for TungsteniteConnection {
                 None => None,
             }
         })
+    }
+
+    fn upgrade_response_header(&self, name: &str) -> Option<&str> {
+        self.upgrade_response_headers.get(name)?.to_str().ok()
     }
 }
 
@@ -331,11 +428,14 @@ mod tests {
     }
 
     #[test]
-    fn proxy_for_logging_omits_credentials() {
-        let proxy = Url::parse("http://user:hunter2@proxy.example.com:8080").unwrap();
-        assert_eq!(proxy_for_logging(&proxy), "http://proxy.example.com:8080");
-
-        let proxy = Url::parse("socks5://proxy.example.com").unwrap();
-        assert_eq!(proxy_for_logging(&proxy), "socks5://proxy.example.com");
+    fn close_codes_round_trip_through_raw_values() {
+        for code in [1000, 1001, 1006, 1011, 1015, 2000, 3000, 4000, 5000] {
+            assert_eq!(u16::from(WebSocketCloseCode::from(code)), code);
+        }
+        assert_eq!(WebSocketCloseCode::from(1000), WebSocketCloseCode::Normal);
+        assert_eq!(
+            WebSocketCloseCode::from(4001),
+            WebSocketCloseCode::Library(4001)
+        );
     }
 }

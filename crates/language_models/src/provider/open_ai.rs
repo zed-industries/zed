@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{
@@ -50,6 +51,19 @@ const DISABLE_WEBSOCKET_ENV_VAR_NAME: &str = "ZED_DISABLE_OPENAI_WEBSOCKET";
 
 fn websocket_streaming_disabled() -> bool {
     std::env::var_os(DISABLE_WEBSOCKET_ENV_VAR_NAME).is_some()
+}
+
+/// The WebSocket transport is staff-only while it stabilizes; everyone else
+/// streams over HTTP/SSE.
+fn websocket_streaming_enabled(cx: &AsyncApp) -> bool {
+    if websocket_streaming_disabled() {
+        log::debug!(
+            "OpenAI Responses transport: HTTP/SSE because {} is set",
+            DISABLE_WEBSOCKET_ENV_VAR_NAME
+        );
+        return false;
+    }
+    cx.update(|cx| cx.is_staff())
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -750,11 +764,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-            let completions = if websocket_streaming_disabled() {
-                log::debug!(
-                    "OpenAI Responses transport: HTTP/SSE because {} is set",
-                    DISABLE_WEBSOCKET_ENV_VAR_NAME
-                );
+            let completions = if !websocket_streaming_enabled(cx) {
                 self.stream_response(request, cx)
             } else {
                 let fallback_request = match response_request(fallback_language_request) {

@@ -21283,6 +21283,8 @@ dependencies = [
  "http_client",
  "http_client_tls",
  "log",
+ "parking_lot",
+ "proxy_handshake",
  "rustls 0.23.40",
  "smol",
  "url",

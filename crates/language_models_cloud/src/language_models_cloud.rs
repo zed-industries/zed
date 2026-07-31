@@ -1020,6 +1020,17 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         self
     }
 
+    /// Enables or disables the WebSocket transport after construction, e.g.
+    /// when the user's eligibility is only known once the server responds.
+    /// Affects models created afterwards; disabling also drops any cached
+    /// connections.
+    pub fn set_websocket_client(&mut self, websocket_client: Option<Arc<dyn WebSocketClient>>) {
+        if websocket_client.is_none() {
+            self.websocket_chains.lock().clear();
+        }
+        self.websocket_client = websocket_client;
+    }
+
     pub fn refresh_models(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();

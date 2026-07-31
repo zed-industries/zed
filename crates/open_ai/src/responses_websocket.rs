@@ -838,7 +838,7 @@ mod tests {
         let connection = Box::new(ScriptedWebSocketConnection {
             incoming: vec![Ok(WebSocketMessage::Close(Some(
                 websocket_client::WebSocketCloseFrame {
-                    code: 1008,
+                    code: websocket_client::WebSocketCloseCode::Policy,
                     reason: "usage limit reached".to_string(),
                 },
             )))],

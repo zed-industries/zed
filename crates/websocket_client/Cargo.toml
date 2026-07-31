@@ -19,6 +19,8 @@ futures-rustls.workspace = true
 http_client.workspace = true
 http_client_tls.workspace = true
 log.workspace = true
+parking_lot.workspace = true
+proxy_handshake = { workspace = true, features = ["futures-io"] }
 rustls.workspace = true
 smol.workspace = true
 url.workspace = true
