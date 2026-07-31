@@ -11125,6 +11125,7 @@ pub fn client_side_decorations(
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
+    let is_resizable = window.is_resizable();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
@@ -11157,38 +11158,40 @@ pub fn client_side_decorations(
                 .when(!tiling.right, |div| {
                     div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
-                .on_mouse_move(move |e, window, cx| {
-                    let size = window.window_bounds().get_bounds().size;
-                    let pos = e.position;
+                .when(is_resizable, |div| {
+                    div.on_mouse_move(move |e, window, cx| {
+                        let size = window.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                    let new_edge =
-                        resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
+                        let new_edge =
+                            resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
 
-                    let edge = cx.try_global::<GlobalResizeEdge>();
-                    if new_edge != edge.map(|edge| edge.0) {
-                        window
-                            .window_handle()
-                            .update(cx, |workspace, _, cx| {
-                                cx.notify(workspace.entity_id());
-                            })
-                            .ok();
-                    }
-                })
-                .on_mouse_down(MouseButton::Left, move |e, window, _| {
-                    let size = window.window_bounds().get_bounds().size;
-                    let pos = e.position;
+                        let edge = cx.try_global::<GlobalResizeEdge>();
+                        if new_edge != edge.map(|edge| edge.0) {
+                            window
+                                .window_handle()
+                                .update(cx, |workspace, _, cx| {
+                                    cx.notify(workspace.entity_id());
+                                })
+                                .ok();
+                        }
+                    })
+                    .on_mouse_down(MouseButton::Left, move |e, window, _| {
+                        let size = window.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                    let edge = match resize_edge(
-                        pos,
-                        theme::CLIENT_SIDE_DECORATION_SHADOW,
-                        size,
-                        tiling,
-                    ) {
-                        Some(value) => value,
-                        None => return,
-                    };
+                        let edge = match resize_edge(
+                            pos,
+                            theme::CLIENT_SIDE_DECORATION_SHADOW,
+                            size,
+                            tiling,
+                        ) {
+                            Some(value) => value,
+                            None => return,
+                        };
 
-                    window.start_window_resize(edge);
+                        window.start_window_resize(edge);
+                    })
                 }),
         })
         .size_full()
@@ -11228,7 +11231,7 @@ pub fn client_side_decorations(
         )
         .map(|div| match decorations {
             Decorations::Server => div,
-            Decorations::Client { tiling, .. } => div.child(
+            Decorations::Client { tiling, .. } if is_resizable => div.child(
                 canvas(
                     |_bounds, window, _| {
                         window.insert_hitbox(
@@ -11268,6 +11271,7 @@ pub fn client_side_decorations(
                 .size_full()
                 .absolute(),
             ),
+            Decorations::Client { .. } => div,
         })
 }
 
