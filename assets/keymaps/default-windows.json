@@ -189,6 +189,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k ctrl-r": "git::Restore",
+      "ctrl-alt-y": "git::ToggleStaged",
       "alt-y": "git::StageAndNext",
       "shift-alt-y": "git::UnstageAndNext",
     },

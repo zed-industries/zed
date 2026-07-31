@@ -142,6 +142,8 @@ pub struct MultiBufferDiffHunk {
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
     pub excerpt_range: ExcerptRange<text::Anchor>,
     pub multi_buffer_range: Range<Anchor>,
+    pub staged_added: Vec<Range<Anchor>>,
+    pub staged_deleted: Vec<Range<u32>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -2302,23 +2304,6 @@ impl MultiBuffer {
             .is_some()
     }
 
-    pub fn single_hunk_is_expanded(&self, range: Range<Anchor>, cx: &App) -> bool {
-        let snapshot = self.read(cx);
-        let mut cursor = snapshot.diff_transforms.cursor::<MultiBufferOffset>(());
-        let offset_range = range.to_offset(&snapshot);
-        cursor.seek(&offset_range.start, Bias::Left);
-        while let Some(item) = cursor.item() {
-            if *cursor.start() >= offset_range.end && *cursor.start() > offset_range.start {
-                break;
-            }
-            if item.hunk_info().is_some() {
-                return true;
-            }
-            cursor.next();
-        }
-        false
-    }
-
     pub fn has_expanded_diff_hunks_in_ranges(&self, ranges: &[Range<Anchor>], cx: &App) -> bool {
         let snapshot = self.read(cx);
         let mut cursor = snapshot.diff_transforms.cursor::<MultiBufferOffset>(());
@@ -3067,7 +3052,7 @@ impl MultiBuffer {
             .excerpt_containing(range.end..range.end)
             .and_then(|(_, excerpt_range)| snapshot.anchor_in_excerpt(excerpt_range.context.end));
         let point_range = range.to_point(&snapshot);
-        let expand = !self.single_hunk_is_expanded(range, cx);
+        let expand = !snapshot.single_hunk_is_expanded(range);
         let edits =
             self.expand_or_collapse_diff_hunks_inner([(point_range, excerpt_end)], expand, cx);
         if !edits.is_empty() {
@@ -3483,6 +3468,21 @@ impl MultiBufferSnapshot {
             };
             let multi_buffer_range =
                 Anchor::range_in_buffer(excerpt.path_key_index, buffer_range.clone());
+            let staged_added = if is_inverted {
+                vec![]
+            } else {
+                hunk.staged_added
+                    .iter()
+                    .map(|r| {
+                        Anchor::range_in_buffer(
+                            excerpt.path_key_index,
+                            buffer_snapshot
+                                .anchor_range_inside(Point::new(r.start, 0)..Point::new(r.end, 0)),
+                        )
+                    })
+                    .collect()
+            };
+            let staged_deleted = hunk.staged_deleted.clone();
             Some(MultiBufferDiffHunk {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: buffer_snapshot.remote_id(),
@@ -3496,6 +3496,8 @@ impl MultiBufferSnapshot {
                 },
                 excerpt_range: excerpt.range.clone(),
                 multi_buffer_range,
+                staged_added,
+                staged_deleted,
             })
         })
     }
@@ -6494,6 +6496,22 @@ impl MultiBufferSnapshot {
 
     pub fn all_diff_hunks_expanded(&self) -> bool {
         self.all_diff_hunks_expanded
+    }
+
+    pub fn single_hunk_is_expanded(&self, range: Range<Anchor>) -> bool {
+        let mut cursor = self.diff_transforms.cursor::<MultiBufferOffset>(());
+        let offset_range = range.to_offset(self);
+        cursor.seek(&offset_range.start, Bias::Left);
+        while let Some(item) = cursor.item() {
+            if *cursor.start() >= offset_range.end && *cursor.start() > offset_range.start {
+                break;
+            }
+            if item.hunk_info().is_some() {
+                return true;
+            }
+            cursor.next();
+        }
+        false
     }
 
     /// Visually annotates a position or range with the `Debug` representation of a value. The
