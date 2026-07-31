@@ -108,13 +108,22 @@ impl OpenHarmonyPlatform {
     ///
     /// This should be called from the XComponent `OnSurfaceCreated` callback.
     pub fn surface_created(&self, info: SurfaceInfo) {
+        // Query real display properties from the OHOS DisplayManager service.
+        // Use the DisplayManager DPI for scale factor when available, falling
+        // back to the host-provided value.
+        let scale_factor = crate::display_info::query_default_display()
+            .map(|dp| dp.scale_factor())
+            .unwrap_or(info.scale_factor);
+
+        let surface_info = SurfaceInfo { scale_factor, ..info };
+
         let display = Rc::new(OpenHarmonyDisplay::new(
             DisplayId::new(0),
             info.size,
-            info.scale_factor,
+            scale_factor,
         ));
         self.display.replace(Some(display));
-        self.surface_info.replace(Some(info));
+        self.surface_info.replace(Some(surface_info));
 
         if let Some(callback) = self.on_finish_launching.borrow_mut().take() {
             self.foreground_executor
@@ -473,10 +482,12 @@ impl Platform for OpenHarmonyPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        crate::clipboard::read_from_clipboard()
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        crate::clipboard::write_to_clipboard(&item);
+    }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem> {

@@ -10,6 +10,10 @@ mod events;
 #[cfg(target_env = "ohos")]
 mod keyboard;
 #[cfg(target_env = "ohos")]
+mod clipboard;
+#[cfg(target_env = "ohos")]
+mod display_info;
+#[cfg(target_env = "ohos")]
 mod platform;
 #[cfg(target_env = "ohos")]
 mod text_system;
