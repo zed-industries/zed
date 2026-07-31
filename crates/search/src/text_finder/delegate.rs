@@ -45,8 +45,8 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    Disclosure, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
-    Tooltip, prelude::*, text_for_keystroke,
+    Disclosure, Divider, FluentBuilder, ListItem, ListItemSpacing, Toggleable, Tooltip, prelude::*,
+    text_for_keystroke,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
@@ -719,12 +719,12 @@ impl PickerDelegate for Delegate {
             let label = option.label();
             let focus_handle = focus_handle.clone();
             let picker = picker.clone();
+
             IconButton::new(
                 ("text-finder-search-option", option as usize),
                 option.icon(),
             )
             .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square)
             .toggle_state(active.contains(options))
             .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
             .on_click(move |_, window, cx| {
@@ -737,8 +737,9 @@ impl PickerDelegate for Delegate {
 
         Some(
             h_flex()
-                .gap_1()
+                .gap_px()
                 .children(filter_buttons)
+                .child(Divider::vertical().ml_px().mr_0p5())
                 .children(picker::parts::project_scan_indicator(
                     self.active_query.is_some(),
                     self.project(cx),
@@ -772,7 +773,7 @@ impl PickerDelegate for Delegate {
             picker::PickerAction::separator(),
             picker::PickerAction::button(
                 if self.selected_matches.len() > 1 {
-                    "Open multiple"
+                    "Open Multiple"
                 } else {
                     "Open File"
                 },
@@ -1009,9 +1010,33 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, None, window, cx)
+    }
+
+    fn render_match_with_checkbox(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        self.render_match_impl(ix, selected, Some(checkbox), window, cx)
+    }
+}
+
+impl Delegate {
+    fn render_match_impl(
+        &self,
+        ix: usize,
+        selected: bool,
+        checkbox: Option<AnyElement>,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
         match self.entries.get(ix)? {
             Entry::Separator => Some(
                 div()
@@ -1129,6 +1154,7 @@ impl PickerDelegate for Delegate {
                         .spacing(ListItemSpacing::Sparse)
                         .inset(true)
                         .toggle_state(selected)
+                        .when_some(checkbox, |this, checkbox| this.start_slot(checkbox))
                         .child(
                             h_flex()
                                 .w_full()

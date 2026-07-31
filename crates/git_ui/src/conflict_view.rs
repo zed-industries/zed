@@ -642,6 +642,8 @@ impl Render for MergeConflictIndicator {
             .border_color(border_color)
             .child(
                 ButtonLike::new("update-button")
+                    .tab_index(0isize)
+                    .aria_label(message.clone())
                     .child(
                         h_flex()
                             .h_full()

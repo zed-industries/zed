@@ -11,6 +11,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-a": "picker::ToggleActionsMenu",
+      "cmd-shift-s": "picker::ToggleMultiSelect",
     },
   },
   {

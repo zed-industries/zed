@@ -1,0 +1,82 @@
+[
+  // VS Code for macOS. See: https://code.visualstudio.com/docs/reference/default-keybindings
+  //
+  // Zed's default keymap is close to VS Code's, so this overlay only contains
+  // the bindings where the two diverge.
+  {
+    "context": "Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-alt-f": "editor::Format", // Format Document
+      "cmd-k cmd-f": "editor::FormatSelections", // Format Selection
+      "shift-alt-i": "editor::SplitSelectionIntoLines", // Insert cursor at end of each line selected
+      "alt-z": "editor::ToggleSoftWrap", // Toggle Word Wrap
+      "cmd-shift-space": "editor::ShowSignatureHelp", // Trigger Parameter Hints
+      "ctrl-shift-cmd-right": "editor::SelectLargerSyntaxNode", // Expand AST Selection
+      "ctrl-shift-cmd-left": "editor::SelectSmallerSyntaxNode", // Shrink AST Selection
+      "cmd-k cmd-c": ["editor::ToggleComments", { "advance_downwards": false }], // Add Line Comment (closest analog)
+      "cmd-k f12": "editor::GoToDefinitionSplit", // Open Definition to the Side
+    },
+  },
+  {
+    "context": "Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      // In VS Code `cmd-k z` is Zen Mode; the word wrap toggle moves to `alt-z`.
+      "cmd-k z": "workspace::ToggleCenteredLayout",
+      "cmd-i": "assistant::InlineAssist", // Inline Chat
+    },
+  },
+  {
+    "context": "!AcpThread > Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": null, // Inline Chat lives on `cmd-i` in VS Code
+    },
+  },
+  {
+    "context": "Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-i": "assistant::InlineAssist", // Terminal Inline Chat
+      "ctrl-enter": null,
+    },
+  },
+  {
+    "context": "BufferSearchBar || ProjectSearchBar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-cmd-r": "search::ToggleRegex", // Toggle Find Regex
+    },
+  },
+  {
+    "context": "Workspace",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "debugger::Start", // Start Debugging
+      "ctrl-cmd-i": "agent::ToggleFocus", // Open Chat
+    },
+  },
+  {
+    "context": "Workspace && debugger_running",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": null,
+    },
+  },
+  {
+    "context": "Workspace && debugger_stopped",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "debugger::Continue",
+    },
+  },
+  {
+    "context": "Workspace && debugger_session",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f10": "debugger::StepOver",
+      "f11": "debugger::StepInto",
+    },
+  },
+]

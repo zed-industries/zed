@@ -11,7 +11,10 @@ use serde::Deserialize;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
-use ui::{ContextMenu, Divider, DocumentationAside, PopoverMenuHandle, prelude::*, v_flex};
+use ui::{
+    Checkbox, ContextMenu, Divider, DocumentationAside, KeyBinding, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use ui_input::ErasedEditorEvent;
 use util::ResultExt;
 use workspace::ModalView;
@@ -73,8 +76,6 @@ actions!(
         SetPreviewHidden,
         /// Opens the footer's actions menu.
         ToggleActionsMenu,
-        /// Take the picker's content and open it in a multibuffer
-        ToMultiBuffer,
         /// Toggles multi-select mode, in which clicking items adds them to
         /// the selection instead of opening them
         ToggleMultiSelect,
@@ -300,6 +301,27 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> Option<String> {
         None
     }
+    /// Called when `SelectChild` fires (e.g. shift-right-arrow). Return `Some(query)`
+    /// to step into the currently selected item (e.g. a directory); the picker
+    /// will set the query and refresh matches.
+    fn select_child(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
+
+    /// Called when `SelectParent` fires (e.g. shift-left-arrow). Return `Some(query)`
+    /// to step back to the parent; the picker will set the query and refresh
+    /// matches.
+    fn select_parent(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::default()
@@ -323,30 +345,17 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
 
+    /// Overrides the search bar entirely. Most delegates should return `None`
+    /// to get the picker-rendered default (which includes
+    /// [`Self::searchbar_trailer`] and the multi-select toggle); override for
+    /// full control over the search bar.
     fn render_editor(
         &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        v_flex()
-            .when(
-                self.editor_position() == PickerEditorPosition::End,
-                |this| this.child(Divider::horizontal()),
-            )
-            .child(
-                h_flex()
-                    .overflow_hidden()
-                    .flex_none()
-                    .h_9()
-                    .px_2p5()
-                    .child(div().flex_1().child(editor.render(window, cx)))
-                    .children(self.searchbar_trailer(window, cx)),
-            )
-            .when(
-                self.editor_position() == PickerEditorPosition::Start,
-                |this| this.child(Divider::horizontal()),
-            )
+        _editor: &Arc<dyn ErasedEditor>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Div> {
+        None
     }
 
     fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<PreviewUpdate> {
@@ -364,6 +373,17 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem>;
+
+    fn render_match_with_checkbox(
+        &self,
+        _ix: usize,
+        _selected: bool,
+        _checkbox: AnyElement,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        None
+    }
 
     fn render_header(
         &self,
@@ -922,6 +942,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if !self.delegate.supports_multi_select() {
+            cx.propagate();
             return;
         }
         self.select_instead_of_open = !self.select_instead_of_open;
@@ -997,6 +1018,26 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
+            self.set_query(&new_query, window, cx);
+        } else {
+            cx.propagate()
+        }
+    }
+    fn select_child(&mut self, _: &menu::SelectChild, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(new_query) = self.delegate.select_child(window, cx) {
+            self.set_query(&new_query, window, cx);
+        } else {
+            cx.propagate()
+        }
+    }
+
+    fn select_parent(
+        &mut self,
+        _: &menu::SelectParent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(new_query) = self.delegate.select_parent(window, cx) {
             self.set_query(&new_query, window, cx);
         } else {
             cx.propagate()
@@ -1263,11 +1304,54 @@ impl<D: PickerDelegate> Picker<D> {
         let is_multi_selected = supports_multi_select && self.delegate.is_item_selected(ix);
         let multi_select_active = supports_multi_select && self.select_instead_of_open;
 
+        let item_with_checkbox = if multi_select_active && selectable {
+            let checkbox = self
+                .render_multi_select_indicator(ix, is_multi_selected, cx)
+                .into_any_element();
+            self.delegate.render_match_with_checkbox(
+                ix,
+                ix == self.delegate.selected_index(),
+                checkbox,
+                window,
+                cx,
+            )
+        } else {
+            None
+        };
+
+        let use_fallback_indicator =
+            multi_select_active && selectable && item_with_checkbox.is_none();
+        let focus_handle = self.focus_handle(cx);
+
         div()
             .id(("item", ix))
             .when(selectable, |this| this.cursor_pointer())
-            .when(selectable && multi_select_active, |this| {
+            .when(use_fallback_indicator, |this| {
                 this.hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
+            })
+            .when(multi_select_active && selectable, |this| {
+                this.tooltip(Tooltip::element(move |_window, cx| {
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(KeyBinding::for_action_in(
+                                    &MultiSelectNext,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                                .child(Label::new("Select")),
+                        )
+                        .child(Divider::vertical())
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx))
+                                .child(Label::new("Open")),
+                        )
+                        .into_any_element()
+                }))
             })
             .child(
                 canvas(
@@ -1310,17 +1394,19 @@ impl<D: PickerDelegate> Picker<D> {
                 }))
             })
             .map(|row| {
-                // Pickers without multi-select keep their element tree
-                // unchanged.
-                if supports_multi_select {
+                if let Some(item) = item_with_checkbox {
+                    row.child(item)
+                } else if supports_multi_select {
                     row.child(
                         h_flex()
                             // Headers and separators cannot be part of the
                             // selection, so they get no indicator.
-                            .when(multi_select_active && selectable, |this| {
-                                this.child(
-                                    self.render_multi_select_indicator(is_multi_selected, cx),
-                                )
+                            .when(use_fallback_indicator, |this| {
+                                this.child(self.render_multi_select_indicator(
+                                    ix,
+                                    is_multi_selected,
+                                    cx,
+                                ))
                             })
                             .children(self.delegate.render_match(
                                 ix,
@@ -1349,39 +1435,21 @@ impl<D: PickerDelegate> Picker<D> {
             )
     }
 
-    /// The checkbox in front of items while in multi-select mode.
     fn render_multi_select_indicator(
         &self,
+        ix: usize,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        h_flex()
-            .w_6()
-            .flex_none()
-            .justify_center()
-            .items_center()
-            .child(
-                div()
-                    .size_4()
-                    .flex_none()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(if is_selected {
-                        cx.theme().colors().border_focused
-                    } else {
-                        cx.theme().colors().border
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(is_selected, |this| {
-                        this.bg(cx.theme().colors().element_selected).child(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Accent),
-                        )
-                    }),
-            )
+        Checkbox::new(("picker-multi-select-checkbox", ix), is_selected.into())
+            .fill()
+            .elevation(ui::ElevationIndex::ModalSurface)
+            .on_click(cx.listener(move |this, _: &ui::ToggleState, window, cx| {
+                // Don't let the row's click handler also toggle the item.
+                cx.stop_propagation();
+                this.delegate.toggle_item_selected(ix, window, cx);
+                cx.notify();
+            }))
     }
 
     fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {

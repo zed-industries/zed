@@ -26,8 +26,12 @@ pub struct ReqwestClient {
 }
 
 impl ReqwestClient {
-    fn builder() -> reqwest::ClientBuilder {
-        reqwest::Client::builder()
+    /// Shared connection-management configuration for every client this type
+    /// builds. `read_timeout` sets an idle timeout on each body read (see
+    /// [`ReqwestClient::proxy_user_agent_and_read_timeout`]); `None` leaves
+    /// reads without a timeout.
+    fn builder(read_timeout: Option<Duration>) -> reqwest::ClientBuilder {
+        let builder = reqwest::Client::builder()
             .use_rustls_tls()
             .connect_timeout(Duration::from_secs(10))
             // Detect and drop connections that have silently gone bad on a
@@ -38,11 +42,15 @@ impl ReqwestClient {
             .pool_idle_timeout(Duration::from_secs(30))
             .http2_keep_alive_interval(Duration::from_secs(15))
             .http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_keep_alive_while_idle(true)
+            .http2_keep_alive_while_idle(true);
+        match read_timeout {
+            Some(read_timeout) => builder.read_timeout(read_timeout),
+            None => builder,
+        }
     }
 
     pub fn new() -> Self {
-        Self::builder()
+        Self::builder(None)
             .build()
             .expect("Failed to initialize HTTP client")
             .into()
@@ -51,16 +59,37 @@ impl ReqwestClient {
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
-        let client = Self::builder().default_headers(map).build()?;
+        let client = Self::builder(None).default_headers(map).build()?;
         Ok(client.into())
     }
 
     pub fn proxy_and_user_agent(proxy: Option<Url>, user_agent: &str) -> anyhow::Result<Self> {
+        Self::proxy_user_agent_and_read_timeout(proxy, user_agent, None)
+    }
+
+    /// Like [`ReqwestClient::proxy_and_user_agent`], but also applies a
+    /// per-read idle timeout. `read_timeout` fires only after that long with no
+    /// bytes received on a response body and resets on every chunk, so it
+    /// aborts a silently stalled stream without disturbing a healthy one that
+    /// merely goes quiet between chunks. Callers streaming long-lived responses
+    /// (e.g. LLM completions, which can pause for tens of seconds during
+    /// provider-side reasoning while keep-alive bytes still flow) should size
+    /// it comfortably above the provider's keep-alive interval.
+    ///
+    /// Note: on macOS the timeout is measured against a monotonic clock that
+    /// pauses during system sleep, so it does not fire from a suspend alone;
+    /// callers that need prompt detection of a connection killed while
+    /// suspended must re-validate the stream on wake themselves.
+    pub fn proxy_user_agent_and_read_timeout(
+        proxy: Option<Url>,
+        user_agent: &str,
+        read_timeout: Option<Duration>,
+    ) -> anyhow::Result<Self> {
         let user_agent = HeaderValue::from_str(user_agent)?;
 
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, user_agent.clone());
-        let mut client = Self::builder().default_headers(map);
+        let mut client = Self::builder(read_timeout).default_headers(map);
         let client_has_proxy;
 
         if let Some(proxy) = proxy.as_ref().and_then(|proxy_url| {

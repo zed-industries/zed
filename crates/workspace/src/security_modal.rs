@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn accepts_ancestor_or_equal() {
         let project = Path::new("/Users/me/dev/delta/wt/t1");
-        let style = PathStyle::Posix;
+        let style = PathStyle::Unix;
         assert_eq!(
             validate_trust_scope("/Users/me/dev/delta/wt", project, None, style).unwrap(),
             PathBuf::from("/Users/me/dev/delta/wt"),
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn rejects_non_ancestor_relative_or_empty() {
         let project = Path::new("/Users/me/dev/delta/wt/t1");
-        let style = PathStyle::Posix;
+        let style = PathStyle::Unix;
         assert!(validate_trust_scope("/Users/other", project, None, style).is_err());
         assert!(validate_trust_scope("relative/path", project, None, style).is_err());
         assert!(validate_trust_scope("   ", project, None, style).is_err());
@@ -565,7 +565,7 @@ mod tests {
     fn expands_leading_tilde() {
         let home = Path::new("/Users/me");
         let project = Path::new("/Users/me/dev/wt/t1");
-        let style = PathStyle::Posix;
+        let style = PathStyle::Unix;
         assert_eq!(
             validate_trust_scope("~/dev/wt", project, Some(home), style).unwrap(),
             PathBuf::from("/Users/me/dev/wt"),
