@@ -2,6 +2,7 @@ use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate};
 use gpui::BackgroundExecutor;
 use language_core::{Grammar, SymbolKind};
 use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tree_sitter::StreamingIterator;
@@ -19,8 +20,10 @@ pub struct SymbolLocation {
 pub struct ExtractedSymbol {
     /// Symbol name only (e.g., "initBookForOfficial"), from @name capture.
     pub name: String,
-    /// Context text from @context and @context.extra captures (e.g., "fn", "struct"), for display.
-    pub context: String,
+    /// Full display text from source (e.g., "fn initBookForOfficial()"), for display.
+    pub display_text: String,
+    /// Byte range of the name within `display_text`.
+    pub name_range: Range<u32>,
     /// Inferred from the @item node's tree-sitter type.
     pub kind: SymbolKind,
     /// Row (0-indexed) of the @name node's start position (where the cursor lands on jump).
@@ -34,9 +37,10 @@ pub struct ExtractedSymbol {
 pub struct IndexedSymbol {
     /// Symbol name only — used as the fuzzy match candidate string.
     pub name: Arc<str>,
-    /// Context text (e.g., "fn", "struct"), stored separately to avoid
-    /// redundant string allocations; display text is computed on demand.
-    pub context: Arc<str>,
+    /// Full display text from source (e.g., "fn initBookForOfficial()").
+    pub display_text: Arc<str>,
+    /// Byte range of the name within `display_text`.
+    pub name_range: Range<u32>,
     /// File location.
     pub location: SymbolLocation,
     /// Inferred symbol kind.
@@ -148,13 +152,11 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
         let mut item_node = None;
         let mut name_node = None;
         let mut name_parts = Vec::new();
-        // Track the earliest capture byte position so we can extract context
-        // text from source in the correct order. This avoids a bug where
-        // @context captures appearing after @name in source (e.g. "(" and ")"
-        // in TypeScript function_declarations) would be placed before the name
-        // in the display text, producing "async ( ) mmdata" instead of
-        // "async function mmdata".
+        // Track the byte range spanning all relevant captures (context, name,
+        // open, close) so we can extract display text from source in the
+        // correct order, preserving original token positions.
         let mut first_capture_start: Option<usize> = None;
+        let mut last_capture_end: Option<usize> = None;
 
         for capture in query_match.captures {
             let node = capture.node;
@@ -172,11 +174,19 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
                 if first_capture_start.map_or(true, |s| node.start_byte() < s) {
                     first_capture_start = Some(node.start_byte());
                 }
+                if last_capture_end.map_or(true, |e| node.end_byte() > e) {
+                    last_capture_end = Some(node.end_byte());
+                }
             } else if config.context_capture_ix == Some(capture_index)
                 || config.extra_context_capture_ix == Some(capture_index)
+                || config.open_capture_ix == Some(capture_index)
+                || config.close_capture_ix == Some(capture_index)
             {
                 if first_capture_start.map_or(true, |s| node.start_byte() < s) {
                     first_capture_start = Some(node.start_byte());
+                }
+                if last_capture_end.map_or(true, |e| node.end_byte() > e) {
+                    last_capture_end = Some(node.end_byte());
                 }
             }
         }
@@ -196,18 +206,37 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
             continue;
         }
 
-        // Build context from source text between the first capture and the
-        // name, preserving original token order. Captures after @name (like
-        // "(" and ")") are naturally excluded.
+        // Build display_text from source, spanning from the first relevant
+        // capture to the last. This preserves original token order and
+        // includes captures after @name (e.g., "(" and ")").
         let name_start_byte = name_node.start_byte();
+        let name_end_byte = name_node.end_byte();
         let first_start = first_capture_start.unwrap_or(name_start_byte);
-        let context = if first_start < name_start_byte {
-            text[first_start..name_start_byte]
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        } else {
-            String::new()
+        let last_end = last_capture_end.unwrap_or(name_end_byte);
+
+        let raw_before = &text[first_start..name_start_byte];
+        let raw_after = &text[name_end_byte..last_end];
+        let norm_before: String =
+            raw_before.split_whitespace().collect::<Vec<_>>().join(" ");
+        let norm_after: String =
+            raw_after.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        let (display_text, name_range) = {
+            let mut result = String::new();
+            let mut name_start = 0usize;
+
+            if !norm_before.is_empty() {
+                result.push_str(&norm_before);
+                result.push(' ');
+                name_start = result.len();
+            }
+            result.push_str(&name);
+            let name_end = result.len();
+            if !norm_after.is_empty() {
+                result.push(' ');
+                result.push_str(&norm_after);
+            }
+            (result, name_start as u32..name_end as u32)
         };
 
         let kind = infer_symbol_kind(item_node.kind());
@@ -217,7 +246,8 @@ pub fn extract_symbols(text: &str, grammar: &Grammar) -> Vec<ExtractedSymbol> {
 
         extracted_symbols.push(ExtractedSymbol {
             name,
-            context,
+            display_text,
+            name_range,
             kind,
             row,
             column,
@@ -305,7 +335,8 @@ impl SymbolIndex {
             for symbol in extracted {
                 self.symbols.push(IndexedSymbol {
                     name: Arc::from(symbol.name.as_str()),
-                    context: Arc::from(symbol.context.as_str()),
+                    display_text: Arc::from(symbol.display_text.as_str()),
+                    name_range: symbol.name_range,
                     location: location.clone(),
                     kind: symbol.kind,
                     row: symbol.row,
@@ -452,7 +483,7 @@ enum Status { Active, Inactive }
             .find(|symbol| symbol.name == "initBookForOfficial")
             .expect("function symbol should exist");
         assert_eq!(function_symbol.kind, SymbolKind::Function);
-        assert!(function_symbol.context.contains("fn"));
+        assert!(function_symbol.display_text.contains("fn"));
         // Name position should point at the function name, not "fn"
         assert_eq!(function_symbol.row, 1);
         assert_eq!(function_symbol.column, 3);
@@ -483,7 +514,8 @@ enum Status { Active, Inactive }
         };
         let symbol = ExtractedSymbol {
             name: "initBookForOfficial".to_string(),
-            context: "fn".to_string(),
+            display_text: "fn initBookForOfficial".to_string(),
+            name_range: 3..21,
             kind: SymbolKind::Function,
             row: 0,
             column: 0,
@@ -509,7 +541,8 @@ enum Status { Active, Inactive }
         };
         let symbol = ExtractedSymbol {
             name: "main".to_string(),
-            context: "fn".to_string(),
+            display_text: "fn main".to_string(),
+            name_range: 3..7,
             kind: SymbolKind::Function,
             row: 0,
             column: 0,
@@ -536,22 +569,25 @@ enum Status { Active, Inactive }
         };
         let symbols = vec![
             ExtractedSymbol {
-                name: "alpha_function".to_string(),
-                context: "fn".to_string(),
+            name: "alpha_function".to_string(),
+            display_text: "fn alpha_function".to_string(),
+            name_range: 3..17,
                 kind: SymbolKind::Function,
                 row: 0,
                 column: 0,
             },
             ExtractedSymbol {
-                name: "beta_function".to_string(),
-                context: "fn".to_string(),
+            name: "beta_function".to_string(),
+            display_text: "fn beta_function".to_string(),
+            name_range: 3..16,
                 kind: SymbolKind::Function,
                 row: 1,
                 column: 0,
             },
             ExtractedSymbol {
-                name: "gamma_struct".to_string(),
-                context: "struct".to_string(),
+            name: "gamma_struct".to_string(),
+            display_text: "struct gamma_struct".to_string(),
+            name_range: 7..19,
                 kind: SymbolKind::Struct,
                 row: 2,
                 column: 0,
@@ -580,7 +616,8 @@ enum Status { Active, Inactive }
         };
         let symbol = ExtractedSymbol {
             name: "something".to_string(),
-            context: "fn".to_string(),
+            display_text: "fn something".to_string(),
+            name_range: 3..12,
             kind: SymbolKind::Function,
             row: 0,
             column: 0,
@@ -608,8 +645,9 @@ enum Status { Active, Inactive }
         index.update_file(
             location_a.clone(),
             vec![ExtractedSymbol {
-                name: "alpha_func".to_string(),
-                context: "fn".to_string(),
+            name: "alpha_func".to_string(),
+            display_text: "fn alpha_func".to_string(),
+            name_range: 3..13,
                 kind: SymbolKind::Function,
                 row: 0,
                 column: 0,
@@ -624,8 +662,9 @@ enum Status { Active, Inactive }
         index.update_file(
             location_b,
             vec![ExtractedSymbol {
-                name: "beta_func".to_string(),
-                context: "fn".to_string(),
+            name: "beta_func".to_string(),
+            display_text: "fn beta_func".to_string(),
+            name_range: 3..12,
                 kind: SymbolKind::Function,
                 row: 0,
                 column: 0,

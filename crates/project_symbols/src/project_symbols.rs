@@ -275,12 +275,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         };
 
         let symbol = &result.symbol;
-        let display_text = if symbol.context.is_empty() {
-            symbol.name.to_string()
-        } else {
-            format!("{} {}", symbol.context, symbol.name)
-        };
-        let label = display_text.as_str();
+        let display_text = symbol.display_text.as_ref();
+        let label = display_text;
         let line_number = symbol.row + 1;
 
         let settings = ThemeSettings::get_global(cx);
@@ -298,12 +294,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
 
         // Build syntax highlight runs: context in keyword color, name in kind color.
         let syntax_theme = cx.theme().syntax();
-        let name_start = if symbol.context.is_empty() {
-            0
-        } else {
-            symbol.context.len() + 1
-        };
-        let name_end = name_start + symbol.name.len();
+        let name_start = symbol.name_range.start as usize;
+        let name_end = symbol.name_range.end as usize;
 
         let mut syntax_runs: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
 
