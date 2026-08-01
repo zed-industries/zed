@@ -220,6 +220,7 @@ pub struct CommitTooltip {
 impl CommitTooltip {
     pub fn blame_entry(
         blame: &BlameEntry,
+        buffer_row: u32,
         details: Option<ParsedCommitMessage>,
         tag_names: Vec<SharedString>,
         repository: Entity<Repository>,
@@ -231,7 +232,7 @@ impl CommitTooltip {
             .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
             .unwrap_or(OffsetDateTime::now_utc());
 
-        let scroll_to = crate::blame_entry_scroll_target(blame);
+        let scroll_to = crate::blame_entry_scroll_target(blame, buffer_row);
 
         Self::new(
             CommitDetails {

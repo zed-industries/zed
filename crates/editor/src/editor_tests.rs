@@ -33883,6 +33883,7 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
         );
         editor.show_blame_popover(
             buffer_id,
+            0,
             &::git::blame::BlameEntry {
                 sha: "1b1b1b".parse().unwrap(),
                 range: 0..1,

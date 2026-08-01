@@ -461,33 +461,11 @@ impl CommitView {
 
                 if let Some((target_path, target_row)) = &scroll_to {
                     if *target_path == file_path {
-                        let (anchor, excerpt_info) = this.update(cx, |this, cx| {
-                            let mb = this.multibuffer.read(cx);
-                            let snap = mb.snapshot(cx);
-                            let buffer_id = buffer.read(cx).remote_id();
-                            let buf_snap = buffer.read(cx).snapshot();
-                            let target_anchor = buf_snap.anchor_after(&language::Point::new(*target_row, 0));
-                            let excerpts: Vec<_> = snap
-                                .excerpts_for_buffer(buffer_id)
-                                .map(|e| {
-                                    let start_before = e.context.start.cmp(&target_anchor, &buf_snap).is_le();
-                                    let end_after = e.context.end.cmp(&target_anchor, &buf_snap).is_ge();
-                                    (start_before, end_after)
-                                })
-                                .collect();
-                            let anchor = mb.buffer_point_to_anchor(
-                                &buffer,
-                                language::Point::new(*target_row, 0),
-                                cx,
-                            );
-                            (anchor, excerpts)
+                        let anchor = this.update(cx, |this, cx| {
+                            this.multibuffer
+                                .read(cx)
+                                .buffer_point_to_anchor(&buffer, language::Point::new(*target_row, 0), cx)
                         })?;
-                        log::info!(
-                            "scroll_to: target_row={}, excerpts={:?}, anchor={}",
-                            target_row,
-                            excerpt_info,
-                            anchor.is_some()
-                        );
                         if let Some(anchor) = anchor {
                             this.update_in(cx, |this, window, cx| {
                                 this.editor.update(cx, |editor, cx| {
