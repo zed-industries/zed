@@ -17,8 +17,7 @@ use file_icons::FileIcons;
 use fs::TrashId;
 use git;
 use git::status::GitSummary;
-use git_ui;
-use git_ui::file_diff_view::FileDiffView;
+use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
@@ -544,10 +543,10 @@ pub fn init(cx: &mut App) {
             }
         });
 
-        // Forwards `git::FileHistory` to `git_ui::git_graph` when the project
-        // panel is the focused source of selection. Lives here (and not in
-        // `git_ui`) so that `git_ui` does not need to depend on
-        // `project_panel`, which would create a dependency cycle.
+        // Forwards `git::FileHistory` to the file history opener installed by
+        // `git_ui` when the project panel is the focused source of selection.
+        // Lives here (and not in `git_ui`) so that `git_ui` does not need to
+        // depend on `project_panel`, which would create a dependency cycle.
         workspace.register_action_renderer(|div, workspace, window, cx| {
             let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
                 return div;
@@ -569,19 +568,7 @@ pub fn init(cx: &mut App) {
                         else {
                             return;
                         };
-                        let Some((repo_id, log_source)) =
-                            git_ui::git_graph::resolve_file_history_target_from_project_path(
-                                workspace,
-                                &project_path,
-                                cx,
-                            )
-                        else {
-                            return;
-                        };
-                        let git_store = workspace.project().read(cx).git_store().clone();
-                        git_ui::git_graph::open_or_reuse_graph(
-                            workspace, repo_id, git_store, log_source, None, window, cx,
-                        );
+                        git_ui_core::open_file_history(workspace, &project_path, window, cx);
                     })
                     .log_err();
                 cx.stop_propagation();
@@ -3881,16 +3868,10 @@ impl ProjectPanel {
                     Some(parent) => Arc::from(parent),
                     None => {
                         // File at root, open search with empty filter
-                        self.workspace
-                            .update(cx, |workspace, cx| {
-                                search::ProjectSearchView::new_search_in_directory(
-                                    workspace,
-                                    RelPath::empty(),
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
+                        window.dispatch_action(
+                            Box::new(zed_actions::search::NewSearchInDirectory::default()),
+                            cx,
+                        );
                         return;
                     }
                 }
@@ -3903,13 +3884,13 @@ impl ProjectPanel {
                 dir_path.to_rel_path_buf()
             };
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    search::ProjectSearchView::new_search_in_directory(
-                        workspace, &dir_path, window, cx,
-                    );
-                })
-                .ok();
+            let directory = dir_path
+                .display(self.project.read(cx).path_style(cx))
+                .into_owned();
+            window.dispatch_action(
+                Box::new(zed_actions::search::NewSearchInDirectory { directory }),
+                cx,
+            );
         }
     }
 
