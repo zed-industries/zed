@@ -3868,16 +3868,10 @@ impl ProjectPanel {
                     Some(parent) => Arc::from(parent),
                     None => {
                         // File at root, open search with empty filter
-                        self.workspace
-                            .update(cx, |workspace, cx| {
-                                search::ProjectSearchView::new_search_in_directory(
-                                    workspace,
-                                    RelPath::empty(),
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .ok();
+                        window.dispatch_action(
+                            Box::new(zed_actions::search::NewSearchInDirectory::default()),
+                            cx,
+                        );
                         return;
                     }
                 }
@@ -3890,13 +3884,13 @@ impl ProjectPanel {
                 dir_path.to_rel_path_buf()
             };
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    search::ProjectSearchView::new_search_in_directory(
-                        workspace, &dir_path, window, cx,
-                    );
-                })
-                .ok();
+            let directory = dir_path
+                .display(self.project.read(cx).path_style(cx))
+                .into_owned();
+            window.dispatch_action(
+                Box::new(zed_actions::search::NewSearchInDirectory { directory }),
+                cx,
+            );
         }
     }
 

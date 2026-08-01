@@ -474,7 +474,19 @@ pub mod icon_theme_selector {
 }
 
 pub mod search {
-    use gpui::actions;
+    use gpui::{Action, actions};
+
+    /// Opens a new project search filtered down to the given directory.
+    ///
+    /// An internal forwarding action: the user-facing, keybindable entry
+    /// point is `project_panel::NewSearchInDirectory`, which resolves the
+    /// selected directory and dispatches this action with it.
+    #[derive(Clone, Debug, Default, PartialEq, Action)]
+    #[action(namespace = search, no_json, no_register)]
+    pub struct NewSearchInDirectory {
+        pub directory: String,
+    }
+
     actions!(
         search,
         [
