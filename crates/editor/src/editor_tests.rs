@@ -10774,7 +10774,6 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         );
 }
 
-#[gpui::test]
 /// A different number of tabs can align the same column on each row, so a cursor has to
 /// be placed by the column the tabs expand to. Counting a tab as a single column lands it
 /// wherever that many characters happen to reach on the next row.
@@ -10806,6 +10805,115 @@ async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppConte
     cx.assert_editor_state(
         "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\tˇ= p[0] & 0xff;\n",
     );
+}
+
+#[gpui::test]
+/// Regression test for a panic ("display point out of range"): with a multi-line fold,
+/// buffer rows below the fold exceed the fold map's max row, so they must be converted
+/// to tab map rows instead of being used directly.
+async fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        one
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn ˇfoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.set_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        one
+        two"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        two"#
+    ));
 }
 
 #[gpui::test]
