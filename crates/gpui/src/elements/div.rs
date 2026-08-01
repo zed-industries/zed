@@ -1260,7 +1260,8 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Unlike the GPUI element ID, this value is visible outside the process.
     /// Keep it stable and unique within its accessibility tree.
     /// AccessKit maps it to platform identifiers where supported, including
-    /// UIA `AutomationId` on Windows and `AXIdentifier` on macOS.
+    /// UIA `AutomationId` on Windows, `AXIdentifier` on macOS, and AT-SPI
+    /// `AccessibleId` on Linux stacks whose deployed adapter exposes it.
     fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
         self.interactivity().aria.author_id = Some(id.into());
         self
