@@ -32,7 +32,7 @@ mod shader_compilation {
         let modules = [
             "quad",
             "shadow",
-            "path_bin",
+            "path_tile",
             "underline",
             "monochrome_sprite",
             "subpixel_sprite",

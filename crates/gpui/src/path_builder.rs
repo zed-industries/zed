@@ -244,7 +244,7 @@ impl PathBuilder {
 
     /// Builds into a [`Path`].
     #[inline]
-    pub fn build(self) -> Result<Path<Pixels>, Error> {
+    pub fn build(self) -> Result<Path, Error> {
         let path = if let Some(transform) = self.transform {
             self.raw.build().transformed(&transform)
         } else {
@@ -256,20 +256,14 @@ impl PathBuilder {
             // routing them through the fill pipeline would be thrown away, so
             // they render nothing for now.
             PathStyle::Stroke(_) => Ok(Path::new(Point::default())),
-            PathStyle::Fill(options) => {
-                let mut path = Self::fill_outline(&path, options.fill_rule);
-                // Do the expensive, scale-independent geometry work once at
-                // build time; painting the built path only bins it.
-                path.ensure_decomposition();
-                Ok(path)
-            }
+            PathStyle::Fill(options) => Ok(Self::fill_outline(&path, options.fill_rule)),
         }
     }
 
     /// Convert a lyon path into contours of quadratic segments; every subpath
     /// is treated as closed, matching fill semantics.
-    fn fill_outline(path: &lyon::path::Path, fill_rule: FillRule) -> Path<Pixels> {
-        let mut output: Option<Path<Pixels>> = None;
+    fn fill_outline(path: &lyon::path::Path, fill_rule: FillRule) -> Path {
+        let mut output: Option<Path> = None;
         for event in path.iter() {
             match event {
                 Event::Begin { at } => match &mut output {

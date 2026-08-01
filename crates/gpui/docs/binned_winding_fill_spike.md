@@ -41,6 +41,53 @@ do not port pieces of its topology logic into the new design.
    passes, single blend per pixel per path, exact quadratic curves
    evaluated in the shader (no flattening of rendered geometry).
 
+## Current data model — supersedes the phase names below
+
+The phases below are the original directions and keep their original
+vocabulary (`PathDecomposition`, `PathBins`, `PathBin`, `PathPiece`,
+"bins"). The shipped code has since been reorganized around two concrete,
+non-generic path types — the generic `Path<Pixels>`/`Path<ScaledPixels>`
+is gone — and renamed bin → **tile**, piece → **curve** ("bin" survives
+as the verb):
+
+- `Path` is pure logical-space geometry: `segments`, their xy-monotone
+  decomposition (grown *inline* as each segment is pushed — no `Option`,
+  no `Arc`, no `ensure_decomposition`, no staleness; `PathDecomposition`
+  no longer exists), `bounds`, and `fill_rule`. Paint-time facts are not
+  fields; they arrive as arguments.
+- `Path::painted(scale_factor, content_mask, color)` bins once, in
+  device space, and returns a `PaintedPath`: `order`, an inline
+  `paint: PathPaint` row (bounds, mask, color, `even_odd`), and the
+  tile payload (`tiles`/`curves`/`tile_curves`, crate-private with
+  read-only accessors). `painted` is the only constructor, so a
+  `PaintedPath` is always fully binned. Scene replay clones it
+  tiles-and-all; cached elements skip re-binning entirely.
+- `Scene.paths` is a plain `Vec<PaintedPath>`, handled exactly like
+  `quads`: push on insert, sort by order in `finish`, batch by order. No
+  tile-specific logic exists outside `path_winding.rs` and the renderer.
+- Tile indices are **path-local**. The renderer concatenates every
+  path's vecs into its four structured buffers at upload
+  (`upload_scene_buffers` in `directx_renderer.rs`), rebasing via
+  `PathTile::for_upload` / `TileCurve::for_upload`, uploading each
+  path's `paint` row once, and recording per-path instance offsets so a
+  `PrimitiveBatch::Paths` path range maps to an instance range.
+- Binning scratch (backdrop grid, tile heads, entry arena) is a
+  thread-local inside `path_winding.rs`, reused across paths and frames.
+
+Name map for reading the phases: `PathDecomposition::compute` → inline
+`decompose_quadratic`; `MonotonePiece` → `MonotoneCurve`; `PathPiece` →
+`PathCurve`; `PathBin` → `PathTile` (no `order`/`even_odd` fields);
+`PathPieceEntry` → `TileCurve`; `PathBins` → gone; shader entry points
+`path_bin_*` → `path_tile_*`, `piece_winding` → `curve_winding`,
+`piece_column_area` → `curve_column_area`.
+
+Public-API migration (for the merge changelog): `Path<Pixels>` → `Path`
+(delete the parameter); `Path::scale` → `Path::painted(scale, mask,
+color)`; the built path's `color`/`content_mask`/`order` fields are gone
+(they were overwritten by `Window::paint_path` anyway — pass color to
+`paint_path`, which is unchanged for callers); `Primitive::Path` and
+`Scene.paths` now carry `PaintedPath`.
+
 ## Phase 0 — demolition
 
 Salvage these before deleting anything (copy them out; they are reused):
@@ -370,6 +417,15 @@ Done:
   can leave f32's 24-bit-exact range even on the lattice), which would
   reopen the tie class. 40 bytes/piece; piece count scales with path
   complexity, not area, so the growth is immaterial.
+- Path-owned tiles (see "Current data model"): tiles/curves live on the
+  `PaintedPath` itself, produced once in `Path::painted`, so
+  `Scene::replay` of cached elements clones instead of re-binning, and
+  the scene/batching layers carry no tile-specific logic. Costs one staging copy per tile at
+  upload (the renderer rebases path-local indices while concatenating);
+  buys eliminating per-replay binning and the `PathBins` special case.
+  The eager-inline decomposition also removed the `Arc`/`Option` cache —
+  a path painted fresh every frame re-decomposes every frame, which is
+  strictly dominated by the binning it already pays for.
 
 Deferred pending measurement (the solid-color `paths_bench` A/B, then a
 GPU capture, decide priority — in that order):

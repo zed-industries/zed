@@ -1,4 +1,5 @@
 use std::{
+    ops::Range,
     slice,
     sync::{Arc, OnceLock},
 };
@@ -77,11 +78,11 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    path_bin_pipeline: PipelineState<PathBin>,
-    /// Concatenated per-bin piece lists, bound at `t2`.
-    path_piece_entries: StructuredBuffer<PathPieceEntry>,
-    /// Path pieces of the whole scene, bound at `t3`.
-    path_pieces: StructuredBuffer<PathPiece>,
+    path_tile_pipeline: PipelineState<PathTile>,
+    /// Concatenated per-tile curve lists, bound at `t2`.
+    path_tile_curves: StructuredBuffer<TileCurve>,
+    /// Device-space curves of the whole scene, bound at `t3`.
+    path_curves: StructuredBuffer<PathCurve>,
     /// Per-path paint rows, bound at `t4`.
     path_paints: StructuredBuffer<PathPaint>,
     underline_pipeline: PipelineState<Underline>,
@@ -351,6 +352,7 @@ impl DirectXRenderer {
             .as_ref()
             .and_then(|devices| devices.annotation.clone())
             .filter(|annotation| unsafe { annotation.GetStatus().as_bool() });
+        let mut path_tiles_drawn = 0;
         for batch in scene.batches() {
             let _annotation = annotation
                 .as_ref()
@@ -358,7 +360,9 @@ impl DirectXRenderer {
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
-                PrimitiveBatch::Paths(range) => self.draw_path_bins(range.start, range.len()),
+                PrimitiveBatch::Paths(range) => {
+                    self.draw_paths(&scene.paths, range, &mut path_tiles_drawn)
+                }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => {
                     self.draw_monochrome_sprites(texture_id, range.start, range.len())
@@ -374,8 +378,8 @@ impl DirectXRenderer {
             .with_context(|| {
                 format!(
                     "scene too large:\
-                    {} path bins, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
-                    scene.paths.bins.len(),
+                    {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
+                    scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
                     scene.underlines.len(),
@@ -530,32 +534,59 @@ impl DirectXRenderer {
             )?;
         }
 
-        if !scene.paths.bins.is_empty() {
-            self.pipelines.path_bin_pipeline.update_buffer(
+        // Each path buffer is one flat pass over `scene.paths`, written
+        // straight into the mapped GPU memory. Curves and tile-curve
+        // entries are path-local and copy verbatim; scene position exists
+        // only here, so it is stamped where it lives — each tile's paint
+        // row index, and each paint row's slice bases.
+        let tile_count: usize = scene.paths.iter().map(|path| path.tiles.len()).sum();
+        if tile_count > 0 {
+            let curve_count = scene.paths.iter().map(|path| path.curves.len()).sum();
+            let entry_count = scene.paths.iter().map(|path| path.tile_curves.len()).sum();
+            self.pipelines.path_tile_pipeline.update_buffer_with(
                 &devices.device,
                 &devices.device_context,
-                &scene.paths.bins,
+                tile_count,
+                scene.paths.iter().enumerate().flat_map(|(paint, path)| {
+                    path.tiles.iter().map(move |tile| PathTile {
+                        paint: paint as u32,
+                        ..*tile
+                    })
+                }),
             )?;
-            self.pipelines.path_pieces.write(
+            self.pipelines.path_curves.write_with(
                 &devices.device,
                 &devices.device_context,
-                &scene.paths.pieces,
+                curve_count,
+                scene
+                    .paths
+                    .iter()
+                    .flat_map(|path| path.curves.iter().copied()),
             )?;
-            self.pipelines.path_paints.write(
+            self.pipelines.path_tile_curves.write_with(
                 &devices.device,
                 &devices.device_context,
-                &scene.paths.paints,
+                entry_count,
+                scene
+                    .paths
+                    .iter()
+                    .flat_map(|path| path.tile_curves.iter().copied()),
             )?;
-            // Every bin of a wholly interior region has an empty piece list,
-            // so the entry buffer can be empty while bins exist; those bins
-            // never read it.
-            if !scene.paths.piece_entries.is_empty() {
-                self.pipelines.path_piece_entries.write(
-                    &devices.device,
-                    &devices.device_context,
-                    &scene.paths.piece_entries,
-                )?;
-            }
+            self.pipelines.path_paints.write_with(
+                &devices.device,
+                &devices.device_context,
+                scene.paths.len(),
+                scene.paths.iter().scan((0u32, 0u32), |bases, path| {
+                    let (curve_base, tile_curve_base) = *bases;
+                    bases.0 += path.curves.len() as u32;
+                    bases.1 += path.tile_curves.len() as u32;
+                    Some(PathPaint {
+                        curve_base,
+                        tile_curve_base,
+                        ..path.paint
+                    })
+                }),
+            )?;
         }
 
         if !scene.underlines.is_empty() {
@@ -637,26 +668,39 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_path_bins(&mut self, start: usize, len: usize) -> Result<()> {
-        if len == 0 {
+    /// Draw one batch of paths. Path batches arrive in draw order and
+    /// cover `scene.paths` in order without gaps, so a running tile count
+    /// maps each batch's path range onto its instance range in the tile
+    /// buffer.
+    fn draw_paths(
+        &mut self,
+        paths: &[PaintedPath],
+        range: Range<usize>,
+        tiles_drawn: &mut usize,
+    ) -> Result<()> {
+        let batch = paths.get(range).context("path batch out of range")?;
+        let instance_count: usize = batch.iter().map(|path| path.tiles.len()).sum();
+        let first_instance = *tiles_drawn;
+        *tiles_drawn += instance_count;
+        if instance_count == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let piece_buffers = [
-            self.pipelines.path_piece_entries.view.clone(),
-            self.pipelines.path_pieces.view.clone(),
+        let curve_buffers = [
+            self.pipelines.path_tile_curves.view.clone(),
+            self.pipelines.path_curves.view.clone(),
             self.pipelines.path_paints.view.clone(),
         ];
-        self.pipelines.path_bin_pipeline.draw_range_with_buffers(
+        self.pipelines.path_tile_pipeline.draw_range_with_buffers(
             &devices.device,
             &devices.device_context,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
-            &piece_buffers,
+            &curve_buffers,
             4,
-            start as u32,
-            len as u32,
+            first_instance as u32,
+            instance_count as u32,
         )
     }
 
@@ -869,15 +913,15 @@ impl DirectXRenderPipelines {
             64,
             create_blend_state(device)?,
         )?;
-        let path_bin_pipeline = PipelineState::new(
+        let path_tile_pipeline = PipelineState::new(
             device,
-            "path_bin_pipeline",
-            ShaderModule::PathBin,
+            "path_tile_pipeline",
+            ShaderModule::PathTile,
             64,
             create_blend_state(device)?,
         )?;
-        let path_piece_entries = StructuredBuffer::new(device, "path_piece_entries", 256)?;
-        let path_pieces = StructuredBuffer::new(device, "path_pieces", 256)?;
+        let path_tile_curves = StructuredBuffer::new(device, "path_tile_curves", 256)?;
+        let path_curves = StructuredBuffer::new(device, "path_curves", 256)?;
         let path_paints = StructuredBuffer::new(device, "path_paints", 64)?;
         let underline_pipeline = PipelineState::new(
             device,
@@ -911,9 +955,9 @@ impl DirectXRenderPipelines {
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
-            path_bin_pipeline,
-            path_piece_entries,
-            path_pieces,
+            path_tile_pipeline,
+            path_tile_curves,
+            path_curves,
             path_paints,
             underline_pipeline,
             mono_sprites,
@@ -1025,8 +1069,38 @@ impl<T> StructuredBuffer<T> {
         device_context: &ID3D11DeviceContext,
         data: &[T],
     ) -> Result<()> {
-        if self.capacity < data.len() {
-            let new_capacity = data.len().next_power_of_two();
+        self.ensure_capacity(device, data.len())?;
+        update_buffer(device_context, &self.buffer, data)
+    }
+
+    /// Map the buffer for writing exactly `capacity` items straight into
+    /// GPU memory, growing it first if needed. Unmapped when the returned
+    /// writer is dropped.
+    fn map<'a>(
+        &'a mut self,
+        devices: &'a DirectXRendererDevices,
+        capacity: usize,
+    ) -> Result<MappedBuffer<'a, T>> {
+        self.ensure_capacity(&devices.device, capacity)?;
+        let pointer = unsafe {
+            let mut dest = std::mem::zeroed();
+            devices
+                .device_context
+                .Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
+            dest.pData as *mut T
+        };
+        Ok(MappedBuffer {
+            device_context: &devices.device_context,
+            buffer: &self.buffer,
+            pointer,
+            written: 0,
+            capacity,
+        })
+    }
+
+    fn ensure_capacity(&mut self, device: &ID3D11Device, len: usize) -> Result<()> {
+        if self.capacity < len {
+            let new_capacity = len.next_power_of_two();
             log::debug!(
                 "Updating {} buffer size from {} to {}",
                 self.label,
@@ -1039,7 +1113,52 @@ impl<T> StructuredBuffer<T> {
             self.view = view;
             self.capacity = new_capacity;
         }
-        update_buffer(device_context, &self.buffer, data)
+        Ok(())
+    }
+}
+
+/// A [`StructuredBuffer`] mapped for writing: `push`/`extend` append
+/// straight to GPU memory, and the write cursor doubles as the index the
+/// next item will occupy. Unmaps on drop.
+struct MappedBuffer<'a, T> {
+    device_context: &'a ID3D11DeviceContext,
+    buffer: &'a ID3D11Buffer,
+    pointer: *mut T,
+    written: usize,
+    capacity: usize,
+}
+
+impl<T: Copy> MappedBuffer<'_, T> {
+    /// The index the next pushed item will occupy.
+    fn next_index(&self) -> u32 {
+        self.written as u32
+    }
+
+    fn push(&mut self, item: T) {
+        assert!(self.written < self.capacity, "mapped buffer overrun");
+        unsafe { std::ptr::write(self.pointer.add(self.written), item) };
+        self.written += 1;
+    }
+
+    fn extend(&mut self, items: &[T]) {
+        assert!(
+            self.written + items.len() <= self.capacity,
+            "mapped buffer overrun"
+        );
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                items.as_ptr(),
+                self.pointer.add(self.written),
+                items.len(),
+            );
+        }
+        self.written += items.len();
+    }
+}
+
+impl<T> Drop for MappedBuffer<'_, T> {
+    fn drop(&mut self) {
+        unsafe { self.device_context.Unmap(self.buffer, 0) };
     }
 }
 
@@ -1508,7 +1627,7 @@ pub(crate) mod shader_resources {
         Quad,
         Shadow,
         Underline,
-        PathBin,
+        PathTile,
         MonochromeSprite,
         SubpixelSprite,
         PolychromeSprite,
@@ -1566,9 +1685,9 @@ pub(crate) mod shader_resources {
                     ShaderTarget::Vertex => UNDERLINE_VERTEX_BYTES,
                     ShaderTarget::Fragment => UNDERLINE_FRAGMENT_BYTES,
                 },
-                ShaderModule::PathBin => match target {
-                    ShaderTarget::Vertex => PATH_BIN_VERTEX_BYTES,
-                    ShaderTarget::Fragment => PATH_BIN_FRAGMENT_BYTES,
+                ShaderModule::PathTile => match target {
+                    ShaderTarget::Vertex => PATH_TILE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => PATH_TILE_FRAGMENT_BYTES,
                 },
                 ShaderModule::MonochromeSprite => match target {
                     ShaderTarget::Vertex => MONOCHROME_SPRITE_VERTEX_BYTES,
@@ -1667,7 +1786,7 @@ pub(crate) mod shader_resources {
                 ShaderModule::Quad => "quad",
                 ShaderModule::Shadow => "shadow",
                 ShaderModule::Underline => "underline",
-                ShaderModule::PathBin => "path_bin",
+                ShaderModule::PathTile => "path_tile",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::SubpixelSprite => "subpixel_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",

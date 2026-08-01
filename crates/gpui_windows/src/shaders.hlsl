@@ -954,20 +954,20 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
 /*
 **
-**              Path Bins
+**              Path Tiles
 **
 */
 
-// One xy-monotone quadratic piece of a path's boundary, stored downward
+// One xy-monotone quadratic curve of a path's boundary, stored downward
 // (p0.y <= p1.y), with its polynomial coefficients precomputed on the CPU:
 // x(t) = ax*t^2 + bx*t + p0.x and y(t) = ay*t^2 + by*t + p0.y. Uploading
 // the coefficients keeps this shader and the CPU binning consuming
-// bit-identical values (and line pieces' quadratic coefficients exactly
+// bit-identical values (and line curves' quadratic coefficients exactly
 // zero, so their solves take monotone_quadratic_root's linear branch).
-// `sign` is +1 if the contour ran downward through the piece and -1 if
+// `sign` is +1 if the contour ran downward through the curve and -1 if
 // upward; `sx` is sign(p1.x - p0.x) in stored orientation, or 0 for a
-// vertical piece.
-struct PathPiece {
+// vertical curve.
+struct PathCurve {
     float2 p0;
     float2 p1;
     float ax;
@@ -978,74 +978,77 @@ struct PathPiece {
     float sx;
 };
 
-// One bin of a filled path: a screen-aligned quad whose every pixel resolves
-// its own winding number from `backdrop` (the winding at `corner`, the bin's
-// backdrop sample point: its top-left nudged half a geometry-lattice step
-// inward, so no snapped boundary passes through it) plus the pieces listed
-// for the bin.
-struct PathBin {
-    uint order;
+// One tile of a filled path: a screen-aligned quad whose every pixel
+// resolves its own winding number from `backdrop` (the winding at `corner`,
+// the tile's backdrop sample point: its top-left nudged half a
+// geometry-lattice step inward, so no snapped boundary passes through it)
+// plus the curves listed for the tile.
+struct PathTile {
     uint paint;
-    uint piece_start;
-    uint piece_count;
+    uint curve_start;
+    uint curve_count;
     int backdrop;
-    uint even_odd;
     float2 corner;
     Bounds quad;
 };
 
-// Per-path paint data shared by every bin instance of one path, indexed by
-// PathBin.paint.
+// Per-path paint data shared by every tile of one path, indexed by
+// PathTile.paint. Tile and entry indices are path-local; `curve_base` and
+// `tile_curve_base` are where this path's slices start within the
+// concatenated scene-wide buffers, stamped at upload.
 struct PathPaint {
     Bounds bounds;
     Bounds content_mask;
     Background color;
+    uint even_odd;
+    uint curve_base;
+    uint tile_curve_base;
 };
 
-// One element of a bin's piece list: which piece (low bits), whether its
-// crossing of the bin's downward leg counts (high bit of `piece`), and the
+// One element of a tile's curve list: which curve (low bits), whether its
+// crossing of the tile's downward leg counts (high bit of `curve`), and the
 // height of that crossing, solved once on the CPU. Everything
-// per-(bin, piece) the fragment loop would otherwise re-derive per pixel.
-struct PathPieceEntry {
-    uint piece;
+// per-(tile, curve) the fragment loop would otherwise re-derive per pixel.
+struct TileCurve {
+    uint curve;
     float leg_y;
 };
 
-StructuredBuffer<PathBin> path_bins: register(t1);
-StructuredBuffer<PathPieceEntry> path_piece_entries: register(t2);
-StructuredBuffer<PathPiece> path_pieces: register(t3);
+StructuredBuffer<PathTile> path_tiles: register(t1);
+StructuredBuffer<TileCurve> tile_curves: register(t2);
+StructuredBuffer<PathCurve> path_curves: register(t3);
 StructuredBuffer<PathPaint> path_paints: register(t4);
 
-struct PathBinVertexOutput {
+struct PathTileVertexOutput {
     float4 position: SV_Position;
-    nointerpolation uint bin_id: TEXCOORD0;
+    nointerpolation uint tile_id: TEXCOORD0;
     nointerpolation float4 background_solid: COLOR1;
     nointerpolation float4 background_color0: COLOR2;
     nointerpolation float4 background_color1: COLOR3;
     float4 clip_distance: SV_ClipDistance;
 };
 
-struct PathBinFragmentInput {
+struct PathTileFragmentInput {
     float4 position: SV_Position;
-    nointerpolation uint bin_id: TEXCOORD0;
+    nointerpolation uint tile_id: TEXCOORD0;
     nointerpolation float4 background_solid: COLOR1;
     nointerpolation float4 background_color0: COLOR2;
     nointerpolation float4 background_color1: COLOR3;
 };
 
-PathBinVertexOutput path_bin_vertex(uint vertex_id: SV_VertexID, uint bin_id: SV_InstanceID) {
+PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
-    PathBin bin = path_bins[bin_id];
-    PathPaint paint = path_paints[bin.paint];
-    float2 position = bin.quad.origin + unit_vertex * bin.quad.size;
+    PathTile tile = path_tiles[tile_id];
+    PathPaint paint = path_paints[tile.paint];
+    float2 position = tile.quad.origin + unit_vertex * tile.quad.size;
 
     GradientColor gradient = prepare_gradient_color(
         paint.color.tag, paint.color.color_space,
         paint.color.solid, paint.color.colors);
 
-    PathBinVertexOutput output;
+    PathTileVertexOutput output;
     output.position = to_device_position_impl(position);
-    output.bin_id = bin_id;
+    output.tile_id = tile_id;
     output.background_solid = gradient.solid;
     output.background_color0 = gradient.color0;
     output.background_color1 = gradient.color1;
@@ -1054,7 +1057,7 @@ PathBinVertexOutput path_bin_vertex(uint vertex_id: SV_VertexID, uint bin_id: SV
 }
 
 // Stable quadratic solve for a*t^2 + b*t + c = 0, returning the root within
-// [0, 1]. The curve pieces are monotone, so at most one root lies in range.
+// [0, 1]. The curves are monotone, so at most one root lies in range.
 float monotone_quadratic_root(float a, float b, float c) {
     if (abs(a) < 1e-6) {
         return abs(b) < 1e-12 ? 0.0 : saturate(-c / b);
@@ -1079,13 +1082,13 @@ float coverage_integral(float ax, float bx, float cx, float ay, float by, float 
 }
 
 // Exact area of the part of the pixel column [px, px+1] left of a
-// downward-monotone quadratic piece over the window [ya, yb]:
+// downward-monotone quadratic curve over the window [ya, yb]:
 //     integral over [ya, yb] of clamp(x(y) - px, 0, 1) dy
 // Specialized to its one call site: the caller guarantees the window lies
-// inside the piece's y-span (so no constant extensions are needed) and
+// inside the curve's y-span (so no constant extensions are needed) and
 // passes the window-end roots ta/tb and column-relative offsets xa/xb
 // (= x - px) it already computed.
-float piece_column_area(float ax, float bx, float cx, float ay, float by, float p0y,
+float curve_column_area(float ax, float bx, float cx, float ay, float by, float p0y,
                         float ta, float tb, float xa, float xb) {
     // Split the parameter interval where the curve crosses the column's
     // boundaries; each crossing is another single-root monotone solve.
@@ -1108,57 +1111,57 @@ float piece_column_area(float ax, float bx, float cx, float ay, float by, float 
     }
 }
 
-// Mean winding this piece contributes to the pixel box, along the L-shaped
-// route from the bin's backdrop sample point: down to the sample's row,
+// Mean winding this curve contributes to the pixel box, along the L-shaped
+// route from the tile's backdrop sample point: down to the sample's row,
 // then right to the sample. `crosses_downward_leg` and `leg_y` are the
-// CPU's booking of whether this piece's crossing of the bin's left-edge
+// CPU's booking of whether this curve's crossing of the tile's left-edge
 // line belongs to the leg, and where that crossing is; both are constant
-// over the bin and are never re-derived here.
+// over the tile and are never re-derived here.
 //
 // A leg crossing counts with the sign of cross(leg direction, contour
-// tangent). For the rightward leg that is sign(dy) = piece.sign; for the
-// downward leg it is -sign(dx) = -piece.sign * piece.sx. The rightward leg
+// tangent). For the rightward leg that is sign(dy) = curve.sign; for the
+// downward leg it is -sign(dx) = -curve.sign * curve.sx. The rightward leg
 // matches what the CPU counted along the grid row line, so the backdrop and
 // these corrections compose into the true winding.
-float piece_winding(PathPiece piece, float2 corner, float2 pixel,
+float curve_winding(PathCurve curve, float2 corner, float2 pixel,
                     bool crosses_downward_leg, float leg_y) {
-    float ax = piece.ax;
-    float bx = piece.bx;
-    float ay = piece.ay;
-    float by = piece.by;
+    float ax = curve.ax;
+    float bx = curve.bx;
+    float ay = curve.ay;
+    float by = curve.by;
     float winding = 0.0;
 
-    // Rightward leg, from the bin's left edge to the sample. Clamping to the
-    // piece's y-span first is what makes the column integral usable here: it
-    // extends its boundary with constant x outside the span, but a winding
-    // crossing exists only inside the span.
-    float ya = max(pixel.y, piece.p0.y);
-    float yb = min(pixel.y + 1.0, piece.p1.y);
+    // Rightward leg, from the tile's left edge to the sample. Clamping to
+    // the curve's y-span first is what makes the column integral usable
+    // here: it extends its boundary with constant x outside the span, but a
+    // winding crossing exists only inside the span.
+    float ya = max(pixel.y, curve.p0.y);
+    float yb = min(pixel.y + 1.0, curve.p1.y);
     if (yb > ya) {
-        float ta = monotone_quadratic_root(ay, by, piece.p0.y - ya);
-        float tb = monotone_quadratic_root(ay, by, piece.p0.y - yb);
-        float xa = (ax * ta + bx) * ta + piece.p0.x;
-        float xb = (ax * tb + bx) * tb + piece.p0.x;
+        float ta = monotone_quadratic_root(ay, by, curve.p0.y - ya);
+        float tb = monotone_quadratic_root(ay, by, curve.p0.y - yb);
+        float xa = (ax * ta + bx) * ta + curve.p0.x;
+        float xb = (ax * tb + bx) * tb + curve.p0.x;
 
-        // By monotonicity the piece's x-extent over the window is exactly
+        // By monotonicity the curve's x-extent over the window is exactly
         // [min(xa, xb), max(xa, xb)], which classifies most pixels without
-        // the column integral: a piece entirely right of this pixel's
+        // the column integral: a curve entirely right of this pixel's
         // column contributes zero (the pixel is wholly left of the
         // boundary), and one entirely left of it contributes the whole
-        // window. Only the one or two columns the piece actually passes
+        // window. Only the one or two columns the curve actually passes
         // through pay for the exact area.
         if (min(xa, xb) < pixel.x + 1.0) {
-            // A crossing left of the bin's left edge is not on the leg and
+            // A crossing left of the tile's left edge is not on the leg and
             // must contribute zero for that y -- not a full pixel width.
             // x-monotonicity means x_c(y) meets corner.x at most once, at
             // the uploaded height, so the window splits into a live part
             // and a dead one with no solve. Dead means never *strictly*
-            // right of the corner: a vertical piece lying exactly on the
-            // bin's left edge is left of every sample in the bin, and the
+            // right of the corner: a vertical curve lying exactly on the
+            // tile's left edge is left of every sample in the tile, and the
             // backdrop owns it. Only the crossing-count height is clipped;
             // the area integral keeps the full window, because over the
-            // dead part the piece is left of corner.x where this pixel's
-            // column integrand is zero anyway (short of 1/512 on the bin's
+            // dead part the curve is left of corner.x where this pixel's
+            // column integrand is zero anyway (short of 1/512 on the tile's
             // leftmost column, far below visibility), which is what lets
             // the clipped end keep its already-solved parameter bounds.
             bool live = true;
@@ -1175,11 +1178,11 @@ float piece_winding(PathPiece piece, float2 corner, float2 pixel,
             }
             if (live) {
                 if (max(xa, xb) <= pixel.x) {
-                    winding += piece.sign * (yb - ya);
+                    winding += curve.sign * (yb - ya);
                 } else {
                     // clamp(px + 1 - x_c, 0, 1) = 1 - clamp(x_c - px, 0, 1).
-                    winding += piece.sign * ((yb - ya)
-                        - piece_column_area(ax, bx, piece.p0.x - pixel.x, ay, by, piece.p0.y,
+                    winding += curve.sign * ((yb - ya)
+                        - curve_column_area(ax, bx, curve.p0.x - pixel.x, ay, by, curve.p0.y,
                                             ta, tb, xa - pixel.x, xb - pixel.x));
                 }
             }
@@ -1189,41 +1192,42 @@ float piece_winding(PathPiece piece, float2 corner, float2 pixel,
     // Downward leg, from the sample point down to the sample's row. Both
     // the decision and the crossing height were made once, on the CPU,
     // alongside the backdrop this correction must complement; re-deriving
-    // either here would repeat per-bin work at every pixel, and re-deriving
-    // the decision would reopen the possibility of the two sides
-    // disagreeing. Per pixel only the box-filter weight remains. No lower
-    // gate is needed; the weight zeroes crossings below the pixel by
+    // either here would repeat per-tile work at every pixel, and
+    // re-deriving the decision would reopen the possibility of the two
+    // sides disagreeing. Per pixel only the box-filter weight remains. No
+    // lower gate is needed; the weight zeroes crossings below the pixel by
     // itself.
     if (crosses_downward_leg) {
-        winding -= piece.sign * piece.sx * clamp(pixel.y + 1.0 - leg_y, 0.0, 1.0);
+        winding -= curve.sign * curve.sx * clamp(pixel.y + 1.0 - leg_y, 0.0, 1.0);
     }
 
     return winding;
 }
 
-float4 path_bin_fragment(PathBinFragmentInput input): SV_Target {
-    PathBin bin = path_bins[input.bin_id];
+float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
+    PathTile tile = path_tiles[input.tile_id];
+    PathPaint paint = path_paints[tile.paint];
     float2 pixel = floor(input.position.xy);
 
-    // The loop bound is per instance, so every pixel of the bin runs the
-    // same iterations in lockstep; branches inside piece_winding still
+    // The loop bound is per instance, so every pixel of the tile runs the
+    // same iterations in lockstep; branches inside curve_winding still
     // diverge per pixel, but reconverge within each iteration.
-    float winding = float(bin.backdrop);
+    float winding = float(tile.backdrop);
     [loop]
-    for (uint i = 0u; i < bin.piece_count; i++) {
-        PathPieceEntry entry = path_piece_entries[bin.piece_start + i];
-        PathPiece piece = path_pieces[entry.piece & 0x7fffffffu];
-        winding += piece_winding(piece, bin.corner, pixel,
-            (entry.piece & 0x80000000u) != 0u, entry.leg_y);
+    for (uint i = 0u; i < tile.curve_count; i++) {
+        TileCurve entry = tile_curves[paint.tile_curve_base + tile.curve_start + i];
+        PathCurve curve = path_curves[paint.curve_base + (entry.curve & 0x7fffffffu)];
+        winding += curve_winding(curve, tile.corner, pixel,
+            (entry.curve & 0x80000000u) != 0u, entry.leg_y);
     }
 
-    float coverage = bin.even_odd != 0u
+    float coverage = paint.even_odd != 0u
         // Distance to the nearest even integer (FreeType's fold).
         ? abs(winding - 2.0 * round(winding * 0.5))
         // Distance from zero, clamped.
         : min(abs(winding), 1.0);
 
-    // Wholly-exterior pixels of boundary bins land on exactly zero (their
+    // Wholly-exterior pixels of boundary tiles land on exactly zero (their
     // winding is the untouched integer backdrop), and with straight-alpha
     // blending an all-zero output is a no-op, so skip paint evaluation —
     // gradient direction math, Oklab conversion, and dithering — for them.
@@ -1231,7 +1235,6 @@ float4 path_bin_fragment(PathBinFragmentInput input): SV_Target {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    PathPaint paint = path_paints[bin.paint];
     float4 color = gradient_color(paint.color, input.position.xy, paint.bounds,
         input.background_solid, input.background_color0, input.background_color1);
     return float4(color.rgb, color.a * coverage);

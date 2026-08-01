@@ -5,18 +5,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, PathBin,
-    PathBins, PathDecomposition, PathPaint, Pixels, Point, Radians, ScaledPixels, Size,
-    bounds_tree::BoundsTree, point, px,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, PathCurve,
+    PathPaint, PathTile, Pixels, Point, Radians, ScaledPixels, Size, TileCurve,
+    bounds_tree::BoundsTree,
+    path_winding::{MonotoneCurve, decompose_quadratic},
+    point, px,
 };
 use lyon::path::FillRule;
-use std::{
-    fmt::Debug,
-    iter::Peekable,
-    ops::{Add, Range, Sub},
-    slice,
-    sync::Arc,
-};
+use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
@@ -35,6 +31,13 @@ impl From<bool> for PaddedBool32 {
     }
 }
 
+impl PaddedBool32 {
+    /// The wrapped boolean.
+    pub fn as_bool(self) -> bool {
+        self.0 != 0
+    }
+}
+
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
@@ -43,7 +46,7 @@ pub struct Scene {
     layer_stack: Vec<DrawOrder>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
-    pub paths: PathBins,
+    pub paths: Vec<PaintedPath>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
@@ -109,21 +112,7 @@ impl Scene {
             }
             Primitive::Path(path) => {
                 path.order = order;
-                // A scaled path without a decomposition is empty by the
-                // `Path::scale` contract (asserted there, where the logical
-                // segments are still visible) and draws nothing.
-                if let Some(decomposition) = &path.decomposition {
-                    self.paths.insert(
-                        decomposition,
-                        path.scale_factor,
-                        order,
-                        &PathPaint {
-                            bounds: path.bounds,
-                            content_mask: path.content_mask,
-                            color: path.color,
-                        },
-                    );
-                }
+                self.paths.push(path.clone());
             }
             Primitive::Underline(underline) => {
                 underline.order = order;
@@ -163,12 +152,7 @@ impl Scene {
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
-        // Only the instances are sorted; `piece_start` indexes the piece list
-        // buffer absolutely, so it survives the reordering. Unstable is fine:
-        // equal-order bins come from one path and tile without overlap, so
-        // their relative draw order is immaterial — and the elements are wide
-        // enough that the sort's memory traffic is worth saving.
-        self.paths.bins.sort_unstable_by_key(|bin| bin.order);
+        self.paths.sort_by_key(|path| path.order);
         self.underlines.sort_by_key(|underline| underline.order);
         self.monochrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
@@ -193,7 +177,7 @@ impl Scene {
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
             paths_start: 0,
-            paths_iter: self.paths.bins.iter().peekable(),
+            paths_iter: self.paths.iter().peekable(),
             underlines_start: 0,
             underlines_iter: self.underlines.iter().peekable(),
             monochrome_sprites_start: 0,
@@ -239,7 +223,7 @@ pub(crate) enum PaintOperation {
 pub enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
-    Path(Path<ScaledPixels>),
+    Path(PaintedPath),
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     SubpixelSprite(SubpixelSprite),
@@ -253,7 +237,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
             Primitive::Quad(quad) => &quad.bounds,
-            Primitive::Path(path) => &path.bounds,
+            Primitive::Path(path) => &path.paint.bounds,
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
@@ -266,7 +250,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.content_mask,
             Primitive::Quad(quad) => &quad.content_mask,
-            Primitive::Path(path) => &path.content_mask,
+            Primitive::Path(path) => &path.paint.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
@@ -289,7 +273,7 @@ struct BatchIterator<'a> {
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
     paths_start: usize,
-    paths_iter: Peekable<slice::Iter<'a, PathBin>>,
+    paths_iter: Peekable<slice::Iter<'a, PaintedPath>>,
     underlines_start: usize,
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
     monochrome_sprites_start: usize,
@@ -518,7 +502,7 @@ impl PrimitiveBatch {
         match self {
             Self::Shadows(range) => format!("shadows ({})", range.len()),
             Self::Quads(range) => format!("quads ({})", range.len()),
-            Self::Paths(range) => format!("path bins ({})", range.len()),
+            Self::Paths(range) => format!("paths ({})", range.len()),
             Self::Underlines(range) => format!("underlines ({})", range.len()),
             Self::MonochromeSprites { texture_id, range } => {
                 format!(
@@ -814,35 +798,58 @@ pub struct PathQuadratic<P: Clone + Debug + Default + PartialEq> {
 /// the measurements behind the value.
 pub(crate) const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
 
-/// A filled path, represented as closed contours of quadratic Bézier
+/// A filled path in logical pixels: closed contours of quadratic Bézier
 /// segments (lines are degenerate quadratics). Contours are closed
-/// implicitly: starting a new contour (or decomposing the path for
-/// rendering) appends a closing line segment if the current contour is
-/// open.
+/// implicitly: starting a new contour (or painting the path) treats an
+/// open contour as if it ended with a closing line segment.
 ///
-/// A built path carries its scale-independent winding decomposition, computed
-/// once via [`Path::ensure_decomposition`] and shared by clones; painting only
-/// bins it into device-space cells.
+/// A `Path` is pure geometry — paint-time facts (display scale, clip,
+/// color) arrive as [`Path::painted`] arguments. Building a path
+/// decomposes each segment into xy-monotone curves the moment it is
+/// appended; `painted` bins those curves into the device-space
+/// [`PaintedPath`] a scene renders.
 #[derive(Clone, Debug)]
-#[expect(missing_docs)]
-pub struct Path<P: Clone + Debug + Default + PartialEq> {
-    pub order: DrawOrder,
-    pub bounds: Bounds<P>,
-    pub content_mask: ContentMask<P>,
-    pub segments: Vec<PathQuadratic<P>>,
-    pub color: Background,
+pub struct Path {
+    /// Conservative bounds of the geometry (the union of every segment's
+    /// control polygon).
+    pub bounds: Bounds<Pixels>,
+    /// The rule mapping winding numbers to coverage when the path is
+    /// filled.
     pub fill_rule: FillRule,
-    decomposition: Option<Arc<PathDecomposition>>,
-    pub(crate) scale_factor: f32,
-    start: Point<P>,
-    current: Point<P>,
+    /// The contours as built, one homogeneous sequence of quadratics.
+    pub segments: Vec<PathQuadratic<Pixels>>,
+    /// The segments' xy-monotone decomposition, grown in lockstep with
+    /// `segments` as the path is built; consumed by [`Path::painted`].
+    monotone_curves: Vec<MonotoneCurve>,
+    start: Point<Pixels>,
+    current: Point<Pixels>,
 }
 
-impl Path<Pixels> {
+/// A filled path, painted: its draw order, the paint row every tile
+/// shares, and the device-space tiles renderers upload. [`Path::painted`]
+/// is the only constructor, so a `PaintedPath` is always fully binned — a
+/// self-contained primitive that can be inserted into a scene, cached, and
+/// replayed with no further geometry work.
+#[derive(Clone, Debug)]
+pub struct PaintedPath {
+    /// Draw order, assigned on scene insertion.
+    pub order: DrawOrder,
+    /// The per-path paint row shared by every tile of this path, uploaded
+    /// once per path.
+    pub paint: PathPaint,
+    /// The device-space tiles of this path, one GPU instance each.
+    pub tiles: Vec<PathTile>,
+    /// The device-space curves the tiles reference.
+    pub curves: Vec<PathCurve>,
+    /// Concatenated per-tile curve lists, indexed by
+    /// [`PathTile::curve_start`].
+    pub tile_curves: Vec<TileCurve>,
+}
+
+impl Path {
     /// Create a new path with the given starting point.
     pub fn new(start: Point<Pixels>) -> Self {
         Self {
-            order: DrawOrder::default(),
             segments: Vec::new(),
             start,
             current: start,
@@ -850,56 +857,47 @@ impl Path<Pixels> {
                 origin: start,
                 size: Default::default(),
             },
-            content_mask: Default::default(),
-            color: Default::default(),
             fill_rule: FillRule::NonZero,
-            decomposition: None,
-            scale_factor: 1.0,
+            monotone_curves: Vec::new(),
         }
     }
 
-    /// Compute the path's scale-independent winding decomposition, closing
-    /// any open contour first. Reuses a previous decomposition when the path
-    /// hasn't been mutated since.
-    pub fn ensure_decomposition(&mut self) {
-        self.close();
-        let stale = self
-            .decomposition
-            .as_ref()
-            .is_none_or(|decomposition| decomposition.fill_rule() != self.fill_rule);
-        if stale {
-            self.decomposition = Some(Arc::new(PathDecomposition::compute(
-                &self.segments,
-                self.fill_rule,
-            )));
-        }
-    }
-
-    /// Scale this path into a paint-time primitive. The decomposition is
-    /// carried over unchanged — it is scale-independent, and the binner
-    /// applies the factor when producing device-space instances — while the
-    /// segments are deliberately left behind: rendering reads only the
-    /// decomposition, and cloning the segment list bought nothing while
-    /// costing an allocation and copy on every paint (and again on every
-    /// `Scene::replay` of a cached element).
-    pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
-        debug_assert!(
-            self.decomposition.is_some() || self.segments.is_empty(),
-            "path scaled for painting without a decomposition; \
-            call Path::ensure_decomposition first"
-        );
-        Path {
-            order: self.order,
-            bounds: self.bounds.scale(factor),
-            content_mask: self.content_mask.scale(factor),
-            segments: Vec::new(),
-            start: self.start.map(|start| start.scale(factor)),
-            current: self.current.scale(factor),
-            color: self.color,
-            fill_rule: self.fill_rule,
-            decomposition: self.decomposition.clone(),
-            scale_factor: self.scale_factor * factor,
-        }
+    /// Paint this path: scale the geometry into device pixels, clip it to
+    /// `content_mask`, and bin it into tiles, once. The logical segments
+    /// stay behind on the built path — rendering reads only the tiles.
+    pub fn painted(
+        &self,
+        scale_factor: f32,
+        content_mask: ContentMask<Pixels>,
+        color: Background,
+    ) -> PaintedPath {
+        let mut painted = PaintedPath {
+            order: DrawOrder::default(),
+            paint: PathPaint {
+                bounds: self.bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                color,
+                even_odd: matches!(self.fill_rule, FillRule::EvenOdd).into(),
+                curve_base: 0,
+                tile_curve_base: 0,
+            },
+            tiles: Vec::new(),
+            curves: Vec::new(),
+            tile_curves: Vec::new(),
+        };
+        // Fill semantics treat every contour as closed; an open final
+        // contour is closed virtually so painting need not mutate the
+        // built path.
+        let closing_curve = (!self.segments.is_empty() && self.current != self.start)
+            .then(|| {
+                MonotoneCurve::from_line(
+                    point(self.current.x.0, self.current.y.0),
+                    point(self.start.x.0, self.start.y.0),
+                )
+            })
+            .flatten();
+        painted.bin(&self.monotone_curves, closing_curve, scale_factor);
+        painted
     }
 
     /// Close the current contour and start a new one at the given point.
@@ -952,23 +950,20 @@ impl Path<Pixels> {
             });
         }
         self.segments.push(PathQuadratic { p0, ctrl, p1 });
-        self.decomposition = None;
+        // Decomposition is per-segment independent, so the monotone form is
+        // maintained inline: it grows in lockstep with `segments` and can
+        // never go stale.
+        decompose_quadratic(
+            &mut self.monotone_curves,
+            point(p0.x.0, p0.y.0),
+            point(ctrl.x.0, ctrl.y.0),
+            point(p1.x.0, p1.y.0),
+        );
     }
 }
 
-impl<T> Path<T>
-where
-    T: Clone + Debug + Default + PartialEq + PartialOrd + Add<T, Output = T> + Sub<Output = T>,
-{
-    #[allow(unused)]
-    #[expect(missing_docs)]
-    pub fn clipped_bounds(&self) -> Bounds<T> {
-        self.bounds.intersect(&self.content_mask.bounds)
-    }
-}
-
-impl From<Path<ScaledPixels>> for Primitive {
-    fn from(path: Path<ScaledPixels>) -> Self {
+impl From<PaintedPath> for Primitive {
+    fn from(path: PaintedPath) -> Self {
         Primitive::Path(path)
     }
 }
