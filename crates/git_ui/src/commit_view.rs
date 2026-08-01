@@ -299,6 +299,7 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
+        let mut scroll_buffer: Option<(Entity<language::Buffer>, u32)> = None;
 
         cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
@@ -440,27 +441,31 @@ impl CommitView {
 
                 if let Some((target_path, target_row)) = &scroll_to {
                     if *target_path == file_path {
-                        let anchor = this.update(cx, |this, cx| {
-                            this.multibuffer
-                                .read(cx)
-                                .buffer_point_to_anchor(&buffer, language::Point::new(*target_row, 0), cx)
-                        })?;
-                        if let Some(anchor) = anchor {
-                            this.update_in(cx, |this, window, cx| {
-                                this.editor.update(cx, |editor, cx| {
-                                    editor.rhs_editor().update(cx, |editor, cx| {
-                                        editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::focused()),
-                                            window,
-                                            cx,
-                                            |s| s.select_ranges([anchor..anchor]),
-                                        );
-                                    });
-                                });
-                            })?;
-                            scroll_to = None;
-                        }
+                        scroll_buffer = Some((buffer.clone(), *target_row));
+                        scroll_to = None;
                     }
+                }
+            }
+
+            if let Some((buffer, target_row)) = scroll_buffer {
+                let anchor = this.update(cx, |this, cx| {
+                    this.multibuffer
+                        .read(cx)
+                        .buffer_point_to_anchor(&buffer, language::Point::new(target_row, 0), cx)
+                })?;
+                if let Some(anchor) = anchor {
+                    this.update_in(cx, |this, window, cx| {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.rhs_editor().update(cx, |editor, cx| {
+                                editor.change_selections(
+                                    SelectionEffects::scroll(Autoscroll::focused()),
+                                    window,
+                                    cx,
+                                    |s| s.select_ranges([anchor..anchor]),
+                                );
+                            });
+                        });
+                    })?;
                 }
             }
 

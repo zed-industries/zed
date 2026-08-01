@@ -64,6 +64,7 @@ pub mod worktree_picker;
 pub mod worktree_service;
 
 pub use blame_ui::GitBlameStatus;
+pub(crate) use blame_ui::blame_entry_scroll_target;
 pub use conflict_view::MergeConflictIndicator;
 
 pub fn get_provider_icon(name: &str) -> IconName {

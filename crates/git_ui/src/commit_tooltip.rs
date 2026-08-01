@@ -214,6 +214,7 @@ pub struct CommitTooltip {
     markdown: Entity<Markdown>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
+    scroll_to: Option<(git::repository::RepoPath, u32)>,
 }
 
 impl CommitTooltip {
@@ -229,6 +230,8 @@ impl CommitTooltip {
             .committer_time
             .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
             .unwrap_or(OffsetDateTime::now_utc());
+
+        let scroll_to = crate::blame_entry_scroll_target(blame);
 
         Self::new(
             CommitDetails {
@@ -247,6 +250,7 @@ impl CommitTooltip {
             workspace,
             cx,
         )
+        .with_scroll_to(scroll_to)
     }
 
     pub fn new(
@@ -273,7 +277,13 @@ impl CommitTooltip {
             workspace,
             scroll_handle: ScrollHandle::new(),
             markdown,
+            scroll_to: None,
         }
+    }
+
+    fn with_scroll_to(mut self, scroll_to: Option<(git::repository::RepoPath, u32)>) -> Self {
+        self.scroll_to = scroll_to;
+        self
     }
 }
 
@@ -326,6 +336,7 @@ impl Render for CommitTooltip {
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
         let repo = self.repository.clone();
         let workspace = self.workspace.clone();
+        let scroll_to = self.scroll_to.clone();
         let commit_summary = CommitSummary {
             sha: self.commit.sha.clone(),
             subject: self
@@ -435,7 +446,7 @@ impl Render for CommitTooltip {
                                                         workspace.clone(),
                                                         None,
                                                         None,
-                                                        None,
+                                                        scroll_to.clone(),
                                                         window,
                                                         cx,
                                                     );

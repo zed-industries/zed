@@ -384,6 +384,8 @@ impl BlameRenderer for GitBlameRenderer {
             has_parent: false,
         };
 
+        let scroll_target = blame_entry_scroll_target(&blame);
+
         Some(
             tooltip_container(cx, |this, cx| {
                 this.occlude()
@@ -465,19 +467,21 @@ impl BlameRenderer for GitBlameRenderer {
                                                         .size(IconSize::Small)
                                                         .color(Color::Muted),
                                                 )
-                                                .on_click(move |_, window, cx| {
+                                                .on_click({
+                                                    let scroll_target = scroll_target.clone();
+                                                    move |_, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
                                                         None,
                                                         None,
-                                                        None,
+                                                        scroll_target.clone(),
                                                         window,
                                                         cx,
                                                     );
                                                     cx.stop_propagation();
-                                                }),
+                                                }}),
                                             )
                                             .child(Divider::vertical())
                                             .child(
@@ -562,7 +566,7 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
 
 /// Derive a (path, 0-based row) scroll target from a blame entry, so the
 /// commit view can jump to the exact line the user clicked.
-fn blame_entry_scroll_target(blame_entry: &BlameEntry) -> Option<(RepoPath, u32)> {
+pub(crate) fn blame_entry_scroll_target(blame_entry: &BlameEntry) -> Option<(RepoPath, u32)> {
     let path = RepoPath::new(&blame_entry.filename).ok()?;
     let row = blame_entry.original_line_number.saturating_sub(1);
     Some((path, row))
