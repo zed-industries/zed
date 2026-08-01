@@ -33,7 +33,6 @@ use crate::{
     text_diff_view::TextDiffView,
 };
 
-mod askpass_modal;
 pub mod branch_diff;
 pub mod branch_picker;
 mod commit_context_menu;
@@ -41,7 +40,6 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
-pub mod created_worktrees;
 mod diff_multibuffer;
 pub mod file_diff_view;
 pub mod git_graph;
@@ -59,9 +57,7 @@ pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod unstaged_diff;
-pub mod worktree_names;
 pub mod worktree_picker;
-pub mod worktree_service;
 
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;

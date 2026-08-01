@@ -29,7 +29,6 @@ component.workspace = true
 db.workspace = true
 editor.workspace = true
 file_icons.workspace = true
-fs.workspace = true
 futures-lite.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -48,7 +47,6 @@ panel.workspace = true
 picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true
-proto.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 remote.workspace = true
@@ -73,8 +71,8 @@ ui_input.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true
+worktree_service.workspace = true
 zed_actions.workspace = true
-zeroize.workspace = true
 ztracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -23,8 +23,8 @@ use workspace::{
     ModalView, MultiWorkspace, Workspace, dock::DockPosition, notifications::DetachAndPromptErr,
 };
 
-use crate::git_panel::show_error_toast;
-use crate::worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
+use worktree_service::notifications::show_error_toast;
+use worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
 use zed_actions::{
     CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, OpenWorktreeSetupTasks,
     SwitchWorktree,
@@ -944,7 +944,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
+                        worktree_service::handle_create_worktree(
                             workspace,
                             &CreateWorktree {
                                 worktree_name: None,
@@ -963,7 +963,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
+                        worktree_service::handle_create_worktree(
                             workspace,
                             &CreateWorktree {
                                 worktree_name: None,
@@ -1002,7 +1002,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                             .map(|wt| wt.path.as_path());
                         if let Some(workspace) = self.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
-                                crate::worktree_service::handle_switch_worktree(
+                                worktree_service::handle_switch_worktree(
                                     workspace,
                                     &SwitchWorktree {
                                         path: worktree.path.clone(),
@@ -1031,7 +1031,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 };
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        crate::worktree_service::handle_create_worktree(
+                        worktree_service::handle_create_worktree(
                             workspace,
                             &CreateWorktree {
                                 worktree_name: Some(name.clone()),

@@ -4792,7 +4792,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
                 };
                 let creation = window.update(cx, |_root, window, cx| {
                     workspace.update(cx, |workspace, cx| {
-                        git_ui::worktree_service::create_worktree_workspace(
+                        worktree_service::create_worktree_workspace(
                             workspace, &action, window, None, cx,
                         )
                     })
@@ -11154,19 +11154,19 @@ mod tests {
 
     #[gpui::test]
     fn test_resolve_worktree_branch_target() {
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+        let resolved = worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::ExistingBranch {
                 name: "feature".to_string(),
             },
         );
         assert_eq!(resolved, Some("feature".to_string()));
 
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+        let resolved = worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::CurrentBranch,
         );
         assert_eq!(resolved, None);
 
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+        let resolved = worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::RemoteBranch {
                 remote_name: "origin".to_string(),
                 branch_name: "main".to_string(),
@@ -12172,12 +12172,8 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
-                        creation_infos,
-                        fs_clone,
-                        cx,
-                    )
-                    .await
+                    worktree_service::await_and_rollback_on_failure(creation_infos, fs_clone, cx)
+                        .await
                 })
             })
             .unwrap()
@@ -12260,12 +12256,8 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
-                        creation_infos,
-                        fs_clone,
-                        cx,
-                    )
-                    .await
+                    worktree_service::await_and_rollback_on_failure(creation_infos, fs_clone, cx)
+                        .await
                 })
             })
             .unwrap()
@@ -12331,12 +12323,8 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
-                        creation_infos,
-                        fs_clone,
-                        cx,
-                    )
-                    .await
+                    worktree_service::await_and_rollback_on_failure(creation_infos, fs_clone, cx)
+                        .await
                 })
             })
             .unwrap()
@@ -12406,12 +12394,8 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
-                        creation_infos,
-                        fs_clone,
-                        cx,
-                    )
-                    .await
+                    worktree_service::await_and_rollback_on_failure(creation_infos, fs_clone, cx)
+                        .await
                 })
             })
             .unwrap()
@@ -12558,7 +12542,7 @@ mod tests {
 
         panel.read_with(cx, |panel, cx| {
             let (git_repos, non_git_paths) =
-                git_ui::worktree_service::classify_worktrees(panel.project.read(cx), cx);
+                worktree_service::classify_worktrees(panel.project.read(cx), cx);
 
             let git_work_dirs: Vec<PathBuf> = git_repos
                 .iter()

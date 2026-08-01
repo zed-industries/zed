@@ -491,7 +491,6 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "git",
- "git_ui",
  "gpui",
  "gpui_tokio",
  "heapless",
@@ -561,6 +560,7 @@ dependencies = [
  "vim",
  "watch",
  "workspace",
+ "worktree_service",
  "zed_actions",
 ]
 
@@ -7437,7 +7437,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "proto",
  "rand 0.9.4",
  "release_channel",
  "remote",
@@ -7465,8 +7464,8 @@ dependencies = [
  "watch",
  "windows 0.61.3",
  "workspace",
+ "worktree_service",
  "zed_actions",
- "zeroize",
  "zlog",
  "ztracing",
 ]
@@ -17065,7 +17064,6 @@ dependencies = [
  "feature_flags",
  "fs",
  "git",
- "git_ui",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -17095,6 +17093,7 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "workspace",
+ "worktree_service",
  "zed_actions",
 ]
 
@@ -22820,6 +22819,43 @@ dependencies = [
  "gpui_platform",
  "settings",
  "worktree",
+]
+
+[[package]]
+name = "worktree_service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "askpass",
+ "collections",
+ "db",
+ "editor",
+ "fs",
+ "futures 0.3.32",
+ "git",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "notifications",
+ "project",
+ "proto",
+ "rand 0.9.4",
+ "remote",
+ "remote_connection",
+ "serde",
+ "serde_json",
+ "settings",
+ "task",
+ "terminal",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+ "zeroize",
+ "zlog",
 ]
 
 [[package]]
