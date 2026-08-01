@@ -4,6 +4,12 @@
 
 use super::*;
 
+use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::Task;
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use project::Project;
+use ui::{HighlightedLabel, ListItemSpacing};
+
 /// Computes, for each item in a flat pre-order outline (given as `depths`), the index of its
 /// parent — the nearest preceding item with a smaller depth (`None` for top-level items).
 /// "Nearest preceding item with a smaller depth" is used rather than `depth - 1`, because
@@ -436,35 +442,43 @@ impl settings::Settings for BreadcrumbDirectoryListingSettings {
     }
 }
 
-/// A single row in a [`BreadcrumbDirectoryBrowser`] listing: `path`'s direct children, ready to
-/// render, already sorted the same way the project panel orders siblings (see
-/// [`BreadcrumbDirectoryListingSettings`]) and truncated to `MAX_BREADCRUMB_MENU_ENTRIES`.
+/// A single row in a breadcrumb directory dropdown: one of `path`'s direct children, sorted the
+/// way the project panel orders siblings (see [`BreadcrumbDirectoryListingSettings`]).
 struct BreadcrumbDirectoryEntry {
     name: SharedString,
     path: Arc<RelPath>,
     is_dir: bool,
     is_ignored: bool,
+    git_summary: GitSummary,
 }
 
-/// Lists `path`'s direct children for a [`BreadcrumbDirectoryBrowser`] to render, plus whether the
-/// listing was truncated. Entries gitignored by Git are dropped entirely when
-/// `project_panel.hide_gitignore` is set, and hidden (dotfile) entries are dropped entirely when
-/// `project_panel.hide_hidden` is set, matching the project panel; ignored entries that are kept
-/// are colored by [`BreadcrumbDirectoryBrowser::render_entry`] the same way the panel does.
+/// Lists `path`'s direct children for a breadcrumb directory dropdown. Gitignored and hidden
+/// entries are dropped when `project_panel.hide_gitignore`/`hide_hidden` are set, matching the
+/// project panel, and each entry carries the git summary the panel colors rows by.
 fn breadcrumb_directory_entries(
+    project: &Entity<Project>,
     worktree: &Entity<project::Worktree>,
     path: &RelPath,
     cx: &App,
-) -> (Vec<BreadcrumbDirectoryEntry>, bool) {
+) -> Vec<BreadcrumbDirectoryEntry> {
     let settings = BreadcrumbDirectoryListingSettings::get_global(cx);
-    let mut entries = worktree
+    let worktree_snapshot = worktree.read(cx).snapshot();
+    // The panel's own scoped traversal (`project_panel.rs`'s sibling lookup uses the same one),
+    // which walks just this directory's children rather than the whole worktree.
+    let repo_snapshots = project
         .read(cx)
-        .snapshot()
-        .child_entries(path)
-        .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
-        .filter(|entry| !settings.hide_hidden || !entry.is_hidden)
-        .cloned()
-        .collect::<Vec<_>>();
+        .git_store()
+        .read(cx)
+        .display_repo_snapshots(cx);
+    let mut entries = project::git_store::git_traversal::ChildEntriesGitIter::new(
+        &repo_snapshots,
+        &worktree_snapshot,
+        path,
+    )
+    .filter(|entry| !settings.hide_gitignore || !entry.is_ignored)
+    .filter(|entry| !settings.hide_hidden || !entry.is_hidden)
+    .map(|entry| entry.to_owned())
+    .collect::<Vec<_>>();
     entries.sort_by(|a, b| {
         util::paths::compare_rel_paths_by(
             (&*a.path, a.is_file()),
@@ -473,10 +487,8 @@ fn breadcrumb_directory_entries(
             settings.sort_order.into(),
         )
     });
-    let truncated = entries.len() > MAX_BREADCRUMB_MENU_ENTRIES;
-    entries.truncate(MAX_BREADCRUMB_MENU_ENTRIES);
 
-    let entries = entries
+    entries
         .into_iter()
         .filter_map(|entry| {
             let name = entry.path.file_name()?.to_string();
@@ -485,36 +497,34 @@ fn breadcrumb_directory_entries(
                 path: entry.path.clone(),
                 is_dir: entry.is_dir(),
                 is_ignored: entry.is_ignored,
+                git_summary: entry.git_summary,
             })
         })
-        .collect();
-    (entries, truncated)
+        .collect()
 }
 
-/// A breadcrumb directory dropdown's contents: the current directory's children. Clicking a
-/// directory row navigates the same popover into that directory in place — rather than opening a
-/// nested submenu the way `ContextMenu` would — mirroring IntelliJ's navigation bar popup, which
-/// has no submenu tree. Clicking a file row opens it and dismisses the popover.
-///
-/// Keyboard support is intentionally minimal: `Escape` dismisses. Arrow-key/Enter row selection
-/// isn't wired up — every row is still reachable and clickable, this just doesn't add a
-/// keyboard-driven highlight cursor on top of mouse hover.
-pub(crate) struct BreadcrumbDirectoryBrowser {
+/// The list a breadcrumb directory segment drops down: `current_path`'s direct children, filtered
+/// by the query typed into the picker's search field. Choosing a directory navigates the bar into
+/// it and reopens the dropdown under its own segment (see [`Editor::navigate_breadcrumb_to`]),
+/// mirroring IntelliJ's navigation bar popup, which has no submenu tree either. Choosing a file
+/// opens it.
+pub(crate) struct BreadcrumbDirectoryDelegate {
     editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
     worktree_id: WorktreeId,
     current_path: Arc<RelPath>,
+    /// The open file's own path, so the row leading to it reads as the current one.
     active_path: Option<Arc<RelPath>>,
-    focus_handle: FocusHandle,
-    _on_blur_subscription: Subscription,
-    /// Set by [`Self::on_dismiss`] right after construction, since the subscription needs the
-    /// entity this field lives in. Held here rather than detached so it dies with the browser.
-    _on_dismiss_subscription: Option<Subscription>,
+    entries: Vec<BreadcrumbDirectoryEntry>,
+    matches: Vec<StringMatch>,
+    selected_index: usize,
     _expand_task: gpui::Task<()>,
 }
 
-impl BreadcrumbDirectoryBrowser {
-    fn new(
+pub(crate) type BreadcrumbDirectoryPicker = Picker<BreadcrumbDirectoryDelegate>;
+
+impl BreadcrumbDirectoryDelegate {
+    fn picker(
         editor: WeakEntity<Editor>,
         workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
@@ -522,39 +532,71 @@ impl BreadcrumbDirectoryBrowser {
         active_path: Option<Arc<RelPath>>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Entity<Self> {
-        let browser = cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-            // Clicking away — including into the editor — moves focus off this popover, which
-            // should end the navigation session the same way `Escape` does (see
-            // `Editor::clear_breadcrumb_navigation`), rather than leaving it open and stale.
-            let _on_blur_subscription =
-                cx.on_blur(&focus_handle, window, |_, _, cx| cx.emit(DismissEvent));
-            Self {
+    ) -> Entity<BreadcrumbDirectoryPicker> {
+        cx.new(|cx| {
+            let delegate = Self {
                 editor,
                 workspace,
                 worktree_id,
                 current_path,
                 active_path,
-                focus_handle,
-                _on_blur_subscription,
-                _on_dismiss_subscription: None,
+                entries: Vec::new(),
+                matches: Vec::new(),
+                selected_index: 0,
                 _expand_task: gpui::Task::ready(()),
-            }
-        });
-        browser.update(cx, |browser, cx| browser.expand_current_path(cx));
-        browser
+            };
+            let mut picker = Picker::uniform_list(delegate, window, cx).popover();
+            picker.delegate.reload_entries(cx);
+            picker.delegate.expand_current_path(window, cx);
+            picker.delegate.select_active_path();
+            picker
+        })
+    }
+
+    fn project(&self, cx: &App) -> Option<Entity<Project>> {
+        Some(self.workspace.upgrade()?.read(cx).project().clone())
+    }
+
+    fn worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
+        self.project(cx)?
+            .read(cx)
+            .worktree_for_id(self.worktree_id, cx)
+    }
+
+    fn reload_entries(&mut self, cx: &App) {
+        let (Some(project), Some(worktree)) = (self.project(cx), self.worktree(cx)) else {
+            self.entries = Vec::new();
+            return;
+        };
+        self.entries = breadcrumb_directory_entries(&project, &worktree, &self.current_path, cx);
+    }
+
+    /// Starts on the row leading to the open file, so the dropdown opens where the user already is
+    /// rather than at the top of an unrelated directory.
+    fn select_active_path(&mut self) {
+        let Some(active_path) = self.active_path.as_ref() else {
+            return;
+        };
+        self.selected_index = self
+            .matches
+            .iter()
+            .position(|entry_match| {
+                self.entries
+                    .get(entry_match.candidate_id)
+                    .is_some_and(|entry| active_path.starts_with(&entry.path))
+            })
+            .unwrap_or(0);
     }
 
     /// Asks the worktree to scan this directory's children, the same call the project panel makes
     /// when a directory is expanded. Gitignored directories are never scanned proactively, so
     /// without this their dropdown lists nothing at all.
-    fn expand_current_path(&mut self, cx: &mut Context<Self>) {
-        let Some(project) = self
-            .workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
-        else {
+    fn expand_current_path(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
+    ) {
+        let Some(project) = self.project(cx) else {
             return;
         };
         let Some(entry_id) = self
@@ -570,121 +612,235 @@ impl BreadcrumbDirectoryBrowser {
             return;
         };
 
-        self._expand_task = cx.spawn(async move |browser, cx| {
+        self._expand_task = cx.spawn_in(window, async move |picker, cx| {
             expand.await.log_err();
-            browser.update(cx, |_, cx| cx.notify()).ok();
+            picker
+                .update_in(cx, |picker, window, cx| picker.refresh(window, cx))
+                .ok();
         });
     }
 
-    /// Runs `on_dismiss` when this browser is dismissed, by any route: `Escape`, focus moving away,
-    /// or another segment's `PopoverMenuHandle::hide`.
-    fn on_dismiss(browser: &Entity<Self>, cx: &mut App, on_dismiss: impl Fn(&mut App) + 'static) {
-        let subscription = cx.subscribe(browser, move |_, _: &DismissEvent, cx| on_dismiss(cx));
-        browser.update(cx, |browser, _| {
-            browser._on_dismiss_subscription = Some(subscription);
-        });
+    fn entry_at(&self, index: usize) -> Option<&BreadcrumbDirectoryEntry> {
+        self.entries.get(self.matches.get(index)?.candidate_id)
+    }
+}
+
+impl PickerDelegate for BreadcrumbDirectoryDelegate {
+    type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "breadcrumb directory picker"
     }
 
-    fn worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
-        let workspace = self.workspace.upgrade()?;
-        workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .worktree_for_id(self.worktree_id, cx)
+    fn match_count(&self) -> usize {
+        self.matches.len()
     }
 
-    /// Handles choosing `entry`. Descends through any chain of single-child directories (see
-    /// [`descend_single_child_directories`]) before navigating this popover to the resolved
-    /// directory — choosing a row is what triggers the descent, unlike opening a segment's own
-    /// dropdown, which lists `path`'s direct children verbatim. The descent never opens a file on
-    /// its own — even a directory whose only child is a file stops there and lists that file as
-    /// the resolved directory's sole entry, leaving the actual open to the user's own click on it
-    /// (handled below, since `is_dir` is false for that click).
-    fn choose(
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
         &mut self,
-        entry_path: Arc<RelPath>,
-        is_dir: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
     ) {
-        if !is_dir {
-            self.open_file(entry_path, window, cx);
+        self.selected_index = index;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search this folder…".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some(if self.entries.is_empty() {
+            "Empty directory".into()
+        } else {
+            "No matches".into()
+        })
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        // Below the list, so a folder with three entries still reads as a menu rather than as a
+        // search dialog that happens to have results.
+        PickerEditorPosition::End
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
+    ) -> Task<()> {
+        // Re-read rather than filter the previous listing: a pending `expand_current_path` scan,
+        // or an edit elsewhere, may have changed what this directory holds.
+        self.reload_entries(cx);
+        let candidates = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| StringMatchCandidate::new(index, &entry.name))
+            .collect::<Vec<_>>();
+
+        if query.is_empty() {
+            self.matches = candidates
+                .into_iter()
+                .map(|candidate| StringMatch {
+                    candidate_id: candidate.id,
+                    string: candidate.string,
+                    positions: Vec::new(),
+                    score: 0.,
+                })
+                .collect();
+            self.select_active_path();
+            cx.notify();
+            return Task::ready(());
+        }
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |picker, cx| {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                MAX_BREADCRUMB_MENU_ENTRIES,
+                &Default::default(),
+                executor,
+            )
+            .await;
+            picker
+                .update(cx, |picker, cx| {
+                    picker.delegate.matches = matches;
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                })
+                .ok();
+        })
+    }
+
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
+    ) {
+        let Some(entry) = self.entry_at(self.selected_index) else {
+            return;
+        };
+        let entry_path = entry.path.clone();
+
+        if !entry.is_dir {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .open_path(
+                            ProjectPath {
+                                worktree_id: self.worktree_id,
+                                path: entry_path,
+                            },
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                        .detach_and_log_err(cx);
+                });
+            }
+            cx.emit(DismissEvent);
             return;
         }
-        let worktree_id = self.worktree_id;
-        let resolved_path = {
-            let Some(worktree) = self.worktree(cx) else {
-                return;
-            };
-            descend_single_child_directories(entry_path, |path| {
-                breadcrumb_directory_children(&worktree, path, cx)
-            })
+
+        // Descending here rather than when the dropdown opens: a segment's own dropdown lists its
+        // children verbatim, and only choosing a row walks through a chain of single-child
+        // directories. The walk stops at a directory whose only child is a file, leaving the open
+        // to the user's click on that file.
+        let Some(worktree) = self.worktree(cx) else {
+            return;
         };
-        // Doesn't update `self.current_path`/re-render this browser in place: the popover is
-        // about to be dismissed and reopened under the resolved directory's own segment (see
-        // `Editor::navigate_breadcrumb_to`), so a fresh `BreadcrumbDirectoryBrowser` for it is
-        // built there instead.
+        let resolved_path = descend_single_child_directories(entry_path, |path| {
+            breadcrumb_directory_children(&worktree, path, cx)
+        });
+
+        // Doesn't update `current_path` in place: the popover is about to be dismissed and
+        // reopened under the resolved directory's own segment, with a picker of its own.
         if let Some(editor) = self.editor.upgrade() {
             editor.update(cx, |editor, cx| {
-                editor.navigate_breadcrumb_to(worktree_id, resolved_path, window, cx);
+                editor.navigate_breadcrumb_to(self.worktree_id, resolved_path, window, cx);
             });
         }
     }
 
-    fn open_file(&mut self, path: Arc<RelPath>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace
-                    .open_path(
-                        ProjectPath {
-                            worktree_id: self.worktree_id,
-                            path,
-                        },
-                        None,
-                        true,
-                        window,
-                        cx,
-                    )
-                    .detach_and_log_err(cx);
-            });
+    /// Stepping into the selected directory without leaving the keyboard. Returns `None` because
+    /// the bar re-anchors the dropdown under the directory's own segment instead of the picker
+    /// swapping its own query, which is what the `Some(query)` contract is for.
+    fn select_child(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
+    ) -> Option<String> {
+        if self.entry_at(self.selected_index)?.is_dir {
+            self.confirm(false, window, cx);
         }
-        cx.emit(DismissEvent);
+        None
     }
 
-    fn render_entry(
+    fn select_parent(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
+    ) -> Option<String> {
+        let parent = self.current_path.parent()?.into_arc();
+        if let Some(editor) = self.editor.upgrade() {
+            editor.update(cx, |editor, cx| {
+                editor.navigate_breadcrumb_to(self.worktree_id, parent, window, cx);
+            });
+        }
+        None
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<BreadcrumbDirectoryPicker>) {}
+
+    fn render_match(
         &self,
-        entry: BreadcrumbDirectoryEntry,
-        show_file_icons: bool,
-        show_folder_icons: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let is_open_ancestor = entry.is_dir
+        index: usize,
+        selected: bool,
+        _window: &mut Window,
+        cx: &mut Context<BreadcrumbDirectoryPicker>,
+    ) -> Option<Self::ListItem> {
+        let entry = self.entry_at(index)?;
+        let listing_settings = BreadcrumbDirectoryListingSettings::get_global(cx);
+
+        let leads_to_active_path = entry.is_dir
             && self
                 .active_path
                 .as_ref()
                 .is_some_and(|active_path| active_path.starts_with(&entry.path));
-        let is_active = !entry.is_dir && self.active_path.as_deref() == Some(entry.path.as_ref());
+        let is_active_file =
+            !entry.is_dir && self.active_path.as_deref() == Some(entry.path.as_ref());
 
-        let icon_path =
-            match breadcrumb_entry_icon_source(entry.is_dir, show_file_icons, show_folder_icons) {
-                BreadcrumbEntryIconSource::File => {
-                    file_icons::FileIcons::get_icon(entry.path.as_std_path(), cx)
-                }
-                BreadcrumbEntryIconSource::Folder => file_icons::FileIcons::get_folder_icon(
-                    is_open_ancestor,
-                    entry.path.as_std_path(),
-                    cx,
-                ),
-                BreadcrumbEntryIconSource::Chevron => {
-                    // Unlike the project/git/outline panels, these rows aren't expandable in
-                    // place — choosing a directory row navigates into it rather than expanding it
-                    // inline — so there's no real "expanded" state for the chevron to reflect;
-                    // always pass `false` for the collapsed, right-pointing chevron.
-                    file_icons::FileIcons::get_chevron_icon(false, cx)
-                }
-                BreadcrumbEntryIconSource::None => None,
-            };
+        let icon_path = match breadcrumb_entry_icon_source(
+            entry.is_dir,
+            listing_settings.file_icons,
+            listing_settings.folder_icons,
+        ) {
+            BreadcrumbEntryIconSource::File => {
+                file_icons::FileIcons::get_icon(entry.path.as_std_path(), cx)
+            }
+            BreadcrumbEntryIconSource::Folder => file_icons::FileIcons::get_folder_icon(
+                leads_to_active_path,
+                entry.path.as_std_path(),
+                cx,
+            ),
+            BreadcrumbEntryIconSource::Chevron => {
+                // These rows aren't expandable in place — choosing a directory navigates into it
+                // rather than expanding it inline — so there's no expanded state to reflect.
+                file_icons::FileIcons::get_chevron_icon(false, cx)
+            }
+            BreadcrumbEntryIconSource::None => None,
+        };
         let icon = icon_path
             .map(Icon::from_path)
             .map(|icon| {
@@ -694,80 +850,27 @@ impl BreadcrumbDirectoryBrowser {
             })
             .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
 
-        // Colors ignored entries the same way the project panel does — see
-        // `entry_git_aware_label_color`'s doc comment. Passed `GitSummary::UNCHANGED` rather than
-        // this entry's real tracked/conflict/untracked status: `Worktree::child_entries` (unlike
-        // the panel's own `GitTraversal`) doesn't join per-entry git status onto `Entry`, and
-        // computing it separately just for this dropdown's coloring would duplicate the panel's
-        // traversal for a detail that matters far less here than the ignored-or-not distinction,
-        // which is already on hand as `Entry::is_ignored`.
+        // The project panel's own mapping, so a modified or untracked entry reads the same in both
+        // places. Only the label is colored; the panel leaves icons muted too.
         let label_color = crate::items::entry_git_aware_label_color(
-            GitSummary::UNCHANGED,
+            entry.git_summary,
             entry.is_ignored,
-            is_active,
+            is_active_file,
         );
 
-        let entry_path = entry.path.clone();
-        let is_dir = entry.is_dir;
-        ListItem::new(SharedString::from(format!(
-            "breadcrumb-directory-entry-{}",
-            entry.name
-        )))
-        .toggle_state(is_active)
-        .start_slot(icon)
-        .child(Label::new(entry.name).color(label_color))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.choose(entry_path.clone(), is_dir, window, cx);
-        }))
-    }
-}
-
-impl gpui::Focusable for BreadcrumbDirectoryBrowser {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl EventEmitter<DismissEvent> for BreadcrumbDirectoryBrowser {}
-
-impl Render for BreadcrumbDirectoryBrowser {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let listing_settings = BreadcrumbDirectoryListingSettings::get_global(cx);
-        let show_file_icons = listing_settings.file_icons;
-        let show_folder_icons = listing_settings.folder_icons;
-        let (entries, truncated) = self
-            .worktree(cx)
-            .map(|worktree| breadcrumb_directory_entries(&worktree, &self.current_path, cx))
-            .unwrap_or_default();
-
-        let rows = entries
-            .into_iter()
-            .map(|entry| {
-                self.render_entry(entry, show_file_icons, show_folder_icons, cx)
-                    .into_any_element()
-            })
-            .collect::<Vec<_>>();
-
-        Popover::new().child(
-            v_flex()
-                .id("breadcrumb-directory-browser")
-                .track_focus(&self.focus_handle)
-                .key_context("BreadcrumbDirectoryBrowser")
-                .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| cx.emit(DismissEvent)))
-                .min_w(px(200.))
-                .max_h(px(400.))
-                .overflow_y_scroll()
-                .child(List::new().empty_message("Empty directory").children(rows))
-                .when(truncated, |this| {
-                    this.child(
-                        Label::new(format!(
-                            "Showing first {MAX_BREADCRUMB_MENU_ENTRIES} entries"
-                        ))
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .mx_2(),
-                    )
-                }),
+        Some(
+            ListItem::new(SharedString::from(format!(
+                "breadcrumb-directory-entry-{index}"
+            )))
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .start_slot(icon)
+            .child(
+                HighlightedLabel::new(entry.name.clone(), self.matches[index].positions.clone())
+                    .color(label_color),
+            )
+            .into_any_element(),
         )
     }
 }
@@ -778,7 +881,7 @@ impl Render for BreadcrumbDirectoryBrowser {
 /// IntelliJ's navigation bar reaches it, without switching to the project panel. Opening the
 /// dropdown only marks this segment active (see [`Editor::open_breadcrumb_navigation`]); it does
 /// not itself skip through single-child directories or otherwise change the bar — that happens
-/// only once a row is chosen, inside [`BreadcrumbDirectoryBrowser::choose`], which is also what
+/// only once a row is chosen, inside [`BreadcrumbDirectoryDelegate::confirm`], which is also what
 /// replaces the bar with the resolved directory (see [`Editor::navigate_breadcrumb_to`]).
 fn render_breadcrumb_directory_segment(
     editor: WeakEntity<Editor>,
@@ -787,7 +890,7 @@ fn render_breadcrumb_directory_segment(
     path: Arc<RelPath>,
     active_path: Option<Arc<RelPath>>,
     is_active_segment: bool,
-    shared_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+    shared_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryPicker>,
     label: gpui::AnyElement,
     index: usize,
 ) -> gpui::AnyElement {
@@ -822,7 +925,7 @@ fn render_breadcrumb_directory_segment(
                 });
             }
 
-            let browser = BreadcrumbDirectoryBrowser::new(
+            let picker = BreadcrumbDirectoryDelegate::picker(
                 editor.clone(),
                 workspace.clone(),
                 worktree_id,
@@ -831,18 +934,12 @@ fn render_breadcrumb_directory_segment(
                 window,
                 cx,
             );
-            BreadcrumbDirectoryBrowser::on_dismiss(&browser, cx, {
-                let editor = editor.clone();
-                let path = path.clone();
-                move |cx| {
-                    if let Some(editor_entity) = editor.upgrade() {
-                        editor_entity.update(cx, |editor, cx| {
-                            editor.clear_breadcrumb_navigation(worktree_id, &path, cx);
-                        });
-                    }
-                }
-            });
-            Some(browser)
+            if let Some(editor_entity) = editor.upgrade() {
+                editor_entity.update(cx, |editor, cx| {
+                    editor.watch_breadcrumb_dismissal(&picker, worktree_id, path.clone(), cx);
+                });
+            }
+            Some(picker)
         })
         .into_any_element()
 }
@@ -1843,6 +1940,33 @@ fn apply_dirty_filename_style(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Selects the row for `path` in an open directory picker and confirms it, standing in for a
+    /// click on that row.
+    #[cfg(test)]
+    fn confirm_breadcrumb_row(
+        picker: &Entity<BreadcrumbDirectoryPicker>,
+        path: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        use util::rel_path::rel_path;
+        picker.update_in(cx, |picker, window, cx| {
+            let index = picker
+                .delegate
+                .matches
+                .iter()
+                .position(|entry_match| {
+                    picker.delegate.entries[entry_match.candidate_id]
+                        .path
+                        .as_ref()
+                        == rel_path(path)
+                })
+                .expect("row is listed");
+            picker.delegate.selected_index = index;
+            picker.delegate.confirm(false, window, cx);
+        });
+    }
+
     use crate::MultiBuffer;
     use gpui::{TestAppContext, VisualTestContext};
 
@@ -2536,7 +2660,7 @@ mod tests {
         use project::{FakeFs, Project};
         use serde_json::json;
         use std::cell::RefCell;
-        use util::{path, rel_path::rel_path};
+        use util::path;
         use workspace::Workspace;
 
         // A real `PopoverMenu`/`PopoverMenuHandle` only wires itself up during an actual layout
@@ -2550,11 +2674,11 @@ mod tests {
         // window would keep re-anchoring's `on_next_frame` calls stuck on that other window,
         // where nothing in this test ever drains them.
         struct Harness {
-            handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+            handle: PopoverMenuHandle<BreadcrumbDirectoryPicker>,
             editor: Entity<Editor>,
             workspace: WeakEntity<Workspace>,
             worktree_id: WorktreeId,
-            captured_browser: Rc<RefCell<Option<Entity<BreadcrumbDirectoryBrowser>>>>,
+            captured_browser: Rc<RefCell<Option<Entity<BreadcrumbDirectoryPicker>>>>,
         }
 
         impl Render for Harness {
@@ -2589,7 +2713,7 @@ mod tests {
                                 );
                             });
                         }
-                        let browser = BreadcrumbDirectoryBrowser::new(
+                        let browser = BreadcrumbDirectoryDelegate::picker(
                             editor.clone(),
                             workspace.clone(),
                             worktree_id,
@@ -2629,7 +2753,7 @@ mod tests {
 
         let buffer = cx.new(|cx| language::Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let captured_browser: Rc<RefCell<Option<Entity<BreadcrumbDirectoryBrowser>>>> =
+        let captured_browser: Rc<RefCell<Option<Entity<BreadcrumbDirectoryPicker>>>> =
             Rc::default();
 
         let harness_window = cx.add_window(|window, cx| {
@@ -2680,9 +2804,7 @@ mod tests {
         // by this very `update` call. `dir_a` has two children, so `descend_single_child_directories`
         // resolves it immediately and `choose` calls straight into `navigate_breadcrumb_to` —
         // still inside this closure's lease. Pre-fix, this panicked.
-        browser.update_in(cx, |browser, window, cx| {
-            browser.choose(rel_path("dir_a").into_arc(), true, window, cx);
-        });
+        confirm_breadcrumb_row(&browser, "dir_a", cx);
 
         editor.read_with(cx, |editor, _| {
             let navigation = editor
@@ -2755,8 +2877,9 @@ mod tests {
         let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
         cx.run_until_parked();
 
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, rel_path("ignored_dir"), cx));
+        let entries = cx.update(|cx| {
+            breadcrumb_directory_entries(&project, &worktree, rel_path("ignored_dir"), cx)
+        });
         assert!(
             entries.is_empty(),
             "nothing under a gitignored directory is scanned until something asks for it"
@@ -2774,7 +2897,7 @@ mod tests {
         let open_dropdown_at = |path: &'static str, cx: &mut VisualTestContext| {
             let browser = editor_window
                 .update(cx, |_, window, cx| {
-                    BreadcrumbDirectoryBrowser::new(
+                    BreadcrumbDirectoryDelegate::picker(
                         editor.downgrade(),
                         workspace.downgrade(),
                         worktree_id,
@@ -2786,9 +2909,9 @@ mod tests {
                 })
                 .unwrap();
             cx.run_until_parked();
-            let entries = cx
-                .update(|_, cx| breadcrumb_directory_entries(&worktree, rel_path(path), cx))
-                .0;
+            let entries = cx.update(|_, cx| {
+                breadcrumb_directory_entries(&project, &worktree, rel_path(path), cx)
+            });
             drop(browser);
             entries
                 .into_iter()
@@ -2816,7 +2939,7 @@ mod tests {
         use crate::test::build_editor;
         use project::{FakeFs, Project};
         use serde_json::json;
-        use util::{path, rel_path::rel_path};
+        use util::path;
         use workspace::Workspace;
 
         init_test(cx, |_| {});
@@ -2849,7 +2972,7 @@ mod tests {
         // (see `descend_single_child_directories`).
         let browser = editor_window
             .update(cx, |_, window, cx| {
-                BreadcrumbDirectoryBrowser::new(
+                BreadcrumbDirectoryDelegate::picker(
                     editor.downgrade(),
                     workspace.downgrade(),
                     worktree_id,
@@ -2860,9 +2983,7 @@ mod tests {
                 )
             })
             .unwrap();
-        browser.update_in(cx, |browser, window, cx| {
-            browser.choose(rel_path("a").into_arc(), true, window, cx);
-        });
+        confirm_breadcrumb_row(&browser, "a", cx);
         editor.read_with(cx, |editor, _| {
             assert_eq!(
                 editor
@@ -2902,8 +3023,8 @@ mod tests {
         // Default settings (`sort_mode: directories_first`, `sort_order: default`) match the
         // project panel's own default: the directory first, then files in case-insensitive
         // natural order.
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec!["Apple", "banana.txt", "Cherry.txt"],
@@ -2923,8 +3044,8 @@ mod tests {
                 });
             });
         });
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
         assert_eq!(
             entries.iter().map(|e| e.name.as_ref()).collect::<Vec<_>>(),
             vec!["Cherry.txt", "banana.txt", "Apple"],
@@ -2960,8 +3081,8 @@ mod tests {
         // `hide_gitignore` defaults to `false`: the ignored entry is still listed, matching
         // `entry.is_ignored` on `worktree::Entry` so the caller can still color it, mirroring the
         // project panel's default of showing gitignored entries dimmed rather than hidden.
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
         let ignored_entry = entries
             .iter()
             .find(|entry| entry.name.as_ref() == "ignored.txt")
@@ -2981,8 +3102,8 @@ mod tests {
                 });
             });
         });
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
         assert!(
             !entries
                 .iter()
@@ -3022,8 +3143,8 @@ mod tests {
 
         // `hide_hidden` defaults to `false`: the dotfile is still listed, matching the project
         // panel's default of showing hidden entries.
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
         assert!(
             entries.iter().any(|entry| entry.name.as_ref() == ".hidden"),
             "hidden entry is shown by default"
@@ -3039,8 +3160,8 @@ mod tests {
                 });
             });
         });
-        let (entries, _) =
-            cx.update(|cx| breadcrumb_directory_entries(&worktree, RelPath::empty(), cx));
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
         assert!(
             !entries.iter().any(|entry| entry.name.as_ref() == ".hidden"),
             "hide_hidden should drop the hidden entry entirely, not just dim it",

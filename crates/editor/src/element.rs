@@ -6,7 +6,7 @@ mod mouse;
 pub(crate) use breadcrumbs::breadcrumb_path_segments;
 pub use breadcrumbs::render_breadcrumb_text;
 pub(crate) use breadcrumbs::{
-    BreadcrumbDirectoryBrowser, MAX_BREADCRUMB_MENU_ENTRIES, child_outline_indices,
+    BreadcrumbDirectoryPicker, MAX_BREADCRUMB_MENU_ENTRIES, child_outline_indices,
     sibling_outline_indices, top_level_outline_indices,
 };
 #[cfg(test)]
@@ -51,13 +51,13 @@ use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::GitSummar
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DismissEvent, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, EventEmitter, FocusHandle, Focusable as _, Font,
-    FontId, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
-    IntoElement, IsZero, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, StyledText, Subscription, TaskExt, TextAlign,
-    TextRun, TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
+    TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad,
+    relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -98,8 +98,8 @@ use theme::{ActiveTheme, Appearance, PlayerColor};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{
-    ButtonLike, ContextMenu, List, ListItem, POPOVER_Y_PADDING, Popover, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*, scrollbars::ShowScrollbar,
+    ButtonLike, ContextMenu, ListItem, POPOVER_Y_PADDING, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*, scrollbars::ShowScrollbar,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{ResultExt, debug_panic, rel_path::RelPath};

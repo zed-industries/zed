@@ -103,7 +103,7 @@ pub use editor_settings::{
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
     ui_scrollbar_settings_from_raw,
 };
-use element::BreadcrumbDirectoryBrowser;
+use element::BreadcrumbDirectoryPicker;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
@@ -1133,7 +1133,10 @@ pub struct Editor {
     /// so exactly one breadcrumb dropdown can be open at a time, and so
     /// [`Editor::navigate_breadcrumb_to`] can re-anchor the popover under the newly active segment
     /// after the bar re-renders, instead of leaving it under the segment the user actually clicked.
-    breadcrumb_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryBrowser>,
+    breadcrumb_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryPicker>,
+    /// Ends the navigation session when the open dropdown is dismissed, by any route. Replaced
+    /// each time a dropdown opens, and dropped with the editor, rather than being detached.
+    breadcrumb_dismiss_subscription: Option<Subscription>,
     /// Suppresses [`Editor::clear_breadcrumb_navigation`] while [`Editor::navigate_breadcrumb_to`]
     /// is swapping the open popover from the old active segment to the new one: dismissing the old
     /// one fires its dismiss-on-blur subscription, which would otherwise wipe the navigation state
@@ -2474,6 +2477,7 @@ impl Editor {
             breadcrumb_navigation: None,
             breadcrumb_popover_handle: PopoverMenuHandle::default(),
             breadcrumb_reanchoring: false,
+            breadcrumb_dismiss_subscription: None,
             breadcrumb_pending_reanchor: false,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
@@ -11008,10 +11012,26 @@ impl Editor {
     /// The handle every breadcrumb directory segment's `PopoverMenu` shares while it is the active
     /// segment (see `render_breadcrumb_directory_segment`), so exactly one instance is ever wired
     /// up to open/close it programmatically at a time.
-    pub(crate) fn breadcrumb_popover_handle(
-        &self,
-    ) -> PopoverMenuHandle<BreadcrumbDirectoryBrowser> {
+    pub(crate) fn breadcrumb_popover_handle(&self) -> PopoverMenuHandle<BreadcrumbDirectoryPicker> {
         self.breadcrumb_popover_handle.clone()
+    }
+
+    /// Ends the navigation session `worktree_id`/`path`'s segment started once `picker` is
+    /// dismissed, by any route: `Escape`, focus moving away, or another segment's dropdown
+    /// hiding this one.
+    pub(crate) fn watch_breadcrumb_dismissal(
+        &mut self,
+        picker: &Entity<BreadcrumbDirectoryPicker>,
+        worktree_id: WorktreeId,
+        path: Arc<RelPath>,
+        cx: &mut Context<Self>,
+    ) {
+        self.breadcrumb_dismiss_subscription = Some(cx.subscribe(
+            picker,
+            move |editor, _, _: &gpui::DismissEvent, cx| {
+                editor.clear_breadcrumb_navigation(worktree_id, &path, cx);
+            },
+        ));
     }
 
     /// Marks `path`'s segment as active because its dropdown just opened, without otherwise
@@ -11065,7 +11085,7 @@ impl Editor {
     /// wherever `path`'s segment ends up once the bar re-renders with it marked active, mirroring
     /// IntelliJ's navigation bar reopening exactly where a direct click on that segment would have.
     ///
-    /// This is reached from [`BreadcrumbDirectoryBrowser::choose`], which runs inside a
+    /// This is reached from [`element::BreadcrumbDirectoryDelegate::confirm`], which runs inside a
     /// `cx.listener` on the browser entity — i.e. that entity's lease is still on the stack here.
     /// `PopoverMenuHandle::hide`/`show` update that same entity (it's the shared handle for the
     /// active segment, and the browser being chosen from is always the active segment's), so
