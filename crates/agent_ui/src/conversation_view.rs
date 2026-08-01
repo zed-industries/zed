@@ -3905,6 +3905,44 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_send_content_preserves_an_unsent_draft(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+
+        // Whatever the user has typed but not sent must survive a prompt that
+        // arrives from outside the panel, such as one sent by `zed --agent`.
+        thread_view.update_in(cx, |view, window, cx| {
+            view.message_editor.update(cx, |editor, cx| {
+                editor.set_text("half-written thought", window, cx);
+            });
+        });
+
+        thread_view.update_in(cx, |view, window, cx| {
+            let blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+                "prompt from the CLI".to_string(),
+            ))];
+            view.send_content(
+                Task::ready(Ok(Some((blocks, Vec::new())))),
+                false,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.message_editor.read(cx).text(cx),
+                "half-written thought",
+                "the user's unsent draft should be untouched"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_external_source_prompt_requires_manual_send(cx: &mut TestAppContext) {
         init_test(cx);
 

@@ -13,7 +13,7 @@ use crate::completions::Shell;
 
 use anyhow::{Context as _, Result};
 use clap::{CommandFactory, Parser};
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{AgentAction, CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -138,6 +138,40 @@ struct Args {
     /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], value_hint = clap::ValueHint::AnyPath)]
     diff: Vec<String>,
+    /// Send a prompt to the Zed agent in a running instance
+    #[arg(long)]
+    agent: bool,
+    /// List agent threads instead of sending a prompt
+    #[arg(long)]
+    agent_list: bool,
+    /// Target an existing thread by id, given either in full or as a unique
+    /// leading fragment of one. Hyphens are optional, so `550e8400-e29b` and
+    /// `550e8400e29b` select the same thread. Use `--agent-list` to see ids.
+    #[arg(long, value_name = "ID")]
+    agent_thread: Option<String>,
+    /// Target an existing thread by ACP session id
+    #[arg(long, value_name = "SESSION_ID")]
+    agent_session: Option<String>,
+    /// Scope the thread lookup to a project directory, defaulting to the working directory
+    #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
+    agent_project: Option<PathBuf>,
+    /// Always start a new agent thread and print its id
+    #[arg(long)]
+    agent_new: bool,
+    /// Wait for the agent turn to finish before exiting
+    #[arg(long)]
+    agent_wait: bool,
+    /// Agent profile for a new thread, which decides the available tools.
+    /// Requires `--agent-new`
+    #[arg(long, value_name = "PROFILE")]
+    agent_profile: Option<String>,
+    /// Model for a new thread, given as `provider/model-id`. Requires
+    /// `--agent-new`
+    #[arg(long, value_name = "PROVIDER/MODEL")]
+    agent_model: Option<String>,
+    /// Output format for `--agent-list`
+    #[arg(long, value_name = "FORMAT", default_value_t = AgentListFormat::Text)]
+    agent_list_format: AgentListFormat,
     /// Generate shell completions for Zed
     #[arg(long, value_names = ["SHELL"])]
     completions: Option<Shell>,
@@ -153,6 +187,27 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+}
+
+/// Output format for `--agent-list`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[non_exhaustive]
+#[value(rename_all = "lower")]
+enum AgentListFormat {
+    /// One thread per line, for reading in a terminal.
+    Text,
+    /// A JSON array, for scripts that would otherwise parse columns.
+    Json,
+}
+
+impl std::fmt::Display for AgentListFormat {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Text => "text",
+            Self::Json => "json",
+        };
+        formatter.write_str(name)
+    }
 }
 
 /// Parses a path containing a position (e.g. `path:line:column`)
@@ -427,6 +482,366 @@ mod tests {
         .unwrap();
         assert_eq!(result, expected);
     }
+
+    fn make_args() -> Args {
+        Args {
+            wait: false,
+            add: false,
+            new: false,
+            reuse: false,
+            existing: false,
+            classic: false,
+            user_data_dir: None,
+            paths_with_position: vec![],
+            version: false,
+            foreground: false,
+            zed: None,
+            dev_server_token: None,
+            #[cfg(target_os = "windows")]
+            wsl: None,
+            system_specs: false,
+            dev_container: false,
+            diff: vec![],
+            agent: false,
+            agent_list: false,
+            agent_thread: None,
+            agent_session: None,
+            agent_project: None,
+            agent_new: false,
+            agent_wait: false,
+            agent_list_format: AgentListFormat::Text,
+            agent_profile: None,
+            agent_model: None,
+            completions: None,
+            #[cfg(all(
+                any(target_os = "linux", target_os = "macos"),
+                not(feature = "no-bundled-uninstall")
+            ))]
+            uninstall: false,
+            askpass: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_agent_no_flags_is_ok() {
+        let args = make_args();
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_thread_without_agent_is_error() {
+        let args = Args {
+            agent_thread: Some("abc123".to_string()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_session_without_agent_is_error() {
+        let args = Args {
+            agent_session: Some("session-1".to_string()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_new_without_agent_is_error() {
+        let args = Args {
+            agent_new: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_wait_without_agent_is_error() {
+        let args = Args {
+            agent_wait: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_prompt_is_error() {
+        let args = Args {
+            agent_list: true,
+            paths_with_position: vec!["some prompt".to_string()],
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_new_is_error() {
+        let args = Args {
+            agent_list: true,
+            agent_new: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_wait_is_error() {
+        let args = Args {
+            agent_list: true,
+            agent_wait: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_thread_is_error() {
+        let args = Args {
+            agent_list: true,
+            agent_thread: Some("abc".into()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_session_is_error() {
+        let args = Args {
+            agent_list: true,
+            agent_session: Some("sess1".into()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_thread_and_session_together_is_error() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["hello".into()],
+            agent_thread: Some("abc".into()),
+            agent_session: Some("sess1".into()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_new_with_thread_is_error() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["hello".into()],
+            agent_new: true,
+            agent_thread: Some("abc".into()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_new_with_session_is_error() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["hello".into()],
+            agent_new: true,
+            agent_session: Some("sess1".into()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_format_without_agent_list_is_error() {
+        let without_agent_flags = Args {
+            agent_list_format: AgentListFormat::Json,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&without_agent_flags).is_err());
+
+        let with_prompt = Args {
+            agent: true,
+            paths_with_position: vec!["hello".to_string()],
+            agent_list_format: AgentListFormat::Json,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&with_prompt).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_json_format_is_ok() {
+        let args = Args {
+            agent_list: true,
+            agent_list_format: AgentListFormat::Json,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_profile_and_model_without_agent_or_list_are_errors() {
+        for mutate in [
+            (|args: &mut Args| args.agent_profile = Some("write".to_string())) as fn(&mut Args),
+            |args: &mut Args| args.agent_model = Some("anthropic/claude".to_string()),
+        ] {
+            let mut args = make_args();
+            mutate(&mut args);
+            assert!(validate_agent_args(&args).is_err());
+
+            let mut listing = Args {
+                agent_list: true,
+                ..make_args()
+            };
+            mutate(&mut listing);
+            assert!(validate_agent_args(&listing).is_err());
+        }
+    }
+
+    #[test]
+    fn test_validate_agent_with_profile_and_model_requires_new_thread() {
+        let existing_thread = Args {
+            agent: true,
+            paths_with_position: vec!["hello".to_string()],
+            agent_profile: Some("write".to_string()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&existing_thread).is_err());
+
+        let new_thread = Args {
+            agent: true,
+            agent_new: true,
+            paths_with_position: vec!["hello".to_string()],
+            agent_profile: Some("write".to_string()),
+            agent_model: Some("anthropic/claude-sonnet-4".to_string()),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&new_thread).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_project_without_agent_is_error() {
+        let args = Args {
+            agent_project: Some(PathBuf::from("/tmp")),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_with_open_behavior_flags_is_error() {
+        for mutate in [
+            (|args: &mut Args| args.wait = true) as fn(&mut Args),
+            |args: &mut Args| args.add = true,
+            |args: &mut Args| args.new = true,
+            |args: &mut Args| args.reuse = true,
+            |args: &mut Args| args.existing = true,
+            |args: &mut Args| args.classic = true,
+            |args: &mut Args| args.dev_container = true,
+            |args: &mut Args| args.diff = vec!["a".to_string(), "b".to_string()],
+        ] {
+            let mut args = Args {
+                agent: true,
+                paths_with_position: vec!["hello".to_string()],
+                ..make_args()
+            };
+            mutate(&mut args);
+            assert!(validate_agent_args(&args).is_err());
+        }
+    }
+
+    #[test]
+    fn test_validate_agent_allows_foreground() {
+        // `--foreground` is how a development build is driven.
+        let args = Args {
+            agent: true,
+            foreground: true,
+            paths_with_position: vec!["hello".to_string()],
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_and_agent_list_together_is_error() {
+        let args = Args {
+            agent: true,
+            agent_list: true,
+            paths_with_position: vec!["hello".to_string()],
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_whitespace_prompt_is_error() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["   ".to_string()],
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_no_prompt_is_error() {
+        let args = Args {
+            agent: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_with_prompt_is_ok() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["hello".into()],
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_list_alone_is_ok() {
+        let args = Args {
+            agent_list: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_list_with_project_is_ok() {
+        let args = Args {
+            agent_list: true,
+            agent_project: Some(PathBuf::from("/tmp")),
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_with_thread_and_project_is_ok() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["fix this".into()],
+            agent_thread: Some("abc123".into()),
+            agent_project: Some(PathBuf::from("/tmp")),
+            agent_wait: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_new_alone_is_ok() {
+        let args = Args {
+            agent: true,
+            paths_with_position: vec!["fix this".into()],
+            agent_new: true,
+            ..make_args()
+        };
+        assert!(validate_agent_args(&args).is_ok());
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
@@ -481,6 +896,148 @@ fn main() {
     }
 }
 
+fn validate_agent_args(args: &Args) -> Result<()> {
+    let is_agent_list = args.agent_list;
+    let is_prompt = args.agent;
+
+    if !is_prompt && !is_agent_list {
+        // The modifier flags are meaningless on their own, and silently
+        // ignoring them would mask a forgotten `--agent`.
+        anyhow::ensure!(
+            args.agent_thread.is_none(),
+            "--agent-thread requires --agent"
+        );
+        anyhow::ensure!(
+            args.agent_session.is_none(),
+            "--agent-session requires --agent"
+        );
+        anyhow::ensure!(!args.agent_new, "--agent-new requires --agent");
+        anyhow::ensure!(!args.agent_wait, "--agent-wait requires --agent");
+        anyhow::ensure!(
+            args.agent_project.is_none(),
+            "--agent-project requires --agent or --agent-list"
+        );
+        anyhow::ensure!(
+            args.agent_list_format == AgentListFormat::Text,
+            "--agent-list-format requires --agent-list"
+        );
+        anyhow::ensure!(
+            args.agent_profile.is_none(),
+            "--agent-profile requires --agent"
+        );
+        anyhow::ensure!(args.agent_model.is_none(), "--agent-model requires --agent");
+        return Ok(());
+    }
+
+    anyhow::ensure!(
+        !(is_prompt && args.agent_list_format != AgentListFormat::Text),
+        "--agent-list-format requires --agent-list"
+    );
+
+    anyhow::ensure!(
+        !(is_prompt && is_agent_list),
+        "--agent and --agent-list cannot be used together"
+    );
+
+    // Flags that steer file opening have no meaning for an agent request, and
+    // silently dropping them would hide a mistyped command. `--foreground` is
+    // deliberately still allowed: it is how a development build is driven.
+    for (is_set, flag) in [
+        (args.wait, "--wait"),
+        (args.add, "--add"),
+        (args.new, "--new"),
+        (args.reuse, "--reuse"),
+        (args.existing, "--existing"),
+        (args.classic, "--classic"),
+        (args.dev_container, "--dev-container"),
+        (!args.diff.is_empty(), "--diff"),
+        (args.askpass.is_some(), "--askpass"),
+    ] {
+        anyhow::ensure!(
+            !is_set,
+            "{flag} cannot be combined with --agent or --agent-list"
+        );
+    }
+
+    anyhow::ensure!(
+        !(is_agent_list && !args.paths_with_position.is_empty()),
+        "--agent-list does not take a prompt"
+    );
+
+    // --agent-list with any prompt-only flags is invalid.
+    if is_agent_list {
+        anyhow::ensure!(
+            !args.agent_new,
+            "--agent-list cannot be combined with --agent-new"
+        );
+        anyhow::ensure!(
+            !args.agent_wait,
+            "--agent-list cannot be combined with --agent-wait"
+        );
+        anyhow::ensure!(
+            args.agent_thread.is_none(),
+            "--agent-list cannot be combined with --agent-thread"
+        );
+        anyhow::ensure!(
+            args.agent_session.is_none(),
+            "--agent-list cannot be combined with --agent-session"
+        );
+        anyhow::ensure!(
+            args.agent_profile.is_none(),
+            "--agent-list cannot be combined with --agent-profile"
+        );
+        anyhow::ensure!(
+            args.agent_model.is_none(),
+            "--agent-list cannot be combined with --agent-model"
+        );
+    }
+
+    // --agent-thread together with --agent-session is invalid.
+    anyhow::ensure!(
+        !(args.agent_thread.is_some() && args.agent_session.is_some()),
+        "--agent-thread and --agent-session cannot be used together"
+    );
+
+    // Profile and model are persisted on the thread and also cascade into the
+    // model selection and any running subagents, so they are only accepted when
+    // creating a thread rather than reconfiguring one the user already owns.
+    if !args.agent_new {
+        anyhow::ensure!(
+            args.agent_profile.is_none(),
+            "--agent-profile requires --agent-new"
+        );
+        anyhow::ensure!(
+            args.agent_model.is_none(),
+            "--agent-model requires --agent-new"
+        );
+    }
+
+    // --agent-new together with --agent-thread or --agent-session is invalid.
+    if args.agent_new {
+        anyhow::ensure!(
+            args.agent_thread.is_none(),
+            "--agent-new cannot be combined with --agent-thread"
+        );
+        anyhow::ensure!(
+            args.agent_session.is_none(),
+            "--agent-new cannot be combined with --agent-session"
+        );
+    }
+
+    // --agent requires a prompt (or stdin). A prompt made only of whitespace
+    // would otherwise reach the agent as an empty message it cannot act on.
+    if is_prompt && !is_agent_list {
+        anyhow::ensure!(
+            args.paths_with_position
+                .iter()
+                .any(|argument| !argument.trim().is_empty()),
+            "no prompt provided: pass a prompt as positional arguments, or pipe one via stdin using '-'"
+        );
+    }
+
+    Ok(())
+}
+
 fn run() -> Result<()> {
     #[cfg(unix)]
     util::prevent_root_execution();
@@ -511,6 +1068,10 @@ fn run() -> Result<()> {
     }
 
     let args = Args::parse();
+
+    // Validate agent arg combinations before doing any IPC work.
+    validate_agent_args(&args)?;
+    let is_agent_mode = args.agent || args.agent_list;
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
@@ -632,69 +1193,138 @@ fn run() -> Result<()> {
     };
 
     let exit_status = Arc::new(Mutex::new(None));
+
+    let mut agent_prompt: Option<String> = None;
+    let mut agent_project: Option<PathBuf> = None;
+
+    if is_agent_mode {
+        if !args.paths_with_position.is_empty() {
+            let prompt_text = args.paths_with_position.join(" ");
+            if prompt_text == "-" {
+                // Read prompt from stdin. Do this synchronously before the
+                // sender thread so we know the full prompt before we handshake.
+                let mut stdin = std::io::stdin().lock();
+                if !io::IsTerminal::is_terminal(&stdin) {
+                    let mut buffer = String::new();
+                    std::io::Read::read_to_string(&mut stdin, &mut buffer)?;
+                    agent_prompt = Some(buffer);
+                } else {
+                    anyhow::bail!(
+                        "stdin is a terminal, but '-' was given as the prompt; pipe input or pass a literal prompt"
+                    );
+                }
+            } else {
+                agent_prompt = Some(prompt_text);
+            }
+        }
+
+        if args.agent {
+            // An all-whitespace prompt would otherwise be dispatched as an
+            // empty content block, which the agent cannot act on.
+            let prompt = agent_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|prompt| !prompt.is_empty())
+                .context("no prompt provided: pipe one via stdin, or pass it as arguments")?;
+            agent_prompt = Some(prompt.to_string());
+        }
+
+        if let Some(project_path) = args.agent_project.as_deref() {
+            // Without this the app silently falls back to whichever project
+            // happens to be open, which looks like success but targets the
+            // wrong thread.
+            anyhow::ensure!(
+                project_path.is_dir(),
+                "--agent-project directory does not exist: \"{}\"",
+                project_path.display()
+            );
+        }
+        agent_project = args
+            .agent_project
+            .clone()
+            .or_else(|| env::current_dir().ok());
+        if let Some(ref project_path) = agent_project {
+            if project_path.exists() {
+                agent_project = Some(fs::canonicalize(project_path)?);
+            }
+        }
+    }
+
     let mut paths = vec![];
     let mut urls = vec![];
     let mut diff_paths = vec![];
+    let mut diff_all_mode = false;
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
-
-    // Check if any diff paths are directories to determine diff_all mode
-    let diff_all_mode = args
-        .diff
-        .chunks(2)
-        .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
-
-    for path in args.diff.chunks(2) {
-        let left = parse_path_with_position(&path[0])?;
-        let right = parse_path_with_position(&path[1])?;
-        for diff_path in [&left, &right] {
-            anyhow::ensure!(
-                diff_path_exists(diff_path),
-                "--diff path does not exist: {diff_path}"
-            );
+    let wsl_for_ipc: Option<String> = {
+        #[cfg(target_os = "windows")]
+        {
+            if !is_agent_mode {
+                args.wsl.clone()
+            } else {
+                None
+            }
         }
-        diff_paths.push([left, right]);
-    }
-
-    let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
-    diff_paths = expanded_diff_paths;
-    // Prevent automatic cleanup of temp directories containing empty stub files
-    // for directory diffs. The CLI process may exit before Zed has read these
-    // files (e.g., when RPC-ing into an already-running instance). The files
-    // live in the OS temp directory and will be cleaned up on reboot.
-    for temp_dir in temp_dirs {
-        let _ = temp_dir.keep();
-    }
-
-    #[cfg(target_os = "windows")]
-    let wsl = args.wsl.as_ref();
-    #[cfg(not(target_os = "windows"))]
-    let wsl = None;
-
-    for path in args.paths_with_position.iter() {
-        if URL_PREFIX.iter().any(|&prefix| path.starts_with(prefix)) {
-            urls.push(path.to_string());
-        } else if path == "-" && args.paths_with_position.len() == 1 {
-            let file = NamedTempFile::new()?;
-            paths.push(file.path().to_string_lossy().into_owned());
-            let (file, _) = file.keep()?;
-            stdin_tmp_file = Some(file);
-        } else if let Some(file) = anonymous_fd(path) {
-            let tmp_file = NamedTempFile::new()?;
-            paths.push(tmp_file.path().to_string_lossy().into_owned());
-            let (tmp_file, _) = tmp_file.keep()?;
-            anonymous_fd_tmp_files.push((file, tmp_file));
-        } else if let Some(wsl) = wsl {
-            urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
-        } else {
-            paths.push(parse_path_with_position(path)?);
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
         }
-    }
+    };
 
-    anyhow::ensure!(
-        args.dev_server_token.is_none(),
-        "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
-    );
+    if !is_agent_mode {
+        diff_all_mode = args
+            .diff
+            .chunks(2)
+            .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
+
+        for path in args.diff.chunks(2) {
+            let left = parse_path_with_position(&path[0])?;
+            let right = parse_path_with_position(&path[1])?;
+            for diff_path in [&left, &right] {
+                anyhow::ensure!(
+                    diff_path_exists(diff_path),
+                    "--diff path does not exist: {diff_path}"
+                );
+            }
+            diff_paths.push([left, right]);
+        }
+
+        let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
+        diff_paths = expanded_diff_paths;
+        for temp_dir in temp_dirs {
+            let _ = temp_dir.keep();
+        }
+
+        #[cfg(target_os = "windows")]
+        let wsl = args.wsl.as_ref();
+        #[cfg(not(target_os = "windows"))]
+        let wsl: Option<&String> = None;
+
+        for path in args.paths_with_position.iter() {
+            if URL_PREFIX.iter().any(|&prefix| path.starts_with(prefix)) {
+                urls.push(path.to_string());
+            } else if path == "-" && args.paths_with_position.len() == 1 {
+                let file = NamedTempFile::new()?;
+                paths.push(file.path().to_string_lossy().into_owned());
+                let (file, _) = file.keep()?;
+                stdin_tmp_file = Some(file);
+            } else if let Some(file) = anonymous_fd(path) {
+                let tmp_file = NamedTempFile::new()?;
+                paths.push(tmp_file.path().to_string_lossy().into_owned());
+                let (tmp_file, _) = tmp_file.keep()?;
+                anonymous_fd_tmp_files.push((file, tmp_file));
+            } else if let Some(wsl) = wsl {
+                urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
+            } else {
+                paths.push(parse_path_with_position(path)?);
+            }
+        }
+
+        anyhow::ensure!(
+            args.dev_server_token.is_none(),
+            "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
+        );
+    }
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(4)
@@ -703,35 +1333,53 @@ fn run() -> Result<()> {
         .build_global()
         .unwrap();
 
+    let ipc_request = if is_agent_mode {
+        let action = if args.agent_list {
+            AgentAction::List {
+                project: agent_project,
+                json: args.agent_list_format == AgentListFormat::Json,
+            }
+        } else {
+            AgentAction::Prompt {
+                prompt: agent_prompt.unwrap_or_default(),
+                thread: args.agent_thread.clone(),
+                session: args.agent_session.clone(),
+                project: agent_project,
+                profile: args.agent_profile.clone(),
+                model: args.agent_model.clone(),
+                new_thread: args.agent_new,
+                wait: args.agent_wait,
+            }
+        };
+        CliRequest::Agent {
+            action,
+            cwd: env::current_dir().ok(),
+        }
+    } else {
+        CliRequest::Open {
+            paths,
+            urls,
+            diff_paths,
+            diff_all: diff_all_mode,
+            wsl: wsl_for_ipc,
+            wait: args.wait,
+            open_behavior,
+            env,
+            user_data_dir: user_data_dir.clone(),
+            dev_container: args.dev_container,
+            cwd: env::current_dir().ok(),
+        }
+    };
+
     let sender: JoinHandle<anyhow::Result<()>> = thread::Builder::new()
         .name("CliReceiver".to_string())
         .spawn({
             let exit_status = exit_status.clone();
-            let user_data_dir_for_thread = user_data_dir.clone();
             move || {
                 let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
                 let (tx, rx) = (handshake.requests, handshake.responses);
 
-                #[cfg(target_os = "windows")]
-                let wsl = args.wsl;
-                #[cfg(not(target_os = "windows"))]
-                let wsl = None;
-
-                let open_request = CliRequest::Open {
-                    paths,
-                    urls,
-                    diff_paths,
-                    diff_all: diff_all_mode,
-                    wsl,
-                    wait: args.wait,
-                    open_behavior,
-                    env,
-                    user_data_dir: user_data_dir_for_thread,
-                    dev_container: args.dev_container,
-                    cwd: env::current_dir().ok(),
-                };
-
-                tx.send(open_request)?;
+                tx.send(ipc_request)?;
 
                 while let Ok(response) = rx.recv() {
                     match response {
@@ -743,11 +1391,26 @@ fn run() -> Result<()> {
                             return Ok(());
                         }
                         CliResponse::PromptOpenBehavior => {
-                            let behavior = prompt_open_behavior()
-                                .unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
-                            tx.send(CliRequest::SetOpenBehavior { behavior })?;
+                            // Should not occur in agent mode, but handle gracefully.
+                            if is_agent_mode {
+                                eprintln!(
+                                    "protocol error: received PromptOpenBehavior in agent mode"
+                                );
+                            } else {
+                                let behavior = prompt_open_behavior()
+                                    .unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
+                                tx.send(CliRequest::SetOpenBehavior { behavior })?;
+                            }
                         }
                     }
+                }
+
+                // The channel closed without an `Exit`, which means Zed went
+                // away mid-request. Reporting success here would let a webhook
+                // treat a dropped request as a delivered one.
+                if is_agent_mode && exit_status.lock().is_none() {
+                    eprintln!("error: Zed closed the connection without responding");
+                    exit_status.lock().replace(1);
                 }
 
                 Ok(())

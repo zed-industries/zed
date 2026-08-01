@@ -40,7 +40,25 @@ impl ThreadId {
 
     /// Stable, hyphenated string form suitable for use as a key.
     pub fn to_key_string(&self) -> String {
-        self.0.hyphenated().to_string()
+        self.to_string()
+    }
+}
+
+/// Renders the hyphenated form, which is what [`ThreadId::to_key_string`]
+/// persists and what users see in `zed --agent-list`.
+impl std::fmt::Display for ThreadId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0.hyphenated())
+    }
+}
+
+/// Accepts every form `uuid` understands, not just the hyphenated one written
+/// by [`Display`], so a thread id copied from anywhere still parses.
+impl std::str::FromStr for ThreadId {
+    type Err = uuid::Error;
+
+    fn from_str(source: &str) -> Result<Self, Self::Err> {
+        Ok(Self(uuid::Uuid::parse_str(source)?))
     }
 }
 

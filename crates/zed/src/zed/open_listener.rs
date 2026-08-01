@@ -2,6 +2,7 @@ use crate::handle_open_request;
 use crate::restore_or_create_workspace;
 use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
+use chrono::{DateTime, Utc};
 use cli::{CliRequest, CliResponse, CliResponseSink};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
@@ -676,6 +677,133 @@ pub async fn handle_cli_connection(
                 // resolve_open_behavior
                 debug_panic!("unexpected SetOpenBehavior message");
             }
+            CliRequest::Agent { action, cwd } => {
+                match action {
+                    cli::AgentAction::List { project, json } => {
+                        // Scope to the invoking shell's directory when no
+                        // project was given, so `zed --agent-list` inside a
+                        // project lists that project's threads.
+                        let project = project.or(cwd);
+                        let entries =
+                            cx.update(|cx| agent_ui::list_threads(project.as_deref(), cx));
+
+                        let mut status = 0;
+                        if json {
+                            // Always emit an array, so callers can pipe straight
+                            // into `jq` without special-casing "no threads".
+                            match serde_json::to_string_pretty(&thread_list_json(&entries)) {
+                                Ok(message) => {
+                                    responses.send(CliResponse::Stdout { message }).log_err();
+                                }
+                                Err(error) => {
+                                    responses
+                                        .send(CliResponse::Stderr {
+                                            message: format!(
+                                                "could not serialize threads: {error}"
+                                            ),
+                                        })
+                                        .log_err();
+                                    status = 1;
+                                }
+                            }
+                        } else if entries.is_empty() {
+                            responses
+                                .send(CliResponse::Stdout {
+                                    message: "no agent threads found".into(),
+                                })
+                                .log_err();
+                        } else {
+                            let now = Utc::now();
+                            let lines = entries
+                                .iter()
+                                .map(|entry| {
+                                    let age = format_compact_relative_age(now, entry.updated_at);
+                                    let marker = if entry.is_open { "  (open)" } else { "" };
+                                    let title = truncate_title(&entry.title, 60);
+                                    format!("{}  {}  {}{}", entry.thread_id, age, title, marker)
+                                })
+                                .collect::<Vec<_>>();
+                            responses
+                                .send(CliResponse::Stdout {
+                                    message: lines.join("\n"),
+                                })
+                                .log_err();
+                        }
+                        responses.send(CliResponse::Exit { status }).log_err();
+                    }
+                    cli::AgentAction::Prompt {
+                        prompt,
+                        thread,
+                        session,
+                        project,
+                        profile,
+                        model,
+                        new_thread,
+                        wait,
+                    } => {
+                        let selector = if new_thread {
+                            agent_ui::ThreadSelector::New
+                        } else if let Some(session) = session {
+                            agent_ui::ThreadSelector::Session(session)
+                        } else if let Some(thread) = thread {
+                            agent_ui::ThreadSelector::from_thread_argument(&thread)
+                        } else {
+                            agent_ui::ThreadSelector::MostRecent
+                        };
+
+                        // Deliberately do NOT call cx.activate(true) —
+                        // a webhook/automation-triggered agent turn should not
+                        // steal window focus from the user.
+
+                        let request = agent_ui::CliPromptRequest {
+                            selector,
+                            prompt,
+                            project: project.or(cwd),
+                            profile,
+                            model,
+                            wait,
+                        };
+
+                        match agent_ui::dispatch_cli_prompt(request, app_state.clone(), cx).await {
+                            Ok(outcome) => {
+                                match outcome {
+                                    agent_ui::DispatchOutcome::Sent { thread_id } => {
+                                        responses
+                                            .send(CliResponse::Stdout {
+                                                message: thread_id.to_string(),
+                                            })
+                                            .log_err();
+                                    }
+                                    agent_ui::DispatchOutcome::Queued { thread_id } => {
+                                        // Keep stdout to the bare id so callers
+                                        // can capture it either way.
+                                        responses
+                                            .send(CliResponse::Stderr {
+                                                message: "agent is busy; message queued"
+                                                    .to_string(),
+                                            })
+                                            .log_err();
+                                        responses
+                                            .send(CliResponse::Stdout {
+                                                message: thread_id.to_string(),
+                                            })
+                                            .log_err();
+                                    }
+                                }
+                                responses.send(CliResponse::Exit { status: 0 }).log_err();
+                            }
+                            Err(error) => {
+                                responses
+                                    .send(CliResponse::Stderr {
+                                        message: format!("{error:#}"),
+                                    })
+                                    .log_err();
+                                responses.send(CliResponse::Exit { status: 1 }).log_err();
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1121,6 +1249,105 @@ pub async fn derive_paths_with_position(
         result.push(parsed);
     }
     result
+}
+
+/// Formats a relative age in compact style: "just now", "2m ago", "3h ago", "1d ago", etc.
+///
+/// `time_format` spells these out ("2 minutes ago"), which would push the title
+/// column of `--agent-list` around as ages change; the listing is meant to stay
+/// readable in a terminal and greppable in a script.
+fn format_compact_relative_age(now: DateTime<Utc>, timestamp: DateTime<Utc>) -> String {
+    let delta = now - timestamp;
+    let minutes = delta.num_minutes();
+    if minutes < 1 {
+        "just now".into()
+    } else if minutes == 1 {
+        "1m ago".into()
+    } else if minutes < 60 {
+        format!("{}m ago", minutes)
+    } else {
+        let hours = delta.num_hours();
+        if hours == 1 {
+            "1h ago".into()
+        } else if hours < 24 {
+            format!("{}h ago", hours)
+        } else {
+            let days = delta.num_days();
+            if days == 1 {
+                "1d ago".into()
+            } else if days < 7 {
+                format!("{}d ago", days)
+            } else {
+                let weeks = delta.num_weeks();
+                if weeks == 1 {
+                    "1w ago".into()
+                } else if weeks < 5 {
+                    format!("{}w ago", weeks)
+                } else {
+                    let months = days / 30;
+                    if months == 1 {
+                        "1mo ago".into()
+                    } else if months < 12 {
+                        format!("{}mo ago", months)
+                    } else {
+                        let years = days / 365;
+                        if years == 1 {
+                            "1y ago".into()
+                        } else {
+                            format!("{}y ago", years)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Shapes threads for `--agent-list --agent-list-format json`.
+///
+/// Timestamps are RFC 3339 and paths are absolute, so a caller can match a
+/// thread to a git worktree without re-deriving either.
+fn thread_list_json(entries: &[agent_ui::ThreadListEntry]) -> serde_json::Value {
+    serde_json::Value::Array(
+        entries
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "id": entry.thread_id.to_string(),
+                    "title": entry.title,
+                    "updated_at": entry.updated_at.to_rfc3339(),
+                    "interacted_at": entry.interacted_at.map(|at| at.to_rfc3339()),
+                    "is_open": entry.is_open,
+                    "paths": entry.paths,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Collapse a title onto a single line and truncate it to `max_len`
+/// characters, appending "…" if truncated.
+///
+/// Titles are agent-generated and may contain newlines, which would otherwise
+/// split one thread across several lines of the line-oriented listing.
+fn truncate_title(title: &str, max_len: usize) -> String {
+    let title: String = title
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if title.chars().count() <= max_len {
+        return title;
+    }
+    let truncated: String = title.chars().take(max_len.saturating_sub(1)).collect();
+    format!("{truncated}…")
 }
 
 #[cfg(test)]
@@ -3018,5 +3245,65 @@ mod tests {
         );
         // File opened in existing window
         assert_eq!(cx.windows().len(), 1);
+    }
+
+    #[test]
+    fn test_agent_list_json_exposes_worktree_paths_and_timestamps() {
+        let updated_at = DateTime::parse_from_rfc3339("2026-01-02T03:04:05Z")
+            .expect("valid timestamp")
+            .with_timezone(&Utc);
+        let entries = vec![agent_ui::ThreadListEntry {
+            thread_id: "0f53a524-44b8-4121-a653-c62ef9584c17"
+                .parse()
+                .expect("valid thread id"),
+            title: "Worktree thread".to_string(),
+            updated_at,
+            interacted_at: None,
+            is_open: true,
+            paths: vec![PathBuf::from(path!("/repo-featx"))],
+        }];
+
+        let json = thread_list_json(&entries);
+        let entry = &json.as_array().expect("an array")[0];
+
+        assert_eq!(entry["id"], "0f53a524-44b8-4121-a653-c62ef9584c17");
+        assert_eq!(entry["title"], "Worktree thread");
+        assert_eq!(entry["updated_at"], "2026-01-02T03:04:05+00:00");
+        assert_eq!(entry["interacted_at"], serde_json::Value::Null);
+        assert_eq!(entry["is_open"], true);
+        assert_eq!(entry["paths"][0], path!("/repo-featx"));
+    }
+
+    #[test]
+    fn test_agent_list_json_is_an_array_when_no_threads_match() {
+        // Scripts pipe this straight into `jq`, so the shape must not change
+        // when there is nothing to report.
+        assert_eq!(thread_list_json(&[]), serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_agent_list_titles_stay_on_one_line() {
+        // `--agent-list` output is parsed line by line, so a title containing
+        // newlines must not split one thread across several lines.
+        let title = truncate_title("first line\nsecond line\r\nthird", 60);
+        assert_eq!(title, "first line second line third");
+        assert!(!title.contains('\n'));
+    }
+
+    #[test]
+    fn test_agent_list_titles_are_truncated_with_an_ellipsis() {
+        let title = truncate_title("abcdefghij", 5);
+        assert_eq!(title, "abcd…");
+    }
+
+    #[test]
+    fn test_agent_list_titles_shorter_than_the_limit_are_unchanged() {
+        assert_eq!(truncate_title("short title", 60), "short title");
+    }
+
+    #[test]
+    fn test_agent_list_titles_handle_multibyte_characters() {
+        // Truncation counts characters, so slicing must not land mid-codepoint.
+        assert_eq!(truncate_title("日本語の依頼です", 4), "日本語…");
     }
 }

@@ -53,6 +53,38 @@ pub enum CliBehaviorSetting {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum AgentAction {
+    /// Send a prompt into a thread, creating one if needed.
+    Prompt {
+        prompt: String,
+        /// A complete `ThreadId`, or a unique leading fragment of one with
+        /// hyphens optional.
+        thread: Option<String>,
+        /// An ACP session id.
+        session: Option<String>,
+        /// Absolute path scoping thread lookup/creation.
+        project: Option<PathBuf>,
+        /// Agent profile for a new thread, which decides the available tools.
+        /// Only honored when `new_thread` is set.
+        profile: Option<String>,
+        /// Model for a new thread, as `provider/model-id`. Only honored when
+        /// `new_thread` is set.
+        model: Option<String>,
+        /// Force creation of a brand-new thread.
+        new_thread: bool,
+        /// Block until the agent turn completes.
+        wait: bool,
+    },
+    /// List known threads.
+    List {
+        project: Option<PathBuf>,
+        /// Emit machine-readable JSON instead of one thread per line.
+        #[serde(default)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum CliRequest {
     Open {
         paths: Vec<String>,
@@ -71,6 +103,12 @@ pub enum CliRequest {
     },
     SetOpenBehavior {
         behavior: CliBehaviorSetting,
+    },
+    Agent {
+        action: AgentAction,
+        /// Directory the CLI was invoked from, used to scope thread lookup
+        /// when no explicit project was given.
+        cwd: Option<PathBuf>,
     },
 }
 

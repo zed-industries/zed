@@ -2154,6 +2154,20 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// Resume the message queue after a manual stop. The queue auto-drains on
+    /// [`AcpThreadEvent::Stopped`], but if the user previously hit Stop and put
+    /// the queue into [`ProcessingState::Paused`], no `Stopped` event will fire
+    /// until a new turn starts. Callers that initiate a new turn (such as the
+    /// CLI agent dispatch) must resume the queue first, matching what
+    /// [`send_impl`] does.
+    pub(crate) fn resume_message_queue(&mut self) {
+        self.message_queue.resume();
+    }
+
+    pub(crate) fn is_message_queue_empty(&self) -> bool {
+        self.message_queue.is_empty()
+    }
+
     fn handle_queue_editor_event(
         &mut self,
         id: QueueEntryId,

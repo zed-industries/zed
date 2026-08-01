@@ -57,7 +57,7 @@ use crate::{
     },
     ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
 };
-use agent_settings::AgentSettings;
+use agent_settings::{AgentProfileId, AgentSettings};
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(feature = "audio")]
@@ -979,6 +979,9 @@ pub struct CreateThreadOptions {
     /// Model override, as `provider/model-id`. Only applied when the thread
     /// uses the native Zed agent.
     pub model: Option<String>,
+    /// Profile to run the thread under, deciding which tools are available.
+    /// Only applied when the thread uses the native Zed agent.
+    pub profile: Option<AgentProfileId>,
     /// Working directories to attach to the new thread (e.g., the path of a
     /// freshly-created sibling worktree). When `None`, the thread inherits
     /// the project's default path list.
@@ -1898,6 +1901,7 @@ impl AgentPanel {
             Some(metadata.folder_paths().clone()),
             metadata.title.clone(),
             initial_content,
+            None,
             None,
             AgentThreadSource::AgentPanel,
             window,
@@ -3020,6 +3024,7 @@ impl AgentPanel {
             None,
             None,
             None,
+            None,
             source,
             window,
             cx,
@@ -3218,6 +3223,7 @@ impl AgentPanel {
             options.title.clone(),
             options.initial_content,
             options.model,
+            options.profile,
             source,
             window,
             cx,
@@ -3483,6 +3489,7 @@ impl AgentPanel {
             work_dirs,
             title,
             initial_content,
+            None,
             None,
             source,
             window,
@@ -4457,6 +4464,7 @@ impl AgentPanel {
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         model_override: Option<String>,
+        profile_override: Option<AgentProfileId>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -4474,6 +4482,7 @@ impl AgentPanel {
             title,
             initial_content,
             model_override,
+            profile_override,
             source,
             window,
             cx,
@@ -4509,6 +4518,7 @@ impl AgentPanel {
             title,
             initial_content,
             None,
+            None,
             source,
             window,
             cx,
@@ -4525,6 +4535,7 @@ impl AgentPanel {
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         model_override: Option<String>,
+        profile_override: Option<AgentProfileId>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -4587,10 +4598,10 @@ impl AgentPanel {
         // already established by the time the observe fires.
         self.ensure_sibling_host_installed(&conversation_view, window, cx);
 
-        if let Some(model) = model_override {
+        if model_override.is_some() || profile_override.is_some() {
             // The native thread is constructed asynchronously after the
             // connection establishes. Wait for the first `RootThreadUpdated`
-            // event that yields a native thread, then apply the override once.
+            // event that yields a native thread, then apply the overrides once.
             let applied = Cell::new(false);
             cx.subscribe(
                 &conversation_view,
@@ -4601,7 +4612,16 @@ impl AgentPanel {
                     let Some(native_thread) = view.read(cx).as_native_thread(cx) else {
                         return;
                     };
-                    apply_native_model_override(&native_thread, &model, cx);
+                    if let Some(profile_id) = profile_override.clone() {
+                        native_thread.update(cx, |thread, cx| {
+                            thread.set_profile(profile_id, cx);
+                        });
+                    }
+                    // Applied after the profile because switching profiles can
+                    // itself select that profile's preferred model.
+                    if let Some(model) = model_override.as_deref() {
+                        apply_native_model_override(&native_thread, model, cx);
+                    }
                     applied.set(true);
                 },
             )
@@ -4683,7 +4703,7 @@ pub(crate) fn apply_native_model_override(
     });
 }
 
-fn parse_provider_slash_model(input: &str) -> Option<language_model::SelectedModel> {
+pub(crate) fn parse_provider_slash_model(input: &str) -> Option<language_model::SelectedModel> {
     let (provider, model) = input.split_once('/')?;
     if provider.is_empty() || model.is_empty() {
         return None;
@@ -4759,6 +4779,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
                 initial_content: Some(initial_content),
                 agent: agent_choice.clone(),
                 model: request.model.clone(),
+                profile: None,
                 work_dirs: None,
             };
 
@@ -5276,6 +5297,7 @@ impl AgentPanel {
                 None,
                 None,
                 Some(initial_content),
+                None,
                 None,
                 AgentThreadSource::AgentPanel,
                 window,
@@ -6582,6 +6604,7 @@ impl AgentPanel {
             None,
             None,
             None,
+            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -6622,6 +6645,7 @@ impl AgentPanel {
             None,
             None,
             None,
+            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -6651,6 +6675,7 @@ impl AgentPanel {
         let thread = self.create_agent_thread_with_server(
             ext_agent,
             Some(server),
+            None,
             None,
             None,
             None,

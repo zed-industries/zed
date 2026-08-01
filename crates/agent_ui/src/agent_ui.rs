@@ -1,3 +1,4 @@
+mod agent_cli;
 mod agent_configuration;
 pub mod agent_connection_store;
 mod agent_diff;
@@ -68,6 +69,10 @@ use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use workspace::{OpenOptions, Workspace};
 
+pub use crate::agent_cli::{
+    CliPromptRequest, DispatchOutcome, ThreadListEntry, ThreadSelector, dispatch_cli_prompt,
+    list_threads,
+};
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{

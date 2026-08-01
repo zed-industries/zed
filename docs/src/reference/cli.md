@@ -206,6 +206,163 @@ Specify a custom path to the Zed application or binary:
 zed --zed /path/to/Zed.app myfile.txt
 ```
 
+## Sending Prompts to the Agent
+
+The CLI can start an agent turn in a running Zed instance, which is useful for driving the agent from scripts, git hooks, or webhooks.
+
+Send a prompt to the most recently updated thread for the current project:
+
+```sh
+zed --agent "Summarize the changes on this branch"
+```
+
+The Agent Panel does not need to be focused, and the prompt is never written into an editor you are typing in. If the agent is already generating, the prompt is added to that thread's message queue and sent when the current turn finishes, exactly as if you had typed it while the agent was working.
+
+### `--agent`
+
+Send a prompt. The prompt is taken from the remaining arguments, or from stdin when the prompt is `-`:
+
+```sh
+zed --agent "Fix the failing test in parser.rs"
+curl -s https://example.com/task | zed --agent -
+```
+
+On success the target thread's id is printed to stdout, so scripts can capture it and keep talking to the same thread:
+
+```sh
+thread=$(zed --agent --agent-new "Start reviewing this PR")
+zed --agent --agent-thread "$thread" "Now check the tests"
+```
+
+### `--agent-list`
+
+List known threads, most recently updated first. Threads currently open in a window are marked `(open)`:
+
+```sh
+zed --agent-list
+```
+
+```text
+567079b5-f231-4837-8283-23581f508113  just now  Fix failing parser test  (open)
+8bb41db0-b3cd-4f45-b2eb-4dc49cc57602  2h ago  Add CLI reference docs
+```
+
+### `--agent-list-format <FORMAT>`
+
+Either `text` (the default, shown above) or `json`. JSON emits an array — including when nothing matches — so scripts can pipe it straight into `jq` without parsing columns:
+
+```sh
+zed --agent-list --agent-list-format json
+```
+
+```json
+[
+  {
+    "id": "567079b5-f231-4837-8283-23581f508113",
+    "title": "Fix failing parser test",
+    "updated_at": "2026-01-02T03:04:05+00:00",
+    "interacted_at": "2026-01-02T03:03:11+00:00",
+    "is_open": true,
+    "paths": ["/Users/me/projects/myproject"]
+  }
+]
+```
+
+`updated_at` moves whenever the thread changes, including while the agent is working. `interacted_at` moves when you send, queue, retry, or regenerate a message in the Agent Panel, so it tells you when a person last engaged with the thread; prompts delivered by the CLI deliberately leave it alone. `paths` are the thread's worktree folders, which is what lets you match a thread to a specific git worktree:
+
+```sh
+# The most recently updated thread for the worktree checked out at $worktree
+zed --agent-list --agent-list-format json --agent-project "$worktree" \
+  | jq -r '.[0].id'
+```
+
+### `--agent-thread <ID>`
+
+Target a specific thread. The id may be given in full or as a unique leading fragment, and hyphens are optional, so `567079b5-f231` and `567079b5f231` select the same thread:
+
+```sh
+zed --agent --agent-thread 567079b5 "Add a test for that"
+```
+
+If the fragment matches more than one thread, Zed reports the candidates instead of guessing.
+
+### `--agent-new`
+
+Always start a new thread rather than continuing an existing one:
+
+```sh
+zed --agent --agent-new "Investigate the flaky CI job"
+```
+
+### `--agent-project <DIR>`
+
+Scope thread lookup and creation to a project. Defaults to the working directory, so running the CLI anywhere inside a project targets that project's threads:
+
+```sh
+zed --agent --agent-project ~/projects/myproject "What changed today?"
+```
+
+### `--agent-profile <PROFILE>`
+
+Create the thread under a specific [agent profile](../ai/agent-profiles.md), which decides the tools the agent may use. This matters for unattended runs, where a narrower profile limits what a prompt can do:
+
+```sh
+zed --agent --agent-new --agent-profile ask "Summarize what changed on this branch"
+```
+
+An unknown profile is an error listing the configured ones, rather than a silent fallback to the default.
+
+### `--agent-model <PROVIDER/MODEL>`
+
+Create the thread with a specific model:
+
+```sh
+zed --agent --agent-new --agent-model anthropic/claude-sonnet-4-5 "Review this diff"
+```
+
+An unconfigured model is an error.
+
+Both flags require `--agent-new`. A thread stores its profile and model, and changing the profile also switches the model and applies to any subagents it is running. They configure a thread you are creating rather than silently reconfiguring one you already have open. To run a prompt under a different profile, start a new thread for it.
+
+### `--agent-wait`
+
+Block until the agent finishes its turn:
+
+```sh
+zed --agent --agent-wait "Run the test suite and fix what breaks"
+```
+
+There is deliberately no timeout. If the agent asks for permission to run a tool, it waits for you to answer in the Agent Panel, the same as a prompt you typed yourself. See [Agent Settings](../ai/agent-settings.md) for how to configure tool permissions.
+
+### `--agent-session <SESSION_ID>`
+
+Target a thread by its Agent Client Protocol session id. This is mainly useful for tooling that already tracks ACP sessions:
+
+```sh
+zed --agent --agent-session 8bb41db0-b3cd-4f45-b2eb-4dc49cc57602 "Continue this review"
+```
+
+### Targeting a Git Worktree
+
+Because threads remember the worktree folders they belong to, a hook that knows a branch can find the right thread by resolving the branch to its worktree first:
+
+```sh
+worktree=$(git -C "$repo" worktree list --porcelain \
+  | awk -v branch="refs/heads/$branch" '/^worktree /{path=$2} $0=="branch "branch{print path}')
+
+zed --agent --agent-project "$worktree" "CI failed on $branch: $details"
+```
+
+Pass `--agent-project` explicitly rather than relying on the working directory. A thread created in a linked worktree also records the main checkout, so a lookup made from the main checkout can match threads belonging to any of its linked worktrees, while a lookup made from the linked worktree matches only its own.
+
+The worktree must already be open in Zed. If it isn't, the CLI reports that rather than falling back to another project, so a hook can open it first:
+
+```sh
+git -C "$repo" worktree add "$worktree" "$branch"
+zed "$worktree"
+zed --agent --agent-project "$worktree" --agent-new "Investigate the CI failure on $branch"
+```
+
 ## Reading from Standard Input
 
 Read content from stdin by passing `-` as the path:
