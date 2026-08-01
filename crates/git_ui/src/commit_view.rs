@@ -402,30 +402,9 @@ impl CommitView {
                         if hunks.peek().is_none() {
                             vec![language::Point::zero()..snapshot.max_point()]
                         } else {
-                            let mut ranges: Vec<_> = hunks
+                            hunks
                                 .map(|hunk| hunk.buffer_range.to_point(&snapshot))
-                                .collect();
-
-                            // Ensure the target row is covered by an excerpt
-                            // so buffer_point_to_anchor returns an exact anchor
-                            // instead of clamping to a nearby excerpt boundary.
-                            if let Some((target_path, target_row)) = &scroll_to {
-                                if *target_path == file_path {
-                                    let target_point =
-                                        language::Point::new(*target_row, 0);
-                                    let covered = ranges.iter().any(|r| {
-                                        r.start <= target_point && target_point <= r.end
-                                    });
-                                    if !covered {
-                                        let insert_point =
-                                            target_point.min(snapshot.max_point());
-                                        ranges.push(insert_point..insert_point);
-                                        ranges.sort_by_key(|r| r.start);
-                                    }
-                                }
-                            }
-
-                            ranges
+                                .collect::<Vec<_>>()
                         }
                     };
                     (ranges, path)
@@ -471,7 +450,7 @@ impl CommitView {
                                 this.editor.update(cx, |editor, cx| {
                                     editor.rhs_editor().update(cx, |editor, cx| {
                                         editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::focused()),
+                                            SelectionEffects::scroll(Autoscroll::center()),
                                             window,
                                             cx,
                                             |s| s.select_ranges([anchor..anchor]),
