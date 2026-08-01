@@ -510,6 +510,7 @@ pub(crate) struct BreadcrumbDirectoryBrowser {
     /// Set by [`Self::on_dismiss`] right after construction, since the subscription needs the
     /// entity this field lives in. Held here rather than detached so it dies with the browser.
     _on_dismiss_subscription: Option<Subscription>,
+    _expand_task: gpui::Task<()>,
 }
 
 impl BreadcrumbDirectoryBrowser {
@@ -522,7 +523,7 @@ impl BreadcrumbDirectoryBrowser {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        cx.new(|cx| {
+        let browser = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             // Clicking away — including into the editor — moves focus off this popover, which
             // should end the navigation session the same way `Escape` does (see
@@ -538,17 +539,46 @@ impl BreadcrumbDirectoryBrowser {
                 focus_handle,
                 _on_blur_subscription,
                 _on_dismiss_subscription: None,
+                _expand_task: gpui::Task::ready(()),
             }
-        })
+        });
+        browser.update(cx, |browser, cx| browser.expand_current_path(cx));
+        browser
+    }
+
+    /// Asks the worktree to scan this directory's children, the same call the project panel makes
+    /// when a directory is expanded. Gitignored directories are never scanned proactively, so
+    /// without this their dropdown lists nothing at all.
+    fn expand_current_path(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return;
+        };
+        let Some(entry_id) = self
+            .worktree(cx)
+            .and_then(|worktree| worktree.read(cx).entry_for_path(&self.current_path))
+            .map(|entry| entry.id)
+        else {
+            return;
+        };
+        let Some(expand) = project.update(cx, |project, cx| {
+            project.expand_entry(self.worktree_id, entry_id, cx)
+        }) else {
+            return;
+        };
+
+        self._expand_task = cx.spawn(async move |browser, cx| {
+            expand.await.log_err();
+            browser.update(cx, |_, cx| cx.notify()).ok();
+        });
     }
 
     /// Runs `on_dismiss` when this browser is dismissed, by any route: `Escape`, focus moving away,
     /// or another segment's `PopoverMenuHandle::hide`.
-    fn on_dismiss(
-        browser: &Entity<Self>,
-        cx: &mut App,
-        on_dismiss: impl Fn(&mut App) + 'static,
-    ) {
+    fn on_dismiss(browser: &Entity<Self>, cx: &mut App, on_dismiss: impl Fn(&mut App) + 'static) {
         let subscription = cx.subscribe(browser, move |_, _: &DismissEvent, cx| on_dismiss(cx));
         browser.update(cx, |browser, _| {
             browser._on_dismiss_subscription = Some(subscription);
@@ -2690,6 +2720,91 @@ mod tests {
         assert!(
             handle.is_deployed(),
             "the popover reopened under the resolved directory's own segment"
+        );
+    }
+
+    #[gpui::test]
+    /// Worktrees never scan gitignored directories proactively, so a dropdown that only reads the
+    /// snapshot shows them as empty. Opening one has to trigger the same scan the project panel
+    /// triggers when a directory is expanded — one level per dropdown, so reaching a file nested
+    /// two levels inside `.gitignore`d territory takes two of them.
+    #[gpui::test]
+    async fn test_breadcrumb_directory_browser_expands_nested_gitignored_directories(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "ignored_dir\n",
+                "ignored_dir": { "nested": { "file.txt": "" } },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+        cx.run_until_parked();
+
+        let (entries, _) =
+            cx.update(|cx| breadcrumb_directory_entries(&worktree, rel_path("ignored_dir"), cx));
+        assert!(
+            entries.is_empty(),
+            "nothing under a gitignored directory is scanned until something asks for it"
+        );
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor_window = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+        let editor = editor_window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+
+        let open_dropdown_at = |path: &'static str, cx: &mut VisualTestContext| {
+            let browser = editor_window
+                .update(cx, |_, window, cx| {
+                    BreadcrumbDirectoryBrowser::new(
+                        editor.downgrade(),
+                        workspace.downgrade(),
+                        worktree_id,
+                        rel_path(path).into_arc(),
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap();
+            cx.run_until_parked();
+            let entries = cx
+                .update(|_, cx| breadcrumb_directory_entries(&worktree, rel_path(path), cx))
+                .0;
+            drop(browser);
+            entries
+                .into_iter()
+                .map(|entry| entry.name.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            open_dropdown_at("ignored_dir", cx),
+            vec!["nested".to_string()],
+            "opening the dropdown scans one level into the gitignored directory"
+        );
+        assert_eq!(
+            open_dropdown_at("ignored_dir/nested", cx),
+            vec!["file.txt".to_string()],
+            "and the level below it once that one is opened too"
         );
     }
 
