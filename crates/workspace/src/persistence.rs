@@ -1435,7 +1435,8 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
-                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
+                let Some(relative_path) = RelPath::from_unix_str(&relative_worktree_path).log_err()
+                else {
                     continue;
                 };
                 if worktree_root_path != String::default()
@@ -2496,7 +2497,7 @@ impl WorkspaceDb {
                                 as_json: serde_json::Value::from_str(&json).ok()?,
                             },
                            Arc::from(worktree_root_path.as_ref()),
-                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                            RelPath::from_unix_str(&relative_worktree_path).log_err()?.into(),
                         ))
                     },
                 )
@@ -5287,6 +5288,47 @@ mod tests {
         // Bare-backed worktrees should resolve to the repo identity path, which
         // is the parent directory users think of as the project root.
         assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/foo")]);
+    }
+
+    #[gpui::test]
+    async fn test_recent_workspace_identity_for_submodule(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Superproject `/Foo` with a submodule `Bar`. A submodule's `.git` is a
+        // file pointing into the superproject's `.git/modules/<name>` directory,
+        // structurally like a linked worktree's `.git` file.
+        fs.insert_tree(
+            "/Foo",
+            json!({
+                ".git": {
+                    "modules": {
+                        "Bar": {
+                            "HEAD": "ref: refs/heads/main"
+                        }
+                    }
+                },
+                "Bar": {
+                    ".git": "gitdir: ../.git/modules/Bar\n",
+                    "src": { "main.rs": "" }
+                },
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now();
+
+        let result = local_recent_workspace(
+            WorkspaceId(1),
+            PathList::new(&["/Foo/Bar"]),
+            t0,
+            fs.as_ref(),
+        )
+        .await;
+
+        // Submodules are independent projects: their identity is their own
+        // working directory, not the superproject's `.git/modules/<name>`.
+        assert_eq!(result.identity_paths.paths(), &[PathBuf::from("/Foo/Bar")]);
     }
 
     #[gpui::test]

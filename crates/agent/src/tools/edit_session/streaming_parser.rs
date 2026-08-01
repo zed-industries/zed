@@ -114,7 +114,7 @@ impl StreamingParser {
                 if partial.new_text.is_some() && !state.buffer_new_text_until_old_text_done {
                     // new_text appeared after old_text, so old_text is done — emit everything.
                     let start = find_char_boundary(old_text, state.old_text_emitted_len);
-                    let chunk = normalize_done_chunk(old_text[start..].to_string());
+                    let chunk = old_text[start..].to_string();
                     state.old_text_done = true;
                     state.old_text_emitted_len = old_text.len();
                     events.push(EditEvent::OldTextChunk {
@@ -217,12 +217,12 @@ impl StreamingParser {
                 state.buffer_new_text_until_old_text_done = false;
                 events.push(EditEvent::OldTextChunk {
                     edit_index: index,
-                    chunk: normalize_done_chunk(edit.old_text.clone()),
+                    chunk: edit.old_text.clone(),
                     done: true,
                 });
                 events.push(EditEvent::NewTextChunk {
                     edit_index: index,
-                    chunk: normalize_done_chunk(edit.new_text.clone()),
+                    chunk: edit.new_text.clone(),
                     done: true,
                 });
                 continue;
@@ -230,7 +230,7 @@ impl StreamingParser {
 
             if !state.old_text_done {
                 let start = find_char_boundary(&edit.old_text, state.old_text_emitted_len);
-                let chunk = normalize_done_chunk(edit.old_text[start..].to_string());
+                let chunk = edit.old_text[start..].to_string();
                 state.old_text_done = true;
                 state.old_text_emitted_len = edit.old_text.len();
                 events.push(EditEvent::OldTextChunk {
@@ -242,7 +242,7 @@ impl StreamingParser {
 
             if !state.new_text_done {
                 let start = find_char_boundary(&edit.new_text, state.new_text_emitted_len);
-                let chunk = normalize_done_chunk(edit.new_text[start..].to_string());
+                let chunk = edit.new_text[start..].to_string();
                 state.new_text_done = true;
                 state.new_text_emitted_len = edit.new_text.len();
                 events.push(EditEvent::NewTextChunk {
@@ -301,12 +301,12 @@ impl StreamingParser {
             state.buffer_new_text_until_old_text_done = false;
             events.push(EditEvent::OldTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(old_text.to_string()),
+                chunk: old_text.to_string(),
                 done: true,
             });
             events.push(EditEvent::NewTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(new_text.to_string()),
+                chunk: new_text.to_string(),
                 done: true,
             });
             return Some(events);
@@ -319,7 +319,7 @@ impl StreamingParser {
             state.old_text_emitted_len = old_text.len();
             events.push(EditEvent::OldTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(old_text[start..].to_string()),
+                chunk: old_text[start..].to_string(),
                 done: true,
             });
         }
@@ -332,7 +332,7 @@ impl StreamingParser {
             state.buffer_new_text_until_old_text_done = false;
             events.push(EditEvent::NewTextChunk {
                 edit_index: previous_index,
-                chunk: normalize_done_chunk(new_text[start..].to_string()),
+                chunk: new_text[start..].to_string(),
                 done: true,
             });
         }
@@ -385,13 +385,6 @@ fn find_char_boundary(text: &str, target: usize) -> usize {
         pos -= 1;
     }
     pos
-}
-
-fn normalize_done_chunk(mut chunk: String) -> String {
-    if chunk.ends_with('\n') {
-        chunk.pop();
-    }
-    chunk
 }
 
 #[cfg(test)]
@@ -555,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn test_done_chunks_strip_trailing_newline() {
+    fn test_done_chunks_preserve_trailing_newlines() {
         let mut parser = StreamingParser::default();
 
         let events = parser.finalize_edits(&[Edit {
@@ -567,12 +560,12 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "before".into(),
+                    chunk: "before\n".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
                     edit_index: 0,
-                    chunk: "after".into(),
+                    chunk: "after\n".into(),
                     done: true,
                 },
             ]
@@ -580,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_edit_chunks_hold_back_trailing_newline() {
+    fn test_partial_edit_preserves_trailing_newlines() {
         let mut parser = StreamingParser::default();
 
         let events = parser.push_edits(&[PartialEdit {
@@ -598,12 +591,12 @@ mod tests {
             &[
                 EditEvent::OldTextChunk {
                     edit_index: 0,
-                    chunk: "before".into(),
+                    chunk: "before\n".into(),
                     done: true,
                 },
                 EditEvent::NewTextChunk {
                     edit_index: 0,
-                    chunk: "after".into(),
+                    chunk: "after\n".into(),
                     done: true,
                 },
             ]

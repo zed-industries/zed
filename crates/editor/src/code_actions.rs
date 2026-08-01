@@ -206,19 +206,52 @@ impl Editor {
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
+        let runnable_task_key =
+            self.runnable_task_key_for_source(&actions_menu.deployed_from, window, cx);
         let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.schedule_resolved_task(
-                        task_source_kind,
-                        resolved_task,
-                        false,
-                        window,
+                if let Some((buffer_id, buffer_row)) = runnable_task_key {
+                    self.set_runnable_task_status(
+                        buffer_id,
+                        buffer_row,
+                        RunnableTaskStatus::Running,
                         cx,
                     );
+                }
+                let editor = cx.weak_entity();
+                workspace.update(cx, |workspace, cx| {
+                    if let Some((buffer_id, buffer_row)) = runnable_task_key {
+                        workspace.schedule_resolved_task_with_completion(
+                            task_source_kind,
+                            resolved_task,
+                            false,
+                            move |result, cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.set_runnable_task_status(
+                                            buffer_id,
+                                            buffer_row,
+                                            RunnableTaskStatus::from(result),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            },
+                            window,
+                            cx,
+                        );
+                    } else {
+                        workspace.schedule_resolved_task(
+                            task_source_kind,
+                            resolved_task,
+                            false,
+                            window,
+                            cx,
+                        );
+                    }
 
                     Some(Task::ready(Ok(())))
                 })
@@ -260,6 +293,25 @@ impl Editor {
                 Some(Task::ready(Ok(())))
             }
         }
+    }
+
+    fn runnable_task_key_for_source(
+        &self,
+        source: &Option<CodeActionSource>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(BufferId, BufferRow)> {
+        let display_row = match source {
+            Some(CodeActionSource::RunMenu(row)) => *row,
+            _ => return None,
+        };
+        let snapshot = self.snapshot(window, cx);
+        let multibuffer_row =
+            MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(&snapshot).row);
+        let (buffer_snapshot, range) = snapshot
+            .buffer_snapshot()
+            .buffer_line_for_row(multibuffer_row)?;
+        Some((buffer_snapshot.remote_id(), range.start.row))
     }
 
     pub fn code_actions_enabled_for_toolbar(&self, cx: &App) -> bool {

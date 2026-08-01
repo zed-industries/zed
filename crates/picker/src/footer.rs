@@ -98,6 +98,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let actions = self.delegate.actions_menu(window, cx);
+
         if self.preview.is_none() && actions.is_empty() {
             return None;
         }
@@ -111,9 +112,9 @@ impl<D: PickerDelegate> Picker<D> {
                 .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
-                .child(div().when(self.preview.is_some(), |this| {
+                .when(self.preview.is_some(), |this| {
                     this.child(self.render_preview_controls(window, cx))
-                }))
+                })
                 .when(!actions.is_empty(), |this| {
                     this.child(self.render_actions_button(actions.into(), focus_handle, window, cx))
                 })
@@ -194,11 +195,8 @@ impl<D: PickerDelegate> Picker<D> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let _ = cx;
         PopoverMenu::new("picker-actions-menu")
             .with_handle(self.actions_menu_handle.clone())
-            .attach(gpui::Anchor::TopRight)
-            .anchor(gpui::Anchor::BottomRight)
             .trigger(
                 Button::new("picker-actions-trigger", "Actions…")
                     .key_binding(
@@ -217,6 +215,12 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                     menu
                 }))
+            })
+            .attach(gpui::Anchor::TopRight)
+            .anchor(gpui::Anchor::BottomRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
             })
     }
 }

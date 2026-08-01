@@ -1,6 +1,8 @@
-use crate::commit::parse_git_diff_name_status;
+use crate::commit::{CommitDiffObject, CommitDiffObjectKind, parse_git_diff_raw};
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
+use crate::status::{
+    DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
@@ -458,6 +460,7 @@ pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
     pub allow_empty: bool,
+    pub no_verify: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -572,6 +575,57 @@ pub fn is_binary_content(content: &[u8]) -> bool {
     content[..check_len].contains(&0)
 }
 
+struct LoadedCommitObject {
+    text: String,
+    is_binary: bool,
+}
+
+async fn read_commit_blob<R: smol::io::AsyncBufRead + Unpin>(
+    stdout: &mut R,
+    info_line: &mut String,
+    newline: &mut [u8; 1],
+) -> Result<LoadedCommitObject> {
+    info_line.clear();
+    stdout.read_line(info_line).await?;
+
+    let len = info_line
+        .trim_end()
+        .parse()
+        .with_context(|| format!("invalid object size output from cat-file {info_line}"))?;
+
+    let mut bytes = vec![0; len];
+    stdout.read_exact(&mut bytes).await?;
+    stdout.read_exact(newline).await?;
+
+    let is_binary = is_binary_content(&bytes);
+    Ok(LoadedCommitObject {
+        text: if is_binary {
+            String::new()
+        } else {
+            String::from_utf8_lossy(&bytes).to_string()
+        },
+        is_binary,
+    })
+}
+
+async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
+    object: Option<CommitDiffObject<'_>>,
+    stdout: &mut R,
+    info_line: &mut String,
+    newline: &mut [u8; 1],
+) -> Result<Option<LoadedCommitObject>> {
+    match object {
+        Some(object) if object.kind == CommitDiffObjectKind::Gitlink => {
+            Ok(Some(LoadedCommitObject {
+                text: format!("Subproject commit {}\n", object.oid),
+                is_binary: false,
+            }))
+        }
+        Some(_) => Ok(Some(read_commit_blob(stdout, info_line, newline).await?)),
+        None => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
@@ -620,110 +674,6 @@ impl std::fmt::Display for FetchOptions {
         match self {
             FetchOptions::All => write!(f, "--all"),
             FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
-        }
-    }
-}
-
-/// Modifies .git/info/exclude temporarily
-pub struct GitExcludeOverride {
-    git_exclude_path: PathBuf,
-    original_excludes: Option<String>,
-    added_excludes: Option<String>,
-}
-
-impl GitExcludeOverride {
-    const START_BLOCK_MARKER: &str = "\n\n#  ====== Auto-added by Zed: =======\n";
-    const END_BLOCK_MARKER: &str = "\n#  ====== End of auto-added by Zed =======\n";
-
-    pub async fn new(git_exclude_path: PathBuf) -> Result<Self> {
-        let original_excludes =
-            smol::fs::read_to_string(&git_exclude_path)
-                .await
-                .ok()
-                .map(|content| {
-                    // Auto-generated lines are normally cleaned up in
-                    // `restore_original()` or `drop()`, but may stuck in rare cases.
-                    // Make sure to remove them.
-                    Self::remove_auto_generated_block(&content)
-                });
-
-        Ok(GitExcludeOverride {
-            git_exclude_path,
-            original_excludes,
-            added_excludes: None,
-        })
-    }
-
-    pub async fn add_excludes(&mut self, excludes: &str) -> Result<()> {
-        self.added_excludes = Some(if let Some(ref already_added) = self.added_excludes {
-            format!("{already_added}\n{excludes}")
-        } else {
-            excludes.to_string()
-        });
-
-        let mut content = self.original_excludes.clone().unwrap_or_default();
-
-        content.push_str(Self::START_BLOCK_MARKER);
-        content.push_str(self.added_excludes.as_ref().unwrap());
-        content.push_str(Self::END_BLOCK_MARKER);
-
-        smol::fs::write(&self.git_exclude_path, content).await?;
-        Ok(())
-    }
-
-    pub async fn restore_original(&mut self) -> Result<()> {
-        if let Some(ref original) = self.original_excludes {
-            smol::fs::write(&self.git_exclude_path, original).await?;
-        } else if self.git_exclude_path.exists() {
-            smol::fs::remove_file(&self.git_exclude_path).await?;
-        }
-
-        self.added_excludes = None;
-
-        Ok(())
-    }
-
-    fn remove_auto_generated_block(content: &str) -> String {
-        let start_marker = Self::START_BLOCK_MARKER;
-        let end_marker = Self::END_BLOCK_MARKER;
-        let mut content = content.to_string();
-
-        let start_index = content.find(start_marker);
-        let end_index = content.rfind(end_marker);
-
-        if let (Some(start), Some(end)) = (start_index, end_index) {
-            if end > start {
-                content.replace_range(start..end + end_marker.len(), "");
-            }
-        }
-
-        // Older versions of Zed didn't have end-of-block markers,
-        // so it's impossible to determine auto-generated lines.
-        // Conservatively remove the standard list of excludes
-        let standard_excludes = format!(
-            "{}{}",
-            Self::START_BLOCK_MARKER,
-            include_str!("./checkpoint.gitignore")
-        );
-        content = content.replace(&standard_excludes, "");
-
-        content
-    }
-}
-
-impl Drop for GitExcludeOverride {
-    fn drop(&mut self) {
-        if self.added_excludes.is_some() {
-            let git_exclude_path = self.git_exclude_path.clone();
-            let original_excludes = self.original_excludes.clone();
-            smol::spawn(async move {
-                if let Some(original) = original_excludes {
-                    smol::fs::write(&git_exclude_path, original).await
-                } else {
-                    smol::fs::remove_file(&git_exclude_path).await
-                }
-            })
-            .detach();
         }
     }
 }
@@ -962,6 +912,10 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Only used to serve `proto::RunGitHook` requests from older remote clients;
+    /// new code lets `git commit` run hooks itself.
+    ///
+    /// TODO: remove together with `proto::RunGitHook` (see the deprecation note in git.proto).
     fn run_hook(
         &self,
         hook: RunHook,
@@ -1054,6 +1008,7 @@ pub trait GitRepository: Send + Sync {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
@@ -1136,6 +1091,13 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+#[derive(Clone, Copy)]
+pub enum DiffStatType {
+    HeadToIndex,
+    HeadToWorktree,
+    IndexToWorktree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -1421,7 +1383,8 @@ impl GitRepository for RealGitRepository {
                     "--format=",
                     "-z",
                     "--no-renames",
-                    "--name-status",
+                    "--raw",
+                    "--no-abbrev",
                     "--first-parent",
                 ])
                 .arg(&commit)
@@ -1431,10 +1394,14 @@ impl GitRepository for RealGitRepository {
                 .output()
                 .await
                 .context("starting git show process")?;
+            anyhow::ensure!(
+                show_output.status.success(),
+                "git show failed: {}",
+                String::from_utf8_lossy(&show_output.stderr)
+            );
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let changes = parse_git_diff_name_status(&show_stdout);
-            let parent_sha = format!("{}^", commit);
+            let changes = parse_git_diff_raw(&show_stdout);
 
             let mut cat_file_process = git
                 .build_command(&["cat-file", "--batch=%(objectsize)"])
@@ -1445,85 +1412,62 @@ impl GitRepository for RealGitRepository {
                 .context("starting git cat-file process")?;
 
             let mut files = Vec::<CommitFile>::new();
-            let mut stdin = BufWriter::with_capacity(512, cat_file_process.stdin.take().unwrap());
-            let mut stdout = BufReader::new(cat_file_process.stdout.take().unwrap());
+            let stdin = cat_file_process
+                .stdin
+                .take()
+                .context("git cat-file process has no stdin")?;
+            let stdout = cat_file_process
+                .stdout
+                .take()
+                .context("git cat-file process has no stdout")?;
+            let mut stdin = BufWriter::with_capacity(512, stdin);
+            let mut stdout = BufReader::new(stdout);
             let mut info_line = String::new();
             let mut newline = [b'\0'];
-            for (path, status_code) in changes {
+            for change in changes {
+                let change = change?;
+                let path = change.path;
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Some(rel_path) = RelPath::unix(path).log_err() else {
+                let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
                     continue;
                 };
 
-                match status_code {
-                    StatusCode::Modified | StatusCode::TypeChanged => {
-                        stdin.write_all(commit.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
+                let objects = [change.new_object, change.old_object];
+                let mut has_blobs = false;
+                for object in objects.iter().flatten() {
+                    if object.kind == CommitDiffObjectKind::Blob {
+                        stdin.write_all(object.oid.as_bytes()).await?;
                         stdin.write_all(b"\n").await?;
-                        stdin.write_all(parent_sha.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
+                        has_blobs = true;
                     }
-                    StatusCode::Added => {
-                        stdin.write_all(commit.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
-                    }
-                    StatusCode::Deleted => {
-                        stdin.write_all(parent_sha.as_bytes()).await?;
-                        stdin.write_all(b":").await?;
-                        stdin.write_all(path.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
-                    }
-                    _ => continue,
                 }
-                stdin.flush().await?;
-
-                info_line.clear();
-                stdout.read_line(&mut info_line).await?;
-
-                let len = info_line.trim_end().parse().with_context(|| {
-                    format!("invalid object size output from cat-file {info_line}")
-                })?;
-                let mut text_bytes = vec![0; len];
-                stdout.read_exact(&mut text_bytes).await?;
-                stdout.read_exact(&mut newline).await?;
-
-                let mut old_text = None;
-                let mut new_text = None;
-                let mut is_binary = is_binary_content(&text_bytes);
-                let text = if is_binary {
-                    String::new()
-                } else {
-                    String::from_utf8_lossy(&text_bytes).to_string()
-                };
-
-                match status_code {
-                    StatusCode::Modified | StatusCode::TypeChanged => {
-                        info_line.clear();
-                        stdout.read_line(&mut info_line).await?;
-                        let len = info_line.trim_end().parse().with_context(|| {
-                            format!("invalid object size output from cat-file {}", info_line)
-                        })?;
-                        let mut parent_bytes = vec![0; len];
-                        stdout.read_exact(&mut parent_bytes).await?;
-                        stdout.read_exact(&mut newline).await?;
-                        is_binary = is_binary || is_binary_content(&parent_bytes);
-                        if is_binary {
-                            old_text = Some(String::new());
-                            new_text = Some(String::new());
-                        } else {
-                            old_text = Some(String::from_utf8_lossy(&parent_bytes).to_string());
-                            new_text = Some(text);
-                        }
-                    }
-                    StatusCode::Added => new_text = Some(text),
-                    StatusCode::Deleted => old_text = Some(text),
-                    _ => continue,
+                if has_blobs {
+                    stdin.flush().await?;
                 }
+
+                let [new_object, old_object] = objects;
+                let new_object =
+                    load_commit_object(new_object, &mut stdout, &mut info_line, &mut newline)
+                        .await?;
+                let old_object =
+                    load_commit_object(old_object, &mut stdout, &mut info_line, &mut newline)
+                        .await?;
+                let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
+                    || old_object.as_ref().is_some_and(|object| object.is_binary);
+                let new_text = new_object.map(|object| {
+                    if is_binary {
+                        String::new()
+                    } else {
+                        object.text
+                    }
+                });
+                let old_text = old_object.map(|object| {
+                    if is_binary {
+                        String::new()
+                    } else {
+                        object.text
+                    }
+                });
 
                 files.push(CommitFile {
                     path: RepoPath(Arc::from(rel_path)),
@@ -1869,36 +1813,197 @@ impl GitRepository for RealGitRepository {
 
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
         let git = self.git_binary_in_worktree();
+        let working_directory = self.working_directory.clone();
+        let merge_base_ref = match &request {
+            DiffTreeType::MergeBaseWithWorktree { base } => Some(base.clone()),
+            DiffTreeType::MergeBase { .. } | DiffTreeType::Since { .. } => None,
+        };
 
-        let mut args = vec![
-            OsString::from("diff-tree"),
-            OsString::from("-r"),
-            OsString::from("-z"),
-            OsString::from("--no-renames"),
-        ];
-        match request {
-            DiffTreeType::MergeBase { base, head } => {
-                args.push("--merge-base".into());
-                args.push(OsString::from(base.as_str()));
-                args.push(OsString::from(head.as_str()));
-            }
-            DiffTreeType::Since { base, head } => {
-                args.push(OsString::from(base.as_str()));
-                args.push(OsString::from(head.as_str()));
-            }
-        }
+        let args = match request {
+            DiffTreeType::MergeBase { base, head } => [
+                "diff-tree",
+                "-r",
+                "-z",
+                "--abbrev=64",
+                "--no-renames",
+                "--merge-base",
+                base.as_str(),
+                head.as_str(),
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            DiffTreeType::MergeBaseWithWorktree { base } => [
+                "diff",
+                "--raw",
+                "-z",
+                "--abbrev=64",
+                "--no-renames",
+                "--merge-base",
+                base.as_str(),
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            DiffTreeType::Since { base, head } => [
+                "diff-tree",
+                "-r",
+                "-z",
+                "--abbrev=64",
+                "--no-renames",
+                base.as_str(),
+                head.as_str(),
+            ]
+            .map(OsString::from)
+            .to_vec(),
+        };
 
         self.executor
             .spawn(async move {
                 let git = git?;
                 let output = git.build_command(&args).output().await?;
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    stdout.parse()
-                } else {
+                if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git diff-tree failed: {stderr}");
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut tree_diff = stdout.parse::<TreeDiff>()?;
+                let Some(merge_base_ref) = merge_base_ref else {
+                    return Ok(tree_diff);
+                };
+                let Some(working_directory) = working_directory else {
+                    return Ok(tree_diff);
+                };
+                if !tree_diff
+                    .entries
+                    .values()
+                    .any(|status| matches!(status, TreeDiffStatus::Deleted { .. }))
+                {
+                    return Ok(tree_diff);
+                }
+
+                let status_output = git.build_command(&git_status_args(&[])).output().await?;
+                if !status_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&status_output.stderr);
                     anyhow::bail!("git status failed: {stderr}");
                 }
+                let status = String::from_utf8_lossy(&status_output.stdout).parse::<GitStatus>()?;
+                // Files the diff reports as deleted but that exist on disk
+                // (deleted from the index or from a commit, then recreated).
+                // `git diff` compares them against the index, so compare their
+                // disk contents against the merge base ourselves.
+                let recreated: Vec<(RepoPath, Oid)> = status
+                    .entries
+                    .iter()
+                    .filter(|(_, status)| {
+                        matches!(
+                            *status,
+                            FileStatus::Untracked
+                                | FileStatus::Tracked(TrackedStatus {
+                                    index_status: StatusCode::Deleted,
+                                    worktree_status: StatusCode::Added,
+                                })
+                        )
+                    })
+                    .filter_map(|(path, _)| match tree_diff.entries.get(path) {
+                        Some(TreeDiffStatus::Deleted { old }) => Some((path.clone(), *old)),
+                        _ => None,
+                    })
+                    .collect();
+                if recreated.is_empty() {
+                    return Ok(tree_diff);
+                }
+
+                let merge_base_output = git
+                    .build_command(&["merge-base", merge_base_ref.as_ref(), "HEAD"])
+                    .output()
+                    .await?;
+                if !merge_base_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&merge_base_output.stderr);
+                    anyhow::bail!("git merge-base failed: {stderr}");
+                }
+                let merge_base = String::from_utf8_lossy(&merge_base_output.stdout);
+                let merge_base = merge_base.trim();
+
+                for (path, old) in recreated {
+                    let full_path = working_directory.join(path.as_std_path());
+                    let metadata = match smol::fs::symlink_metadata(&full_path).await {
+                        Ok(metadata) => metadata,
+                        Err(_) => continue,
+                    };
+                    let base_entry = git
+                        .build_command(
+                            &["ls-tree", merge_base, "--", path.as_unix_str()].map(OsString::from),
+                        )
+                        .output()
+                        .await?;
+                    if !base_entry.status.success() {
+                        continue;
+                    }
+                    let base_mode = String::from_utf8_lossy(&base_entry.stdout);
+                    let Some(base_mode) = base_mode.split_ascii_whitespace().next() else {
+                        continue;
+                    };
+                    let current_mode = if metadata.file_type().is_symlink() {
+                        "120000"
+                    } else {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt as _;
+                            if metadata.permissions().mode() & 0o111 == 0 {
+                                "100644"
+                            } else {
+                                "100755"
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            "100644"
+                        }
+                    };
+                    if current_mode != base_mode {
+                        tree_diff
+                            .entries
+                            .insert(path.clone(), TreeDiffStatus::Modified { old });
+                        continue;
+                    }
+
+                    let hash_output = if metadata.file_type().is_symlink() {
+                        let target = smol::fs::read_link(&full_path).await?;
+                        let mut child = git
+                            .build_command(&["hash-object", "--stdin"])
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .spawn()?;
+                        let mut stdin = child.stdin.take().context("hash-object has no stdin")?;
+                        stdin
+                            .write_all(target.as_os_str().as_encoded_bytes())
+                            .await?;
+                        stdin.flush().await?;
+                        drop(stdin);
+                        child.output().await?
+                    } else {
+                        git.build_command(&[
+                            OsString::from("hash-object"),
+                            OsString::from(format!("--path={}", path.as_unix_str())),
+                            OsString::from("--"),
+                            full_path.into_os_string(),
+                        ])
+                        .output()
+                        .await?
+                    };
+                    if !hash_output.status.success() {
+                        continue;
+                    }
+                    let worktree_oid = String::from_utf8_lossy(&hash_output.stdout);
+                    if worktree_oid.trim() == old.to_string() {
+                        tree_diff.entries.remove(&path);
+                    } else {
+                        tree_diff
+                            .entries
+                            .insert(path.clone(), TreeDiffStatus::Modified { old });
+                    }
+                }
+                Ok(tree_diff)
             })
             .boxed()
     }
@@ -2296,6 +2401,7 @@ impl GitRepository for RealGitRepository {
 
     fn diff_stat(
         &self,
+        diff: DiffStatType,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
@@ -2304,12 +2410,13 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match diff {
+                    DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
+                    DiffStatType::HeadToWorktree => args.push("HEAD".into()),
+                    DiffStatType::IndexToWorktree => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(
@@ -2499,7 +2606,6 @@ impl GitRepository for RealGitRepository {
             cmd.envs(env.iter())
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
-                .arg("--no-verify")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
@@ -2513,6 +2619,10 @@ impl GitRepository for RealGitRepository {
 
             if options.allow_empty {
                 cmd.arg("--allow-empty");
+            }
+
+            if options.no_verify {
+                cmd.arg("--no-verify");
             }
 
             if let Some((name, email)) = name_and_email {
@@ -2799,9 +2909,10 @@ impl GitRepository for RealGitRepository {
                 let mut git = git?.envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
-                    let mut excludes = exclude_files(git).await?;
 
-                    git.run(&["add", "--all"]).await?;
+                    git.run(&["add", "--update"]).await?;
+                    let untracked_files = untracked_files_for_checkpoint(git).await?;
+                    add_files_to_index(git, &untracked_files).await?;
                     let tree = git.run(&["write-tree"]).await?;
                     let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
                         git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
@@ -2809,8 +2920,6 @@ impl GitRepository for RealGitRepository {
                     } else {
                         git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                     };
-
-                    excludes.restore_original().await?;
 
                     Ok(GitRepositoryCheckpoint {
                         commit_sha: checkpoint_sha.parse()?,
@@ -3481,42 +3590,109 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     args
 }
 
-/// Temporarily git-ignore commonly ignored files and files over 2MB
-async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
+/// Lists untracked files that should be included in a checkpoint, skipping
+/// commonly ignored file types and files over 2MB.
+async fn untracked_files_for_checkpoint(git: &GitBinary) -> Result<Vec<String>> {
     const MAX_SIZE: u64 = 2 * 1024 * 1024; // 2 MB
-    let mut excludes = git.with_exclude_overrides().await?;
-    excludes
-        .add_excludes(include_str!("./checkpoint.gitignore"))
-        .await?;
 
-    let working_directory = git.working_directory.clone();
-    let untracked_files = git.list_untracked_files().await?;
-    let excluded_paths = untracked_files.into_iter().map(|path| {
-        let working_directory = working_directory.clone();
-        smol::spawn(async move {
-            let full_path = working_directory.join(path.clone());
-            match smol::fs::metadata(&full_path).await {
-                Ok(metadata) if metadata.is_file() && metadata.len() >= MAX_SIZE => {
-                    Some(PathBuf::from("/").join(path.clone()))
-                }
-                _ => None,
-            }
-        })
+    // The extra checkpoint excludes are passed ad hoc via --exclude-from
+    // rather than by mutating .git/info/exclude, whose writes would trigger a
+    // rescan of the repository. The scratch file is placed directly in the
+    // .git directory with a .tmp extension so that the worktree scanner
+    // filters out the events it generates.
+    let excludes_file_path = git
+        .git_directory
+        .join(format!("checkpoint-excludes-{}.tmp", Uuid::new_v4()));
+
+    let delete_excludes_file = util::defer({
+        let excludes_file_path = excludes_file_path.clone();
+        let executor = git.executor.clone();
+        move || {
+            executor
+                .spawn(async move {
+                    smol::fs::remove_file(excludes_file_path).await.log_err();
+                })
+                .detach();
+        }
     });
 
-    let excluded_paths = futures::future::join_all(excluded_paths).await;
-    let excluded_paths = excluded_paths.into_iter().flatten().collect::<Vec<_>>();
+    smol::fs::write(&excludes_file_path, include_str!("./checkpoint.gitignore")).await?;
 
-    if !excluded_paths.is_empty() {
-        let exclude_patterns = excluded_paths
-            .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("\n");
-        excludes.add_excludes(&exclude_patterns).await?;
+    let mut exclude_from_arg = OsString::from("--exclude-from=");
+    exclude_from_arg.push(&excludes_file_path);
+    let output = git
+        .run(&[
+            OsStr::new("ls-files"),
+            OsStr::new("--others"),
+            OsStr::new("--exclude-standard"),
+            OsStr::new("-z"),
+            exclude_from_arg.as_os_str(),
+        ])
+        .await;
+
+    smol::fs::remove_file(&excludes_file_path).await.ok();
+    delete_excludes_file.abort();
+    let output = output?;
+
+    let working_directory = git.working_directory.clone();
+    let size_checks = output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            let full_path = working_directory.join(path);
+            let path = path.to_string();
+            smol::spawn(async move {
+                match smol::fs::metadata(&full_path).await {
+                    Ok(metadata) if metadata.is_file() && metadata.len() >= MAX_SIZE => None,
+                    _ => Some(path),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let untracked_files = futures::future::join_all(size_checks)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    Ok(untracked_files)
+}
+
+async fn add_files_to_index(git: &GitBinary, files: &[String]) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
     }
 
-    Ok(excludes)
+    let mut process = git
+        .build_command(&["update-index", "--add", "-z", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = BufWriter::new(
+        process
+            .stdin
+            .take()
+            .context("no stdin for git update-index subprocess")?,
+    );
+    for file in files {
+        stdin.write_all(file.as_bytes()).await?;
+        stdin.write_all(b"\0").await?;
+    }
+    stdin.flush().await?;
+    drop(stdin);
+
+    let output = process.output().await?;
+    anyhow::ensure!(
+        output.status.success(),
+        GitBinaryCommandError {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            status: output.status,
+        }
+    );
+    Ok(())
 }
 
 pub(crate) struct GitBinary {
@@ -3546,19 +3722,6 @@ impl GitBinary {
             envs: HashMap::default(),
             is_trusted,
         }
-    }
-
-    async fn list_untracked_files(&self) -> Result<Vec<PathBuf>> {
-        let status_output = self
-            .run(&["status", "--porcelain=v1", "--untracked-files=all", "-z"])
-            .await?;
-
-        let paths = status_output
-            .split('\0')
-            .filter(|entry| entry.len() >= 3 && entry.starts_with("?? "))
-            .map(|entry| PathBuf::from(&entry[3..]))
-            .collect::<Vec<_>>();
-        Ok(paths)
     }
 
     fn envs(mut self, envs: HashMap<String, String>) -> Self {
@@ -3599,12 +3762,6 @@ impl GitBinary {
         delete_temp_index.abort();
 
         Ok(result)
-    }
-
-    pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self.git_directory.join("info").join("exclude");
-
-        GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
@@ -3711,6 +3868,16 @@ async fn run_git_command(
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS_REQUIRE", "force");
+
+        if !env.contains_key("GIT_CONFIG_COUNT")
+            && let Some(gpg_wrapper) = ask_pass.gpg_wrapper_path()
+        {
+            command
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "gpg.program")
+                .env("GIT_CONFIG_VALUE_0", gpg_wrapper);
+        }
+
         #[cfg(target_os = "windows")]
         command.env("ZED_ASKPASS_SOCKET", ask_pass.socket_path());
         let git_process = command.spawn()?;
@@ -3724,12 +3891,15 @@ async fn run_askpass_command(
     git_process: util::command::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
     select_biased! {
-        result = ask_pass.run().fuse() => {
+        // Git can legitimately run long without prompting (e.g. large fetches,
+        // hooks), so completion is determined by the process itself.
+        result = ask_pass.run(None).fuse() => {
             match result {
                 AskPassResult::CancelledByUser => {
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
+                    // Unreachable since no timeout is passed to run()
                     Err(anyhow!("Connecting to host timed out"))?
                 }
             }
@@ -3760,7 +3930,7 @@ impl std::fmt::Debug for RepoPath {
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
-        let rel_path = RelPath::unix(s.as_ref())?;
+        let rel_path = RelPath::from_unix_str(s.as_ref())?;
         Ok(Self::from_rel_path(rel_path))
     }
 
@@ -3770,7 +3940,7 @@ impl RepoPath {
     }
 
     pub fn from_proto(proto: &str) -> Result<Self> {
-        let rel_path = RelPath::from_proto(proto)?;
+        let rel_path = RelPath::from_unix_str(proto)?.into();
         Ok(Self(rel_path))
     }
 
@@ -3789,7 +3959,7 @@ impl RepoPath {
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
-    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
+    RepoPath(RelPath::from_unix_str(s.as_ref()).unwrap().into())
 }
 
 impl AsRef<Arc<RelPath>> for RepoPath {
@@ -4079,6 +4249,185 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_merge_base_worktree_diff_handles_recreated_index_deletion(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        fs::write(&file_path, "base\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "base"]);
+        let base_oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD:file.txt"])
+            .parse()
+            .unwrap();
+
+        fs::write(&file_path, "head\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "head"]);
+        git_command(repo_dir.path(), ["rm", "--cached", "file.txt"]);
+        fs::write(&file_path, "base\n").unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::default(),
+            }
+        );
+
+        fs::write(&file_path, "worktree\n").unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("file.txt").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_merge_base_worktree_diff_handles_committed_deletion_recreated_on_disk(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        fs::write(&file_path, "base\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "base"]);
+        let base_oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD:file.txt"])
+            .parse()
+            .unwrap();
+
+        git_command(repo_dir.path(), ["rm", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "delete"]);
+        fs::write(&file_path, "base\n").unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::default(),
+            }
+        );
+
+        fs::write(&file_path, "worktree\n").unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("file.txt").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_merge_base_worktree_diff_handles_recreated_symlink(cx: &mut TestAppContext) {
+        use std::os::unix::fs::symlink;
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        symlink("base-target", &file_path).unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "base"]);
+        let base_oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD:file.txt"])
+            .parse()
+            .unwrap();
+
+        fs::remove_file(&file_path).unwrap();
+        symlink("head-target", &file_path).unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "head"]);
+        git_command(repo_dir.path(), ["rm", "--cached", "file.txt"]);
+        fs::remove_file(&file_path).unwrap();
+        symlink("base-target", &file_path).unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::default(),
+            }
+        );
+
+        fs::remove_file(&file_path).unwrap();
+        fs::write(&file_path, "base-target").unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("file.txt").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    #[gpui::test]
     async fn test_load_commit_with_type_changed_file(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
@@ -4131,6 +4480,107 @@ mod tests {
         assert_eq!(file.old_text.as_deref(), Some("regular contents\n"));
         assert_eq!(file.new_text.as_deref(), Some("target"));
         assert_eq!(file.status(), CommitFileStatus::Modified);
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_with_gitlink_changes(cx: &mut TestAppContext) {
+        const FIRST_SUBMODULE_COMMIT: &str = "1111111111111111111111111111111111111111";
+        const SECOND_SUBMODULE_COMMIT: &str = "2222222222222222222222222222222222222222";
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().expect("failed to create temporary repository");
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("README.md"), "parent repository\n")
+            .expect("failed to write regular file");
+        git_command(repo_dir.path(), ["add", "README.md"]);
+        git_command(
+            repo_dir.path(),
+            [
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                crate::commit::GITLINK_MODE,
+                FIRST_SUBMODULE_COMMIT,
+                "modules/example",
+            ],
+        );
+        git_command(repo_dir.path(), ["commit", "-m", "add submodule"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open repository");
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load commit that adds a gitlink");
+        assert_eq!(commit_diff.files.len(), 2);
+        let gitlink = commit_diff
+            .files
+            .iter()
+            .find(|file| file.path.as_unix_str() == "modules/example")
+            .expect("gitlink should be present alongside the regular file");
+        assert_eq!(gitlink.status(), CommitFileStatus::Added);
+        assert_eq!(gitlink.old_text, None);
+        assert_eq!(
+            gitlink.new_text.as_deref(),
+            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+        );
+        assert!(!gitlink.is_binary);
+
+        git_command(
+            repo_dir.path(),
+            [
+                "update-index",
+                "--cacheinfo",
+                crate::commit::GITLINK_MODE,
+                SECOND_SUBMODULE_COMMIT,
+                "modules/example",
+            ],
+        );
+        git_command(repo_dir.path(), ["commit", "-m", "update submodule"]);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load commit that updates a gitlink");
+        let [gitlink] = commit_diff.files.as_slice() else {
+            panic!("expected one updated gitlink");
+        };
+        assert_eq!(gitlink.status(), CommitFileStatus::Modified);
+        assert_eq!(
+            gitlink.old_text.as_deref(),
+            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+        );
+        assert_eq!(
+            gitlink.new_text.as_deref(),
+            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+        );
+        assert!(!gitlink.is_binary);
+
+        git_command(repo_dir.path(), ["rm", "--cached", "modules/example"]);
+        git_command(repo_dir.path(), ["commit", "-m", "remove submodule"]);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load commit that deletes a gitlink");
+        let [gitlink] = commit_diff.files.as_slice() else {
+            panic!("expected one deleted gitlink");
+        };
+        assert_eq!(gitlink.status(), CommitFileStatus::Deleted);
+        assert_eq!(
+            gitlink.old_text.as_deref(),
+            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+        );
+        assert_eq!(gitlink.new_text, None);
+        assert!(!gitlink.is_binary);
     }
 
     #[gpui::test]
@@ -4790,6 +5240,109 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_runs_git_hooks(cx: &mut TestAppContext) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let hooks_dir = repo_dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let write_hook = |name: &str, contents: &str| {
+            let path = hooks_dir.join(name);
+            fs::write(&path, contents).unwrap();
+            fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+
+        fs::write(repo_dir.path().join("file"), "one").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        // Hooks must not run for untrusted repositories.
+        repo.commit(
+            "Commit in untrusted repo".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("failing pre-commit hook should be skipped in untrusted repos");
+
+        repo.set_trusted(true);
+
+        fs::write(repo_dir.path().join("file"), "two").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit blocked by hook".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect_err("failing pre-commit hook should abort the commit");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 0\n");
+        write_hook(
+            "commit-msg",
+            "#!/bin/sh\necho 'rewritten by commit-msg hook' > \"$1\"\n",
+        );
+
+        repo.commit(
+            "Original message".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "rewritten by commit-msg hook");
+
+        write_hook("pre-commit", "#!/bin/sh\nexit 1\n");
+        fs::write(repo_dir.path().join("file"), "three").unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Commit without verification".into(),
+            None,
+            CommitOptions {
+                no_verify: true,
+                ..Default::default()
+            },
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .expect("--no-verify should skip pre-commit and commit-msg hooks");
+
+        let message = git_command_output(repo_dir.path(), ["log", "-1", "--pretty=%B"]);
+        assert_eq!(message, "Commit without verification");
     }
 
     #[gpui::test]

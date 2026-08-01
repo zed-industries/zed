@@ -27,7 +27,7 @@ wayland = [
     "wayland-protocols-plasma",
     "wayland-protocols-wlr",
     "filedescriptor",
-    "xkbcommon",
+    "xkbcommon/wayland",
     "open",
     "gpui/wayland",
 ]
@@ -37,7 +37,7 @@ x11 = [
 
     "as-raw-xcb-connection",
     "x11rb",
-    "xkbcommon",
+    "xkbcommon/x11",
     "xim",
     "x11-clipboard",
     "filedescriptor",
@@ -66,7 +66,7 @@ itertools.workspace = true
 libc.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-pathfinder_geometry = "0.5"
+pathfinder_geometry.workspace = true
 pollster.workspace = true
 profiling.workspace = true
 smallvec.workspace = true
@@ -81,15 +81,16 @@ oo7 = { version = "0.6", default-features = false, features = [
     "native_crypto",
 ] }
 calloop = "0.14.3"
-raw-window-handle = "0.6"
+notify-rust.workspace = true
+raw-window-handle.workspace = true
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
-swash = { version = "0.2.6" }
+swash.workspace = true
 bitflags = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }
-xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
+xkbcommon = { version = "0.8.0", default-features = false, optional = true }
 
 # Screen capture
 scap = { workspace = true, optional = true }

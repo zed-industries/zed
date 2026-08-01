@@ -678,6 +678,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                         .unwrap_or(8192),
                     mode,
                     anthropic::completion::AnthropicPromptCacheMode::Automatic,
+                    &PROVIDER_ID,
                 ) {
                     Ok(request) => request,
                     Err(error) => return async move { Err(error.into()) }.boxed(),
@@ -685,7 +686,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let stream =
                     self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
                 async move {
-                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
+                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
                     Ok(mapper.map_stream(stream.await?).boxed())
                 }
                 .boxed()
@@ -725,7 +726,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     .model
                     .supported_reasoning_effort_levels()
                     .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
-                let response_request = into_open_ai_response(
+                let response_request = match into_open_ai_response(
                     request,
                     self.model.id(),
                     true,
@@ -733,11 +734,15 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.max_output_tokens(self.subscription),
                     None,
                     supports_none_reasoning_effort,
-                );
+                    &PROVIDER_ID,
+                ) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let stream =
                     self.stream_openai_response(response_request, http_client, extra_headers, cx);
                 async move {
-                    let mapper = OpenAiResponseEventMapper::new();
+                    let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
                     Ok(mapper.map_stream(stream.await?).boxed())
                 }
                 .boxed()
