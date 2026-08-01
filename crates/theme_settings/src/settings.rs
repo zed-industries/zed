@@ -359,38 +359,13 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     }
 }
 
-/// The buffer's line height.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum BufferLineHeight {
-    /// A less dense line height.
-    #[default]
-    Comfortable,
-    /// The default line height.
-    Standard,
-    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
-    Custom(f32),
-}
+pub use theme::BufferLineHeight;
 
-impl From<settings::BufferLineHeight> for BufferLineHeight {
-    fn from(value: settings::BufferLineHeight) -> Self {
-        match value {
-            settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
-            settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
-            settings::BufferLineHeight::Custom(line_height) => {
-                BufferLineHeight::Custom(line_height)
-            }
-        }
-    }
-}
-
-impl BufferLineHeight {
-    /// Returns the value of the line height.
-    pub fn value(&self) -> f32 {
-        match self {
-            BufferLineHeight::Comfortable => 1.618,
-            BufferLineHeight::Standard => 1.3,
-            BufferLineHeight::Custom(line_height) => *line_height,
-        }
+pub fn buffer_line_height_from_settings(value: settings::BufferLineHeight) -> BufferLineHeight {
+    match value {
+        settings::BufferLineHeight::Comfortable => BufferLineHeight::Comfortable,
+        settings::BufferLineHeight::Standard => BufferLineHeight::Standard,
+        settings::BufferLineHeight::Custom(line_height) => BufferLineHeight::Custom(line_height),
     }
 }
 
@@ -754,7 +729,9 @@ impl settings::Settings for ThemeSettings {
                 style: FontStyle::default(),
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
-            buffer_line_height: content.buffer_line_height.unwrap().into(),
+            buffer_line_height: buffer_line_height_from_settings(
+                content.buffer_line_height.unwrap(),
+            ),
             agent_ui_font_family: content
                 .agent_ui_font_family
                 .as_ref()
