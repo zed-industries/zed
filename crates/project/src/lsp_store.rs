@@ -11792,11 +11792,8 @@ impl LspStore {
     }
 
     pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
-        if let Some(local) = self.as_local_mut() {
-            local.all_language_servers_stopped = false;
-        }
-        // `restart_language_servers_for_buffers` with empty selectors and `clear_stopped`
-        // clears `stopped_language_servers` for us.
+        // `restart_language_servers_for_buffers` with `clear_stopped` now clears
+        // both `all_language_servers_stopped` and `stopped_language_servers` for us.
         let buffers = self.buffer_store.read(cx).buffers().collect();
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), true, cx);
     }
@@ -11849,6 +11846,11 @@ impl LspStore {
                 lsp_store.update(cx, |lsp_store, cx| {
                     if clear_stopped {
                         if let Some(local) = lsp_store.as_local_mut() {
+                            // Any explicit restart — whether for one named server or
+                            // for everything — should override a previous "Stop All
+                            // Servers" click; otherwise `register_buffer_with_language_servers`
+                            // keeps silently no-op'ing below no matter what buffers we pass it.
+                            local.all_language_servers_stopped = false;
                             if only_restart_servers.is_empty() {
                                 // A full restart of these buffers un-suppresses every
                                 // manually-stopped server, even ones that are no longer

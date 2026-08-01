@@ -159,6 +159,7 @@ struct LanguageServers {
     health_statuses: HashMap<LanguageServerId, LanguageServerHealthStatus>,
     binary_statuses: HashMap<LanguageServerName, LanguageServerBinaryStatus>,
     servers_per_buffer_abs_path: HashMap<PathBuf, ServersForPath>,
+    last_known_location_by_name: HashMap<LanguageServerName, (SharedString, LanguageServerId)>,
 }
 
 #[derive(Debug, Clone)]
@@ -469,7 +470,6 @@ impl LanguageServerState {
                             });
                         }
 
-                        let state_for_restart = state.clone();
                         let workspace_for_restart = workspace.clone();
                         let lsp_store_for_restart = lsp_store.clone();
                         let server_name_for_restart = submenu_server_name.clone();
@@ -479,69 +479,13 @@ impl LanguageServerState {
                             };
 
                             let project = workspace.read(cx).project().clone();
-                            let path_style = project.read(cx).path_style(cx);
                             let buffer_store = project.read(cx).buffer_store().clone();
-
-                            let buffers = state_for_restart
-                                .update(cx, |state, cx| {
-                                    let server_buffers = state
-                                        .language_servers
-                                        .servers_per_buffer_abs_path
-                                        .iter()
-                                        .filter_map(|(abs_path, servers)| {
-                                            // Check if this server is associated with this path
-                                            let has_server = servers.servers.values().any(|name| {
-                                                name.as_ref() == Some(&server_name_for_restart)
-                                            });
-
-                                            if !has_server {
-                                                return None;
-                                            }
-
-                                            let worktree = servers.worktree.as_ref()?.upgrade()?;
-                                            let worktree_ref = worktree.read(cx);
-                                            let relative_path = abs_path
-                                                .strip_prefix(&worktree_ref.abs_path())
-                                                .ok()?;
-                                            let relative_path =
-                                                RelPath::new(relative_path, path_style)
-                                                    .log_err()?;
-                                            let entry =
-                                                worktree_ref.entry_for_path(&relative_path)?;
-                                            let project_path =
-                                                project.read(cx).path_for_entry(entry.id, cx)?;
-
-                                            buffer_store.read(cx).get_by_path(&project_path)
-                                        })
-                                        .collect::<Vec<_>>();
-
-                                    if server_buffers.is_empty() {
-                                        state
-                                            .language_servers
-                                            .servers_per_buffer_abs_path
-                                            .iter()
-                                            .filter_map(|(abs_path, servers)| {
-                                                let worktree =
-                                                    servers.worktree.as_ref()?.upgrade()?.read(cx);
-                                                let relative_path = abs_path
-                                                    .strip_prefix(&worktree.abs_path())
-                                                    .ok()?;
-                                                let relative_path =
-                                                    RelPath::new(relative_path, path_style)
-                                                        .log_err()?;
-                                                let entry =
-                                                    worktree.entry_for_path(&relative_path)?;
-                                                let project_path = project
-                                                    .read(cx)
-                                                    .path_for_entry(entry.id, cx)?;
-                                                buffer_store.read(cx).get_by_path(&project_path)
-                                            })
-                                            .collect()
-                                    } else {
-                                        server_buffers
-                                    }
-                                })
-                                .unwrap_or_default();
+                            // Source buffers from the project's live buffer store, the same
+                            // way `restart_all_language_servers` does in lsp_store.rs — not
+                            // from `servers_per_buffer_abs_path`, which `remove_server` prunes
+                            // for exactly the server being restarted, making that cache empty
+                            // in precisely the case this button needs to handle.
+                            let buffers = buffer_store.read(cx).buffers().collect::<Vec<_>>();
 
                             if !buffers.is_empty() {
                                 lsp_store_for_restart
@@ -729,6 +673,8 @@ impl LanguageServers {
     /// reaching end-of-life via restart). `binary_statuses` is intentionally
     /// preserved — it is keyed by name and shared across restart cycles to
     /// drive the "Downloading… → Starting…" status UX.
+    /// Similarly, `last_known_location_by_name` is also preserved so closed
+    /// servers can be rendered.
     fn remove_server(&mut self, server_id: LanguageServerId) {
         self.health_statuses.remove(&server_id);
         self.servers_per_buffer_abs_path
@@ -1088,6 +1034,22 @@ impl LspButton {
                 })
                 .ok();
 
+            for (name, worktrees) in &server_names_to_worktrees {
+                if let Some((worktree, server_id)) = worktrees
+                    .iter()
+                    .find(|(worktree, _)| active_worktrees.contains(worktree))
+                    .or_else(|| worktrees.iter().next())
+                {
+                    state.language_servers.last_known_location_by_name.insert(
+                        name.clone(),
+                        (
+                            SharedString::new(worktree.read(cx).root_name_str()),
+                            *server_id,
+                        ),
+                    );
+                }
+            }
+
             let mut servers_per_worktree = BTreeMap::<SharedString, Vec<ServerData>>::new();
             let mut servers_with_health_checks = HashSet::default();
 
@@ -1151,21 +1113,37 @@ impl LspButton {
                     BinaryStatus::Failed { .. } => {}
                 }
 
-                if let Some(worktrees_for_name) = server_names_to_worktrees.get(server_name)
-                    && let Some((worktree, server_id)) = worktrees_for_name
-                        .iter()
-                        .find(|(worktree, _)| active_worktrees.contains(worktree))
-                        .or_else(|| worktrees_for_name.iter().next())
-                {
-                    let worktree_name = SharedString::new(worktree.read(cx).root_name_str());
-                    servers_per_worktree
-                        .entry(worktree_name.clone())
-                        .or_default()
-                        .push(ServerData::WithBinaryStatus {
+                let live_location =
+                    server_names_to_worktrees
+                        .get(server_name)
+                        .and_then(|worktrees_for_name| {
+                            worktrees_for_name
+                                .iter()
+                                .find(|(worktree, _)| active_worktrees.contains(worktree))
+                                .or_else(|| worktrees_for_name.iter().next())
+                                .map(|(worktree, server_id)| {
+                                    (
+                                        SharedString::new(worktree.read(cx).root_name_str()),
+                                        *server_id,
+                                    )
+                                })
+                        });
+                let location = live_location.or_else(|| {
+                    state
+                        .language_servers
+                        .last_known_location_by_name
+                        .get(server_name)
+                        .cloned()
+                });
+
+                if let Some((worktree_name, server_id)) = location {
+                    servers_per_worktree.entry(worktree_name).or_default().push(
+                        ServerData::WithBinaryStatus {
                             server_name,
                             binary_status,
-                            server_id: *server_id,
-                        });
+                            server_id,
+                        },
+                    );
                 }
             }
 
@@ -1528,6 +1506,29 @@ mod tests {
                 .binary_statuses
                 .contains_key(&server_name("rust-analyzer")),
             "binary_statuses is name-keyed and shared across restart cycles",
+        );
+    }
+
+    /// `last_known_location_by_name` is the fallback that keeps a stopped
+    /// server visible in the menu (grouped under its last-known worktree)
+    /// even after its id-keyed state has been evicted by `remove_server`. It
+    /// must survive removal the same way `binary_statuses` does.
+    /// Regression test for #61896.
+    #[test]
+    fn remove_server_does_not_touch_last_known_location_by_name() {
+        let mut state = LanguageServers::default();
+        state.last_known_location_by_name.insert(
+            server_name("rust-analyzer"),
+            (SharedString::new("my-project"), server_id(1)),
+        );
+
+        state.remove_server(server_id(1));
+
+        assert!(
+            state
+                .last_known_location_by_name
+                .contains_key(&server_name("rust-analyzer")),
+            "last_known_location_by_name is name-keyed and must survive server removal",
         );
     }
 
