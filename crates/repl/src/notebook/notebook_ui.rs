@@ -1695,6 +1695,19 @@ impl project::ProjectItem for NotebookItem {
 }
 
 impl NotebookItem {
+    fn file_name(&self, project: &Project, cx: &App) -> String {
+        self.project_path
+            .path
+            .file_name()
+            .map(|file_name| file_name.to_string())
+            .or_else(|| {
+                project
+                    .worktree_for_id(self.project_path.worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).root_name_str().to_owned())
+            })
+            .unwrap_or_default()
+    }
+
     pub fn language_name(&self) -> Option<String> {
         self.notebook
             .metadata
@@ -1808,11 +1821,7 @@ impl Item for NotebookEditor {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.notebook_item
             .read(cx)
-            .project_path
-            .path
-            .file_name()
-            .map(|s| s.to_string())
-            .unwrap_or_default()
+            .file_name(self.project.read(cx), cx)
             .into()
     }
 
@@ -2144,6 +2153,10 @@ mod tests {
             cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
         });
 
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.tab_content_text(0, cx), "test.ipynb");
+        });
+
         // Creating the editor launches the kernel. Wait for the actual launch
         // task, which fails because the interpreter cannot be spawned.
         let pending_kernel = editor.read_with(cx, |editor, _| match &editor.kernel {
@@ -2243,8 +2256,9 @@ mod tests {
             .await
             .expect("notebook should parse");
 
-        notebook_item.read_with(cx, |item, _| {
+        notebook_item.read_with(cx, |item, cx| {
             assert_eq!(item.notebook.cells.len(), 1);
+            assert_eq!(item.file_name(project.read(cx), cx), "single.ipynb");
         });
     }
 }
