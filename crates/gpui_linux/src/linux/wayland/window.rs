@@ -26,6 +26,7 @@ use wayland_protocols::{
     wp::fractional_scale::v1::client::wp_fractional_scale_v1,
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
+use wayland_protocols_plasma::appmenu::client::org_kde_kwin_appmenu;
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
@@ -104,6 +105,7 @@ pub struct WaylandWindowState {
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    appmenu: Option<org_kde_kwin_appmenu::OrgKdeKwinAppmenu>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -599,6 +601,7 @@ impl WaylandWindowState {
             surface,
             app_id: options.app_id,
             blur: None,
+            appmenu: None,
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -692,6 +695,10 @@ impl Drop for WaylandWindow {
         // Destroy blur first, this has no dependencies.
         if let Some(blur) = &state.blur {
             blur.release();
+        }
+
+        if let Some(appmenu) = &state.appmenu {
+            appmenu.release();
         }
 
         // Decorations must be destroyed before the xdg state.
@@ -836,6 +843,10 @@ impl WaylandWindowStatePtr {
     pub fn is_blocked(&self) -> bool {
         let state = self.state.borrow();
         state.children.values().any(|&blocking| blocking)
+    }
+
+    pub(crate) fn try_attach_appmenu(&self) {
+        try_attach_appmenu_for_window(&mut self.state.borrow_mut());
     }
 
     pub fn frame(&self) {
@@ -1965,6 +1976,25 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     }
 }
 
+fn try_attach_appmenu_for_window(state: &mut RefMut<WaylandWindowState>) {
+    if state.appmenu.is_some() {
+        return;
+    }
+    if !matches!(state.surface_state, WaylandSurfaceState::Xdg(_)) {
+        return;
+    }
+    let Some(ref appmenu_manager) = state.globals.appmenu_manager else {
+        return;
+    };
+    let client = state.client.get_client();
+    let address = client.borrow().common.dbus_menu.address();
+    if let Some((service_name, path)) = address {
+        let appmenu = appmenu_manager.create(&state.surface, &state.globals.qh, ());
+        appmenu.set_address(service_name, path.to_string());
+        state.appmenu = Some(appmenu);
+    }
+}
+
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
@@ -2013,6 +2043,8 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     }
 
     region.destroy();
+
+    try_attach_appmenu_for_window(&mut state);
 }
 
 pub(crate) trait WindowDecorationsExt {

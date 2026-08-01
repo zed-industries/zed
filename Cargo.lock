@@ -7904,6 +7904,7 @@ dependencies = [
  "pollster 0.4.0",
  "profiling",
  "raw-window-handle",
+ "serde",
  "smallvec",
  "smol",
  "strum 0.27.2",
@@ -7919,6 +7920,7 @@ dependencies = [
  "x11-clipboard",
  "x11rb",
  "xkbcommon",
+ "zbus",
  "zed-scap",
  "zed-xim",
 ]

@@ -69,6 +69,9 @@ use wayland_protocols::{
     wp::fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
+use wayland_protocols_plasma::appmenu::client::{
+    org_kde_kwin_appmenu, org_kde_kwin_appmenu_manager,
+};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
@@ -80,10 +83,11 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT,
-    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
-    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
-    modifiers_from_xkb, open_uri_internal, read_fd_with_timeout, reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, LinuxPlatformEvent,
+    PIPE_READ_TIMEOUT, SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names,
+    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    keystroke_underlying_dead_key, modifiers_from_xkb, open_uri_internal, read_fd_with_timeout,
+    reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -216,6 +220,7 @@ pub struct Globals {
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    pub appmenu_manager: Option<org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
@@ -258,6 +263,7 @@ impl Globals {
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            appmenu_manager: globals.bind(&qh, 1..=2, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
@@ -739,7 +745,7 @@ impl WaylandClient {
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
-        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, event_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
         handle
@@ -761,10 +767,51 @@ impl WaylandClient {
 
         handle
             .insert_source(
-                wake_receiver,
+                event_receiver,
                 |event, _, client: &mut WaylandClientStatePtr| {
-                    if let calloop::channel::Event::Msg(()) = event {
-                        client.get_client().borrow_mut().common.handle_system_wake();
+                    if let calloop::channel::Event::Msg(event) = event {
+                        let state = client.get_client();
+                        let mut state = state.borrow_mut();
+                        match event {
+                            LinuxPlatformEvent::Wake => {
+                                let mut callback = state.common.callbacks.system_wake.take();
+                                drop(state);
+                                if let Some(ref mut callback) = callback {
+                                    callback();
+                                }
+                                let state_rc = client.get_client();
+                                let mut state = state_rc.borrow_mut();
+                                state.common.callbacks.system_wake = callback;
+                            }
+                            LinuxPlatformEvent::MenuAction(action) => {
+                                let mut callback = state.common.callbacks.app_menu_action.take();
+                                drop(state);
+                                if let Some(ref mut callback) = callback {
+                                    callback(action.as_ref());
+                                }
+                                let state_rc = client.get_client();
+                                let mut state = state_rc.borrow_mut();
+                                state.common.callbacks.app_menu_action = callback;
+                            }
+                            LinuxPlatformEvent::MenuWillOpen => {
+                                let mut callback = state.common.callbacks.will_open_app_menu.take();
+                                drop(state);
+                                if let Some(ref mut callback) = callback {
+                                    callback();
+                                }
+                                let state_rc = client.get_client();
+                                let mut state = state_rc.borrow_mut();
+                                state.common.callbacks.will_open_app_menu = callback;
+                            }
+                            LinuxPlatformEvent::MenuServiceReady(connection, path) => {
+                                state.common.dbus_menu.set_connection(connection, path);
+                                // Retry attaching the appmenu to any windows that were
+                                // created before the D-Bus service finished starting.
+                                for window in state.windows.values() {
+                                    window.try_attach_appmenu();
+                                }
+                            }
+                        }
                     }
                 },
             )
@@ -1376,6 +1423,8 @@ delegate_noop!(WaylandClientStatePtr: ignore xdg_positioner::XdgPositioner);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
+delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_appmenu_manager::OrgKdeKwinAppmenuManager);
+delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_appmenu::OrgKdeKwinAppmenu);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
 

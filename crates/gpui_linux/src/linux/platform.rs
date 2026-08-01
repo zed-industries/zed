@@ -101,6 +101,25 @@ pub(crate) trait LinuxClient {
     }
 }
 
+/// Events that originate off the main thread (a background executor task, or another backend
+/// thread) and need to be handled by [`LinuxCommon`] on the main/event-loop thread. Each backend
+/// (`x11`/`wayland`) registers a single calloop channel source for this enum, instead of one
+/// source per event kind.
+pub(crate) enum LinuxPlatformEvent {
+    /// The system woke from sleep.
+    Wake,
+    /// A DBusMenu client (e.g. a KDE global-menu panel widget) activated a menu item.
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    MenuAction(Box<dyn Action>),
+    /// A DBusMenu client is about to show a (sub)menu.
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    MenuWillOpen,
+    /// The background D-Bus connection backing [`crate::linux::DbusMenuService`] finished
+    /// connecting and exporting its interface.
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    MenuServiceReady(zbus::Connection, zbus::zvariant::OwnedObjectPath),
+}
+
 #[derive(Default)]
 pub(crate) struct PlatformHandlers {
     pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
@@ -129,8 +148,10 @@ pub(crate) struct LinuxCommon {
         not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
         allow(dead_code)
     )]
-    wake_sender: Sender<()>,
+    event_sender: Sender<LinuxPlatformEvent>,
     wake_listener_started: bool,
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    pub(crate) dbus_menu: crate::linux::DbusMenuService,
 }
 
 impl LinuxCommon {
@@ -139,10 +160,10 @@ impl LinuxCommon {
     ) -> (
         Self,
         PriorityQueueCalloopReceiver<RunnableVariant>,
-        calloop::channel::Channel<()>,
+        calloop::channel::Channel<LinuxPlatformEvent>,
     ) {
         let (main_sender, main_receiver) = PriorityQueueCalloopReceiver::new();
-        let (wake_sender, wake_receiver) = calloop::channel::channel();
+        let (event_sender, event_receiver) = calloop::channel::channel();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::linux::CosmicTextSystem::new("IBM Plex Sans"));
@@ -156,6 +177,11 @@ impl LinuxCommon {
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
         let common = LinuxCommon {
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            dbus_menu: crate::linux::DbusMenuService::new(
+                background_executor.clone(),
+                event_sender.clone(),
+            ),
             background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
@@ -168,20 +194,20 @@ impl LinuxCommon {
             app_name: None,
             system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
             ),
-            wake_sender,
+            event_sender,
             wake_listener_started: false,
         };
 
-        (common, main_receiver, wake_receiver)
+        (common, main_receiver, event_receiver)
     }
 
     pub(crate) fn start_wake_listener(&mut self) {
         if !self.wake_listener_started {
             #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
             smol::spawn({
-                let wake_sender = self.wake_sender.clone();
+                let event_sender = self.event_sender.clone();
                 async move {
-                    if let Err(error) = listen_for_system_wake(wake_sender).await {
+                    if let Err(error) = listen_for_system_wake(event_sender).await {
                         log::debug!("failed to listen for system wake events: {error:?}");
                     }
                 }
@@ -191,21 +217,14 @@ impl LinuxCommon {
             self.wake_listener_started = true;
         }
     }
-
-    pub(crate) fn handle_system_wake(&mut self) {
-        if let Some(mut callback) = self.callbacks.system_wake.take() {
-            callback();
-            self.callbacks.system_wake = Some(callback);
-        }
-    }
 }
 
 #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
+async fn listen_for_system_wake(event_sender: Sender<LinuxPlatformEvent>) -> anyhow::Result<()> {
     use futures::StreamExt as _;
 
-    let connection = ashpd::zbus::Connection::system().await?;
-    let proxy = ashpd::zbus::Proxy::new(
+    let connection = zbus::Connection::system().await?;
+    let proxy = zbus::Proxy::new(
         &connection,
         "org.freedesktop.login1",
         "/org/freedesktop/login1",
@@ -217,7 +236,7 @@ async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
     while let Some(message) = sleep_events.next().await {
         let sleeping = message.body().deserialize::<bool>()?;
         if !sleeping {
-            wake_sender.send(()).ok();
+            event_sender.send(LinuxPlatformEvent::Wake).ok();
         }
     }
 
@@ -613,9 +632,15 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         Ok(app_path)
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+    #[cfg_attr(
+        not(any(feature = "wayland", feature = "x11")),
+        allow(unused_variables)
+    )]
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
         self.inner.with_common(|common| {
             common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
+            #[cfg(any(feature = "wayland", feature = "x11"))]
+            common.dbus_menu.update(&common.menus, keymap);
         })
     }
 

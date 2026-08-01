@@ -86,6 +86,8 @@ raw-window-handle.workspace = true
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
+zbus = "5.13.2"
+serde.workspace = true
 swash.workspace = true
 bitflags = { workspace = true, optional = true }
 filedescriptor = { version = "0.8.2", optional = true }
