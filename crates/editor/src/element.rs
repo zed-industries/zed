@@ -6,8 +6,8 @@ mod mouse;
 pub(crate) use breadcrumbs::breadcrumb_path_segments;
 pub use breadcrumbs::render_breadcrumb_text;
 pub(crate) use breadcrumbs::{
-    BreadcrumbDirectoryPicker, MAX_BREADCRUMB_MENU_ENTRIES, child_outline_indices,
-    sibling_outline_indices, top_level_outline_indices,
+    BreadcrumbDirectoryPicker, child_outline_indices, sibling_outline_indices,
+    top_level_outline_indices,
 };
 #[cfg(test)]
 pub(crate) use header::StickyHeader;
@@ -98,8 +98,8 @@ use theme::{ActiveTheme, Appearance, PlayerColor};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{
-    ButtonLike, ContextMenu, ListItem, POPOVER_Y_PADDING, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*, scrollbars::ShowScrollbar,
+    ButtonLike, ListItem, POPOVER_Y_PADDING, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    scrollbars::ShowScrollbar,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{ResultExt, debug_panic, rel_path::RelPath};

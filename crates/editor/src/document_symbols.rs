@@ -166,21 +166,18 @@ impl Editor {
     /// Reads the outline [`Self::prefetch_breadcrumb_outline`] fetched. A stale one is used as
     /// is, since outline items are anchors and survive edits; an absent one yields no entries,
     /// which the caller treats like a buffer with no outline at all.
-    ///
-    /// Truncated to [`crate::element::MAX_BREADCRUMB_MENU_ENTRIES`], the same cap the directory
-    /// dropdown uses, with the second tuple element reporting whether that happened.
     pub(crate) fn breadcrumb_symbol_menu_items(
         &self,
         buffer_id: BufferId,
         target: Option<&OutlineItem<Anchor>>,
         cx: &App,
-    ) -> (Vec<OutlineItem<Anchor>>, bool) {
+    ) -> Vec<OutlineItem<Anchor>> {
         let Some(outline) = self
             .breadcrumb_outline
             .as_ref()
             .filter(|outline| outline.buffer_id == buffer_id)
         else {
-            return (Vec::new(), false);
+            return Vec::new();
         };
 
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
@@ -194,7 +191,7 @@ impl Editor {
         let indices = if let Some(target) = target {
             let Some(target_index) = items.iter().position(|item| item.range == target.range)
             else {
-                return (vec![target.clone()], false);
+                return vec![target.clone()];
             };
 
             let children = crate::element::child_outline_indices(&depths, target_index);
@@ -207,13 +204,10 @@ impl Editor {
             crate::element::top_level_outline_indices(&depths)
         };
 
-        let truncated = indices.len() > crate::element::MAX_BREADCRUMB_MENU_ENTRIES;
-        let menu_items = indices
+        indices
             .into_iter()
-            .take(crate::element::MAX_BREADCRUMB_MENU_ENTRIES)
             .filter_map(|index| items.get(index).cloned())
-            .collect();
-        (menu_items, truncated)
+            .collect()
     }
 
     /// Moves the cursor to `item`'s selection range and scrolls it into view. Used when
@@ -808,12 +802,12 @@ mod tests {
         });
     }
 
-    /// A generated file with hundreds of flat top-level symbols must not render them all into
-    /// one breadcrumb dropdown — same cap and truncation notice as the breadcrumb directory
-    /// dropdown (`MAX_BREADCRUMB_MENU_ENTRIES`), reused rather than duplicated (see
-    /// `Editor::breadcrumb_symbol_menu_items`'s doc comment).
+    /// A generated file with hundreds of flat top-level symbols lists all of them: the dropdown
+    /// filters by the query typed into it rather than cutting the listing short.
     #[gpui::test]
-    async fn test_breadcrumb_symbol_menu_items_caps_at_max_entries(cx: &mut TestAppContext) {
+    async fn test_breadcrumb_symbol_menu_items_lists_every_top_level_symbol(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx, |_| {});
 
         update_test_language_settings(cx, &|settings| {
@@ -829,7 +823,7 @@ mod tests {
         )
         .await;
 
-        const SYMBOL_COUNT: usize = crate::element::MAX_BREADCRUMB_MENU_ENTRIES + 50;
+        const SYMBOL_COUNT: usize = 250;
 
         let source = (0..SYMBOL_COUNT)
             .map(|i| format!("fn f{i}() {{}}\n"))
@@ -874,12 +868,8 @@ mod tests {
         cx.run_until_parked();
 
         cx.update_editor(|editor, _window, cx| {
-            let (menu_items, truncated) = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
-            assert_eq!(
-                menu_items.len(),
-                crate::element::MAX_BREADCRUMB_MENU_ENTRIES
-            );
-            assert!(truncated);
+            let menu_items = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
+            assert_eq!(menu_items.len(), SYMBOL_COUNT);
         });
     }
 
@@ -906,7 +896,7 @@ mod tests {
         });
 
         cx.update_editor(|editor, _window, cx| {
-            let (menu_items, _) = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
+            let menu_items = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
             assert!(
                 menu_items.is_empty(),
                 "Without a prefetched outline the dropdown must stay empty rather than computing one"
@@ -919,7 +909,7 @@ mod tests {
         cx.run_until_parked();
 
         cx.update_editor(|editor, _window, cx| {
-            let (menu_items, _) = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
+            let menu_items = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
             assert_eq!(
                 menu_items
                     .iter()

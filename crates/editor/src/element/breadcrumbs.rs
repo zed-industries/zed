@@ -185,56 +185,200 @@ fn flatten_text_for_single_line_display(text: &str) -> String {
     text.replace(LINE_BREAK, REPLACEMENT)
 }
 
-/// Renders a breadcrumb symbol dropdown entry the same way the outline picker and outline panel
-/// render outline items: with `item.highlight_ranges` (tree-sitter/LSP syntax highlighting)
-/// applied to its text, so `fun resolveEnv` reads as code and the symbol's kind is legible from
-/// keyword coloring, not just a flat label. `ContextMenu` has no built-in "highlighted text
-/// entry" variant, so this is built as a `custom_entry` row instead; the leading checkmark
-/// (shown, not just reserved-and-hidden, only for `is_current`) mirrors what `toggleable_entry`
-/// draws for a toggled item, so switching from `toggleable_entry` doesn't lose that affordance.
-///
-/// `show_current_column` reserves the checkmark's width even for rows that aren't current, so
-/// every row in the menu stays aligned — but only when some row in the menu can actually be
-/// current; symbol menus almost never have one (the cursor is rarely sitting exactly on a
-/// symbol's own range), so most menus render this column for nothing otherwise, indenting every
-/// row for a checkmark that will never appear.
-fn render_outline_item_menu_row(
-    item: &OutlineItem<Anchor>,
-    is_current: bool,
-    show_current_column: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> gpui::AnyElement {
-    let mut text_style = window.text_style();
-    text_style.color = Color::Default.color(cx);
-
-    h_flex()
-        .gap_1p5()
-        .when(is_current, |this| {
-            this.child(
-                Icon::new(IconName::Check)
-                    .color(Color::Accent)
-                    .size(IconSize::Small),
-            )
-        })
-        .when(!is_current && show_current_column, |this| {
-            this.child(div().size(IconSize::Small.rems()))
-        })
-        .child(
-            StyledText::new(flatten_text_for_single_line_display(&item.text))
-                .with_default_highlights(&text_style, item.highlight_ranges.clone()),
-        )
-        .into_any_element()
+/// The list a breadcrumb symbol segment drops down: the symbols the segment can move to, filtered
+/// by the query typed into the picker's search field.
+pub(crate) struct BreadcrumbSymbolDelegate {
+    editor: WeakEntity<Editor>,
+    items: Vec<OutlineItem<Anchor>>,
+    matches: Vec<StringMatch>,
+    selected_index: usize,
+    /// The segment's own symbol, so the row standing for it reads as the current one.
+    current_range: Option<Range<Anchor>>,
 }
 
-/// Renders a single breadcrumb segment as a clickable element that opens a dropdown drilling
-/// into the outline: `target`'s children if it has any, else its siblings (so the deepest
-/// segment, typically the method the cursor sits in and which has no children of its own, can
-/// still switch between methods), else — for the leading path segment, `target: None` — the
-/// buffer's top-level symbols. Chosen via [`Editor::breadcrumb_symbol_menu_items`] and
-/// [`Editor::navigate_to_outline_item`], which give this element real symbol data despite
-/// `render_breadcrumb_text` itself only having `&App`: the popover trigger and its entries are
-/// event handlers, invoked later with their own `&mut Window`/`&mut App`, not part of this render pass.
+pub(crate) type BreadcrumbSymbolPicker = Picker<BreadcrumbSymbolDelegate>;
+
+impl BreadcrumbSymbolDelegate {
+    fn picker(
+        editor: WeakEntity<Editor>,
+        items: Vec<OutlineItem<Anchor>>,
+        current_range: Option<Range<Anchor>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<BreadcrumbSymbolPicker> {
+        cx.new(|cx| {
+            let selected_index = current_range
+                .as_ref()
+                .and_then(|range| items.iter().position(|item| &item.range == range))
+                .unwrap_or(0);
+            let delegate = Self {
+                editor,
+                items,
+                matches: Vec::new(),
+                selected_index,
+                current_range,
+            };
+            Picker::uniform_list(delegate, window, cx).popover()
+        })
+    }
+
+    fn item_at(&self, index: usize) -> Option<&OutlineItem<Anchor>> {
+        self.items.get(self.matches.get(index)?.candidate_id)
+    }
+}
+
+impl PickerDelegate for BreadcrumbSymbolDelegate {
+    type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "breadcrumb symbol picker"
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<BreadcrumbSymbolPicker>,
+    ) {
+        self.selected_index = index;
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Search symbols…".into()
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        PickerEditorPosition::End
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<BreadcrumbSymbolPicker>,
+    ) -> Task<()> {
+        let candidates = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                StringMatchCandidate::new(index, &flatten_text_for_single_line_display(&item.text))
+            })
+            .collect::<Vec<_>>();
+
+        if query.is_empty() {
+            self.matches = candidates
+                .into_iter()
+                .map(|candidate| StringMatch {
+                    candidate_id: candidate.id,
+                    string: candidate.string,
+                    positions: Vec::new(),
+                    score: 0.,
+                })
+                .collect();
+            self.selected_index = self
+                .current_range
+                .as_ref()
+                .and_then(|range| self.items.iter().position(|item| &item.range == range))
+                .unwrap_or(0);
+            cx.notify();
+            return Task::ready(());
+        }
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |picker, cx| {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                MAX_BREADCRUMB_MENU_ENTRIES,
+                &Default::default(),
+                executor,
+            )
+            .await;
+            picker
+                .update(cx, |picker, cx| {
+                    picker.delegate.matches = matches;
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                })
+                .ok();
+        })
+    }
+
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<BreadcrumbSymbolPicker>,
+    ) {
+        let Some(item) = self.item_at(self.selected_index).cloned() else {
+            return;
+        };
+        if let Some(editor) = self.editor.upgrade() {
+            editor.update(cx, |editor, cx| {
+                editor.navigate_to_outline_item(&item, window, cx);
+            });
+        }
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<BreadcrumbSymbolPicker>) {}
+
+    /// Rendered the way the outline picker and outline panel render outline items: with the
+    /// symbol's own syntax highlighting, so `fun resolveEnv` reads as code and the symbol's kind
+    /// is legible from keyword coloring rather than a flat label. The fuzzy match positions are
+    /// deliberately not drawn on top of it, since the two highlight sets would fight.
+    fn render_match(
+        &self,
+        index: usize,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut Context<BreadcrumbSymbolPicker>,
+    ) -> Option<Self::ListItem> {
+        let item = self.item_at(index)?;
+        let is_current = self.current_range.as_ref() == Some(&item.range);
+
+        let mut text_style = window.text_style();
+        text_style.color = Color::Default.color(cx);
+
+        Some(
+            ListItem::new(SharedString::from(format!(
+                "breadcrumb-symbol-entry-{index}"
+            )))
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
+            .start_slot(if is_current {
+                Icon::new(IconName::Check)
+                    .color(Color::Accent)
+                    .size(IconSize::Small)
+                    .into_any_element()
+            } else {
+                div().size(IconSize::Small.rems()).into_any_element()
+            })
+            .child(
+                StyledText::new(flatten_text_for_single_line_display(&item.text))
+                    .with_default_highlights(&text_style, item.highlight_ranges.clone()),
+            )
+            .into_any_element(),
+        )
+    }
+}
+
+/// Renders a single breadcrumb segment as a clickable element that opens a dropdown drilling into
+/// the outline: `target`'s children if it has any, else its siblings, else — for the leading path
+/// segment, `target: None` — the buffer's top-level symbols.
 fn render_breadcrumb_symbol_segment(
     editor: WeakEntity<Editor>,
     buffer_id: BufferId,
@@ -255,63 +399,26 @@ fn render_breadcrumb_symbol_segment(
         .trigger(trigger)
         .menu(move |window, cx| {
             let editor_entity = editor.upgrade()?;
-            let (menu_items, truncated) =
+            let menu_items =
                 editor_entity
                     .read(cx)
                     .breadcrumb_symbol_menu_items(buffer_id, target.as_ref(), cx);
-            // With nothing to drill into — a buffer whose language has no outline, or no
-            // grammar at all — fall through to the outline picker the whole breadcrumb bar
-            // used to open, instead of flashing an empty popover or swallowing the click.
+            // With nothing to drill into — a buffer whose language has no outline, or no grammar
+            // at all — fall through to the outline picker the whole breadcrumb bar used to open,
+            // instead of flashing an empty popover or swallowing the click.
             if menu_items.is_empty() {
                 if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
                     callback(editor_entity.to_any_view(), window, cx);
                 }
                 return None;
             }
-            let current_range = target.as_ref().map(|item| item.range.clone());
-            let editor = editor.clone();
-            let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
-                let show_current_column = menu_items
-                    .iter()
-                    .any(|item| current_range.as_ref() == Some(&item.range));
-                for menu_item in menu_items {
-                    let is_current = current_range.as_ref() == Some(&menu_item.range);
-                    let editor = editor.clone();
-                    let navigate_to = menu_item.clone();
-                    let row_item = menu_item.clone();
-                    menu = menu.custom_entry(
-                        move |window, cx| {
-                            render_outline_item_menu_row(
-                                &row_item,
-                                is_current,
-                                show_current_column,
-                                window,
-                                cx,
-                            )
-                        },
-                        move |window, cx| {
-                            if let Some(editor_entity) = editor.upgrade() {
-                                editor_entity.update(cx, |editor, cx| {
-                                    editor.navigate_to_outline_item(&navigate_to, window, cx);
-                                });
-                            }
-                        },
-                    );
-                }
-                if truncated {
-                    menu = menu.custom_row(|_, _| {
-                        Label::new(format!(
-                            "Showing first {MAX_BREADCRUMB_MENU_ENTRIES} entries"
-                        ))
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .mx_2()
-                        .into_any_element()
-                    });
-                }
-                menu
-            });
-            Some(menu)
+            Some(BreadcrumbSymbolDelegate::picker(
+                editor.clone(),
+                menu_items,
+                target.as_ref().map(|item| item.range.clone()),
+                window,
+                cx,
+            ))
         })
         .into_any_element()
 }
