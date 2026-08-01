@@ -300,6 +300,15 @@ impl CommitView {
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
 
+        // Process the target file first so the editor appears at the correct
+        // scroll position immediately, avoiding a visible jump for large commits.
+        let mut commit_diff = commit_diff;
+        if let Some((target_path, _)) = &scroll_to {
+            if let Some(pos) = commit_diff.files.iter().position(|f| f.path == *target_path) {
+                commit_diff.files.swap(0, pos);
+            }
+        }
+
         cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
