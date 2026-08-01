@@ -1417,6 +1417,387 @@ mod tests {
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
+    mod keyboard {
+        use super::super::*;
+        use gpui::{KeybindingKeystroke, Keystroke, Modifiers};
+
+        fn keymap(layout: &str, variant: &str, options: Option<String>) -> xkb::Keymap {
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            xkb::Keymap::new_from_names(
+                &context,
+                "",
+                "pc105",
+                layout,
+                variant,
+                options,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("test keymap should compile")
+        }
+
+        fn modifier_mask(keymap: &xkb::Keymap, modifiers: &[&str]) -> xkb::ModMask {
+            modifiers.iter().fold(0, |mask, modifier| {
+                let index = keymap.mod_get_index(*modifier);
+                assert_ne!(index, xkb::MOD_INVALID, "missing XKB modifier {modifier}");
+                mask | 1 << index
+            })
+        }
+
+        fn keystroke(
+            keymap: &xkb::Keymap,
+            layout: xkb::LayoutIndex,
+            key_name: &str,
+            xkb_modifiers: &[&str],
+            modifiers: Modifiers,
+        ) -> Keystroke {
+            let mut state = xkb::State::new(keymap);
+            state.update_mask(modifier_mask(keymap, xkb_modifiers), 0, 0, 0, 0, layout);
+            let keycode = keymap.key_by_name(key_name).expect("test key should exist");
+            let mapper = LinuxKeystrokeMapper::new(&state);
+            keystroke_from_xkb(&state, modifiers, keycode, &mapper)
+        }
+
+        #[test]
+        fn normalizes_printable_keys_from_layout_semantics() {
+            struct Case {
+                name: &'static str,
+                layout: &'static str,
+                variant: &'static str,
+                group: xkb::LayoutIndex,
+                key_name: &'static str,
+                xkb_modifiers: &'static [&'static str],
+                modifiers: Modifiers,
+                expected_key: &'static str,
+                expected_key_char: Option<&'static str>,
+                expected_layout_key: Option<&'static str>,
+                expected_modifiers: Modifiers,
+            }
+
+            let cases = [
+                Case {
+                    name: "issue 14053 Russian slash position",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AB10",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL],
+                    modifiers: Modifiers::control(),
+                    expected_key: "/",
+                    expected_key_char: Some("."),
+                    expected_layout_key: Some("."),
+                    expected_modifiers: Modifiers::control(),
+                },
+                Case {
+                    name: "Russian letter uses US binding identity",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AB03",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL],
+                    modifiers: Modifiers::control(),
+                    expected_key: "c",
+                    expected_key_char: None,
+                    expected_layout_key: Some("с"),
+                    expected_modifiers: Modifiers::control(),
+                },
+                Case {
+                    name: "Russian shifted punctuation uses US binding identity",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AE04",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL, xkb::MOD_NAME_SHIFT],
+                    modifiers: Modifiers::control_shift(),
+                    expected_key: "$",
+                    expected_key_char: Some(";"),
+                    expected_layout_key: Some(";"),
+                    expected_modifiers: Modifiers::control(),
+                },
+                Case {
+                    name: "Russian Ctrl Shift letter keeps semantic Shift",
+                    layout: "us,ru",
+                    variant: "",
+                    group: 1,
+                    key_name: "AB01",
+                    xkb_modifiers: &[xkb::MOD_NAME_CTRL, xkb::MOD_NAME_SHIFT],
+                    modifiers: Modifiers::control_shift(),
+                    expected_key: "z",
+                    expected_key_char: None,
+                    expected_layout_key: Some("я"),
+                    expected_modifiers: Modifiers::control_shift(),
+                },
+                Case {
+                    name: "German AltGr remains layout resolved",
+                    layout: "de",
+                    variant: "",
+                    group: 0,
+                    key_name: "AD01",
+                    xkb_modifiers: &["Mod5"],
+                    modifiers: Modifiers::none(),
+                    expected_key: "@",
+                    expected_key_char: Some("@"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+                Case {
+                    name: "French AZERTY shortcuts follow characters",
+                    layout: "fr",
+                    variant: "",
+                    group: 0,
+                    key_name: "AD01",
+                    xkb_modifiers: &[],
+                    modifiers: Modifiers::none(),
+                    expected_key: "a",
+                    expected_key_char: Some("a"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+                Case {
+                    name: "Dvorak shortcuts follow characters",
+                    layout: "us",
+                    variant: "dvorak",
+                    group: 0,
+                    key_name: "AD01",
+                    xkb_modifiers: &[],
+                    modifiers: Modifiers::none(),
+                    expected_key: "'",
+                    expected_key_char: Some("'"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+                Case {
+                    name: "plain US typing preserves produced text",
+                    layout: "us",
+                    variant: "",
+                    group: 0,
+                    key_name: "AC01",
+                    xkb_modifiers: &[],
+                    modifiers: Modifiers::none(),
+                    expected_key: "a",
+                    expected_key_char: Some("a"),
+                    expected_layout_key: None,
+                    expected_modifiers: Modifiers::none(),
+                },
+            ];
+
+            for case in cases {
+                let keymap = keymap(case.layout, case.variant, None);
+                let keystroke = keystroke(
+                    &keymap,
+                    case.group,
+                    case.key_name,
+                    case.xkb_modifiers,
+                    case.modifiers,
+                );
+                assert_eq!(keystroke.key, case.expected_key, "{}", case.name);
+                assert_eq!(
+                    keystroke.key_char.as_deref(),
+                    case.expected_key_char,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    keystroke.layout_key.as_deref(),
+                    case.expected_layout_key,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    keystroke.modifiers, case.expected_modifiers,
+                    "{}",
+                    case.name
+                );
+            }
+        }
+
+        #[test]
+        fn dead_key_keeps_binding_identity_separate_from_text() {
+            let keymap = keymap("us", "intl", None);
+            let keystroke = keystroke(&keymap, 0, "AC11", &[], Modifiers::none());
+            assert_eq!(keystroke.key, "´");
+            assert_eq!(keystroke.key_char, None);
+        }
+
+        #[test]
+        fn named_key_on_custom_level_is_not_replaced_by_printable_identity() {
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let source = r#"
+                xkb_keymap {
+                    xkb_keycodes { include "evdev+aliases(qwerty)" };
+                    xkb_types { include "complete" };
+                    xkb_compat { include "complete" };
+                    xkb_symbols {
+                        include "pc+us+inet(evdev)"
+                        key <AC02> {
+                            type[Group1] = "FOUR_LEVEL",
+                            symbols[Group1] = [ s, S, Left, Left ]
+                        };
+                        key <AC03> {
+                            type[Group1] = "TWO_LEVEL",
+                            symbols[Group1] = [ d, Home ]
+                        };
+                    };
+                    xkb_geometry { include "pc(pc105)" };
+                };
+            "#;
+            let keymap = xkb::Keymap::new_from_string(
+                &context,
+                source.to_owned(),
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("custom test keymap should compile");
+            let level_three_key = keystroke(&keymap, 0, "AC02", &["Mod5"], Modifiers::none());
+            assert_eq!(level_three_key.key, "left");
+            assert_eq!(level_three_key.key_char, None);
+
+            let shifted_named_key = keystroke(
+                &keymap,
+                0,
+                "AC03",
+                &[xkb::MOD_NAME_SHIFT],
+                Modifiers::shift(),
+            );
+            assert_eq!(shifted_named_key.key, "home");
+            assert_eq!(shifted_named_key.key_char, None);
+            assert_eq!(shifted_named_key.modifiers, Modifiers::none());
+        }
+
+        #[test]
+        fn normalizes_named_non_text_keys_generically() {
+            let keymap = keymap("us", "", None);
+            let cases = [
+                ("RTRN", "enter"),
+                ("LEFT", "left"),
+                ("HOME", "home"),
+                ("END", "end"),
+                ("ESC", "escape"),
+                ("TAB", "tab"),
+                ("BKSP", "backspace"),
+                ("FK01", "f1"),
+            ];
+
+            for (key_name, expected_key) in cases {
+                let keystroke = keystroke(&keymap, 0, key_name, &[], Modifiers::none());
+                assert_eq!(keystroke.key, expected_key, "{key_name}");
+                assert_eq!(keystroke.key_char, None, "{key_name}");
+            }
+
+            let shift_tab = keystroke(
+                &keymap,
+                0,
+                "TAB",
+                &[xkb::MOD_NAME_SHIFT],
+                Modifiers::shift(),
+            );
+            assert_eq!(shift_tab.key, "tab");
+            assert_eq!(shift_tab.modifiers, Modifiers::shift());
+        }
+
+        #[test]
+        fn switching_layouts_recomputes_binding_identity() {
+            let keymap = keymap("us,ru", "", None);
+            let us = keystroke(&keymap, 0, "AB10", &[], Modifiers::none());
+            let russian = keystroke(&keymap, 1, "AB10", &[], Modifiers::none());
+
+            assert_eq!((us.key.as_str(), us.key_char.as_deref()), ("/", Some("/")));
+            assert_eq!(
+                (russian.key.as_str(), russian.key_char.as_deref()),
+                ("/", Some("."))
+            );
+        }
+
+        #[test]
+        fn physical_fallback_does_not_match_unrelated_ascii_binding() {
+            let keymap = keymap("us,ru", "", None);
+            let typed = keystroke(
+                &keymap,
+                1,
+                "AB10",
+                &[xkb::MOD_NAME_CTRL],
+                Modifiers::control(),
+            );
+            let slash = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-/").unwrap());
+            let period = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-.").unwrap());
+
+            assert!(typed.should_match(&slash));
+            assert!(!typed.should_match(&period));
+        }
+
+        #[test]
+        fn non_ascii_layout_binding_remains_matchable() {
+            let keymap = keymap("us,ru", "", None);
+            let typed = keystroke(
+                &keymap,
+                1,
+                "AB03",
+                &[xkb::MOD_NAME_CTRL],
+                Modifiers::control(),
+            );
+            let latin = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap());
+            let cyrillic = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-с").unwrap());
+
+            assert!(typed.should_match(&latin));
+            assert!(typed.should_match(&cyrillic));
+        }
+
+        #[test]
+        fn reference_layout_maps_keycodes_by_xkb_key_name() {
+            let standard_keymap = keymap("us,ru", "", None);
+            let mut replaced_ab10 = false;
+            let mut replaced_ad01 = false;
+            let source = standard_keymap
+                .get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1)
+                .lines()
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("<AB10>") && trimmed.ends_with("= 61;") {
+                        replaced_ab10 = true;
+                        line.replace("= 61;", "= 24;")
+                    } else if trimmed.starts_with("<AD01>") && trimmed.ends_with("= 24;") {
+                        replaced_ad01 = true;
+                        line.replace("= 24;", "= 61;")
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(replaced_ab10 && replaced_ad01);
+
+            let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let keymap = xkb::Keymap::new_from_string(
+                &context,
+                source,
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .expect("test keymap with swapped keycodes should compile");
+            let typed = keystroke(
+                &keymap,
+                1,
+                "AB10",
+                &[xkb::MOD_NAME_CTRL],
+                Modifiers::control(),
+            );
+
+            assert_eq!(typed.key, "/");
+            assert_eq!(typed.layout_key.as_deref(), Some("."));
+        }
+
+        #[cfg(feature = "wayland")]
+        #[test]
+        fn wayland_and_x11_normalize_to_the_same_xkb_keycode_once() {
+            let keymap = keymap("us", "", None);
+            let x11_keycode = keymap.key_by_name("AB10").expect("slash key should exist");
+            let wayland_keycode = xkb_keycode_from_wayland(x11_keycode.raw() - 8);
+
+            assert_eq!(wayland_keycode, x11_keycode);
+            assert_ne!(xkb_keycode_from_wayland(x11_keycode.raw()), x11_keycode);
+        }
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
     mod read_fd_with_timeout {
         use super::super::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
         use std::io::Write as _;
