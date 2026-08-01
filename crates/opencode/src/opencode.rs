@@ -506,13 +506,7 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
-            Self::MiniMaxM3 => {
-                if subscription == OpenCodeSubscription::Go {
-                    1_000_000
-                } else {
-                    512_000
-                }
-            }
+            Self::MiniMaxM3 => 1_000_000,
             Self::MiniMaxM2_5 => 204_800,
             Self::Glm5 | Self::Glm5_1 => {
                 if subscription == OpenCodeSubscription::Go {
@@ -843,6 +837,23 @@ impl Model {
 
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Model, OpenCodeSubscription};
+
+    #[test]
+    fn minimax_m3_uses_refreshed_context_window() {
+        assert_eq!(
+            Model::MiniMaxM3.max_token_count(OpenCodeSubscription::Zen),
+            1_000_000
+        );
+        assert_eq!(
+            Model::MiniMaxM3.max_token_count(OpenCodeSubscription::Go),
+            1_000_000
+        );
     }
 }
 
