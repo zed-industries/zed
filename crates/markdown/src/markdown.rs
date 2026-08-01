@@ -404,10 +404,31 @@ struct MermaidViewState {
     showing_code: bool,
     /// The display scale relative to the diagram's natural size; 1.0 is 1:1.
     zoom: f32,
+    /// Whether the user zoomed out to the fit-to-width floor. While set, the
+    /// zoom tracks the container width so the diagram stays fully visible
+    /// when the container is resized, instead of keeping a stale absolute
+    /// zoom computed against the old width.
+    zoomed_to_fit: bool,
     /// Horizontal scroll position, used when the diagram overflows.
     scroll_handle: ScrollHandle,
     /// The pending debounced re-raster scheduled by the last zoom change.
     debounce_task: Option<Task<()>>,
+    /// Overrides the scroll container width, which tests can't obtain from
+    /// the scroll handle since its bounds are only set during layout.
+    #[cfg(test)]
+    container_width_for_test: Option<Pixels>,
+}
+
+impl MermaidViewState {
+    /// The width of the diagram's scroll container as of the last layout,
+    /// if it has been laid out.
+    fn container_width(&self) -> Option<Pixels> {
+        #[cfg(test)]
+        if let Some(width) = self.container_width_for_test {
+            return Some(width);
+        }
+        Some(self.scroll_handle.bounds().size.width).filter(|width| *width > px(0.))
+    }
 }
 
 impl Default for MermaidViewState {
@@ -415,8 +436,11 @@ impl Default for MermaidViewState {
         Self {
             showing_code: false,
             zoom: 1.0,
+            zoomed_to_fit: false,
             scroll_handle: ScrollHandle::new(),
             debounce_task: None,
+            #[cfg(test)]
+            container_width_for_test: None,
         }
     }
 }
@@ -742,8 +766,7 @@ impl Markdown {
         let Some(container_width) = self
             .mermaid_views
             .get(&source_offset)
-            .map(|view| view.scroll_handle.bounds().size.width)
-            .filter(|width| *width > px(0.))
+            .and_then(|view| view.container_width())
         else {
             return 1.0;
         };
@@ -760,15 +783,66 @@ impl Markdown {
         cx: &mut Context<Self>,
     ) {
         let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        let requested_zoom = zoom;
         let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
         if (zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE {
             zoom = 1.0;
         }
+        // The user zoomed out to (or past) the fit-to-width floor. From here
+        // on the zoom tracks the container width (see
+        // `effective_mermaid_zoom_level`), until the user zooms back in. A
+        // zoom landing exactly at 1.0 only sticks when it was clamped, so
+        // resetting to the natural size never turns tracking on.
+        let zoomed_to_fit = requested_zoom < min_zoom || (zoom <= min_zoom && zoom < 1.0);
 
-        // Replacing the previous task cancels its pending timer, debouncing
-        // the expensive re-raster until the zoom gesture settles. Until then,
-        // the existing raster is displayed scaled to the new zoom.
-        let debounce_task = cx.spawn(async move |this, cx| {
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.zoom = zoom;
+        view.zoomed_to_fit = zoomed_to_fit;
+        view.debounce_task = Some(debounce_task);
+        cx.notify();
+    }
+
+    /// The zoom level to display a diagram at, syncing a fit-to-width zoom
+    /// with the current container width. Called at render time so that a
+    /// fully zoomed-out diagram stays stuck to the container width when the
+    /// container is resized, rather than keeping a stale absolute zoom.
+    pub(crate) fn effective_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> f32 {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let zoomed_to_fit = self
+            .mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.zoomed_to_fit);
+        if !zoomed_to_fit {
+            return zoom;
+        }
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        if (min_zoom - zoom).abs() < 0.001 {
+            return zoom;
+        }
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        if let Some(view) = self.mermaid_views.get_mut(&source_offset) {
+            view.zoom = min_zoom;
+            view.debounce_task = Some(debounce_task);
+        }
+        min_zoom
+    }
+
+    /// Schedules a debounced re-raster of a diagram at its current zoom.
+    /// Storing the returned task in `MermaidViewState::debounce_task`
+    /// replaces (and thereby cancels) the previous timer, debouncing the
+    /// expensive re-raster until zoom changes settle. Until then, the
+    /// existing raster is displayed scaled to the new zoom.
+    fn schedule_mermaid_rerasterize(
+        &self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(MERMAID_ZOOM_DEBOUNCE).await;
             this.update(cx, |this, cx| {
                 if let Some(view) = this.mermaid_views.get_mut(&source_offset) {
@@ -777,11 +851,7 @@ impl Markdown {
                 this.rerasterize_mermaid_diagram(source_offset, cx);
             })
             .ok();
-        });
-        let view = self.mermaid_views.entry(source_offset).or_default();
-        view.zoom = zoom;
-        view.debounce_task = Some(debounce_task);
-        cx.notify();
+        })
     }
 
     pub(crate) fn mermaid_scroll_handle(&mut self, source_offset: usize) -> ScrollHandle {
@@ -2481,13 +2551,12 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let (showing_code, zoom) = {
-                                    let markdown = self.markdown.read(cx);
+                                let (showing_code, zoom) = self.markdown.update(cx, |markdown, cx| {
                                     (
                                         markdown.is_mermaid_showing_code(range.start),
-                                        markdown.mermaid_zoom_level(range.start),
+                                        markdown.effective_mermaid_zoom_level(range.start, cx),
                                     )
-                                };
+                                });
                                 let copy_button_visibility = match &self.code_block_renderer {
                                     CodeBlockRenderer::Default {
                                         copy_button_visibility,

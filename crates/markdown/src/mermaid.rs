@@ -1522,6 +1522,105 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_mermaid_zoom_to_fit_tracks_container_width(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+
+        // A raster whose natural (zoom 1.0) width is 200px.
+        let (parsed_svg, image) = markdown.update(cx, |_, cx| {
+            let svg_renderer = cx.svg_renderer();
+            let parsed_svg = Arc::new(
+                svg_renderer
+                    .parse_svg(
+                        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"></svg>"#,
+                    )
+                    .unwrap(),
+            );
+            let image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
+            (parsed_svg, image)
+        });
+
+        let contents = mermaid_contents("graph A");
+        let source_offset = 0;
+        markdown.update(cx, |markdown, _| {
+            markdown.parsed_markdown.mermaid_diagrams.insert(
+                source_offset,
+                ParsedMarkdownMermaidDiagram {
+                    content_range: 0..contents.contents.len(),
+                    contents: contents.clone(),
+                },
+            );
+            markdown.mermaid_state.cache.insert(
+                contents.clone(),
+                Arc::new(CachedMermaidDiagram::new_for_test(
+                    Some(image),
+                    None,
+                    Some(parsed_svg),
+                )),
+            );
+            markdown
+                .mermaid_views
+                .entry(source_offset)
+                .or_default()
+                .container_width_for_test = Some(px(100.));
+        });
+
+        // Zooming out past the floor clamps to fit-to-width (100 / 200).
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_mermaid_zoom_level(source_offset, 0.05, cx);
+            assert_eq!(markdown.mermaid_zoom_level(source_offset), 0.5);
+        });
+
+        // A fully zoomed-out diagram stays stuck to fit-to-width when the
+        // container is resized.
+        markdown.update(cx, |markdown, cx| {
+            markdown
+                .mermaid_views
+                .get_mut(&source_offset)
+                .unwrap()
+                .container_width_for_test = Some(px(150.));
+            assert_eq!(
+                markdown.effective_mermaid_zoom_level(source_offset, cx),
+                0.75
+            );
+            assert_eq!(markdown.mermaid_zoom_level(source_offset), 0.75);
+        });
+
+        // Zooming in one step starts from the tracked fit-to-width zoom
+        // instead of jumping, and stops tracking the container width.
+        markdown.update(cx, |markdown, cx| {
+            let zoom = markdown.mermaid_zoom_level(source_offset);
+            markdown.set_mermaid_zoom_level(source_offset, zoom + 0.1, cx);
+            assert!((markdown.mermaid_zoom_level(source_offset) - 0.85).abs() < 1e-5);
+
+            markdown
+                .mermaid_views
+                .get_mut(&source_offset)
+                .unwrap()
+                .container_width_for_test = Some(px(100.));
+            assert!(
+                (markdown.effective_mermaid_zoom_level(source_offset, cx) - 0.85).abs() < 1e-5,
+                "a zoom above the floor must not track container resizes"
+            );
+        });
+
+        // Resetting to the natural size never tracks the container width.
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_mermaid_zoom_level(source_offset, 1.0, cx);
+            markdown
+                .mermaid_views
+                .get_mut(&source_offset)
+                .unwrap()
+                .container_width_for_test = Some(px(150.));
+            assert_eq!(
+                markdown.effective_mermaid_zoom_level(source_offset, cx),
+                1.0
+            );
+        });
+    }
+
+    #[gpui::test]
     fn test_mermaid_zoom_retained_across_reparse(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
 
