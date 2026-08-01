@@ -210,20 +210,27 @@ pub(crate) fn innermost_surrounding_pair(
     map: &DisplaySnapshot,
     relative_to: Range<DisplayPoint>,
 ) -> Option<DelimiterRange> {
-    innermost_surrounding_pair_impl(map, relative_to, false)
+    innermost_surrounding_pair_impl(map, relative_to, PairMatchMode::Any)
 }
 
-pub(crate) fn innermost_surrounding_pair_excluding_exact_match(
+pub(crate) fn innermost_surrounding_pair_for_text_object(
     map: &DisplaySnapshot,
     relative_to: Range<DisplayPoint>,
+    around: bool,
 ) -> Option<DelimiterRange> {
-    innermost_surrounding_pair_impl(map, relative_to, true)
+    innermost_surrounding_pair_impl(map, relative_to, PairMatchMode::ExpandSelection { around })
+}
+
+#[derive(Clone, Copy)]
+enum PairMatchMode {
+    Any,
+    ExpandSelection { around: bool },
 }
 
 fn innermost_surrounding_pair_impl(
     map: &DisplaySnapshot,
     relative_to: Range<DisplayPoint>,
-    exclude_exact_match: bool,
+    match_mode: PairMatchMode,
 ) -> Option<DelimiterRange> {
     let snapshot = map.buffer_snapshot();
     let offset_range =
@@ -231,10 +238,13 @@ fn innermost_surrounding_pair_impl(
 
     let results = snapshot.map_excerpt_ranges(offset_range, |buffer, _, input_range| {
         let filter = |open: Range<usize>, close: Range<usize>| {
-            if exclude_exact_match {
+            if let PairMatchMode::ExpandSelection { around } = match_mode {
                 let input_range = input_range.start.0..input_range.end.0;
-                if input_range == (open.start..close.end) || input_range == (open.end..close.start)
-                {
+                let selects_around = input_range == (open.start..close.end);
+                let selects_inside = input_range == (open.end..close.start);
+                // `mam` after `mim` changes the form of the current pair;
+                // every other exact match expands to the enclosing pair.
+                if selects_around || (selects_inside && !around) {
                     return false;
                 }
             }

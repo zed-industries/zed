@@ -202,6 +202,12 @@ mod test {
         cx.simulate_keystrokes("m i m");
         cx.assert_state("[foo («barˇ») baz]", Mode::HelixNormal);
 
+        cx.set_state("fn foo() { let x = ˇ1; }", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("fn foo() {« let x = 1; ˇ»}", Mode::HelixNormal);
+        cx.simulate_keystrokes("m a m");
+        cx.assert_state("fn foo() «{ let x = 1; }ˇ»", Mode::HelixNormal);
+
         // Between nested pairs the outer pair is the closest one.
         cx.set_state("{foo (bar) ˇbaz}", Mode::HelixNormal);
         cx.simulate_keystrokes("m i m");
