@@ -503,6 +503,11 @@ impl Cell {
     }
 
     #[inline]
+    pub fn is_wide_char(&self) -> bool {
+        self.cell.flags.contains(Flags::WIDE_CHAR)
+    }
+
+    #[inline]
     pub fn is_dim(&self) -> bool {
         self.cell.flags.intersects(Flags::DIM)
     }

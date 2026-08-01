@@ -1580,6 +1580,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                     ),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
+                    natural_advance: px(glyph_advances[this_glyph_idx]),
                 });
                 context.width += glyph_advances[this_glyph_idx];
             }

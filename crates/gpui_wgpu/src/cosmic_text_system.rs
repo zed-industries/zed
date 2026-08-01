@@ -693,6 +693,7 @@ impl CosmicTextSystemState {
                 position: point(glyph.x.into(), glyph.y.into()),
                 index: glyph.start,
                 is_emoji,
+                natural_advance: glyph.w.into(),
             };
 
             if let Some(last_run) = runs

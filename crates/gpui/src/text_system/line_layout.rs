@@ -51,6 +51,9 @@ pub struct ShapedGlyph {
 
     /// Whether this glyph is an emoji
     pub is_emoji: bool,
+
+    /// The horizontal advance before fixed-width positioning is applied.
+    pub natural_advance: Pixels,
 }
 
 impl LineLayout {
@@ -968,6 +971,7 @@ mod tests {
             position: point(px(x), px(0.)),
             index,
             is_emoji: false,
+            natural_advance: px(8.),
         }
     }
 
@@ -997,11 +1001,47 @@ mod tests {
     fn test_force_width_latin_unchanged() {
         let cell_width = px(8.);
         let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(8., 1), glyph_at(16., 2)]);
+        layout.width = px(24.);
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0., 8., 16.]);
+        assert_eq!(layout.runs[0].glyphs[0].natural_advance, cell_width);
+    }
+
+    #[test]
+    fn test_force_width_preserves_wide_natural_advance() {
+        let cell_width = px(8.);
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(13., 1), glyph_at(26., 2)]);
+        for glyph in &mut layout.runs[0].glyphs {
+            glyph.natural_advance = px(13.);
+        }
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        assert_eq!(glyph_x_positions(&layout), vec![0., 8., 16.]);
+        assert!(
+            layout.runs[0]
+                .glyphs
+                .iter()
+                .all(|glyph| glyph.natural_advance == px(13.))
+        );
+    }
+
+    #[test]
+    fn test_force_width_preserves_combining_mark_natural_advance() {
+        let cell_width = px(8.);
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(0., 1), glyph_at(8., 2)]);
+        layout.runs[0].glyphs[0].natural_advance = cell_width;
+        layout.runs[0].glyphs[1].natural_advance = Pixels::ZERO;
+        layout.runs[0].glyphs[2].natural_advance = cell_width;
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        assert_eq!(layout.runs[0].glyphs[0].natural_advance, cell_width);
+        assert_eq!(layout.runs[0].glyphs[1].natural_advance, Pixels::ZERO);
+        assert_eq!(layout.runs[0].glyphs[2].natural_advance, cell_width);
     }
 
     #[test]
