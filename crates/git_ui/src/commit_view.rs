@@ -299,7 +299,6 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
-        let mut scroll_buffer: Option<(Entity<language::Buffer>, u32)> = None;
 
         cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
@@ -403,9 +402,30 @@ impl CommitView {
                         if hunks.peek().is_none() {
                             vec![language::Point::zero()..snapshot.max_point()]
                         } else {
-                            hunks
+                            let mut ranges: Vec<_> = hunks
                                 .map(|hunk| hunk.buffer_range.to_point(&snapshot))
-                                .collect::<Vec<_>>()
+                                .collect();
+
+                            // Ensure the target row is covered by an excerpt
+                            // so buffer_point_to_anchor returns an exact anchor
+                            // instead of clamping to a nearby excerpt boundary.
+                            if let Some((target_path, target_row)) = &scroll_to {
+                                if *target_path == file_path {
+                                    let target_point =
+                                        language::Point::new(*target_row, 0);
+                                    let covered = ranges.iter().any(|r| {
+                                        r.start <= target_point && target_point <= r.end
+                                    });
+                                    if !covered {
+                                        let insert_point =
+                                            target_point.min(snapshot.max_point());
+                                        ranges.push(insert_point..insert_point);
+                                        ranges.sort_by_key(|r| r.start);
+                                    }
+                                }
+                            }
+
+                            ranges
                         }
                     };
                     (ranges, path)
@@ -441,31 +461,27 @@ impl CommitView {
 
                 if let Some((target_path, target_row)) = &scroll_to {
                     if *target_path == file_path {
-                        scroll_buffer = Some((buffer.clone(), *target_row));
-                        scroll_to = None;
+                        let anchor = this.update(cx, |this, cx| {
+                            this.multibuffer
+                                .read(cx)
+                                .buffer_point_to_anchor(&buffer, language::Point::new(*target_row, 0), cx)
+                        })?;
+                        if let Some(anchor) = anchor {
+                            this.update_in(cx, |this, window, cx| {
+                                this.editor.update(cx, |editor, cx| {
+                                    editor.rhs_editor().update(cx, |editor, cx| {
+                                        editor.change_selections(
+                                            SelectionEffects::scroll(Autoscroll::focused()),
+                                            window,
+                                            cx,
+                                            |s| s.select_ranges([anchor..anchor]),
+                                        );
+                                    });
+                                });
+                            })?;
+                            scroll_to = None;
+                        }
                     }
-                }
-            }
-
-            if let Some((buffer, target_row)) = scroll_buffer {
-                let anchor = this.update(cx, |this, cx| {
-                    this.multibuffer
-                        .read(cx)
-                        .buffer_point_to_anchor(&buffer, language::Point::new(target_row, 0), cx)
-                })?;
-                if let Some(anchor) = anchor {
-                    this.update_in(cx, |this, window, cx| {
-                        this.editor.update(cx, |editor, cx| {
-                            editor.rhs_editor().update(cx, |editor, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::scroll(Autoscroll::focused()),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges([anchor..anchor]),
-                                );
-                            });
-                        });
-                    })?;
                 }
             }
 
