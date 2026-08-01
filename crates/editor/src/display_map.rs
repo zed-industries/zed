@@ -1556,14 +1556,21 @@ impl DisplaySnapshot {
 
     /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
     pub fn point_for_tab_expanded_column(&self, row: u32, column: u32) -> Point {
-        let column = column.min(self.tab_snapshot().line_len(row));
-        self.tab_snapshot()
-            .tab_point_to_point(TabPoint(Point::new(row, column)), Bias::Left)
+        let tab_snapshot = self.tab_snapshot();
+        let row = tab_snapshot
+            .point_to_tab_point(Point::new(row, 0), Bias::Left)
+            .row();
+        let column = column.min(tab_snapshot.line_len(row));
+        tab_snapshot.tab_point_to_point(TabPoint(Point::new(row, column)), Bias::Left)
     }
 
     /// The length of `row` once tabs are expanded.
     pub fn tab_expanded_line_len(&self, row: u32) -> u32 {
-        self.tab_snapshot().line_len(row)
+        let tab_snapshot = self.tab_snapshot();
+        let row = tab_snapshot
+            .point_to_tab_point(Point::new(row, 0), Bias::Left)
+            .row();
+        tab_snapshot.line_len(row)
     }
 
     pub fn fold_snapshot(&self) -> &FoldSnapshot {

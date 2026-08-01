@@ -10809,6 +10809,76 @@ async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("one\ntwo\nthree\nfour\nfive\nsix", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 0)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(4, 0)..Point::new(4, 0)]);
+        });
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        let display_map = editor.display_snapshot(cx);
+        assert_eq!(
+            editor
+                .selections
+                .all::<Point>(&display_map)
+                .into_iter()
+                .map(|selection| selection.range())
+                .collect::<Vec<_>>(),
+            [
+                Point::new(4, 0)..Point::new(4, 0),
+                Point::new(5, 0)..Point::new(5, 0),
+            ]
+        );
+
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([Point::new(5, 0)..Point::new(5, 0)]);
+        });
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        let display_map = editor.display_snapshot(cx);
+        assert_eq!(
+            editor
+                .selections
+                .all::<Point>(&display_map)
+                .into_iter()
+                .map(|selection| selection.range())
+                .collect::<Vec<_>>(),
+            [
+                Point::new(4, 0)..Point::new(4, 0),
+                Point::new(5, 0)..Point::new(5, 0),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
