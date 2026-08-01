@@ -478,6 +478,14 @@ pub mod search {
     actions!(
         search,
         [
+            /// Focuses on the search input field.
+            FocusSearch,
+            /// Selects the next search match.
+            SelectNextMatch,
+            /// Selects the previous search match.
+            SelectPreviousMatch,
+            /// Toggles case-sensitive search.
+            ToggleCaseSensitive,
             /// Toggles searching in ignored files.
             ToggleIncludeIgnored
         ]

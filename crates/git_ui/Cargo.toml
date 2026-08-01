@@ -54,7 +54,6 @@ release_channel.workspace = true
 remote.workspace = true
 remote_connection.workspace = true
 schemars.workspace = true
-search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -93,6 +92,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 remote_connection = { workspace = true, features = ["test-support"] }
+search.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
 unindent.workspace = true
