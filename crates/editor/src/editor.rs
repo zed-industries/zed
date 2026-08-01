@@ -97,10 +97,10 @@ pub(crate) use edit_prediction::{
 pub use edit_prediction_types::Direction;
 pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
-    BreadcrumbNavigationMode, CompletionDetailAlignment, CompletionMenuItemKind,
-    CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode, EditorSettings,
-    EditorSettingsScrollbarProxy, OpenResultsIn, ScrollBeyondLastLine, ScrollbarAxes,
-    SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, OpenResultsIn,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    ui_scrollbar_settings_from_raw,
 };
 use element::BreadcrumbDirectoryBrowser;
 pub use element::{
@@ -1138,16 +1138,11 @@ pub struct Editor {
     /// one fires its dismiss-on-blur subscription, which would otherwise wipe the navigation state
     /// `navigate_breadcrumb_to` just set.
     ///
-    /// Not subsumed by `clear_breadcrumb_navigation`'s own identity check, which only rejects a
-    /// stale dismissal whose identity *differs* from the current navigation. In
-    /// [`BreadcrumbNavigationMode::Siblings`], a dropdown lists the active segment among its own
-    /// siblings, so re-choosing that same row resolves right back to the identity that was already
-    /// active: `navigate_breadcrumb_to` re-sets `breadcrumb_navigation` to a value with the same
-    /// `(worktree_id, active_path)` it already had, and the stale dismissal that follows then
-    /// carries that identity too. The identity check can't distinguish that genuine case from a
-    /// same-path re-selection still in flight; this flag breaks the tie by timing instead. See
-    /// `test_reanchoring_guard_survives_same_identity_reselection` for the scenario reproduced
-    /// (and for confirmation that removing this guard makes that test fail).
+    /// Not subsumed by `clear_breadcrumb_navigation`'s identity check, which only rejects a stale
+    /// dismissal whose identity *differs* from the current navigation. Re-selecting a row that
+    /// resolves back to the already-active path produces a dismissal carrying that same identity,
+    /// which the check cannot tell apart from a genuine one; this flag breaks the tie by timing.
+    /// See `test_reanchoring_guard_survives_same_identity_reselection`.
     breadcrumb_reanchoring: bool,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
@@ -11017,19 +11012,6 @@ impl Editor {
     /// reopened.
     ///
     /// `path` must identify the segment itself, not whatever directory its dropdown lists — see
-    /// `BreadcrumbSegmentTarget::Directory::mark_current_path` for why those differ and how
-    /// callers compute the segment's own identity (`own_path`). Passing the listing path here
-    /// instead mismatches every place that compares against `active_path` expecting the
-    /// segment's own identity (`is_active_segment`, the `navigated`-preserving check above, and
-    /// this segment becoming the target `navigate_breadcrumb_to`'s re-anchor reopens under).
-    ///
-    /// Always resets [`BreadcrumbNavigation::descend_into_active_path`] to `false`: this fires on
-    /// every dropdown opening, direct click or programmatic re-anchor alike, and it's specifically
-    /// the *next* opening after a `navigate_breadcrumb_to` — not this one — that should list
-    /// siblings again instead of continuing to descend. The re-anchor's own reopen already froze
-    /// the children listing it needs into the `BreadcrumbDirectoryBrowser` it's about to construct
-    /// before this call can affect it — see `render_breadcrumb_directory_segment`.
-    ///
     /// This is only ever reached from a `PopoverMenu`'s `menu()` builder (see
     /// `render_breadcrumb_directory_segment`), which `PopoverMenu` invokes either from a trigger's
     /// raw `on_click` (installed directly by `PopoverMenu::trigger`, not through a `cx.listener`,
@@ -11062,7 +11044,6 @@ impl Editor {
             worktree_id,
             active_path: path,
             navigated,
-            descend_into_active_path: false,
         });
         cx.emit(EditorEvent::BreadcrumbsChanged);
     }
@@ -11094,7 +11075,6 @@ impl Editor {
             worktree_id,
             active_path: path,
             navigated: true,
-            descend_into_active_path: true,
         });
         cx.emit(EditorEvent::BreadcrumbsChanged);
 
@@ -12033,17 +12013,6 @@ pub(crate) struct BreadcrumbNavigation {
     pub worktree_id: WorktreeId,
     pub active_path: Arc<RelPath>,
     pub navigated: bool,
-    /// True only for the one render right after [`Editor::navigate_breadcrumb_to`] set this
-    /// session (choosing a directory row), until [`Editor::open_breadcrumb_navigation`] — reached
-    /// either by the popover's re-anchor reopening under `active_path`'s own segment, or by a
-    /// later, genuine direct click on some segment — resets it back to `false`. In
-    /// [`BreadcrumbNavigationMode::Siblings`], `render_breadcrumb_text` reads this to decide
-    /// whether `active_path`'s own segment lists its own children (continuing to descend, the way
-    /// choosing a row is documented to behave) or its parent's children (siblings, the way
-    /// clicking a bar segment behaves) — see `breadcrumb_path_segments`. Ignored in
-    /// [`BreadcrumbNavigationMode::DrillDown`], where every segment always lists its own children
-    /// regardless.
-    pub descend_into_active_path: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

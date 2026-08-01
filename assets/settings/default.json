@@ -539,10 +539,6 @@
   "toolbar": {
     // Whether to show breadcrumbs.
     "breadcrumbs": true,
-    // How clicking a breadcrumb path segment navigates the directory tree:
-    // "drill_down" lists the clicked segment's children (IntelliJ-style), "siblings"
-    // lists its parent's contents instead (VS Code/Cursor-style).
-    "breadcrumb_navigation_mode": "drill_down",
     // Whether to show quick action buttons.
     "quick_actions": true,
     // Whether to show the Selections menu in the editor toolbar.

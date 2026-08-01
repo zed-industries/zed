@@ -509,8 +509,6 @@ fn test_stale_breadcrumb_dismissal_does_not_clobber_newer_navigation(cx: &mut Te
                 None,
                 None,
                 Some(&navigation.active_path),
-                BreadcrumbNavigationMode::DrillDown,
-                navigation.descend_into_active_path,
             )
         })
         .unwrap();
@@ -524,19 +522,12 @@ fn test_stale_breadcrumb_dismissal_does_not_clobber_newer_navigation(cx: &mut Te
     );
 }
 
-/// Demonstrates why `Editor::breadcrumb_reanchoring` still earns its keep alongside
-/// `clear_breadcrumb_navigation`'s identity check (see that method's doc comment): the identity
-/// check alone can only reject a stale dismissal whose identity *differs* from the freshly-set
-/// navigation. In [`BreadcrumbNavigationMode::Siblings`], a directory dropdown lists the active
-/// segment among its own siblings (see `BreadcrumbSegmentTarget::Directory::mark_current_path`),
-/// so re-choosing that same active row resolves, via `descend_single_child_directories`, right
-/// back to the identity that was already active — `navigate_breadcrumb_to` re-sets
-/// `breadcrumb_navigation` to a value with the *same* `(worktree_id, active_path)` it already had.
-/// The stale dismissal that follows (`self.breadcrumb_popover_handle.hide(cx)`, queued via
-/// `cx.emit` the same way the empty-directory bug above is) then carries an identity that matches
-/// the current navigation too — the identity check can't tell "genuine dismiss of the still-active
-/// segment" from "late echo of the reopen that just happened" when both carry the same path.
-/// `breadcrumb_reanchoring` is what breaks that tie, by timing instead of identity.
+/// `clear_breadcrumb_navigation`'s identity check can only reject a stale dismissal whose identity
+/// *differs* from the freshly-set navigation. Re-choosing a row that resolves back to the path
+/// already active (a parent segment's dropdown still lists the child the bar is sitting on) makes
+/// `navigate_breadcrumb_to` re-set the same `(worktree_id, active_path)`, so the queued dismissal
+/// that follows carries a matching identity too. `breadcrumb_reanchoring` breaks that tie by
+/// timing instead.
 #[gpui::test]
 fn test_reanchoring_guard_survives_same_identity_reselection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
