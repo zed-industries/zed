@@ -1,5 +1,5 @@
 [package]
-name = "worktree_service"
+name = "git_ui_core"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,23 +9,26 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-name = "worktree_service"
-path = "src/worktree_service.rs"
+name = "git_ui_core"
+path = "src/git_ui_core.rs"
 
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
+buffer_diff.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
 notifications.workspace = true
+picker.workspace = true
 project.workspace = true
 proto.workspace = true
 rand.workspace = true
@@ -37,9 +40,11 @@ settings.workspace = true
 terminal.workspace = true
 ui.workspace = true
 util.workspace = true
+watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeroize.workspace = true
+ztracing.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
@@ -52,5 +57,6 @@ settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
+unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

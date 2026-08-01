@@ -491,6 +491,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "git",
+ "git_ui_core",
  "gpui",
  "gpui_tokio",
  "heapless",
@@ -560,7 +561,6 @@ dependencies = [
  "vim",
  "watch",
  "workspace",
- "worktree_service",
  "zed_actions",
 ]
 
@@ -7422,6 +7422,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "git",
+ "git_ui_core",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -7439,7 +7440,6 @@ dependencies = [
  "prompt_store",
  "rand 0.9.4",
  "release_channel",
- "remote",
  "remote_connection",
  "schemars 1.0.4",
  "search",
@@ -7464,8 +7464,50 @@ dependencies = [
  "watch",
  "windows 0.61.3",
  "workspace",
- "worktree_service",
  "zed_actions",
+ "zlog",
+ "ztracing",
+]
+
+[[package]]
+name = "git_ui_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "askpass",
+ "buffer_diff",
+ "collections",
+ "db",
+ "editor",
+ "fs",
+ "futures 0.3.32",
+ "fuzzy",
+ "git",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "notifications",
+ "picker",
+ "project",
+ "proto",
+ "rand 0.9.4",
+ "remote",
+ "remote_connection",
+ "serde",
+ "serde_json",
+ "settings",
+ "task",
+ "terminal",
+ "theme",
+ "theme_settings",
+ "ui",
+ "unindent",
+ "util",
+ "watch",
+ "workspace",
+ "zed_actions",
+ "zeroize",
  "zlog",
  "ztracing",
 ]
@@ -14247,6 +14289,7 @@ dependencies = [
  "futures 0.3.32",
  "git",
  "git_ui",
+ "git_ui_core",
  "gpui",
  "itertools 0.14.0",
  "language",
@@ -17064,6 +17107,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "git",
+ "git_ui_core",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -17093,7 +17137,6 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "workspace",
- "worktree_service",
  "zed_actions",
 ]
 
@@ -18968,7 +19011,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "fs",
- "git_ui",
+ "git_ui_core",
  "gpui",
  "icons",
  "livekit_client",
@@ -22822,43 +22865,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "worktree_service"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "askpass",
- "collections",
- "db",
- "editor",
- "fs",
- "futures 0.3.32",
- "git",
- "gpui",
- "language",
- "log",
- "menu",
- "notifications",
- "project",
- "proto",
- "rand 0.9.4",
- "remote",
- "remote_connection",
- "serde",
- "serde_json",
- "settings",
- "task",
- "terminal",
- "theme",
- "theme_settings",
- "ui",
- "util",
- "workspace",
- "zed_actions",
- "zeroize",
- "zlog",
-]
-
-[[package]]
 name = "wprcontrol"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/wprcontrol?rev=cd811f7#cd811f7d744f65291e13131b1d907fda63ed91a1"
@@ -23311,6 +23317,7 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "git_ui",
+ "git_ui_core",
  "go_to_line",
  "gpui",
  "gpui_platform",

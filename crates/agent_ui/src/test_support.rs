@@ -146,7 +146,7 @@ pub async fn record_zed_created_worktree(
 ) {
     let created_at = fake_worktree_created_at(fs, worktree_path).await;
     cx.update(|cx| {
-        worktree_service::created_worktrees::record_created_worktree(
+        git_ui_core::created_worktrees::record_created_worktree(
             worktree_path,
             remote,
             created_at,

@@ -1,5 +1,5 @@
-use worktree_service::askpass_modal::AskPassModal;
-pub(crate) use worktree_service::notifications::{open_output, show_error_toast};
+use git_ui_core::askpass_modal::AskPassModal;
+pub(crate) use git_ui_core::notifications::{open_output, show_error_toast};
 
 use crate::commit_context_menu::{
     CommitContextMenuData, CommitContextMenuSource, commit_context_menu,

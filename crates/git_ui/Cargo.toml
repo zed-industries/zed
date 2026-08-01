@@ -49,7 +49,6 @@ project.workspace = true
 prompt_store.workspace = true
 rand.workspace = true
 release_channel.workspace = true
-remote.workspace = true
 remote_connection.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -71,7 +70,7 @@ ui_input.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true
-worktree_service.workspace = true
+git_ui_core.workspace = true
 zed_actions.workspace = true
 ztracing.workspace = true
 
@@ -98,4 +97,4 @@ workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["tracing"]
+ignored = ["remote_connection", "tracing"]
