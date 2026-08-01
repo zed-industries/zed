@@ -3,7 +3,9 @@ use crate::{
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
-use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
+use git::{
+    blame::BlameEntry, commit::ParsedCommitMessage, repository::{CommitSummary, RepoPath},
+};
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, Pixels, Rems, ScrollHandle, Subscription, TextStyle,
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
@@ -233,6 +235,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     workspace.clone(),
                                     None,
                                     None,
+                                    blame_entry_scroll_target(&blame_entry),
                                     window,
                                     cx,
                                 )
@@ -469,6 +472,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                         workspace.clone(),
                                                         None,
                                                         None,
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
@@ -502,6 +506,7 @@ impl BlameRenderer for GitBlameRenderer {
             workspace,
             None,
             None,
+            blame_entry_scroll_target(&blame_entry),
             window,
             cx,
         )
@@ -553,4 +558,12 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
         }
         Err(_) => "Error parsing date".to_string(),
     }
+}
+
+/// Derive a (path, 0-based row) scroll target from a blame entry, so the
+/// commit view can jump to the exact line the user clicked.
+fn blame_entry_scroll_target(blame_entry: &BlameEntry) -> Option<(RepoPath, u32)> {
+    let path = RepoPath::new(&blame_entry.filename).ok()?;
+    let row = blame_entry.original_line_number.saturating_sub(1);
+    Some((path, row))
 }
