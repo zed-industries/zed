@@ -11,7 +11,7 @@ use ui::{
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
+#[derive(Deserialize, Debug, Clone, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub hide_gitignore: bool,
@@ -38,6 +38,7 @@ pub struct ProjectPanelSettings {
     pub sort_order: ProjectPanelSortOrder,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
+    pub open_with_system_extensions: Vec<String>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -145,6 +146,9 @@ impl Settings for ProjectPanelSettings {
             sort_order: project_panel.sort_order.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
             git_status_indicator: project_panel.git_status_indicator.unwrap(),
+            open_with_system_extensions: project_panel
+                .open_with_system_extensions
+                .unwrap_or_default(),
         }
     }
 }

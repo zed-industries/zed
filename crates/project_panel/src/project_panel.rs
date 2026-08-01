@@ -798,9 +798,9 @@ impl ProjectPanel {
             })
             .detach();
 
-            let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
+            let mut project_panel_settings = ProjectPanelSettings::get_global(cx).clone();
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-                let new_settings = *ProjectPanelSettings::get_global(cx);
+                let new_settings = ProjectPanelSettings::get_global(cx).clone();
                 if project_panel_settings != new_settings {
                     if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
                         this.update_visible_entries(None, false, false, window, cx);
@@ -6086,6 +6086,22 @@ impl ProjectPanel {
                             project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        let open_with_system = settings
+                            .open_with_system_extensions
+                            .iter()
+                            .any(|ext| path.extension().is_some_and(|file_ext| file_ext == ext.as_str()));
+
+                        if open_with_system {
+                            if let Some(worktree) =
+                                project_panel.project.read(cx).worktree_for_id(worktree_id, cx)
+                            {
+                                let abs_path = worktree.read(cx).absolutize(&path);
+                                cx.open_with_system(&abs_path);
+                            }
+                            return;
+                        }
+
                         let preview_tabs_enabled =
                             PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
                         let click_count = event.click_count();

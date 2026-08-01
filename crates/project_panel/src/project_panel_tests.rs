@@ -590,7 +590,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -677,7 +677,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
             .unwrap();
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     auto_fold_dirs: true,
@@ -3843,7 +3843,7 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     );
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_root: true,
@@ -4351,7 +4351,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     hide_root: true,
@@ -4393,7 +4393,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     hide_root: true,
@@ -5051,7 +5051,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -5218,7 +5218,7 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -7021,7 +7021,7 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
 
     // Test 1: Auto selection with one gitignored file next to the deleted file
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_gitignore: true,
@@ -7122,7 +7122,7 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_gitignore: true,
@@ -7820,7 +7820,7 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
 
     // Test 1: When auto-fold is enabled
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -7883,7 +7883,7 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
 
     // Test 2: When auto-fold is disabled
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: false,
@@ -8052,7 +8052,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     // Test 2: With auto-fold enabled
     {
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     auto_fold_dirs: true,
@@ -8108,7 +8108,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     // Test 3: With auto-fold disabled
     {
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     auto_fold_dirs: false,
@@ -8719,7 +8719,7 @@ async fn test_expand_all_entries_via_window_dispatch(cx: &mut gpui::TestAppConte
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_reveal_entries: false,
@@ -8860,7 +8860,7 @@ async fn test_expand_all_entries_with_auto_fold(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -8989,7 +8989,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_root: true,
@@ -9136,7 +9136,7 @@ async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppC
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_root: true,
@@ -9792,7 +9792,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     hide_root: false,
@@ -9830,7 +9830,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
 
         // Set hide_root to true
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     hide_root: true,
@@ -9876,7 +9876,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
 
         // Set hide_root to true
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     hide_root: true,
@@ -9915,7 +9915,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
+            let settings = ProjectPanelSettings::get_global(cx).clone();
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
                     hide_root: false,
@@ -10224,7 +10224,7 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_hidden: false,
@@ -10274,7 +10274,7 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     );
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_hidden: true,
@@ -10303,7 +10303,7 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 hide_hidden: false,
@@ -10584,7 +10584,7 @@ async fn test_sort_mode_default_fallback(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     // Verify that when sort_mode is not specified, it defaults to DirectoriesFirst
-    let default_settings = cx.read(|cx| *ProjectPanelSettings::get_global(cx));
+    let default_settings = cx.read(|cx| ProjectPanelSettings::get_global(cx).clone());
     assert_eq!(
         default_settings.sort_mode,
         settings::ProjectPanelSortMode::DirectoriesFirst,
@@ -10953,7 +10953,7 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
     });
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -11137,7 +11137,7 @@ async fn run_create_file_in_folded_path_case(
     });
 
     cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
+        let settings = ProjectPanelSettings::get_global(cx).clone();
         ProjectPanelSettings::override_global(
             ProjectPanelSettings {
                 auto_fold_dirs: true,
@@ -11596,4 +11596,66 @@ async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::T
         .expect("restore should show a confirmation prompt");
 
     assert_eq!(message, "Discard changes to `__init__.py`?");
+}
+
+#[gpui::test]
+async fn test_open_with_system_extensions_setting(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    // Verify the setting defaults to empty
+    cx.update(|cx| {
+        let settings = ProjectPanelSettings::get_global(cx);
+        assert!(
+            settings.open_with_system_extensions.is_empty(),
+            "open_with_system_extensions should default to empty"
+        );
+    });
+
+    // Configure the setting
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .project_panel
+                .get_or_insert_default()
+                .open_with_system_extensions = Some(vec!["pdf".to_string(), "html".to_string()]);
+        });
+    });
+
+    // Verify the setting is loaded
+    cx.update(|cx| {
+        let settings = ProjectPanelSettings::get_global(cx);
+        assert_eq!(
+            settings.open_with_system_extensions,
+            vec!["pdf".to_string(), "html".to_string()]
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/src"),
+        json!({
+            "test": {
+                "code.rs": "// Rust file",
+                "document.pdf": "%PDF-1.4 fake",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "src/test", cx);
+
+    // Opening a .rs file should still work normally (not routed to system)
+    select_path(&panel, "src/test/code.rs", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+    ensure_single_file_is_opened(&workspace, "test/code.rs", cx);
 }

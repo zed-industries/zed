@@ -828,6 +828,11 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// File extensions that should be opened in the system default application
+    /// when clicked in the project panel, instead of being opened as text in the editor.
+    ///
+    /// Default: []
+    pub open_with_system_extensions: Option<Vec<String>>,
 }
 
 #[derive(
