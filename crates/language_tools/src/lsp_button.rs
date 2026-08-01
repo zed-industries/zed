@@ -25,7 +25,7 @@ use ui::{
     ContextMenu, ContextMenuEntry, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 
-use util::{ResultExt, paths::PathExt, rel_path::RelPath};
+use util::paths::PathExt;
 use workspace::{StatusItemView, ToggleWorktreeSecurity, Workspace};
 
 use crate::lsp_log_view;
@@ -388,7 +388,6 @@ impl LanguageServerState {
                     let server_selector = server_selector.clone();
                     let workspace = self.workspace.clone();
                     let lsp_store = self.lsp_store.clone();
-                    let state = cx.entity().downgrade();
                     let can_stop = submenu_server_info.can_stop();
                     let process_memory_cache = process_memory_cache.clone();
 
