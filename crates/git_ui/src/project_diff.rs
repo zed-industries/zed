@@ -231,7 +231,7 @@ impl ProjectDiff {
         Self::from_diff(diff, project, workspace, cx)
     }
 
-fn from_diff(
+    fn from_diff(
         diff: Entity<DiffMultibuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
@@ -1004,7 +1004,7 @@ mod tests {
     use buffer_diff::DiffHunkSecondaryStatus;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use multi_buffer::PathKey;
     use project::FakeFs;
     use serde_json::json;
@@ -1251,6 +1251,106 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+    }
+
+    #[gpui::test]
+    async fn test_deploy_at_keeps_selected_repository_active(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project_a"),
+            json!({
+                ".git": {},
+                "a.txt": "CHANGED_A\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project_b"),
+            json!({
+                ".git": {},
+                "b.txt": "CHANGED_B\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_a/.git")),
+            &[("a.txt", "original_a\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_b/.git")),
+            &[("b.txt", "original_b\n".to_string())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new(path!("/project_a")),
+                Path::new(path!("/project_b")),
+            ],
+            cx,
+        )
+        .await;
+
+        let (worktree_a_id, worktree_b_id) = project.read_with(cx, |project, cx| {
+            let mut worktrees: Vec<_> = project.worktrees(cx).collect();
+            worktrees.sort_by_key(|w| w.read(cx).abs_path());
+            (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        let select_repo_and_open_diff = |worktree_id, cx: &mut VisualTestContext| {
+            workspace.update(cx, |workspace, cx| {
+                let git_store = workspace.project().read(cx).git_store().clone();
+                git_store.update(cx, |git_store, cx| {
+                    git_store.set_active_repo_for_worktree(worktree_id, cx);
+                });
+            });
+            cx.focus(&workspace);
+            cx.update(|window, cx| {
+                window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+        };
+
+        let active_repo_path = |cx: &mut VisualTestContext| {
+            workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .active_repository(cx)
+                    .map(|repo| repo.read(cx).work_directory_abs_path.as_ref().to_path_buf())
+            })
+        };
+
+        // Show project A's diff, then switch to project B. When the shared
+        // ProjectDiff item is activated, the workspace reads the item's path
+        // to infer the active repository; if the diff still reports project
+        // A's files while it rebuilds, the user's explicit selection of B is
+        // silently undone.
+        select_repo_and_open_diff(worktree_a_id, cx);
+        select_repo_and_open_diff(worktree_b_id, cx);
+
+        assert_eq!(
+            active_repo_path(cx).as_deref(),
+            Some(Path::new(path!("/project_b"))),
+            "switching the diff to project B must not flip the active repository back to A"
+        );
+
+        // And switching back to A again must keep A active.
+        select_repo_and_open_diff(worktree_a_id, cx);
+
+        assert_eq!(
+            active_repo_path(cx).as_deref(),
+            Some(Path::new(path!("/project_a"))),
+            "active repository should stay on the explicitly selected project A"
+        );
     }
 
     #[gpui::test]
