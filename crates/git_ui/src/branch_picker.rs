@@ -27,7 +27,8 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast};
+use crate::branch_picker;
+use git_ui_core::notifications::show_error_toast;
 
 actions!(
     branch_picker,
