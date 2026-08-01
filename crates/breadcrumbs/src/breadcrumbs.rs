@@ -13,7 +13,6 @@ type RenderBreadcrumbTextFn = fn(
     Option<AnyElement>,
     &dyn ItemHandle,
     bool,
-    &mut Window,
     &App,
 ) -> AnyElement;
 
@@ -71,7 +70,6 @@ impl Render for Breadcrumbs {
                 prefix_element,
                 active_item.as_ref(),
                 false,
-                window,
                 cx,
             )
         } else {

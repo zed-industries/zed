@@ -367,15 +367,17 @@ fn test_breadcrumb_navigation_state_transitions(cx: &mut TestAppContext) {
         );
     });
 
-    // Draining the re-anchor's deferred callbacks (see `Window::simulate_next_frame`) has to
-    // happen outside any `Editor` update above — the callbacks update `Editor` themselves, and it
-    // can't be updated reentrantly. `App::with_window` reaches the window without going through
-    // (and so without locking) the root view entity the way `WindowHandle::update` does.
+    // Stands in for the breadcrumb bar laying itself out, which is what completes the re-anchor
+    // (see `BreadcrumbsRow::prepaint`). It has to happen outside any `Editor` update above, since
+    // it updates `Editor` itself and entities can't be updated reentrantly. `App::with_window`
+    // reaches the window without going through (and so without locking) the root view entity the
+    // way `WindowHandle::update` does.
     let editor_entity = editor.root(cx).unwrap();
     cx.update(|cx| {
         cx.with_window(editor_entity.entity_id(), |window, cx| {
-            window.simulate_next_frame(cx);
-            window.simulate_next_frame(cx);
+            editor_entity.update(cx, |editor, cx| {
+                editor.reanchor_breadcrumb_popover(window, cx);
+            });
         });
     });
 
@@ -433,11 +435,14 @@ fn test_stale_breadcrumb_dismissal_does_not_clobber_newer_navigation(cx: &mut Te
     let frontend_path = rel_path("frontend").into_arc();
 
     let editor_entity = editor.root(cx).unwrap();
+    // Stands in for the breadcrumb bar laying itself out, which is what completes the re-anchor
+    // (see `BreadcrumbsRow::prepaint`).
     let drain_reanchor = |cx: &mut TestAppContext| {
         cx.update(|cx| {
             cx.with_window(editor_entity.entity_id(), |window, cx| {
-                window.simulate_next_frame(cx);
-                window.simulate_next_frame(cx);
+                editor_entity.update(cx, |editor, cx| {
+                    editor.reanchor_breadcrumb_popover(window, cx);
+                });
             });
         });
     };
@@ -543,10 +548,13 @@ fn test_reanchoring_guard_survives_same_identity_reselection(cx: &mut TestAppCon
     _ = editor.update(cx, |editor, window, cx| {
         editor.navigate_breadcrumb_to(worktree_id, src_path.clone(), window, cx);
     });
+    // Stands in for the breadcrumb bar laying itself out, which is what completes the re-anchor
+    // (see `BreadcrumbsRow::prepaint`).
     cx.update(|cx| {
         cx.with_window(editor_entity.entity_id(), |window, cx| {
-            window.simulate_next_frame(cx);
-            window.simulate_next_frame(cx);
+            editor_entity.update(cx, |editor, cx| {
+                editor.reanchor_breadcrumb_popover(window, cx);
+            });
         });
     });
     _ = editor.update(cx, |editor, _, _| {

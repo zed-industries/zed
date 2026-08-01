@@ -20,6 +20,14 @@ use crate::display_map::DisplaySnapshot;
 use crate::scroll::Autoscroll;
 use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, SelectionEffects};
 
+/// The outline behind the breadcrumb symbol dropdowns, kept with the buffer version it came from
+/// so a prefetch can tell an up-to-date cache from one worth refreshing.
+pub(crate) struct BreadcrumbOutline {
+    buffer_id: BufferId,
+    version: clock::Global,
+    items: Vec<OutlineItem<text::Anchor>>,
+}
+
 impl Editor {
     /// Returns all document outline items for a buffer, using LSP or
     /// tree-sitter based on the `document_symbols` setting.
@@ -51,8 +59,16 @@ impl Editor {
         } else {
             let buffer_snapshot = buffer.read(cx).snapshot();
             let syntax = cx.theme().syntax().clone();
-            cx.background_executor()
-                .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items })
+            cx.background_executor().spawn(async move {
+                // Not `snapshot.outline(..)`: that wraps the items in an `Outline`, which builds a
+                // fuzzy-match candidate string per item for the outline picker's search. Every
+                // caller here drops those immediately.
+                buffer_snapshot.outline_items_containing(
+                    0..buffer_snapshot.len(),
+                    true,
+                    Some(&syntax),
+                )
+            })
         }
     }
 
@@ -107,61 +123,69 @@ impl Editor {
         Some((buffer.remote_id(), symbols))
     }
 
-    /// Returns the full outline for `buffer_id`, computed synchronously from already-cached
-    /// LSP document symbols or (for tree-sitter) directly from the buffer's syntax tree.
-    ///
-    /// Unlike [`Self::buffer_outline_items`], this never waits on an LSP round trip: it's meant
-    /// for click-time UI (breadcrumb sibling navigation) that needs the whole outline right away
-    /// without an async hop, at the cost of not refreshing LSP symbols that haven't been fetched yet.
-    pub(crate) fn buffer_outline_items_sync(
-        &self,
+    /// Starts fetching the outline backing the breadcrumb dropdowns, unless the cached one was
+    /// already computed from this exact buffer version. Called when the pointer reaches the
+    /// breadcrumb bar, so opening a dropdown reads a cache instead of walking the whole file.
+    pub(crate) fn prefetch_breadcrumb_outline(
+        &mut self,
         buffer_id: BufferId,
-        cx: &App,
-    ) -> Vec<OutlineItem<text::Anchor>> {
+        cx: &mut Context<Self>,
+    ) {
         let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
-            return Vec::new();
+            return;
         };
-
-        if lsp_symbols_enabled(buffer.read(cx), cx) {
-            self.lsp_document_symbols
-                .get(&buffer_id)
-                .cloned()
-                .unwrap_or_default()
-        } else {
-            let syntax = cx.theme().syntax().clone();
-            buffer.read(cx).snapshot().outline(Some(&syntax)).items
+        let version = buffer.read(cx).version();
+        if self
+            .breadcrumb_outline
+            .as_ref()
+            .is_some_and(|outline| outline.buffer_id == buffer_id && outline.version == version)
+        {
+            return;
         }
+
+        let items = self.buffer_outline_items(buffer_id, cx);
+        self.breadcrumb_outline_task = cx.spawn(async move |editor, cx| {
+            let items = items.await;
+            editor
+                .update(cx, |editor, _| {
+                    editor.breadcrumb_outline = Some(BreadcrumbOutline {
+                        buffer_id,
+                        version,
+                        items,
+                    });
+                })
+                .ok();
+        });
     }
 
     /// Returns the entries for a breadcrumb segment's dropdown, in document order: `target`'s
-    /// children (the items directly nested inside it, one level deeper), falling back to its
-    /// siblings if it has none — a node's siblings are its parent's children, so this subsumes
-    /// the sibling case and only needs to fall back to it explicitly when there's nothing
-    /// nested to show. That fallback matters most for the deepest segment (typically the
-    /// method the cursor sits in, which has no children of its own): without it, clicking that
-    /// segment would be a dead end instead of letting you switch methods.
+    /// children, falling back to its siblings when it has none, so the deepest segment (usually
+    /// the method the cursor sits in) can still switch methods instead of being a dead end.
+    /// `target: None` is the file segment, which lists the buffer's top-level symbols.
     ///
-    /// `target: None` is the leading path segment, which has no ancestor item of its own; it
-    /// stands in for the tree's implicit root and so lists the buffer's top-level symbols.
+    /// Reads the outline [`Self::prefetch_breadcrumb_outline`] fetched. A stale one is used as
+    /// is, since outline items are anchors and survive edits; an absent one yields no entries,
+    /// which the caller treats like a buffer with no outline at all.
     ///
-    /// Falls back to just `target` (or an empty list, for `None`) if `target` can't be located
-    /// in the freshly computed outline (e.g. the buffer changed between breadcrumb render and
-    /// click).
-    ///
-    /// Truncated to [`crate::element::MAX_BREADCRUMB_MENU_ENTRIES`] — the same cap and
-    /// reasoning as the breadcrumb directory dropdown, which a generated file's flat top-level
-    /// symbol listing can just as easily blow past — with the second element of the returned
-    /// tuple reporting whether truncation happened, so the caller can show the same notice the
-    /// directory dropdown does.
+    /// Truncated to [`crate::element::MAX_BREADCRUMB_MENU_ENTRIES`], the same cap the directory
+    /// dropdown uses, with the second tuple element reporting whether that happened.
     pub(crate) fn breadcrumb_symbol_menu_items(
         &self,
         buffer_id: BufferId,
         target: Option<&OutlineItem<Anchor>>,
         cx: &App,
     ) -> (Vec<OutlineItem<Anchor>>, bool) {
+        let Some(outline) = self
+            .breadcrumb_outline
+            .as_ref()
+            .filter(|outline| outline.buffer_id == buffer_id)
+        else {
+            return (Vec::new(), false);
+        };
+
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let items = self
-            .buffer_outline_items_sync(buffer_id, cx)
+        let items = outline
+            .items
             .iter()
             .filter_map(|item| text_outline_item_to_multibuffer(item, &multi_buffer_snapshot))
             .collect::<Vec<_>>();
@@ -836,7 +860,7 @@ mod tests {
         assert!(symbol_request.next().await.is_some());
         cx.run_until_parked();
 
-        cx.update_editor(|editor, _window, cx| {
+        let buffer_id = cx.update_editor(|editor, _window, cx| {
             let buffer_id = editor
                 .buffer()
                 .read(cx)
@@ -844,12 +868,65 @@ mod tests {
                 .unwrap()
                 .read(cx)
                 .remote_id();
+            editor.prefetch_breadcrumb_outline(buffer_id, cx);
+            buffer_id
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
             let (menu_items, truncated) = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
             assert_eq!(
                 menu_items.len(),
                 crate::element::MAX_BREADCRUMB_MENU_ENTRIES
             );
             assert!(truncated);
+        });
+    }
+
+    /// Opening a segment's dropdown must not walk the file's syntax tree itself: the entries come
+    /// from the outline prefetched when the pointer reaches the bar, and are empty until it lands.
+    #[gpui::test]
+    async fn test_breadcrumb_symbol_menu_items_come_from_the_prefetched_outline(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        cx.run_until_parked();
+
+        let buffer_id = cx.update_editor(|editor, _window, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .remote_id()
+        });
+
+        cx.update_editor(|editor, _window, cx| {
+            let (menu_items, _) = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
+            assert!(
+                menu_items.is_empty(),
+                "Without a prefetched outline the dropdown must stay empty rather than computing one"
+            );
+        });
+
+        cx.update_editor(|editor, _window, cx| {
+            editor.prefetch_breadcrumb_outline(buffer_id, cx);
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let (menu_items, _) = editor.breadcrumb_symbol_menu_items(buffer_id, None, cx);
+            assert_eq!(
+                menu_items
+                    .iter()
+                    .map(|item| item.text.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["fn main"]
+            );
         });
     }
 

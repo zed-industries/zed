@@ -21,6 +21,7 @@ pub mod display_map;
 mod document_colors;
 mod document_links;
 mod document_symbols;
+use document_symbols::BreadcrumbOutline;
 mod editor_settings;
 mod element;
 mod fold;
@@ -1144,6 +1145,10 @@ pub struct Editor {
     /// which the check cannot tell apart from a genuine one; this flag breaks the tie by timing.
     /// See `test_reanchoring_guard_survives_same_identity_reselection`.
     breadcrumb_reanchoring: bool,
+    /// Set once `navigate_breadcrumb_to` has dismissed the old dropdown and is waiting for the new
+    /// active segment to exist. `BreadcrumbsRow::prepaint` clears it and reopens the dropdown, that
+    /// being the point at which the segment's `PopoverMenu` has registered the shared handle.
+    breadcrumb_pending_reanchor: bool,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
@@ -1185,6 +1190,8 @@ pub struct Editor {
     lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
     refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
     outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
+    breadcrumb_outline_task: Task<()>,
+    breadcrumb_outline: Option<BreadcrumbOutline>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
     pub(crate) colorize_brackets_task: Task<()>,
@@ -2467,6 +2474,7 @@ impl Editor {
             breadcrumb_navigation: None,
             breadcrumb_popover_handle: PopoverMenuHandle::default(),
             breadcrumb_reanchoring: false,
+            breadcrumb_pending_reanchor: false,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
@@ -2499,6 +2507,8 @@ impl Editor {
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
             outline_symbols_at_cursor: None,
+            breadcrumb_outline_task: Task::ready(()),
+            breadcrumb_outline: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
             colorize_brackets_task: Task::ready(()),
@@ -11081,24 +11091,42 @@ impl Editor {
         self.breadcrumb_reanchoring = true;
         let handle = self.breadcrumb_popover_handle.clone();
 
-        cx.defer_in(window, move |_editor, window, cx| {
+        cx.defer_in(window, move |editor, _window, cx| {
             handle.hide(cx);
+            // Reopening has to wait for `path`'s segment to exist and register the shared handle,
+            // which happens while the bar lays itself out. `BreadcrumbsRow::prepaint` is the point
+            // where that has just finished, so it picks this flag up rather than this code trying
+            // to guess how many frames away that is.
+            editor.breadcrumb_pending_reanchor = true;
+            cx.notify();
+        });
+    }
 
-            // The handle only points at `path`'s segment once the bar has re-rendered with it
-            // marked active (see `render_breadcrumb_text`); a single `on_next_frame` runs before
-            // that re-render's own deferred popover elements are wired up (the same reason
-            // `show_menu` nests two calls when focusing a freshly opened menu), so this nests two
-            // as well. Neither frame is nested inside any entity update, so `handle.show` here
-            // can't hit the same re-entrancy hazard `hide` above was just deferred to avoid.
-            let editor = cx.entity().downgrade();
-            window.on_next_frame(move |window, _cx| {
-                window.on_next_frame(move |window, cx| {
-                    handle.show(window, cx);
-                    editor
-                        .update(cx, |editor, _| editor.breadcrumb_reanchoring = false)
-                        .ok();
-                });
-            });
+    pub(crate) fn breadcrumb_pending_reanchor(&self) -> bool {
+        self.breadcrumb_pending_reanchor
+    }
+
+    /// Reopens the dropdown [`Self::navigate_breadcrumb_to`] dismissed, now that the segment it
+    /// belongs to has been laid out.
+    pub(crate) fn reanchor_breadcrumb_popover(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.breadcrumb_pending_reanchor {
+            return;
+        }
+        self.breadcrumb_pending_reanchor = false;
+
+        let handle = self.breadcrumb_popover_handle.clone();
+        let editor = cx.entity().downgrade();
+        // Deferred rather than immediate: this runs mid-draw, and `show` builds and focuses the
+        // dropdown's entity.
+        window.defer(cx, move |window, cx| {
+            handle.show(window, cx);
+            editor
+                .update(cx, |editor, _| editor.breadcrumb_reanchoring = false)
+                .ok();
         });
     }
 

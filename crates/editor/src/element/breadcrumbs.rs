@@ -1,7 +1,6 @@
 //! Breadcrumb path/symbol navigation: turns the breadcrumb bar's segments into clickable
 //! dropdown targets, sharing the project panel's ordering and gitignore treatment (see
-//! `BreadcrumbDirectoryListingSettings`) rather than reimplementing them. Split out from
-//! `element.rs` at the maintainer's request on #60282.
+//! `BreadcrumbDirectoryListingSettings`) rather than reimplementing them.
 
 use super::*;
 
@@ -166,23 +165,18 @@ pub(crate) fn breadcrumb_path_segments(
     (labels, targets)
 }
 
-/// Flattens `text` to a single display line by replacing newlines with spaces, for text that
-/// carries along a set of *byte-offset* highlight ranges (tree-sitter/LSP syntax highlighting, or
-/// a manually computed range like `apply_dirty_filename_style`'s bold-filename span) computed
-/// against the original, unflattened string. Byte-offset highlights are only still valid against
-/// the returned string because `'\n'` and `' '` both encode to exactly one UTF-8 byte, so the
-/// replacement can't shift any byte index — every other transform in this file that touches text
-/// with highlights attached must preserve that same "same byte length" invariant or recompute the
-/// ranges. Debug-asserts the invariant instead of only documenting it, so a future change to the
-/// replacement character (or to `'\n'` handling) fails a test instead of silently mis-highlighting.
+/// Flattens `text` to a single display line. The highlight ranges that travel with breadcrumb text
+/// are byte offsets into the unflattened string, so the replacement has to be the same length as
+/// what it replaces or every range past the first newline shifts.
 fn flatten_text_for_single_line_display(text: &str) -> String {
+    const LINE_BREAK: char = '\n';
+    const REPLACEMENT: &str = " ";
     debug_assert_eq!(
-        '\n'.len_utf8(),
-        ' '.len_utf8(),
-        "replacement must be single-byte like the newline it replaces, or byte-offset highlights \
-         computed against the original text would need remapping"
+        LINE_BREAK.len_utf8(),
+        REPLACEMENT.len(),
+        "replacing {LINE_BREAK:?} with {REPLACEMENT:?} would shift byte-offset highlight ranges"
     );
-    text.replace('\n', " ")
+    text.replace(LINE_BREAK, REPLACEMENT)
 }
 
 /// Renders a breadcrumb symbol dropdown entry the same way the outline picker and outline panel
@@ -513,6 +507,9 @@ pub(crate) struct BreadcrumbDirectoryBrowser {
     active_path: Option<Arc<RelPath>>,
     focus_handle: FocusHandle,
     _on_blur_subscription: Subscription,
+    /// Set by [`Self::on_dismiss`] right after construction, since the subscription needs the
+    /// entity this field lives in. Held here rather than detached so it dies with the browser.
+    _on_dismiss_subscription: Option<Subscription>,
 }
 
 impl BreadcrumbDirectoryBrowser {
@@ -540,8 +537,22 @@ impl BreadcrumbDirectoryBrowser {
                 active_path,
                 focus_handle,
                 _on_blur_subscription,
+                _on_dismiss_subscription: None,
             }
         })
+    }
+
+    /// Runs `on_dismiss` when this browser is dismissed, by any route: `Escape`, focus moving away,
+    /// or another segment's `PopoverMenuHandle::hide`.
+    fn on_dismiss(
+        browser: &Entity<Self>,
+        cx: &mut App,
+        on_dismiss: impl Fn(&mut App) + 'static,
+    ) {
+        let subscription = cx.subscribe(browser, move |_, _: &DismissEvent, cx| on_dismiss(cx));
+        browser.update(cx, |browser, _| {
+            browser._on_dismiss_subscription = Some(subscription);
+        });
     }
 
     fn worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
@@ -790,18 +801,17 @@ fn render_breadcrumb_directory_segment(
                 window,
                 cx,
             );
-            cx.subscribe(&browser, {
+            BreadcrumbDirectoryBrowser::on_dismiss(&browser, cx, {
                 let editor = editor.clone();
                 let path = path.clone();
-                move |_browser, _: &DismissEvent, cx| {
+                move |cx| {
                     if let Some(editor_entity) = editor.upgrade() {
                         editor_entity.update(cx, |editor, cx| {
                             editor.clear_breadcrumb_navigation(worktree_id, &path, cx);
                         });
                     }
                 }
-            })
-            .detach();
+            });
             Some(browser)
         })
         .into_any_element()
@@ -1102,6 +1112,33 @@ struct BreadcrumbSegmentMetrics {
     ellipsis_width: Pixels,
 }
 
+/// Runs describing how `render_segment` will actually paint `segment`'s label. The bold file name
+/// `apply_dirty_filename_style` adds is wider than the plain style, so measuring everything at the
+/// base weight would plan the row narrower than it gets painted and let it overflow.
+fn segment_text_runs(
+    segment: &PreparedBreadcrumbSegment,
+    text: &str,
+    text_style: &gpui::TextStyle,
+) -> Vec<gpui::TextRun> {
+    let Some(filename_offset) = segment
+        .dirty_filename_style
+        .then(|| dirty_filename_offset(&segment.label))
+        .flatten()
+    else {
+        return vec![text_style.to_run(text.len())];
+    };
+
+    let mut bold_style = text_style.clone();
+    bold_style.font_weight = FontWeight::BOLD;
+    if filename_offset == 0 {
+        return vec![bold_style.to_run(text.len())];
+    }
+    vec![
+        text_style.to_run(filename_offset),
+        bold_style.to_run(text.len() - filename_offset),
+    ]
+}
+
 /// Sums `plan`'s rendered width the same way `plan_breadcrumb_layout` modeled it internally,
 /// re-expressed from the plan's `visible`/`ellipses` shape instead of a `dropped` bitmap.
 fn breadcrumb_layout_plan_width(
@@ -1169,10 +1206,10 @@ impl BreadcrumbsRow {
             .iter()
             .map(|segment| {
                 let text = flatten_text_for_single_line_display(&segment.label.text);
-                let run = text_style.to_run(text.len());
+                let runs = segment_text_runs(segment, &text, &text_style);
                 let label_width = window
                     .text_system()
-                    .shape_line(text.into(), font_size, &[run], None)
+                    .shape_line(text.into(), font_size, &runs, None)
                     .width();
                 label_width + arrow_width + gap * 2.
             })
@@ -1409,6 +1446,16 @@ impl gpui::Element for BreadcrumbsRow {
             children.push(element);
         }
 
+        // Every segment has now registered whatever popover handle it owns, which is exactly what
+        // a pending re-anchor was waiting for.
+        if let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade)
+            && editor.read(cx).breadcrumb_pending_reanchor()
+        {
+            editor.update(cx, |editor, cx| {
+                editor.reanchor_breadcrumb_popover(window, cx);
+            });
+        }
+
         BreadcrumbsRowPrepaintState { children }
     }
 
@@ -1434,10 +1481,6 @@ pub fn render_breadcrumb_text(
     prefix: Option<gpui::AnyElement>,
     active_item: &dyn ItemHandle,
     multibuffer_header: bool,
-    // No longer used directly: segment text is measured inside `BreadcrumbsRow::request_layout`,
-    // which gets its own `&mut Window` from GPUI when it actually runs. Kept in the signature
-    // since every caller already threads a `window` through this call site for other reasons.
-    _window: &mut Window,
     cx: &App,
 ) -> gpui::AnyElement {
     let element = h_flex().flex_grow_1().text_ui(cx);
@@ -1465,6 +1508,9 @@ pub fn render_breadcrumb_text(
     // `classify_breadcrumb_segment_kinds` below can tell that segment apart from an ordinary
     // `Middle` directory component.
     let mut has_root_segment = false;
+    // The buffer whose outline the segment dropdowns will need, so hovering the bar can start
+    // fetching it before any of them is opened.
+    let mut outline_buffer_id = None;
 
     if !multibuffer_header
         && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
@@ -1472,6 +1518,7 @@ pub fn render_breadcrumb_text(
         let editor_ref = editor_entity.read(cx);
         if let Some(buffer) = editor_ref.buffer().read(cx).as_singleton() {
             let buffer_id = buffer.read(cx).remote_id();
+            outline_buffer_id = Some(buffer_id);
             let mut path_split = false;
 
             // The real open file's path, independent of any breadcrumb navigation below — used
@@ -1660,6 +1707,18 @@ pub fn render_breadcrumb_text(
         Some(editor) => element
             .id("breadcrumb_container")
             .when(!multibuffer_header, |this| this.overflow_x_scroll())
+            .when_some(outline_buffer_id, |this, buffer_id| {
+                let editor = editor.clone();
+                this.on_hover(move |hovered, _, cx| {
+                    if *hovered {
+                        editor
+                            .update(cx, |editor, cx| {
+                                editor.prefetch_breadcrumb_outline(buffer_id, cx)
+                            })
+                            .ok();
+                    }
+                })
+            })
             .child(
                 ButtonLike::new("toggle outline view")
                     .child(breadcrumbs)
@@ -1705,6 +1764,14 @@ pub fn render_breadcrumb_text(
     }
 }
 
+/// Byte offset at which the file name starts inside a path segment's label, or `None` when the
+/// label isn't a path. Shared between painting the bold file name and measuring it, so the two
+/// can't drift apart.
+fn dirty_filename_offset(segment: &HighlightedText) -> Option<usize> {
+    let filename = std::path::Path::new(segment.text.as_ref()).file_name()?;
+    segment.text.rfind(filename.to_string_lossy().as_ref())
+}
+
 fn apply_dirty_filename_style(
     segment: &HighlightedText,
     text_style: &gpui::TextStyle,
@@ -1712,12 +1779,7 @@ fn apply_dirty_filename_style(
 ) -> Option<gpui::AnyElement> {
     let text = flatten_text_for_single_line_display(&segment.text);
 
-    let filename_position = std::path::Path::new(segment.text.as_ref())
-        .file_name()
-        .and_then(|f| {
-            let filename_str = f.to_string_lossy();
-            segment.text.rfind(filename_str.as_ref())
-        })?;
+    let filename_position = dirty_filename_offset(segment)?;
 
     let bold_weight = FontWeight::BOLD;
     let default_color = Color::Default.color(cx);
@@ -2608,15 +2670,15 @@ mod tests {
             "the pre-navigation popover was dismissed synchronously by the defer"
         );
 
-        // Draining the deferred re-anchor (see `navigate_breadcrumb_to`'s doc comment) must not
-        // panic either: it calls `handle.hide` then, a couple of frames later, `handle.show` —
-        // and by then `browser` is no longer leased, but a fresh browser now backs the handle.
-        // A handful of frames covers both this re-anchor's own two-frame focus dance and the one
-        // already in flight from this test's earlier explicit `handle.show` above.
+        // Completing the re-anchor (see `navigate_breadcrumb_to`) must not panic either: it calls
+        // `handle.hide`, then `handle.show` once the bar has laid the new active segment out — and
+        // by then `browser` is no longer leased, but a fresh browser now backs the handle. Standing
+        // in for that layout here, since this test drives the handle directly rather than rendering
+        // a real bar.
         cx.update(|window, cx| {
-            for _ in 0..4 {
-                window.simulate_next_frame(cx);
-            }
+            editor.update(cx, |editor, cx| {
+                editor.reanchor_breadcrumb_popover(window, cx);
+            });
         });
 
         editor.read_with(cx, |editor, _| {
