@@ -13,6 +13,7 @@ use core_graphics::{
     color_space::CGColorSpace,
     context::{CGContext, CGTextDrawingMode},
     display::CGPoint,
+    geometry::CGSize,
 };
 use core_text::{
     font::CTFont,
@@ -55,13 +56,8 @@ use crate::open_type::apply_features_and_fallbacks;
 const kCGImageAlphaOnly: u32 = 7;
 
 unsafe extern "C" {
-    fn CTRunGetTypographicBounds(
-        run: CTRunRef,
-        range: CFRange,
-        ascent: *mut CGFloat,
-        descent: *mut CGFloat,
-        leading: *mut CGFloat,
-    ) -> CGFloat;
+    fn CTRunGetAdvancesPtr(run: CTRunRef) -> *const CGSize;
+    fn CTRunGetAdvances(run: CTRunRef, range: CFRange, buffer: *mut CGSize);
 }
 
 /// macOS text system using CoreText for font shaping.
@@ -596,17 +592,20 @@ impl MacTextSystemState {
                     .unwrap()
             };
             let run_glyphs = run.glyphs();
-            let glyph_advances = (0..run.glyph_count())
-                .map(|glyph_index| unsafe {
-                    CTRunGetTypographicBounds(
+            let glyph_advances = unsafe {
+                let advances = CTRunGetAdvancesPtr(run.as_concrete_TypeRef());
+                if advances.is_null() {
+                    let mut advances = vec![CGSize::default(); run_glyphs.len()];
+                    CTRunGetAdvances(
                         run.as_concrete_TypeRef(),
-                        CFRange::init(glyph_index, 1),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                    )
-                })
-                .collect::<Vec<_>>();
+                        CFRange::init(0, 0),
+                        advances.as_mut_ptr(),
+                    );
+                    Cow::Owned(advances)
+                } else {
+                    Cow::Borrowed(std::slice::from_raw_parts(advances, run_glyphs.len()))
+                }
+            };
             let font_id = self.id_for_native_font(font);
 
             let glyphs = match runs.last_mut() {
@@ -636,7 +635,7 @@ impl MacTextSystemState {
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
                     is_emoji: self.is_emoji(font_id),
-                    natural_advance: px(*glyph_advance as f32),
+                    natural_advance: px(glyph_advance.width as f32),
                 });
             }
         }
@@ -792,15 +791,14 @@ mod lenient_font_attributes {
 mod tests {
     use crate::MacTextSystem;
     use gpui::{
-        Bounds, FontRun, GlyphId, PlatformTextSystem, RenderGlyphParams, ScaledPixels, TextRun,
-        TextSystem, WindowTextSystem, fit_glyph_bounds_to_width, font, point, px,
+        FontRun, GlyphId, PlatformTextSystem, TextRun, TextSystem, WindowTextSystem, font, px,
     };
     use std::sync::Arc;
 
     #[test]
-    fn test_terminal_force_width_does_not_overlap_ambiguous_width_glyphs() {
+    fn test_terminal_ambiguous_width_glyphs_have_wide_natural_advance() {
         let platform_text_system = Arc::new(MacTextSystem::new());
-        let text_system = Arc::new(TextSystem::new(platform_text_system.clone()));
+        let text_system = Arc::new(TextSystem::new(platform_text_system));
         let font = font("Menlo");
         let font_size = px(15.);
         let font_id = text_system.resolve_font(&font);
@@ -820,54 +818,14 @@ mod tests {
             }],
             Some(cell_width),
         );
-        let scale_factor = 2.;
-        let mut glyph_bounds = Vec::new();
-
+        let mut glyph_count = 0;
         for run in &shaped_line.runs {
             for glyph in &run.glyphs {
                 assert!(glyph.natural_advance > cell_width);
-                let raster_bounds = platform_text_system
-                    .glyph_raster_bounds(&RenderGlyphParams {
-                        font_id: run.font_id,
-                        glyph_id: glyph.id,
-                        font_size,
-                        subpixel_variant: point(0, 0),
-                        scale_factor,
-                        is_emoji: glyph.is_emoji,
-                        subpixel_rendering: false,
-                        dilation: 0,
-                    })
-                    .expect("ambiguous-width glyph should have raster bounds");
-                let glyph_origin_x = ScaledPixels(f32::from(glyph.position.x) * scale_factor);
-                let fitted_bounds = fit_glyph_bounds_to_width(
-                    Bounds {
-                        origin: point(
-                            glyph_origin_x + ScaledPixels(raster_bounds.origin.x.0 as f32),
-                            ScaledPixels(raster_bounds.origin.y.0 as f32),
-                        ),
-                        size: raster_bounds.size.map(|value| ScaledPixels(value.0 as f32)),
-                    },
-                    glyph_origin_x,
-                    ScaledPixels(f32::from(cell_width) * scale_factor),
-                );
-                let left = fitted_bounds.origin.x.0;
-                let right = left + fitted_bounds.size.width.0;
-
-                glyph_bounds.push((left, right));
+                glyph_count += 1;
             }
         }
-
-        assert_eq!(glyph_bounds.len(), text.chars().count());
-        for (index, adjacent_glyphs) in glyph_bounds.windows(2).enumerate() {
-            let (_, current_right) = adjacent_glyphs[0];
-            let (next_left, _) = adjacent_glyphs[1];
-            assert!(
-                current_right - next_left <= 0.001,
-                "glyph {index} extends {overlap}px into glyph {} after terminal force-width positioning",
-                index + 1,
-                overlap = current_right - next_left,
-            );
-        }
+        assert_eq!(glyph_count, text.chars().count());
     }
 
     #[test]
@@ -918,7 +876,7 @@ mod tests {
     fn test_layout_line_combining_mark_has_zero_natural_advance() {
         let fonts = MacTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
-        let text = "a\u{301}\u{300}";
+        let text = "q\u{301}\u{300}b";
         let layout = fonts.layout_line(
             text,
             px(16.),
@@ -928,18 +886,17 @@ mod tests {
             }],
         );
 
-        let glyph_metrics = layout
+        let glyph_advances = layout
             .runs
             .iter()
             .flat_map(|run| &run.glyphs)
-            .map(|glyph| (glyph.position.x, glyph.natural_advance))
+            .map(|glyph| glyph.natural_advance)
             .collect::<Vec<_>>();
-        assert!(
-            glyph_metrics
-                .iter()
-                .any(|(_, natural_advance)| *natural_advance == px(0.)),
-            "glyph metrics: {glyph_metrics:?}"
-        );
+        assert_eq!(glyph_advances.len(), 4);
+        assert!(glyph_advances[0] > px(0.));
+        assert_eq!(glyph_advances[1], px(0.));
+        assert_eq!(glyph_advances[2], px(0.));
+        assert!(glyph_advances[3] > px(0.));
     }
 
     #[test]

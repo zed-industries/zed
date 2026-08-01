@@ -83,8 +83,8 @@ pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
     height: Pixels(750.),
 };
 
-#[doc(hidden)]
-pub fn fit_glyph_bounds_to_width(
+/// Horizontally scales glyph bounds to fit within an allocated text cell width.
+fn fit_glyph_bounds_to_width(
     mut bounds: Bounds<ScaledPixels>,
     glyph_origin_x: ScaledPixels,
     max_width: ScaledPixels,
@@ -6815,6 +6815,7 @@ pub fn outline(
 
 #[cfg(test)]
 mod tests {
+    use super::fit_glyph_bounds_to_width;
     use std::{
         cell::{Cell, RefCell},
         path::PathBuf,
@@ -6827,7 +6828,7 @@ mod tests {
         InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
         MouseMoveEvent, ParentElement, Pixels, Point, Render, ScaledPixels,
         StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
-        WindowOptions, canvas, div, fit_glyph_bounds_to_width, point, px, size,
+        WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
