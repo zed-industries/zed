@@ -59,6 +59,7 @@ impl<'de> serde::Deserialize<'de> for VsCodeTaskDefinition {
 enum Command {
     Npm {
         script: String,
+        path: Option<String>,
     },
     Shell {
         command: String,
@@ -72,7 +73,7 @@ enum Command {
 
 fn generate_label(command: &Option<Command>) -> String {
     match command {
-        Some(Command::Npm { script }) => format!("npm: {}", script),
+        Some(Command::Npm { script, .. }) => format!("npm: {}", script),
         Some(Command::Gulp { task }) => format!("gulp: {}", task),
         Some(Command::Shell { command, .. }) => {
             if command.trim().is_empty() {
@@ -105,10 +106,16 @@ impl VsCodeTaskDefinition {
             bail!("Missing `type` field in task");
         };
 
-        let (command, args) = match command {
-            Command::Npm { script } => ("npm".to_owned(), vec!["run".to_string(), script]),
-            Command::Shell { command, args } => (command, args),
-            Command::Gulp { task } => ("gulp".to_owned(), vec![task]),
+        let (command, args, cwd) = match command {
+            Command::Npm { script, path } => (
+                "npm".to_owned(),
+                vec!["run".to_string(), script],
+                path.map(|path| {
+                    format!("{}/{}", VariableName::WorktreeRoot.template_value(), path)
+                }),
+            ),
+            Command::Shell { command, args } => (command, args, None),
+            Command::Gulp { task } => ("gulp".to_owned(), vec![task], None),
         };
         // Per VSC docs, only `command`, `args` and `options` support variable substitution.
         let command = replacer.replace(&command);
@@ -117,10 +124,13 @@ impl VsCodeTaskDefinition {
             label: self.label,
             command,
             args,
+            cwd: cwd.map(|cwd| replacer.replace(&cwd)),
             ..TaskTemplate::default()
         };
         if let Some(options) = self.options {
-            template.cwd = options.cwd.map(|cwd| replacer.replace(&cwd));
+            if let Some(cwd) = options.cwd {
+                template.cwd = Some(replacer.replace(&cwd));
+            }
             template.env = options.env;
         }
         Ok(Some(template))
@@ -223,6 +233,7 @@ mod tests {
                 label: "gulp: tests".to_string(),
                 command: Some(Command::Npm {
                     script: "build:tests:notypecheck".to_string(),
+                    path: None,
                 }),
                 other_attributes: Default::default(),
                 options: None,
@@ -245,6 +256,7 @@ mod tests {
                 label: "npm: build:compiler".to_string(),
                 command: Some(Command::Npm {
                     script: "build:compiler".to_string(),
+                    path: None,
                 }),
                 other_attributes: Default::default(),
                 options: None,
@@ -253,6 +265,7 @@ mod tests {
                 label: "npm: build:tests".to_string(),
                 command: Some(Command::Npm {
                     script: "build:tests:notypecheck".to_string(),
+                    path: None,
                 }),
                 other_attributes: Default::default(),
                 options: None,
@@ -303,6 +316,31 @@ mod tests {
     }
 
     #[test]
+    fn can_deserialize_npm_monorepo_tasks() {
+        const NPM_TASKS: &str = include_str!("../test_data/npm-monorepo.json");
+        let vscode_definitions: VsCodeTaskFile = serde_json_lenient::from_str(NPM_TASKS).unwrap();
+        let expected = vec![
+            TaskTemplate {
+                label: "Build components".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build".to_string()],
+                env: HashMap::from_iter([("NODE_ENV".to_string(), "production".to_string())]),
+                cwd: Some("$ZED_WORKTREE_ROOT/packages/components".to_string()),
+                ..Default::default()
+            },
+            TaskTemplate {
+                label: "Build app".to_string(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), "build".to_string()],
+                cwd: Some("${ZED_WORKTREE_ROOT}/packages/app".to_string()),
+                ..Default::default()
+            },
+        ];
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
+        assert_eq!(tasks.0, expected);
+    }
+
+    #[test]
     fn can_deserialize_rust_analyzer_tasks() {
         const RUST_ANALYZER_TASKS: &str = include_str!("../test_data/rust-analyzer.json");
         let vscode_definitions: VsCodeTaskFile =
@@ -312,6 +350,7 @@ mod tests {
                 label: "Build Extension in Background".to_string(),
                 command: Some(Command::Npm {
                     script: "watch".to_string(),
+                    path: Some("editors/code/".to_string()),
                 }),
                 options: None,
                 other_attributes: Default::default(),
@@ -320,6 +359,7 @@ mod tests {
                 label: "Build Extension".to_string(),
                 command: Some(Command::Npm {
                     script: "build".to_string(),
+                    path: Some("editors/code/".to_string()),
                 }),
                 options: None,
                 other_attributes: Default::default(),
@@ -346,6 +386,7 @@ mod tests {
                 label: "Pretest".to_string(),
                 command: Some(Command::Npm {
                     script: "pretest".to_string(),
+                    path: Some("editors/code/".to_string()),
                 }),
                 options: None,
                 other_attributes: Default::default(),
@@ -374,12 +415,14 @@ mod tests {
                 label: "Build Extension in Background".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "watch".to_string()],
+                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
                 ..Default::default()
             },
             TaskTemplate {
                 label: "Build Extension".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build".to_string()],
+                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
                 ..Default::default()
             },
             TaskTemplate {
@@ -396,6 +439,7 @@ mod tests {
                 label: "Pretest".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "pretest".to_string()],
+                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
                 ..Default::default()
             },
         ];
@@ -420,7 +464,8 @@ mod tests {
     fn test_generate_label() {
         assert_eq!(
             generate_label(&Some(Command::Npm {
-                script: "start".to_string()
+                script: "start".to_string(),
+                path: None,
             })),
             "npm: start"
         );
