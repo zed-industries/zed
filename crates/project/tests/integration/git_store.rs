@@ -1637,6 +1637,7 @@ mod trust_tests {
 mod resolve_worktree_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use path::PathStyle;
     use project::{
         git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name,
         repo_identity_path,
@@ -1761,7 +1762,7 @@ mod resolve_worktree_tests {
         ];
         for (common_dir, expected) in examples {
             assert_eq!(
-                repo_identity_path(Path::new(common_dir)),
+                repo_identity_path(Path::new(common_dir), PathStyle::local()),
                 Path::new(expected),
                 "identity path for common_dir {common_dir:?} should be {expected:?}"
             );
