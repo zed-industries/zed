@@ -1535,6 +1535,7 @@ impl BreadcrumbsRow {
         position: usize,
         last_position: usize,
         content: gpui::AnyElement,
+        interactive: bool,
         cx: &App,
     ) -> gpui::AnyElement {
         // Only the label is painted on hover. The separator stays clickable — it belongs to the
@@ -1543,8 +1544,12 @@ impl BreadcrumbsRow {
         let label = div()
             .px(BREADCRUMB_LABEL_PADDING)
             .rounded_sm()
-            .group_hover(BREADCRUMB_SEGMENT_GROUP, |style| {
-                style.bg(cx.theme().colors().ghost_element_hover)
+            // Multi buffer excerpt headers render the same trail as plain text, with no dropdowns
+            // to open, so lighting it up on hover would advertise a click that does nothing.
+            .when(interactive, |this| {
+                this.group_hover(BREADCRUMB_SEGMENT_GROUP, |style| {
+                    style.bg(cx.theme().colors().ghost_element_hover)
+                })
             })
             .child(content);
 
@@ -1618,7 +1623,8 @@ impl BreadcrumbsRow {
                 .into_any_element(),
             None => text,
         };
-        let label = self.with_separator(position, last_position, content, cx);
+        let interactive = segment.target.is_some() && self.editor.is_some();
+        let label = self.with_separator(position, last_position, content, interactive, cx);
 
         let element = match (segment.target.clone(), self.editor.clone()) {
             (Some(BreadcrumbSegmentTarget::Symbol { buffer_id, item }), Some(editor)) => {
@@ -1634,14 +1640,14 @@ impl BreadcrumbsRow {
                 Some(editor),
             ) => {
                 let Some(upgraded_editor) = editor.upgrade() else {
-                    return self.wrap_segment(label);
+                    return label;
                 };
                 let Some(workspace) = upgraded_editor
                     .read(cx)
                     .workspace()
                     .map(|workspace| workspace.downgrade())
                 else {
-                    return self.wrap_segment(label);
+                    return label;
                 };
                 let shared_popover_handle = upgraded_editor.read(cx).breadcrumb_popover_handle();
                 render_breadcrumb_directory_segment(
@@ -1656,7 +1662,7 @@ impl BreadcrumbsRow {
                     index,
                 )
             }
-            _ => label,
+            _ => return label,
         };
         self.wrap_segment(element)
     }
@@ -1670,7 +1676,7 @@ impl BreadcrumbsRow {
     /// layout-logic complexity here.
     fn render_ellipsis(&self, position: usize, last_position: usize, cx: &App) -> gpui::AnyElement {
         let content = Label::new("⋯").color(Color::Placeholder).into_any_element();
-        self.with_separator(position, last_position, content, cx)
+        self.with_separator(position, last_position, content, false, cx)
     }
 }
 
