@@ -218,8 +218,19 @@ impl BreadcrumbSymbolDelegate {
                 selected_index,
                 current_range,
             };
-            Picker::uniform_list(delegate, window, cx).popover()
+            Picker::uniform_list(delegate, window, cx)
+                .popover()
+                .initial_width(rems(18.))
         })
+    }
+
+    /// Whether any listed symbol is the segment's own, i.e. whether the checkmark column will ever
+    /// be filled. Symbol menus usually have no current row, and reserving the column regardless
+    /// indents every row for a checkmark that never appears.
+    fn shows_current_marker(&self) -> bool {
+        self.current_range
+            .as_ref()
+            .is_some_and(|range| self.items.iter().any(|item| &item.range == range))
     }
 
     fn item_at(&self, index: usize) -> Option<&OutlineItem<Anchor>> {
@@ -359,17 +370,23 @@ impl PickerDelegate for BreadcrumbSymbolDelegate {
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
-            .start_slot(if is_current {
-                Icon::new(IconName::Check)
-                    .color(Color::Accent)
-                    .size(IconSize::Small)
-                    .into_any_element()
-            } else {
-                div().size(IconSize::Small.rems()).into_any_element()
+            .when(self.shows_current_marker(), |this| {
+                this.start_slot(div().flex_none().size(IconSize::Small.rems()).when(
+                    is_current,
+                    |this| {
+                        this.child(
+                            Icon::new(IconName::Check)
+                                .color(Color::Accent)
+                                .size(IconSize::Small),
+                        )
+                    },
+                ))
             })
             .child(
-                StyledText::new(flatten_text_for_single_line_display(&item.text))
-                    .with_default_highlights(&text_style, item.highlight_ranges.clone()),
+                div().text_ui(cx).child(
+                    StyledText::new(flatten_text_for_single_line_display(&item.text))
+                        .with_default_highlights(&text_style, item.highlight_ranges.clone()),
+                ),
             )
             .into_any_element(),
         )
@@ -391,8 +408,9 @@ fn render_breadcrumb_symbol_segment(
     // also reaching the enclosing "toggle outline view" button and opening the outline picker
     // behind the popover.
     let trigger = ButtonLike::new(("breadcrumb-symbol", index))
-        .style(ButtonStyle::Subtle)
+        .style(ButtonStyle::Transparent)
         .size(ButtonSize::None)
+        .height(rems_from_px(22.).into())
         .child(label);
 
     PopoverMenu::new(("breadcrumb-symbol-menu", index))
@@ -625,6 +643,10 @@ pub(crate) struct BreadcrumbDirectoryDelegate {
     entries: Vec<BreadcrumbDirectoryEntry>,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    /// Whether any row will draw an icon. Rows reserve the icon's width to stay aligned with each
+    /// other, but reserving it when the settings turn every icon off just indents the whole list
+    /// for nothing.
+    show_icons: bool,
     _expand_task: gpui::Task<()>,
 }
 
@@ -650,9 +672,14 @@ impl BreadcrumbDirectoryDelegate {
                 entries: Vec::new(),
                 matches: Vec::new(),
                 selected_index: 0,
+                show_icons: false,
                 _expand_task: gpui::Task::ready(()),
             };
-            let mut picker = Picker::uniform_list(delegate, window, cx).popover();
+            let mut picker = Picker::uniform_list(delegate, window, cx)
+                .popover()
+                // Narrower than the picker default, which is sized for modals: this lists file
+                // names next to the segment it drops from, not search results across a project.
+                .initial_width(rems(15.));
             picker.delegate.reload_entries(cx);
             picker.delegate.expand_current_path(window, cx);
             picker.delegate.select_active_path();
@@ -676,6 +703,12 @@ impl BreadcrumbDirectoryDelegate {
             return;
         };
         self.entries = breadcrumb_directory_entries(&project, &worktree, &self.current_path, cx);
+
+        let settings = BreadcrumbDirectoryListingSettings::get_global(cx);
+        self.show_icons = self.entries.iter().any(|entry| {
+            breadcrumb_entry_icon_source(entry.is_dir, settings.file_icons, settings.folder_icons)
+                != BreadcrumbEntryIconSource::None
+        });
     }
 
     /// Starts on the row leading to the open file, so the dropdown opens where the user already is
@@ -948,14 +981,11 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
             }
             BreadcrumbEntryIconSource::None => None,
         };
-        let icon = icon_path
-            .map(Icon::from_path)
-            .map(|icon| {
-                icon.color(Color::Muted)
-                    .size(IconSize::Small)
-                    .into_any_element()
-            })
-            .unwrap_or_else(|| div().size(IconSize::Small.rems()).into_any_element());
+        let icon = icon_path.map(Icon::from_path).map(|icon| {
+            icon.color(Color::Muted)
+                .size(IconSize::Small)
+                .into_any_element()
+        });
 
         // The project panel's own mapping, so a modified or untracked entry reads the same in both
         // places. Only the label is colored; the panel leaves icons muted too.
@@ -972,7 +1002,14 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
-            .start_slot(icon)
+            .when(self.show_icons, |this| {
+                this.start_slot(
+                    div()
+                        .flex_none()
+                        .size(IconSize::Small.rems())
+                        .children(icon),
+                )
+            })
             .child(
                 HighlightedLabel::new(entry.name.clone(), self.matches[index].positions.clone())
                     .color(label_color),
@@ -1002,8 +1039,9 @@ fn render_breadcrumb_directory_segment(
     index: usize,
 ) -> gpui::AnyElement {
     let trigger = ButtonLike::new(("breadcrumb-directory", index))
-        .style(ButtonStyle::Subtle)
+        .style(ButtonStyle::Transparent)
         .size(ButtonSize::None)
+        .height(rems_from_px(22.).into())
         .child(label);
 
     // The active segment's `PopoverMenu` carries the handle `Editor::navigate_breadcrumb_to`
@@ -1328,6 +1366,10 @@ struct PreparedBreadcrumbSegment {
     /// needs `active_item` and `workspace::TabBarSettings`, neither of which a `'static` GPUI
     /// element like `BreadcrumbsRow` can hold onto.
     dirty_filename_style: bool,
+    /// The icon shown before this segment's name, mirroring the project panel's file and folder
+    /// icons. This is what tells the file apart from the directories leading to it, the way
+    /// IntelliJ's navigation bar does.
+    icon: Option<SharedString>,
 }
 
 /// Per-segment "slot" width [`BreadcrumbsRow`] plans against: the segment's own label plus one
@@ -1402,19 +1444,48 @@ fn breadcrumb_layout_plan_width(
 struct BreadcrumbsRow {
     segments: Vec<PreparedBreadcrumbSegment>,
     editor: Option<WeakEntity<Editor>>,
-    breadcrumb_font: Option<Font>,
+}
+
+/// Names the per-segment hover group, so the highlight can be painted on the segment's label alone
+/// while the separator after it stays unpainted despite being inside the same click target.
+const BREADCRUMB_SEGMENT_GROUP: &str = "breadcrumb-segment";
+
+/// Horizontal padding around a segment's label, inside its hover highlight.
+const BREADCRUMB_LABEL_PADDING: Pixels = px(4.);
+
+/// Matches the project panel's own entry icons, so the two read as the same tree.
+const BREADCRUMB_ICON_SIZE: IconSize = IconSize::Small;
+
+/// The icon for one breadcrumb segment: only the segment standing for the open file gets one,
+/// which is what sets the file apart from the directories leading to it. Directories get none —
+/// IntelliJ's navigation bar shows no folder icons either, and a row of them reads as noise rather
+/// than as information. Symbol segments get none because they name code, not an entry in the tree.
+fn breadcrumb_segment_icon(
+    target: &Option<BreadcrumbSegmentTarget>,
+    file_path: Option<&RelPath>,
+    cx: &App,
+) -> Option<SharedString> {
+    if !BreadcrumbDirectoryListingSettings::get_global(cx).file_icons {
+        return None;
+    }
+    match target {
+        Some(BreadcrumbSegmentTarget::Symbol { item: None, .. }) => {
+            file_icons::FileIcons::get_icon(file_path?.as_std_path(), cx)
+        }
+        _ => None,
+    }
+}
+
+fn breadcrumb_separator_width(window: &Window) -> Pixels {
+    IconSize::XSmall.rems().to_pixels(window.rem_size())
 }
 
 impl BreadcrumbsRow {
+    /// The bar reads as part of the UI chrome rather than as code, so it uses the UI font — the
+    /// same choice IntelliJ's navigation bar makes — rather than the buffer font the breadcrumb
+    /// text is measured in elsewhere.
     fn effective_text_style(&self, window: &Window) -> gpui::TextStyle {
-        let mut text_style = window.text_style();
-        if let Some(font) = &self.breadcrumb_font {
-            text_style.font_family = font.family.clone();
-            text_style.font_features = font.features.clone();
-            text_style.font_style = font.style;
-            text_style.font_weight = font.weight;
-        }
-        text_style
+        window.text_style()
     }
 
     fn measure(&self, window: &mut Window) -> BreadcrumbSegmentMetrics {
@@ -1422,18 +1493,15 @@ impl BreadcrumbsRow {
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let gap = window.rem_size() * 0.25;
 
-        let arrow_run = text_style.to_run("›".len());
-        let arrow_width = window
-            .text_system()
-            .shape_line("›".into(), font_size, &[arrow_run], None)
-            .width();
+        let arrow_width = breadcrumb_separator_width(window);
 
         let ellipsis_run = text_style.to_run("⋯".len());
         let ellipsis_label_width = window
             .text_system()
             .shape_line("⋯".into(), font_size, &[ellipsis_run], None)
             .width();
-        let ellipsis_width = ellipsis_label_width + arrow_width + gap * 2.;
+        let ellipsis_width =
+            ellipsis_label_width + BREADCRUMB_LABEL_PADDING * 2. + arrow_width + gap * 2.;
 
         let widths = self
             .segments
@@ -1445,7 +1513,12 @@ impl BreadcrumbsRow {
                     .text_system()
                     .shape_line(text.into(), font_size, &runs, None)
                     .width();
-                label_width + arrow_width + gap * 2.
+                let icon_width = if segment.icon.is_some() {
+                    BREADCRUMB_ICON_SIZE.rems().to_pixels(window.rem_size()) + gap
+                } else {
+                    Pixels::ZERO
+                };
+                icon_width + label_width + BREADCRUMB_LABEL_PADDING * 2. + arrow_width + gap * 2.
             })
             .collect();
 
@@ -1462,14 +1535,44 @@ impl BreadcrumbsRow {
         position: usize,
         last_position: usize,
         content: gpui::AnyElement,
+        cx: &App,
     ) -> gpui::AnyElement {
+        // Only the label is painted on hover. The separator stays clickable — it belongs to the
+        // segment on its left, which is the one a click drills into — but it isn't part of that
+        // segment's name, so highlighting it reads as though it were.
+        let label = div()
+            .px(BREADCRUMB_LABEL_PADDING)
+            .rounded_sm()
+            .group_hover(BREADCRUMB_SEGMENT_GROUP, |style| {
+                style.bg(cx.theme().colors().ghost_element_hover)
+            })
+            .child(content);
+
         if position == last_position {
-            return content;
+            return label.into_any_element();
         }
         h_flex()
             .gap_1()
-            .child(content)
-            .child(Label::new("›").color(Color::Placeholder))
+            .child(label)
+            .child(
+                // Nudged down by a pixel: the chevron is centered in its own box, but breadcrumb
+                // text is almost all lowercase, whose visual center sits below the line's
+                // geometric one, so a geometrically centered chevron reads as raised beside it.
+                div().relative().top(px(2.)).child(
+                    Icon::new(IconName::ChevronRight)
+                        .size(IconSize::XSmall)
+                        .color(Color::Placeholder),
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// Hosts the hover group [`Self::with_separator`]'s label reacts to, wrapped around the whole
+    /// segment so hovering anywhere in its click target — separator included — lights the label.
+    fn wrap_segment(&self, element: gpui::AnyElement) -> gpui::AnyElement {
+        div()
+            .group(BREADCRUMB_SEGMENT_GROUP)
+            .child(element)
             .into_any_element()
     }
 
@@ -1488,19 +1591,36 @@ impl BreadcrumbsRow {
         let mut text_style = self.effective_text_style(window);
         text_style.color = Color::Muted.color(cx);
 
-        if segment.dirty_filename_style
+        let text = if segment.dirty_filename_style
             && let Some(styled_element) =
                 apply_dirty_filename_style(&segment.label, &text_style, cx)
         {
-            return self.with_separator(position, last_position, styled_element);
-        }
+            styled_element
+        } else {
+            StyledText::new(flatten_text_for_single_line_display(&segment.label.text))
+                .with_default_highlights(&text_style, segment.label.highlights.clone())
+                .into_any()
+        };
 
-        let label = StyledText::new(flatten_text_for_single_line_display(&segment.label.text))
-            .with_default_highlights(&text_style, segment.label.highlights.clone())
-            .into_any();
-        let label = self.with_separator(position, last_position, label);
+        let content = match &segment.icon {
+            Some(icon) => h_flex()
+                .gap_1()
+                .child(
+                    // Nudged for the same reason as the separator: centering against the line box
+                    // reads high beside mostly-lowercase text.
+                    div().relative().top(px(2.)).child(
+                        Icon::from_path(icon.clone())
+                            .color(Color::Muted)
+                            .size(BREADCRUMB_ICON_SIZE),
+                    ),
+                )
+                .child(text)
+                .into_any_element(),
+            None => text,
+        };
+        let label = self.with_separator(position, last_position, content, cx);
 
-        match (segment.target.clone(), self.editor.clone()) {
+        let element = match (segment.target.clone(), self.editor.clone()) {
             (Some(BreadcrumbSegmentTarget::Symbol { buffer_id, item }), Some(editor)) => {
                 render_breadcrumb_symbol_segment(editor, buffer_id, item, label, index)
             }
@@ -1514,14 +1634,14 @@ impl BreadcrumbsRow {
                 Some(editor),
             ) => {
                 let Some(upgraded_editor) = editor.upgrade() else {
-                    return label;
+                    return self.wrap_segment(label);
                 };
                 let Some(workspace) = upgraded_editor
                     .read(cx)
                     .workspace()
                     .map(|workspace| workspace.downgrade())
                 else {
-                    return label;
+                    return self.wrap_segment(label);
                 };
                 let shared_popover_handle = upgraded_editor.read(cx).breadcrumb_popover_handle();
                 render_breadcrumb_directory_segment(
@@ -1537,7 +1657,8 @@ impl BreadcrumbsRow {
                 )
             }
             _ => label,
-        }
+        };
+        self.wrap_segment(element)
     }
 
     /// The "⋯" placeholder for a collapsed run. Deliberately inert (plain `Label`, no popover
@@ -1547,9 +1668,9 @@ impl BreadcrumbsRow {
     /// making it list the hidden components itself would mean giving it its own popover machinery
     /// (a `PopoverMenu` plus a listing widget) for a rarely-hit case, which isn't worth the added
     /// layout-logic complexity here.
-    fn render_ellipsis(&self, position: usize, last_position: usize) -> gpui::AnyElement {
+    fn render_ellipsis(&self, position: usize, last_position: usize, cx: &App) -> gpui::AnyElement {
         let content = Label::new("⋯").color(Color::Placeholder).into_any_element();
-        self.with_separator(position, last_position, content)
+        self.with_separator(position, last_position, content, cx)
     }
 }
 
@@ -1599,8 +1720,16 @@ impl gpui::Element for BreadcrumbsRow {
         let ellipsis_width = metrics.ellipsis_width;
         let kinds: Vec<BreadcrumbSegmentKind> = self.segments.iter().map(|s| s.kind).collect();
 
+        // A flex item's automatic minimum size is its min-content size, so answering `MinContent`
+        // with the full trail would tell the layout this row can never be narrower than its text —
+        // the parent would stop offering it less, and `plan_breadcrumb_layout` would never see a
+        // width worth collapsing for. The row can always fall back to one segment plus an ellipsis,
+        // and pins `min_size` to match rather than leaving it to that automatic minimum.
+        let mut style = Style::default();
+        style.min_size.width = px(0.).into();
+
         let layout_id = window.request_measured_layout(
-            Style::default(),
+            style,
             move |known_dimensions, available_space, _window, _cx| {
                 let width = known_dimensions
                     .width
@@ -1614,7 +1743,12 @@ impl gpui::Element for BreadcrumbsRow {
                             );
                             breadcrumb_layout_plan_width(&widths, &plan, ellipsis_width)
                         }
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => natural_width,
+                        AvailableSpace::MinContent => widths
+                            .last()
+                            .copied()
+                            .unwrap_or(ellipsis_width)
+                            .max(ellipsis_width),
+                        AvailableSpace::MaxContent => natural_width,
                     });
                 let height = known_dimensions.height.unwrap_or(line_height);
                 size(width, height)
@@ -1668,7 +1802,7 @@ impl gpui::Element for BreadcrumbsRow {
                 FinalItem::Segment(index) => {
                     self.render_segment(index, position, last_position, window, cx)
                 }
-                FinalItem::Ellipsis => self.render_ellipsis(position, last_position),
+                FinalItem::Ellipsis => self.render_ellipsis(position, last_position, cx),
             };
             let available_space = size(
                 AvailableSpace::MaxContent,
@@ -1711,13 +1845,15 @@ impl gpui::Element for BreadcrumbsRow {
 
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
-    breadcrumb_font: Option<Font>,
     prefix: Option<gpui::AnyElement>,
     active_item: &dyn ItemHandle,
     multibuffer_header: bool,
     cx: &App,
 ) -> gpui::AnyElement {
-    let element = h_flex().flex_grow_1().text_ui(cx);
+    // `min_w_0` so the toolbar's width actually reaches `BreadcrumbsRow`: a flex item defaults to
+    // a minimum size of its content, which would let the row report the width it wants rather than
+    // the width it has, and `plan_breadcrumb_layout` would never collapse anything.
+    let element = h_flex().flex_grow_1().min_w_0().text_ui(cx);
 
     let editor = active_item
         .downcast::<Editor>()
@@ -1745,6 +1881,9 @@ pub fn render_breadcrumb_text(
     // The buffer whose outline the segment dropdowns will need, so hovering the bar can start
     // fetching it before any of them is opened.
     let mut outline_buffer_id = None;
+    // The open file's own path, for the file segment's icon. Only that segment shows one; the
+    // directory segments carry their own paths in their targets.
+    let mut file_path_for_icon: Option<Arc<RelPath>> = None;
 
     if !multibuffer_header
         && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
@@ -1760,6 +1899,9 @@ pub fn render_breadcrumb_text(
             // `active_path` that submenus still highlight their way towards, so browsing
             // elsewhere in the tree doesn't lose the trail back to the file actually open.
             let real_project_path = active_item.project_path(cx);
+            file_path_for_icon = real_project_path
+                .as_ref()
+                .map(|project_path| project_path.path.clone());
             // Set once a directory row has been chosen inside an open dropdown (see
             // `Editor::navigate_breadcrumb_to`); while set, the bar shows that directory's own
             // path instead of the open file's, with no symbol segments.
@@ -1900,23 +2042,25 @@ pub fn render_breadcrumb_text(
         .zip(symbol_segments)
         .zip(kinds)
         .enumerate()
-        .map(
-            |(index, ((label, target), kind))| PreparedBreadcrumbSegment {
+        .map(|(index, ((label, target), kind))| {
+            let icon = breadcrumb_segment_icon(&target, file_path_for_icon.as_deref(), cx);
+            PreparedBreadcrumbSegment {
                 kind,
                 label,
                 target,
                 dirty_filename_style: apply_dirty_filename_style && index == file_segment_index,
-            },
-        )
+                icon,
+            }
+        })
         .collect();
 
     let row = BreadcrumbsRow {
         segments: prepared_segments,
         editor: editor.clone(),
-        breadcrumb_font,
     };
 
     let breadcrumbs_stack = div()
+        .min_w_0()
         .when(multibuffer_header, |this| {
             this.pl_2()
                 .border_l_1()
@@ -1927,6 +2071,7 @@ pub fn render_breadcrumb_text(
 
     let breadcrumbs = if let Some(prefix) = prefix {
         h_flex()
+            .min_w_0()
             .gap_1p5()
             .child(prefix)
             .child(breadcrumbs_stack)
@@ -1940,7 +2085,6 @@ pub fn render_breadcrumb_text(
     match editor {
         Some(editor) => element
             .id("breadcrumb_container")
-            .when(!multibuffer_header, |this| this.overflow_x_scroll())
             .when_some(outline_buffer_id, |this, buffer_id| {
                 let editor = editor.clone();
                 this.on_hover(move |hovered, _, cx| {
@@ -1953,39 +2097,29 @@ pub fn render_breadcrumb_text(
                     }
                 })
             })
+            // A plain row rather than a `ButtonLike`: the whole bar is no longer clickable as one
+            // unit (every segment carries its own dropdown), and `ButtonLike` renders `flex_none`,
+            // which would stop the bar from ever being narrower than its content and so keep
+            // `BreadcrumbsRow` from being told to collapse.
             .child(
-                ButtonLike::new("toggle outline view")
+                h_flex()
+                    .h(rems_from_px(22.))
+                    .px_1()
+                    .min_w_0()
                     .child(breadcrumbs)
-                    // Transparent rather than the default `Subtle` even outside the multibuffer
-                    // header case: with `Subtle`, hovering any part of the bar — including a
-                    // segment's own `Subtle` popover trigger nested inside it — tinted the whole
-                    // bar the same color, so individual segments never looked clickable on their
-                    // own. Each segment still gets its own hover highlight; this just stops the
-                    // outer bar from drowning it out.
-                    .style(ButtonStyle::Transparent)
-                    .when(!multibuffer_header, |this| {
-                        // No tooltip on the whole-bar `ButtonLike`: it repeatedly ended up
-                        // painted on top of a segment's own open dropdown (escaping two separate
-                        // suppression mechanisms in the process), which this removes for good
-                        // rather than patching a third time. Right-click-to-copy-path is kept —
-                        // it doesn't need a hint to be discoverable enough to keep.
-                        this.when(has_project_path, |this| {
-                            this.on_right_click({
-                                let editor = editor.clone();
-                                move |_, _, cx| {
-                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.target_file_abs_path(cx)
-                                        })
-                                    }) {
-                                        if let Some(path_str) = abs_path.to_str() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                path_str.to_string(),
-                                            ));
-                                        }
-                                    }
+                    .when(!multibuffer_header && has_project_path, |this| {
+                        this.on_mouse_down(gpui::MouseButton::Right, {
+                            let editor = editor.clone();
+                            move |_, _, cx| {
+                                if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                    editor.update(cx, |editor, cx| editor.target_file_abs_path(cx))
+                                }) && let Some(path_str) = abs_path.to_str()
+                                {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        path_str.to_string(),
+                                    ));
                                 }
-                            })
+                            }
                         })
                     }),
             )

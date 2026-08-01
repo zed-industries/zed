@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, Context, EventEmitter, Font, Global, IntoElement, Render, Subscription, Window,
+    AnyElement, App, Context, EventEmitter, Global, IntoElement, Render, Subscription, Window,
 };
 use ui::prelude::*;
 use workspace::{
@@ -7,14 +7,8 @@ use workspace::{
     item::{HighlightedText, ItemEvent, ItemHandle},
 };
 
-type RenderBreadcrumbTextFn = fn(
-    Vec<HighlightedText>,
-    Option<Font>,
-    Option<AnyElement>,
-    &dyn ItemHandle,
-    bool,
-    &App,
-) -> AnyElement;
+type RenderBreadcrumbTextFn =
+    fn(Vec<HighlightedText>, Option<AnyElement>, &dyn ItemHandle, bool, &App) -> AnyElement;
 
 pub struct RenderBreadcrumbText(pub RenderBreadcrumbTextFn);
 
@@ -57,21 +51,16 @@ impl Render for Breadcrumbs {
             return element.into_any_element();
         };
 
-        let Some((segments, breadcrumb_font)) = active_item.breadcrumbs(cx) else {
+        // The font the item reports is deliberately ignored: the bar reads as UI chrome, not as
+        // code, so it renders in the UI font.
+        let Some((segments, _)) = active_item.breadcrumbs(cx) else {
             return element.into_any_element();
         };
 
         let prefix_element = active_item.breadcrumb_prefix(window, cx);
 
         if let Some(render_fn) = cx.try_global::<RenderBreadcrumbText>() {
-            (render_fn.0)(
-                segments,
-                breadcrumb_font,
-                prefix_element,
-                active_item.as_ref(),
-                false,
-                cx,
-            )
+            (render_fn.0)(segments, prefix_element, active_item.as_ref(), false, cx)
         } else {
             element.into_any_element()
         }

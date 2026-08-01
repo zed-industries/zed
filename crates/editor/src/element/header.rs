@@ -895,12 +895,8 @@ pub(crate) fn render_buffer_header(
                                         el.child(Icon::new(IconName::FileLock).color(Color::Muted))
                                     })
                                     .when_some(breadcrumbs, |then, breadcrumbs| {
-                                        let font = theme_settings::ThemeSettings::get_global(cx)
-                                            .buffer_font
-                                            .clone();
                                         then.child(render_breadcrumb_text(
                                             breadcrumbs,
-                                            Some(font),
                                             None,
                                             editor_handle,
                                             true,
