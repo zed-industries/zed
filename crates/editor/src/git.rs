@@ -113,6 +113,7 @@ impl DiffHunkDelegate for UncommittedDiffHunkDelegate {
             let Some(buffer) = hunks.buffer else {
                 continue;
             };
+
             let ranges = hunks
                 .hunks
                 .into_iter()
@@ -176,6 +177,15 @@ impl DiffHunkDelegate for RestoreOnlyDiffHunkDelegate {
     fn stage_or_unstage(
         &self,
         _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn restore(
+        &self,
         _hunks: Vec<ResolvedDiffHunks>,
         _editor: &mut Editor,
         _window: &mut Window,
@@ -485,11 +495,9 @@ impl Editor {
 
             if let Some(project) = self.project.clone() {
                 self.load_diff_task = Some(
-                    update_uncommitted_diff_for_buffer(
-                        cx.entity(),
+                    self.update_uncommitted_diff_for_buffer(
                         &project,
                         self.buffer.read(cx).all_buffers(),
-                        self.buffer.clone(),
                         cx,
                     )
                     .shared(),
@@ -1765,7 +1773,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunks = self.resolve_diff_hunks(hunks, cx);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        if self.diff_hunk_delegate.is_none() {
+            hunks.retain(|hunks| hunks.diff.read(cx).is_stageable());
+        }
         if hunks.is_empty() {
             return;
         }
@@ -1780,7 +1791,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunks = self.resolve_diff_hunks(hunks, cx);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        if self.diff_hunk_delegate.is_none() {
+            hunks.retain(|hunks| hunks.diff.read(cx).is_stageable());
+        }
         if hunks.is_empty() {
             return;
         }
@@ -1794,7 +1808,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hunks = self.resolve_diff_hunks(hunks, cx);
+        let mut hunks = self.resolve_diff_hunks(hunks, cx);
+        if self.diff_hunk_delegate.is_none() {
+            hunks.retain(|hunks| hunks.diff.read(cx).is_stageable());
+        }
         if hunks.is_empty() {
             return;
         }
@@ -2941,9 +2958,15 @@ pub fn render_diff_hunk_controls(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let show_stage_restore = ProjectSettings::get_global(cx)
-        .git
-        .show_stage_restore_buttons;
+    let stageable = hunk_range
+        .start
+        .buffer_id()
+        .and_then(|buffer_id| editor.read(cx).buffer().read(cx).diff_for(buffer_id))
+        .is_some_and(|diff| diff.read(cx).is_stageable());
+    let show_stage_restore = stageable
+        && ProjectSettings::get_global(cx)
+            .git
+            .show_stage_restore_buttons;
 
     h_flex()
         .h(line_height)
@@ -3118,31 +3141,38 @@ pub fn render_diff_hunk_controls(
         .into_any_element()
 }
 
-pub(super) fn update_uncommitted_diff_for_buffer(
-    editor: Entity<Editor>,
-    project: &Entity<Project>,
-    buffers: impl IntoIterator<Item = Entity<Buffer>>,
-    buffer: Entity<MultiBuffer>,
-    cx: &mut App,
-) -> Task<()> {
-    let mut tasks = Vec::new();
-    project.update(cx, |project, cx| {
-        for buffer in buffers {
-            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
-            }
-        }
-    });
-    cx.spawn(async move |cx| {
-        let diffs = future::join_all(tasks).await;
-        if editor.read_with(cx, |editor, _cx| editor.diff_hunk_delegate.is_some()) {
-            return;
-        }
-
-        buffer.update(cx, |buffer, cx| {
-            for diff in diffs.into_iter().flatten() {
-                buffer.add_diff(diff, cx);
-            }
+impl Editor {
+    pub(super) fn update_uncommitted_diff_for_buffer(
+        &mut self,
+        project: &Entity<Project>,
+        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let mut tasks = Vec::new();
+        project.update(cx, |project, cx| {
+            let git_store = project.git_store().clone();
+            git_store.update(cx, |git_store, cx| {
+                for buffer in buffers {
+                    if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                        tasks.push(git_store.open_display_diff(buffer, cx));
+                    }
+                }
+            });
         });
-    })
+
+        let editor = cx.entity();
+        let buffer = self.buffer.clone();
+        cx.spawn(async move |_, cx| {
+            let diffs = future::join_all(tasks).await;
+            if editor.read_with(cx, |editor, _cx| editor.diff_hunk_delegate.is_some()) {
+                return;
+            }
+
+            buffer.update(cx, |buffer, cx| {
+                for diff in diffs.into_iter().flatten() {
+                    buffer.add_diff(diff, cx);
+                }
+            });
+        })
+    }
 }

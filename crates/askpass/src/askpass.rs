@@ -156,15 +156,25 @@ impl AskPassSession {
     // The caller is responsible for examining the result of their own commands and cancelling this
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
-    pub async fn run(&mut self) -> AskPassResult {
-        // This is the default timeout setting used by VSCode.
-        let connection_timeout = Duration::from_secs(17);
+    //
+    // When `timeout` is provided, this resolves with `AskPassResult::Timedout` if no askpass prompt
+    // has been opened within that duration. This is intended for connection establishment (e.g.
+    // SSH), where "no prompt and no connection" indicates an unreachable host. Callers wrapping
+    // commands that may legitimately run for a long time without prompting (e.g. git) should pass
+    // `None` and rely on the command's own completion instead.
+    pub async fn run(&mut self, timeout: Option<Duration>) -> AskPassResult {
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
             .take()
             .expect("Only call run once");
         let executor = self.executor.clone();
+        let timer = async move {
+            match timeout {
+                Some(timeout) => executor.timer(timeout).await,
+                None => std::future::pending().await,
+            }
+        };
 
         select_biased! {
             _ = askpass_opened_rx.fuse() => {
@@ -173,7 +183,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(executor.timer(connection_timeout)) => {
+            _ = futures::FutureExt::fuse(timer) => {
                 AskPassResult::Timedout
             }
         }
@@ -494,11 +504,17 @@ fn generate_gpg_wrapper_script(
         .try_quote_prefix_aware("Enter passphrase for your Git signing key:")
         .context("Failed to shell-escape gpg passphrase prompt")?;
 
-    // The wrapper inspects gpg's arguments and only prompts for a passphrase when
-    // git asks it to *sign* (e.g. `gpg -bsau <key>`). Other invocations such as
-    // signature verification (`--verify`) run gpg unchanged so we never pop a
-    // spurious modal. When signing, we feed the passphrase to gpg on fd 3 via
-    // `--passphrase-fd 3` in loopback mode, so no pinentry/terminal is required.
+    // The wrapper only intervenes when git asks gpg to *sign* (e.g. `gpg -bsau
+    // <key>`); other invocations like `--verify` run unchanged. For signing we
+    // first try plain gpg so gpg-agent/keychain can supply a cached or empty
+    // passphrase silently, and only fall back to asking Zed (loopback mode, fd
+    // 3) when that fails, e.g. the "Inappropriate ioctl for device" case with no
+    // TTY for pinentry.
+    //
+    // git streams the payload on stdin (readable once) and reads the signature
+    // from stdout, so we buffer stdin to replay it into both attempts and buffer
+    // the first attempt's output, forwarding it only if it succeeds. The
+    // passphrase goes to fd 3 via a pipe.
     Ok(format!(
         r#"#!/bin/sh
 for arg in "$@"; do
@@ -517,11 +533,29 @@ if [ -z "${{is_signing}}" ]; then
     exec {gpg_program} "$@"
 fi
 
-# Signing: ask Zed for the passphrase, then hand it to gpg on fd 3.
+# Signing. Buffer stdin (the payload) and the first attempt's output
+# so we can retry cleanly on failure without git seeing partial output.
+tmpdir=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmpdir"' EXIT
+payload="$tmpdir/payload"
+signature="$tmpdir/signature"
+status="$tmpdir/status"
+cat > "$payload" || exit 1
+
+# First try letting gpg-agent/keychain supply the passphrase without any
+# interactive pinentry. If that succeeds (cached passphrase)
+# forward its output and we're done, so Zed never shows a modal.
+if {gpg_program} --pinentry-mode error "$@" < "$payload" > "$signature" 2> "$status"; then
+    cat "$status" >&2
+    cat "$signature"
+    exit 0
+fi
+
+# The silent attempt failed: ask Zed for the passphrase, then hand it to gpg on
+# fd 3 using loopback mode so no pinentry/terminal is required.
 passphrase=$(printf '%s\0' {prompt} | {askpass_program} --askpass={askpass_socket} 2>/dev/null)
-exec {gpg_program} --pinentry-mode loopback --passphrase-fd 3 "$@" 3<<EOF
-${{passphrase}}
-EOF
+printf '%s\n' "$passphrase" |
+{gpg_program} --pinentry-mode loopback --passphrase-fd 3 "$@" 3<&0 < "$payload"
 "#,
     ))
 }
