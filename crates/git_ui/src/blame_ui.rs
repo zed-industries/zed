@@ -3,7 +3,11 @@ use crate::{
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
-use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
+use git::{
+    blame::BlameEntry,
+    commit::ParsedCommitMessage,
+    repository::{CommitSummary, RepoPath},
+};
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, Pixels, Rems, ScrollHandle, Subscription, TextStyle,
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
@@ -25,6 +29,10 @@ const GIT_BLAME_GUTTER_GAP: Rems = rems(0.5);
 const GIT_BLAME_AVATAR_SIZE: Rems = rems(1.);
 
 pub struct GitBlameRenderer;
+
+fn blame_file_filter(filename: &str) -> Option<RepoPath> {
+    RepoPath::new(filename).ok()
+}
 
 fn format_blame_text(blame_entry: &BlameEntry, cx: &App) -> String {
     let relative_timestamp = blame_entry_relative_timestamp(blame_entry);
@@ -227,12 +235,13 @@ impl BlameRenderer for GitBlameRenderer {
                             let repository = repository.clone();
                             let workspace = workspace.clone();
                             move |_, window, cx| {
+                                let file_filter = blame_file_filter(&blame_entry.filename);
                                 CommitView::open(
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
                                     None,
-                                    None,
+                                    file_filter,
                                     window,
                                     cx,
                                 )
@@ -323,6 +332,7 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..git::SHORT_SHA_LENGTH)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
+        let file_filter = blame_file_filter(&blame.filename);
         let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
         let absolute_timestamp = time_format::format_localized_timestamp(
             commit_time,
@@ -468,7 +478,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                         repository.downgrade(),
                                                         workspace.clone(),
                                                         None,
-                                                        None,
+                                                        file_filter.clone(),
                                                         window,
                                                         cx,
                                                     );
@@ -496,15 +506,28 @@ impl BlameRenderer for GitBlameRenderer {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let file_filter = blame_file_filter(&blame_entry.filename);
         CommitView::open(
             blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
             None,
-            None,
+            file_filter,
             window,
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::blame_file_filter;
+
+    #[test]
+    fn test_blame_file_filter() {
+        let filter = blame_file_filter("src/main.rs").expect("valid repository path");
+        assert_eq!(filter.as_unix_str(), "src/main.rs");
+        assert!(blame_file_filter("../outside.rs").is_none());
     }
 }
 
