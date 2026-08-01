@@ -3,6 +3,7 @@ use copilot::{
     Copilot, GlobalCopilotAuth, Status,
     request::{self, PromptUserDeviceFlow},
 };
+use copilot_chat::{CopilotChat, CopilotChatStatus, DeviceFlow};
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
@@ -16,8 +17,7 @@ use util::ResultExt as _;
 use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
-const ERROR_LABEL: &str =
-    "Copilot had issues starting. You can try reinstalling it and signing in again.";
+const ERROR_LABEL: &str = "Copilot Edit Predictions had issues starting. You can try reinstalling it and signing in again.";
 
 struct CopilotStatusToast;
 
@@ -27,14 +27,14 @@ pub fn initiate_sign_in(copilot: Entity<Copilot>, window: &mut Window, cx: &mut 
 }
 
 pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut App) {
-    copilot_toast(Some("Signing out of Copilot…"), window, cx);
+    copilot_toast(Some("Signing out of Copilot Edit Predictions…"), window, cx);
 
     let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
     window
         .spawn(cx, async move |cx| match sign_out_task.await {
-            Ok(()) => {
-                cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
-            }
+            Ok(()) => cx.update(|window, cx| {
+                copilot_toast(Some("Signed out of Copilot Edit Predictions"), window, cx)
+            }),
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
@@ -83,6 +83,36 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
     .log_err();
 }
 
+fn open_copilot_chat_code_verification_window(
+    copilot_chat: &Entity<CopilotChat>,
+    window: &Window,
+    cx: &mut App,
+) {
+    let current_window_center = window.bounds().center();
+    let height = px(450.);
+    let width = px(350.);
+    let window_bounds = WindowBounds::Windowed(gpui::bounds(
+        current_window_center - point(height / 2.0, width / 2.0),
+        gpui::size(height, width),
+    ));
+    cx.open_window(
+        WindowOptions {
+            kind: gpui::WindowKind::Floating,
+            window_bounds: Some(window_bounds),
+            is_resizable: false,
+            is_movable: true,
+            titlebar: Some(gpui::TitlebarOptions {
+                appears_transparent: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        |window, cx| cx.new(|cx| CopilotChatCodeVerification::new(&copilot_chat, window, cx)),
+    )
+    .context("Failed to open Copilot Chat code verification window")
+    .log_err();
+}
+
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
     const NOTIFICATION_ID: NotificationId = NotificationId::unique::<CopilotStatusToast>();
 
@@ -111,9 +141,9 @@ pub fn initiate_sign_in_impl(
         Status::Starting { task } => {
             copilot_toast(
                 Some(if is_reinstall {
-                    "Copilot is reinstalling…"
+                    "Copilot Edit Predictions is reinstalling…"
                 } else {
-                    "Copilot is starting…"
+                    "Copilot Edit Predictions is starting…"
                 }),
                 window,
                 cx,
@@ -124,7 +154,7 @@ pub fn initiate_sign_in_impl(
                     task.await;
                     cx.update(|window, cx| match copilot.read(cx).status() {
                         Status::Authorized => {
-                            copilot_toast(Some("Copilot has started."), window, cx)
+                            copilot_toast(Some("Copilot Edit Predictions has started."), window, cx)
                         }
                         _ => {
                             copilot_toast(None, window, cx);
@@ -252,10 +282,15 @@ impl CopilotCodeVerification {
             .gap_2p5()
             .items_center()
             .text_center()
-            .child(Headline::new("Use GitHub Copilot in Zed").size(HeadlineSize::Large))
             .child(
-                Label::new("Using Copilot requires an active subscription on GitHub.")
-                    .color(Color::Muted),
+                Headline::new("Use GitHub Copilot Edit Predictions in Zed")
+                    .size(HeadlineSize::Large),
+            )
+            .child(
+                Label::new(
+                    "Using Copilot edit predictions requires an active subscription on GitHub.",
+                )
+                .color(Color::Muted),
             )
             .child(Self::render_device_code(data, cx))
             .child(
@@ -336,8 +371,10 @@ impl CopilotCodeVerification {
             .gap_2()
             .text_center()
             .justify_center()
-            .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
-            .child(Label::new("You're all set to use GitHub Copilot.").color(Color::Muted))
+            .child(Headline::new("Copilot Edit Predictions Enabled!").size(HeadlineSize::Large))
+            .child(
+                Label::new("You're all set to use Copilot edit predictions.").color(Color::Muted),
+            )
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
@@ -353,7 +390,7 @@ impl CopilotCodeVerification {
             .as_deref()
             .unwrap_or(COPILOT_SIGN_UP_URL)
             .to_owned();
-        let description = "Enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.";
+        let description = "Enable Copilot edit predictions by connecting your existing license once you have subscribed or renewed your subscription.";
 
         v_flex()
             .gap_2()
@@ -387,18 +424,19 @@ impl CopilotCodeVerification {
             .child(Headline::new("An Error Happened").size(HeadlineSize::Large))
             .child(Label::new(ERROR_LABEL).color(Color::Muted))
             .child(
-                Button::new("copilot-subscribe-button", "Reinstall Copilot and Sign In")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .size(ButtonSize::Medium)
-                    .start_icon(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .on_click(move |_, window, cx| {
-                        reinstall_and_sign_in(copilot.clone(), window, cx)
-                    }),
+                Button::new(
+                    "copilot-subscribe-button",
+                    "Reinstall Copilot Edit Predictions and Sign In",
+                )
+                .full_width()
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .start_icon(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .on_click(move |_, window, cx| reinstall_and_sign_in(copilot.clone(), window, cx)),
             )
     }
 
@@ -466,8 +504,241 @@ impl Render for CopilotCodeVerification {
     }
 }
 
+pub struct CopilotChatCodeVerification {
+    status: CopilotChatStatus,
+    connect_clicked: bool,
+    focus_handle: FocusHandle,
+    copilot_chat: Entity<CopilotChat>,
+    _subscription: Subscription,
+}
+
+impl Focusable for CopilotChatCodeVerification {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for CopilotChatCodeVerification {}
+
+impl CopilotChatCodeVerification {
+    pub fn new(
+        copilot_chat: &Entity<CopilotChat>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        window.on_window_should_close(cx, |window, cx| {
+            if let Some(this) = window.root::<CopilotChatCodeVerification>().flatten() {
+                this.update(cx, |this, cx| {
+                    this.before_dismiss(cx);
+                });
+            }
+            true
+        });
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                window.remove_window();
+                this.before_dismiss(cx);
+            },
+        )
+        .detach();
+
+        let status = copilot_chat.read(cx).status();
+        Self {
+            status,
+            connect_clicked: false,
+            focus_handle: cx.focus_handle(),
+            copilot_chat: copilot_chat.clone(),
+            _subscription: cx.observe(copilot_chat, |this, copilot_chat, cx| {
+                let status = copilot_chat.read(cx).status();
+                let should_dismiss = matches!(
+                    status,
+                    CopilotChatStatus::Authorized | CopilotChatStatus::Error(_)
+                );
+                this.status = status;
+                cx.notify();
+                if should_dismiss {
+                    cx.emit(DismissEvent);
+                }
+            }),
+        }
+    }
+
+    fn render_device_code(user_code: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let copied = cx
+            .read_from_clipboard()
+            .map(|item| item.text().as_deref() == Some(user_code))
+            .unwrap_or(false);
+        let user_code = user_code.to_owned();
+
+        ButtonLike::new("copy-button")
+            .full_width()
+            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .size(ButtonSize::Medium)
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_1()
+                    .justify_between()
+                    .child(Label::new(user_code.clone()))
+                    .child(Label::new(if copied { "Copied!" } else { "Copy" })),
+            )
+            .on_click(move |_, window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(user_code.clone()));
+                window.refresh();
+            })
+    }
+
+    fn render_prompting_modal(
+        connect_clicked: bool,
+        device_flow: &DeviceFlow,
+        cx: &mut Context<Self>,
+    ) -> impl Element {
+        let connect_button_label = if connect_clicked {
+            "Waiting for connection…"
+        } else {
+            "Connect to GitHub"
+        };
+
+        v_flex()
+            .flex_1()
+            .gap_2p5()
+            .items_center()
+            .text_center()
+            .child(Headline::new("Use GitHub Copilot Chat in Zed").size(HeadlineSize::Large))
+            .child(
+                Label::new("Using Copilot Chat requires an active subscription on GitHub.")
+                    .color(Color::Muted),
+            )
+            .child(Self::render_device_code(&device_flow.user_code, cx))
+            .child(
+                Label::new("Paste this code into GitHub after clicking the button below.")
+                    .color(Color::Muted),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        Button::new("connect-button", connect_button_label)
+                            .full_width()
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Medium)
+                            .on_click({
+                                let verification_uri = device_flow.verification_uri.clone();
+                                cx.listener(move |this, _, _window, cx| {
+                                    cx.open_url(&verification_uri);
+                                    this.connect_clicked = true;
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new("copilot-chat-enable-cancel-button", "Cancel")
+                            .full_width()
+                            .size(ButtonSize::Medium)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(DismissEvent);
+                            })),
+                    ),
+            )
+    }
+
+    fn render_enabled_modal(cx: &mut Context<Self>) -> impl Element {
+        v_flex()
+            .gap_2()
+            .text_center()
+            .justify_center()
+            .child(Headline::new("Copilot Chat Enabled!").size(HeadlineSize::Large))
+            .child(Label::new("You're all set to use Copilot Chat.").color(Color::Muted))
+            .child(
+                Button::new("copilot-chat-enabled-done-button", "Done")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+            )
+    }
+
+    fn render_error_modal(message: &str, cx: &mut Context<Self>) -> impl Element {
+        v_flex()
+            .gap_2()
+            .text_center()
+            .justify_center()
+            .child(Headline::new("An Error Happened").size(HeadlineSize::Large))
+            .child(Label::new(message.to_owned()).color(Color::Muted))
+            .child(
+                Button::new("copilot-chat-error-cancel-button", "Cancel")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+            )
+    }
+
+    fn before_dismiss(&mut self, cx: &mut Context<Self>) -> workspace::DismissDecision {
+        self.copilot_chat.update(cx, |chat, cx| {
+            if matches!(
+                chat.status(),
+                CopilotChatStatus::SigningIn { .. } | CopilotChatStatus::Starting
+            ) {
+                chat.sign_out(cx).detach_and_log_err(cx);
+            }
+        });
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
+
+impl Render for CopilotChatCodeVerification {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let prompt = match self.status.clone() {
+            CopilotChatStatus::Starting | CopilotChatStatus::SignedOut => {
+                Icon::new(IconName::ArrowCircle)
+                    .color(Color::Muted)
+                    .with_rotate_animation(2)
+                    .into_any_element()
+            }
+            CopilotChatStatus::SigningIn { device_flow } => {
+                Self::render_prompting_modal(self.connect_clicked, &device_flow, cx)
+                    .into_any_element()
+            }
+            CopilotChatStatus::Authorized => {
+                self.connect_clicked = false;
+                Self::render_enabled_modal(cx).into_any_element()
+            }
+            CopilotChatStatus::Error(message) => {
+                self.connect_clicked = false;
+                Self::render_error_modal(&message, cx).into_any_element()
+            }
+        };
+
+        v_flex()
+            .id("copilot_chat_code_verification")
+            .track_focus(&self.focus_handle(cx))
+            .size_full()
+            .px_4()
+            .py_8()
+            .gap_2()
+            .items_center()
+            .justify_center()
+            .elevation_3(cx)
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                window.focus(&this.focus_handle, cx);
+            }))
+            .child(
+                Vector::new(VectorName::ZedXCopilot, rems(8.), rems(4.))
+                    .color(Color::Custom(cx.theme().colors().icon)),
+            )
+            .child(prompt)
+    }
+}
+
 pub struct ConfigurationView {
     copilot_status: Option<Status>,
+    chat_status: Option<CopilotChatStatus>,
     is_authenticated: Box<dyn Fn(&mut App) -> bool + 'static>,
     edit_prediction: bool,
     /// When `true`, renders a compact control suitable for an inline settings
@@ -488,20 +759,46 @@ impl ConfigurationView {
         mode: ConfigurationMode,
         cx: &mut Context<Self>,
     ) -> Self {
-        let copilot = AppState::try_global(cx)
-            .and_then(|state| GlobalCopilotAuth::try_get_or_init(state, cx));
+        let edit_prediction = matches!(mode, ConfigurationMode::EditPrediction);
 
-        Self {
-            copilot_status: copilot.as_ref().map(|copilot| copilot.0.read(cx).status()),
-            is_authenticated: Box::new(is_authenticated),
-            edit_prediction: matches!(mode, ConfigurationMode::EditPrediction),
-            compact: false,
-            _subscription: copilot.as_ref().map(|copilot| {
-                cx.observe(&copilot.0, |this, model, cx| {
-                    this.copilot_status = Some(model.read(cx).status());
-                    cx.notify();
-                })
-            }),
+        match mode {
+            ConfigurationMode::EditPrediction => {
+                let copilot = AppState::try_global(cx)
+                    .and_then(|state| GlobalCopilotAuth::try_get_or_init(state, cx));
+
+                Self {
+                    copilot_status: copilot.as_ref().map(|copilot| copilot.0.read(cx).status()),
+                    chat_status: None,
+                    is_authenticated: Box::new(is_authenticated),
+                    edit_prediction,
+                    _subscription: copilot.as_ref().map(|copilot| {
+                        cx.observe(&copilot.0, |this, model, cx| {
+                            this.copilot_status = Some(model.read(cx).status());
+                            cx.notify();
+                        })
+                    }),
+                    compact: false,
+                }
+            }
+            ConfigurationMode::Chat => {
+                let copilot_chat = CopilotChat::global(cx);
+
+                Self {
+                    copilot_status: None,
+                    chat_status: copilot_chat
+                        .as_ref()
+                        .map(|copilot_chat| copilot_chat.read(cx).status()),
+                    is_authenticated: Box::new(is_authenticated),
+                    edit_prediction,
+                    _subscription: copilot_chat.as_ref().map(|copilot_chat| {
+                        cx.observe(copilot_chat, |this, model, cx| {
+                            this.chat_status = Some(model.read(cx).status());
+                            cx.notify();
+                        })
+                    }),
+                    compact: false,
+                }
+            }
         }
     }
 
@@ -516,32 +813,56 @@ impl ConfigurationView {
 
 impl ConfigurationView {
     fn is_starting(&self) -> bool {
-        matches!(&self.copilot_status, Some(Status::Starting { .. }))
+        if self.edit_prediction {
+            matches!(&self.copilot_status, Some(Status::Starting { .. }))
+        } else {
+            matches!(&self.chat_status, Some(CopilotChatStatus::Starting))
+        }
     }
 
     fn is_signing_in(&self) -> bool {
-        matches!(
-            &self.copilot_status,
-            Some(Status::SigningIn { .. })
-                | Some(Status::SignedOut {
-                    awaiting_signing_in: true
-                })
-        )
+        if self.edit_prediction {
+            matches!(
+                &self.copilot_status,
+                Some(Status::SigningIn { .. })
+                    | Some(Status::SignedOut {
+                        awaiting_signing_in: true
+                    })
+            )
+        } else {
+            matches!(
+                &self.chat_status,
+                Some(CopilotChatStatus::SigningIn { .. } | CopilotChatStatus::Starting)
+            )
+        }
     }
 
     fn is_error(&self) -> bool {
-        matches!(&self.copilot_status, Some(Status::Error(_)))
+        if self.edit_prediction {
+            matches!(&self.copilot_status, Some(Status::Error(_)))
+        } else {
+            matches!(&self.chat_status, Some(CopilotChatStatus::Error(_)))
+        }
     }
 
     fn has_no_status(&self) -> bool {
-        self.copilot_status.is_none()
+        if self.edit_prediction {
+            self.copilot_status.is_none()
+        } else {
+            self.chat_status.is_none()
+        }
     }
 
     fn loading_message(&self) -> Option<SharedString> {
+        let product = if self.edit_prediction {
+            "Copilot Edit Predictions"
+        } else {
+            "Copilot Chat"
+        };
         if self.is_starting() {
-            Some("Starting Copilot…".into())
+            Some(format!("Starting {product}…").into())
         } else if self.is_signing_in() {
-            Some("Signing into Copilot…".into())
+            Some(format!("Signing into {product}…").into())
         } else {
             None
         }
@@ -582,10 +903,15 @@ impl ConfigurationView {
             })
             .style(ButtonStyle::Outlined)
             .when(edit_prediction, |this| this.tab_index(0isize))
-            .on_click(|_, window, cx| {
-                let app_state = AppState::global(cx);
-                if let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx) {
-                    initiate_sign_in(copilot.0, window, cx)
+            .on_click(move |_, window, cx| {
+                if edit_prediction {
+                    let app_state = AppState::global(cx);
+                    if let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx) {
+                        initiate_sign_in(copilot.0, window, cx)
+                    }
+                } else if let Some(copilot_chat) = CopilotChat::global(cx) {
+                    copilot_chat.update(cx, |copilot_chat, cx| copilot_chat.sign_in(cx));
+                    open_copilot_chat_code_verification_window(&copilot_chat, window, cx);
                 }
             })
     }
@@ -640,7 +966,7 @@ impl ConfigurationView {
         };
 
         let start_label = "To use Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.".into();
-        let no_status_label = "Copilot requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different edit predictions provider.".into();
+        let no_status_label = "Copilot Edit Predictions requires an active GitHub Copilot subscription. Please ensure Copilot Edit Predictions is configured and try again, or use a different edit predictions provider.".into();
 
         if let Some(msg) = self.loading_message() {
             container(
@@ -670,8 +996,8 @@ impl ConfigurationView {
     }
 
     fn render_for_chat(&self) -> impl IntoElement {
-        let start_label = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-        let no_status_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different LLM provider.";
+        let start_label = "To use Zed's agent with GitHub Copilot Chat, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+        let no_status_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot Chat is configured and try again, or use a different LLM provider.";
 
         let (label, button) = if let Some(msg) = self.loading_message() {
             (
@@ -680,8 +1006,8 @@ impl ConfigurationView {
             )
         } else if self.is_error() {
             (
-                ERROR_LABEL,
-                self.render_reinstall_button(false).into_any_element(),
+                "Copilot Chat had an issue signing in. Please try again.",
+                self.render_sign_in_button(false).into_any_element(),
             )
         } else if self.has_no_status() {
             (
@@ -705,17 +1031,22 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_authenticated = &self.is_authenticated;
+        let edit_prediction = self.edit_prediction;
 
         if is_authenticated(cx) {
-            let sign_out = |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
-                if let Some(auth) = GlobalCopilotAuth::try_global(cx) {
-                    initiate_sign_out(auth.0.clone(), window, cx);
-                }
-            };
-
             return ConfiguredApiCard::new("copilot-authorized", "Authorized")
                 .button_label("Sign Out")
-                .on_click(sign_out)
+                .on_click(move |_, window, cx| {
+                    if edit_prediction {
+                        if let Some(auth) = GlobalCopilotAuth::try_global(cx) {
+                            initiate_sign_out(auth.0.clone(), window, cx);
+                        }
+                    } else if let Some(copilot_chat) = CopilotChat::global(cx) {
+                        copilot_chat
+                            .update(cx, |copilot_chat, cx| copilot_chat.sign_out(cx))
+                            .detach_and_log_err(cx);
+                    }
+                })
                 .into_any_element();
         }
 

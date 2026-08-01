@@ -31,7 +31,7 @@ use project_panel::project_panel_settings::ProjectPanelSettings;
 use settings::Settings;
 use std::{
     borrow::Cow,
-    cmp,
+    cmp, mem,
     ops::{Range, RangeInclusive},
     path::{Component, Path, PathBuf},
     sync::{
@@ -387,6 +387,7 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    debounce_next_refresh: bool,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -845,6 +846,7 @@ impl FoundPath {
 
 const MAX_RECENT_SELECTIONS: usize = 20;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
+const WORKTREE_UPDATE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub enum Event {
     Selected(ProjectPath),
@@ -994,6 +996,7 @@ impl FileFinderDelegate {
             focus_handle: cx.focus_handle(),
             include_ignored: include_ignored.or(FileFinderSettings::get_global(cx).include_ignored),
             include_ignored_refresh: Task::ready(()),
+            debounce_next_refresh: false,
         }
     }
 
@@ -1004,11 +1007,17 @@ impl FileFinderDelegate {
     ) {
         cx.subscribe_in(project, window, |file_finder, _, event, window, cx| {
             match event {
-                project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded(_)
-                | project::Event::WorktreeRemoved(_) => file_finder
-                    .picker
-                    .update(cx, |picker, cx| picker.refresh(window, cx)),
+                project::Event::WorktreeUpdatedEntries(_, _) => {
+                    file_finder.picker.update(cx, |picker, cx| {
+                        picker.delegate.debounce_next_refresh = true;
+                        picker.refresh(window, cx);
+                    })
+                }
+                project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                    file_finder
+                        .picker
+                        .update(cx, |picker, cx| picker.refresh(window, cx))
+                }
                 _ => {}
             };
         })
@@ -1100,14 +1109,23 @@ impl FileFinderDelegate {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            let query_changed = Some(query.path_query())
+            let path_query_changed = Some(query.path_query())
                 != self
                     .latest_search_query
                     .as_ref()
                     .map(|query| query.path_query());
-            let extend_old_matches = self.latest_search_did_cancel && !query_changed;
+            let extend_old_matches = self.latest_search_did_cancel && !path_query_changed;
 
-            let selected_match = if query_changed {
+            // The line/column suffix doesn't affect which files match, but it
+            // does change the user's intent ("go inside this file" vs. "pick a
+            // file"). Drop the preserved selection when it appears or changes
+            // so the new intent can be honored by `calculate_selected_index`.
+            let position_changed = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|q| q.path_position.row)
+                != query.path_position.row;
+            let selected_match = if path_query_changed || position_changed {
                 None
             } else {
                 self.matches.get(self.selected_index).cloned()
@@ -1187,7 +1205,7 @@ impl FileFinderDelegate {
                 }
             }
 
-            let query_path = query.raw_query.as_str();
+            let query_path = query.path_query();
             if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
@@ -1222,8 +1240,8 @@ impl FileFinderDelegate {
                 if let Some(worktree) = expect_worktree {
                     let worktree = worktree.read(cx);
                     if worktree.entry_for_path(&query_path).is_none()
-                        && !query.raw_query.ends_with("/")
-                        && !(path_style.is_windows() && query.raw_query.ends_with("\\"))
+                        && !query.path_query().ends_with('/')
+                        && !(path_style.is_windows() && query.path_query().ends_with('\\'))
                     {
                         self.matches.matches.push(Match::CreateNew(ProjectPath {
                             worktree_id: worktree.id(),
@@ -1238,8 +1256,9 @@ impl FileFinderDelegate {
             self.selected_index = if !self.selected_matches.is_empty() {
                 0
             } else {
+                let query_has_position = query.path_position.row.is_some();
                 selected_match.map_or_else(
-                    || self.calculate_selected_index(cx),
+                    || self.calculate_selected_index(query_has_position, cx),
                     |m| {
                         self.matches
                             .position(&m, self.currently_opened_path.as_ref())
@@ -1506,8 +1525,17 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
-        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
+    ///
+    /// When the query carries a row (e.g. `foo.rs:42`), the user is asking to
+    /// navigate inside a specific file, so we never skip past the active match
+    /// even if the setting is enabled.
+    fn calculate_selected_index(
+        &self,
+        query_has_position: bool,
+        cx: &mut Context<Picker<Self>>,
+    ) -> usize {
+        if !query_has_position
+            && FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
             && let Some(Match::History { path, .. }) = self.matches.get(0)
             && Some(path) == self.currently_opened_path.as_ref()
         {
@@ -1842,6 +1870,7 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let debounce_refresh = mem::take(&mut self.debounce_next_refresh);
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
@@ -1915,7 +1944,11 @@ impl PickerDelegate for FileFinderDelegate {
             let was_in_flight = search_in_flight.swap(true, atomic::Ordering::Relaxed);
 
             cx.spawn_in(window, async move |this, cx| {
-                if was_in_flight {
+                if debounce_refresh {
+                    cx.background_executor()
+                        .timer(WORKTREE_UPDATE_REFRESH_DEBOUNCE)
+                        .await;
+                } else if was_in_flight {
                     cx.background_executor().timer(SEARCH_DEBOUNCE).await;
                 }
                 let _ = maybe!(async move {
