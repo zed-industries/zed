@@ -207,28 +207,43 @@ impl GitRepository for FakeGitRepository {
         async move { fut.await.unwrap_or_default() }.boxed()
     }
 
-    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
-        let mut entries = HashMap::default();
-        self.with_state_async(false, |state| {
-            for (path, content) in &state.head_contents {
-                let status = if let Some((oid, original)) = state
-                    .merge_base_contents
-                    .get(path)
-                    .map(|oid| (oid, &state.oids[oid]))
-                {
-                    if original == content {
-                        continue;
+    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
+        let worktree_contents =
+            matches!(request, DiffTreeType::MergeBaseWithWorktree { .. }).then(|| {
+                let workdir_path = self.dot_git_path.parent().unwrap();
+                self.fs
+                    .files()
+                    .iter()
+                    .filter_map(|path| {
+                        let path_in_repo = path.strip_prefix(workdir_path).ok()?;
+                        let path_in_repo = RelPath::new(path_in_repo, PathStyle::local()).ok()?;
+                        let content = String::from_utf8(self.fs.read_file_sync(path).ok()?).ok()?;
+                        Some((RepoPath::from_rel_path(&path_in_repo), content))
+                    })
+                    .collect::<HashMap<_, _>>()
+            });
+        self.with_state_async(false, move |state| {
+            let contents = worktree_contents.as_ref().unwrap_or(&state.head_contents);
+            let tracked_paths = state
+                .merge_base_contents
+                .keys()
+                .chain(state.head_contents.keys())
+                .chain(state.index_contents.keys())
+                .collect::<HashSet<_>>();
+            let mut entries = HashMap::default();
+            for path in tracked_paths {
+                let status = match (state.merge_base_contents.get(path), contents.get(path)) {
+                    (Some(oid), Some(content)) => {
+                        if state.oids.get(oid).context("merge-base blob is missing")? == content {
+                            continue;
+                        }
+                        TreeDiffStatus::Modified { old: *oid }
                     }
-                    TreeDiffStatus::Modified { old: *oid }
-                } else {
-                    TreeDiffStatus::Added
+                    (Some(oid), None) => TreeDiffStatus::Deleted { old: *oid },
+                    (None, Some(_)) => TreeDiffStatus::Added,
+                    (None, None) => continue,
                 };
                 entries.insert(path.clone(), status);
-            }
-            for (path, oid) in &state.merge_base_contents {
-                if !entries.contains_key(path) {
-                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: *oid });
-                }
             }
             Ok(TreeDiff { entries })
         })

@@ -404,14 +404,14 @@ fn render_cat_numbered_code_block(
     // `restrict_scroll_to_axis` then keeps vertical wheel events flowing through
     // to the outer thread scroller. This mirrors the standard markdown
     // code-block path in `crates/markdown/src/markdown.rs`.
-    let mut code_scroll = div()
+    let code_scroll = div()
         .id(code_scroll_id)
         .flex()
         .flex_1()
         .min_w_0()
         .overflow_x_scroll()
+        .restrict_scroll_to_axis()
         .child(div().flex_none().child(code_text));
-    code_scroll.style().restrict_scroll_to_axis = Some(true);
 
     container
         .child(

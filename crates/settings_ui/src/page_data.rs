@@ -7881,7 +7881,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_hunks_section() -> [SettingsPageItem; 4] {
+    fn git_hunks_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7893,6 +7893,20 @@ fn version_control_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().hunk_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diff Base",
+                description: "Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git.diff_base"),
+                    pick: |settings_content| settings_content.git.as_ref()?.diff_base.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.git.get_or_insert_default().diff_base = value;
                     },
                 }),
                 metadata: None,

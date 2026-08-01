@@ -218,6 +218,7 @@ pub(crate) async fn build_buffer_diff(
             &new_buffer_snapshot.text,
             new_buffer_snapshot.language().cloned(),
             language_registry,
+            buffer_diff::DiffBaseKind::Custom,
             cx,
         )
     });
