@@ -112,7 +112,13 @@ fn get_adapter(
     ID3D11DeviceContext,
     D3D_FEATURE_LEVEL,
 )> {
-    for adapter_index in 0.. {
+    // TEMPORARY diagnostic: pin adapter selection so the same scene can be
+    // rendered on a different driver (including WARP) to chase GPU-specific
+    // artifacts. Revert once the Intel HD 4600 fill holes are understood.
+    let forced_adapter: Option<u32> = std::env::var("GPUI_ADAPTER_INDEX")
+        .ok()
+        .and_then(|index| index.parse().ok());
+    for adapter_index in forced_adapter.unwrap_or(0).. {
         let adapter: IDXGIAdapter1 = unsafe { dxgi_factory.EnumAdapters(adapter_index)?.cast()? };
         if let Ok(desc) = unsafe { adapter.GetDesc1() } {
             let gpu_name = String::from_utf16_lossy(&desc.Description)

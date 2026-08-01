@@ -32,6 +32,7 @@ mod interactive;
 mod key_dispatch;
 mod keymap;
 mod path_builder;
+mod path_winding;
 mod platform;
 pub mod prelude;
 /// Profiling utilities for task, frame, and thread performance tracking.
@@ -142,6 +143,7 @@ pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
 pub use path_builder::*;
+pub use path_winding::*;
 pub use platform::*;
 pub use profiler::*;
 #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]

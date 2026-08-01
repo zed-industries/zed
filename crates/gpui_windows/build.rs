@@ -32,8 +32,7 @@ mod shader_compilation {
         let modules = [
             "quad",
             "shadow",
-            "path_rasterization",
-            "path_sprite",
+            "path_bin",
             "underline",
             "monochrome_sprite",
             "subpixel_sprite",

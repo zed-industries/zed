@@ -4362,6 +4362,9 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
+        // No-op for paths from `PathBuilder::build`; decomposes paths built
+        // through the manual `Path` API (or mutated since their last paint).
+        path.ensure_decomposition();
         self.next_frame
             .scene
             .insert_primitive(path.scale(scale_factor));

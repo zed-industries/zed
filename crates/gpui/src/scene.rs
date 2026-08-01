@@ -5,19 +5,18 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, PathBin,
+    PathBins, PathDecomposition, PathPaint, Pixels, Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree, point, px,
 };
+use lyon::path::FillRule;
 use std::{
     fmt::Debug,
     iter::Peekable,
     ops::{Add, Range, Sub},
     slice,
+    sync::Arc,
 };
-
-#[allow(non_camel_case_types, unused)]
-#[expect(missing_docs)]
-pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
 #[expect(missing_docs)]
 pub type DrawOrder = u32;
@@ -44,7 +43,7 @@ pub struct Scene {
     layer_stack: Vec<DrawOrder>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
-    pub paths: Vec<Path<ScaledPixels>>,
+    pub paths: PathBins,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
@@ -110,8 +109,21 @@ impl Scene {
             }
             Primitive::Path(path) => {
                 path.order = order;
-                path.id = PathId(self.paths.len());
-                self.paths.push(path.clone());
+                // A scaled path without a decomposition is empty by the
+                // `Path::scale` contract (asserted there, where the logical
+                // segments are still visible) and draws nothing.
+                if let Some(decomposition) = &path.decomposition {
+                    self.paths.insert(
+                        decomposition,
+                        path.scale_factor,
+                        order,
+                        &PathPaint {
+                            bounds: path.bounds,
+                            content_mask: path.content_mask,
+                            color: path.color,
+                        },
+                    );
+                }
             }
             Primitive::Underline(underline) => {
                 underline.order = order;
@@ -151,7 +163,12 @@ impl Scene {
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
-        self.paths.sort_by_key(|path| path.order);
+        // Only the instances are sorted; `piece_start` indexes the piece list
+        // buffer absolutely, so it survives the reordering. Unstable is fine:
+        // equal-order bins come from one path and tile without overlap, so
+        // their relative draw order is immaterial — and the elements are wide
+        // enough that the sort's memory traffic is worth saving.
+        self.paths.bins.sort_unstable_by_key(|bin| bin.order);
         self.underlines.sort_by_key(|underline| underline.order);
         self.monochrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
@@ -176,7 +193,7 @@ impl Scene {
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
             paths_start: 0,
-            paths_iter: self.paths.iter().peekable(),
+            paths_iter: self.paths.bins.iter().peekable(),
             underlines_start: 0,
             underlines_iter: self.underlines.iter().peekable(),
             monochrome_sprites_start: 0,
@@ -272,7 +289,7 @@ struct BatchIterator<'a> {
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
     paths_start: usize,
-    paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
+    paths_iter: Peekable<slice::Iter<'a, PathBin>>,
     underlines_start: usize,
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
     monochrome_sprites_start: usize,
@@ -501,7 +518,7 @@ impl PrimitiveBatch {
         match self {
             Self::Shadows(range) => format!("shadows ({})", range.len()),
             Self::Quads(range) => format!("quads ({})", range.len()),
-            Self::Paths(range) => format!("paths ({})", range.len()),
+            Self::Paths(range) => format!("path bins ({})", range.len()),
             Self::Underlines(range) => format!("underlines ({})", range.len()),
             Self::MonochromeSprites { texture_id, range } => {
                 format!(
@@ -779,32 +796,54 @@ impl From<PaintSurface> for Primitive {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// One quadratic Bézier segment of a path contour. Straight lines are
+/// stored as degenerate quadratics with the control point at the midpoint,
+/// so a contour is a single homogeneous sequence.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
 #[expect(missing_docs)]
-pub struct PathId(pub usize);
+pub struct PathQuadratic<P: Clone + Debug + Default + PartialEq> {
+    pub p0: Point<P>,
+    pub ctrl: Point<P>,
+    pub p1: Point<P>,
+}
 
-/// A line made up of a series of vertices and control points.
+/// Maximum deviation (in pixels, before display scaling) allowed of the
+/// cubic-to-quadratic conversion in `PathBuilder`, the only approximation
+/// baked into a built fill path. See `docs/trapezoid_path_rendering.md` for
+/// the measurements behind the value.
+pub(crate) const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
+
+/// A filled path, represented as closed contours of quadratic Bézier
+/// segments (lines are degenerate quadratics). Contours are closed
+/// implicitly: starting a new contour (or decomposing the path for
+/// rendering) appends a closing line segment if the current contour is
+/// open.
+///
+/// A built path carries its scale-independent winding decomposition, computed
+/// once via [`Path::ensure_decomposition`] and shared by clones; painting only
+/// bins it into device-space cells.
 #[derive(Clone, Debug)]
 #[expect(missing_docs)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
-    pub id: PathId,
     pub order: DrawOrder,
     pub bounds: Bounds<P>,
     pub content_mask: ContentMask<P>,
-    pub vertices: Vec<PathVertex<P>>,
+    pub segments: Vec<PathQuadratic<P>>,
     pub color: Background,
+    pub fill_rule: FillRule,
+    decomposition: Option<Arc<PathDecomposition>>,
+    pub(crate) scale_factor: f32,
     start: Point<P>,
     current: Point<P>,
-    contour_count: usize,
 }
 
 impl Path<Pixels> {
     /// Create a new path with the given starting point.
     pub fn new(start: Point<Pixels>) -> Self {
         Self {
-            id: PathId(0),
             order: DrawOrder::default(),
-            vertices: Vec::new(),
+            segments: Vec::new(),
             start,
             current: start,
             bounds: Bounds {
@@ -813,101 +852,107 @@ impl Path<Pixels> {
             },
             content_mask: Default::default(),
             color: Default::default(),
-            contour_count: 0,
+            fill_rule: FillRule::NonZero,
+            decomposition: None,
+            scale_factor: 1.0,
         }
     }
 
-    /// Scale this path by the given factor.
+    /// Compute the path's scale-independent winding decomposition, closing
+    /// any open contour first. Reuses a previous decomposition when the path
+    /// hasn't been mutated since.
+    pub fn ensure_decomposition(&mut self) {
+        self.close();
+        let stale = self
+            .decomposition
+            .as_ref()
+            .is_none_or(|decomposition| decomposition.fill_rule() != self.fill_rule);
+        if stale {
+            self.decomposition = Some(Arc::new(PathDecomposition::compute(
+                &self.segments,
+                self.fill_rule,
+            )));
+        }
+    }
+
+    /// Scale this path into a paint-time primitive. The decomposition is
+    /// carried over unchanged — it is scale-independent, and the binner
+    /// applies the factor when producing device-space instances — while the
+    /// segments are deliberately left behind: rendering reads only the
+    /// decomposition, and cloning the segment list bought nothing while
+    /// costing an allocation and copy on every paint (and again on every
+    /// `Scene::replay` of a cached element).
     pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
+        debug_assert!(
+            self.decomposition.is_some() || self.segments.is_empty(),
+            "path scaled for painting without a decomposition; \
+            call Path::ensure_decomposition first"
+        );
         Path {
-            id: self.id,
             order: self.order,
             bounds: self.bounds.scale(factor),
             content_mask: self.content_mask.scale(factor),
-            vertices: self
-                .vertices
-                .iter()
-                .map(|vertex| vertex.scale(factor))
-                .collect(),
+            segments: Vec::new(),
             start: self.start.map(|start| start.scale(factor)),
             current: self.current.scale(factor),
-            contour_count: self.contour_count,
             color: self.color,
+            fill_rule: self.fill_rule,
+            decomposition: self.decomposition.clone(),
+            scale_factor: self.scale_factor * factor,
         }
     }
 
-    /// Move the start, current point to the given point.
+    /// Close the current contour and start a new one at the given point.
     pub fn move_to(&mut self, to: Point<Pixels>) {
-        self.contour_count += 1;
+        self.close();
         self.start = to;
         self.current = to;
     }
 
     /// Draw a straight line from the current point to the given point.
     pub fn line_to(&mut self, to: Point<Pixels>) {
-        self.contour_count += 1;
-        if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
+        if to != self.current {
+            let midpoint = point(
+                px(0.5 * (self.current.x.0 + to.x.0)),
+                px(0.5 * (self.current.y.0 + to.y.0)),
             );
+            self.push_segment(self.current, midpoint, to);
+            self.current = to;
         }
-        self.current = to;
     }
 
-    /// Draw a curve from the current point to the given point, using the given control point.
+    /// Draw a quadratic Bézier from the current point to the given point,
+    /// using the given control point. The curve is stored exactly; a built
+    /// path stays resolution-independent, and rendering evaluates the true
+    /// curve at every display scale.
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
-        self.contour_count += 1;
-        if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
+        if to == self.current && ctrl == self.current {
+            return;
         }
-
-        self.push_triangle(
-            (self.current, ctrl, to),
-            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
-        );
+        self.push_segment(self.current, ctrl, to);
         self.current = to;
     }
 
-    /// Push a triangle to the Path.
-    pub fn push_triangle(
-        &mut self,
-        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
-        st: (Point<f32>, Point<f32>, Point<f32>),
-    ) {
-        self.bounds = self
-            .bounds
-            .union(&Bounds {
-                origin: xy.0,
-                size: Default::default(),
-            })
-            .union(&Bounds {
-                origin: xy.1,
-                size: Default::default(),
-            })
-            .union(&Bounds {
-                origin: xy.2,
+    /// Close the current contour with a straight line back to its start.
+    pub fn close(&mut self) {
+        if !self.segments.is_empty() && self.current != self.start {
+            let start = self.start;
+            self.line_to(start);
+        }
+        self.current = self.start;
+    }
+
+    fn push_segment(&mut self, p0: Point<Pixels>, ctrl: Point<Pixels>, p1: Point<Pixels>) {
+        // The control point is included so the bounds stay conservative;
+        // the curve is contained in its control polygon's hull.
+        for position in [p0, ctrl, p1] {
+            self.bounds = self.bounds.union(&Bounds {
+                origin: position,
                 size: Default::default(),
             });
-
-        self.vertices.push(PathVertex {
-            xy_position: xy.0,
-            st_position: st.0,
-            content_mask: Default::default(),
-        });
-        self.vertices.push(PathVertex {
-            xy_position: xy.1,
-            st_position: st.1,
-            content_mask: Default::default(),
-        });
-        self.vertices.push(PathVertex {
-            xy_position: xy.2,
-            st_position: st.2,
-            content_mask: Default::default(),
-        });
+        }
+        self.segments.push(PathQuadratic { p0, ctrl, p1 });
+        self.decomposition = None;
     }
 }
 
@@ -925,25 +970,5 @@ where
 impl From<Path<ScaledPixels>> for Primitive {
     fn from(path: Path<ScaledPixels>) -> Self {
         Primitive::Path(path)
-    }
-}
-
-#[derive(Clone, Debug)]
-#[repr(C)]
-#[expect(missing_docs)]
-pub struct PathVertex<P: Clone + Debug + Default + PartialEq> {
-    pub xy_position: Point<P>,
-    pub st_position: Point<f32>,
-    pub content_mask: ContentMask<P>,
-}
-
-#[expect(missing_docs)]
-impl PathVertex<Pixels> {
-    pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
-        PathVertex {
-            xy_position: self.xy_position.scale(factor),
-            st_position: self.st_position,
-            content_mask: self.content_mask.scale(factor),
-        }
     }
 }

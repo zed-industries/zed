@@ -4,9 +4,9 @@
 mod example_support;
 
 use gpui::{
-    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
-    Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
-    linear_gradient, point, prelude::*, px, quad, rgb, size,
+    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, Pixels, Point,
+    Render, Window, WindowOptions, canvas, div, linear_color_stop, linear_gradient, point,
+    prelude::*, px, quad, rgb, size,
 };
 use gpui_platform::application;
 
@@ -272,20 +272,20 @@ impl PaintingViewer {
             lines.push((path, color.into()));
         }
 
-        // draw a wave
-        let options = StrokeOptions::default()
-            .with_line_width(1.)
-            .with_line_join(lyon::path::LineJoin::Bevel);
-        let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
-        builder.move_to(point(px(40.), px(420.)));
-        for i in 1..50 {
-            builder.line_to(point(
-                px(40.0 + i as f32 * 10.0),
-                px(420.0 + (i as f32 * 10.0).sin() * 40.0),
-            ));
-        }
-        let path = builder.build().unwrap();
-        lines.push((path, gpui::green().into()));
+        // // draw a wave
+        // let options = StrokeOptions::default()
+        //     .with_line_width(1.)
+        //     .with_line_join(lyon::path::LineJoin::Bevel);
+        // let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
+        // builder.move_to(point(px(40.), px(420.)));
+        // for i in 1..50 {
+        //     builder.line_to(point(
+        //         px(40.0 + i as f32 * 10.0),
+        //         px(420.0 + (i as f32 * 10.0).sin() * 40.0),
+        //     ));
+        // }
+        // let path = builder.build().unwrap();
+        // lines.push((path, gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),

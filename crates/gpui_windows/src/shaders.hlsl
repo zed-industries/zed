@@ -954,101 +954,287 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
 /*
 **
-**              Path Rasterization
+**              Path Bins
 **
 */
 
-struct PathRasterizationSprite {
-    float2 xy_position;
-    float2 st_position;
-    Background color;
-    Bounds bounds;
+// One xy-monotone quadratic piece of a path's boundary, stored downward
+// (p0.y <= p1.y), with its polynomial coefficients precomputed on the CPU:
+// x(t) = ax*t^2 + bx*t + p0.x and y(t) = ay*t^2 + by*t + p0.y. Uploading
+// the coefficients keeps this shader and the CPU binning consuming
+// bit-identical values (and line pieces' quadratic coefficients exactly
+// zero, so their solves take monotone_quadratic_root's linear branch).
+// `sign` is +1 if the contour ran downward through the piece and -1 if
+// upward; `sx` is sign(p1.x - p0.x) in stored orientation, or 0 for a
+// vertical piece.
+struct PathPiece {
+    float2 p0;
+    float2 p1;
+    float ax;
+    float bx;
+    float ay;
+    float by;
+    float sign;
+    float sx;
 };
 
-StructuredBuffer<PathRasterizationSprite> path_rasterization_sprites: register(t1);
+// One bin of a filled path: a screen-aligned quad whose every pixel resolves
+// its own winding number from `backdrop` (the winding at `corner`, the bin's
+// backdrop sample point: its top-left nudged half a geometry-lattice step
+// inward, so no snapped boundary passes through it) plus the pieces listed
+// for the bin.
+struct PathBin {
+    uint order;
+    uint paint;
+    uint piece_start;
+    uint piece_count;
+    int backdrop;
+    uint even_odd;
+    float2 corner;
+    Bounds quad;
+};
 
-struct PathVertexOutput {
+// Per-path paint data shared by every bin instance of one path, indexed by
+// PathBin.paint.
+struct PathPaint {
+    Bounds bounds;
+    Bounds content_mask;
+    Background color;
+};
+
+// One element of a bin's piece list: which piece (low bits), whether its
+// crossing of the bin's downward leg counts (high bit of `piece`), and the
+// height of that crossing, solved once on the CPU. Everything
+// per-(bin, piece) the fragment loop would otherwise re-derive per pixel.
+struct PathPieceEntry {
+    uint piece;
+    float leg_y;
+};
+
+StructuredBuffer<PathBin> path_bins: register(t1);
+StructuredBuffer<PathPieceEntry> path_piece_entries: register(t2);
+StructuredBuffer<PathPiece> path_pieces: register(t3);
+StructuredBuffer<PathPaint> path_paints: register(t4);
+
+struct PathBinVertexOutput {
     float4 position: SV_Position;
-    float2 st_position: TEXCOORD0;
-    nointerpolation uint vertex_id: TEXCOORD1;
+    nointerpolation uint bin_id: TEXCOORD0;
+    nointerpolation float4 background_solid: COLOR1;
+    nointerpolation float4 background_color0: COLOR2;
+    nointerpolation float4 background_color1: COLOR3;
     float4 clip_distance: SV_ClipDistance;
 };
 
-struct PathFragmentInput {
+struct PathBinFragmentInput {
     float4 position: SV_Position;
-    float2 st_position: TEXCOORD0;
-    nointerpolation uint vertex_id: TEXCOORD1;
+    nointerpolation uint bin_id: TEXCOORD0;
+    nointerpolation float4 background_solid: COLOR1;
+    nointerpolation float4 background_color0: COLOR2;
+    nointerpolation float4 background_color1: COLOR3;
 };
 
-PathVertexOutput path_rasterization_vertex(uint vertex_id: SV_VertexID) {
-    PathRasterizationSprite sprite = path_rasterization_sprites[vertex_id];
+PathBinVertexOutput path_bin_vertex(uint vertex_id: SV_VertexID, uint bin_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    PathBin bin = path_bins[bin_id];
+    PathPaint paint = path_paints[bin.paint];
+    float2 position = bin.quad.origin + unit_vertex * bin.quad.size;
 
-    PathVertexOutput output;
-    output.position = to_device_position_impl(sprite.xy_position);
-    output.st_position = sprite.st_position;
-    output.vertex_id = vertex_id;
-    output.clip_distance = distance_from_clip_rect_impl(sprite.xy_position, sprite.bounds);
+    GradientColor gradient = prepare_gradient_color(
+        paint.color.tag, paint.color.color_space,
+        paint.color.solid, paint.color.colors);
 
+    PathBinVertexOutput output;
+    output.position = to_device_position_impl(position);
+    output.bin_id = bin_id;
+    output.background_solid = gradient.solid;
+    output.background_color0 = gradient.color0;
+    output.background_color1 = gradient.color1;
+    output.clip_distance = distance_from_clip_rect_impl(position, paint.content_mask);
     return output;
 }
 
-float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
-    float2 dx = ddx(input.st_position);
-    float2 dy = ddy(input.st_position);
-    PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
+// Stable quadratic solve for a*t^2 + b*t + c = 0, returning the root within
+// [0, 1]. The curve pieces are monotone, so at most one root lies in range.
+float monotone_quadratic_root(float a, float b, float c) {
+    if (abs(a) < 1e-6) {
+        return abs(b) < 1e-12 ? 0.0 : saturate(-c / b);
+    }
+    float discriminant = max(b * b - 4.0 * a * c, 0.0);
+    float sqrt_discriminant = sqrt(discriminant);
+    float q = b >= 0.0 ? -0.5 * (b + sqrt_discriminant) : -0.5 * (b - sqrt_discriminant);
+    float root0 = q / a;
+    float root1 = abs(q) > 1e-12 ? c / q : root0;
+    bool root0_in_range = root0 >= -1e-4 && root0 <= 1.0001;
+    return saturate(root0_in_range ? root0 : root1);
+}
 
-    Background background = sprite.color;
-    Bounds bounds = sprite.bounds;
+// Antiderivative of (ax*t^2 + bx*t + cx) * (2*ay*t + by), the pixel-local
+// area integrand expressed in the curve parameter.
+float coverage_integral(float ax, float bx, float cx, float ay, float by, float t) {
+    float c3 = 0.5 * ax * ay;
+    float c2 = (ax * by + 2.0 * bx * ay) / 3.0;
+    float c1 = 0.5 * (bx * by + 2.0 * cx * ay);
+    float c0 = cx * by;
+    return (((c3 * t + c2) * t + c1) * t + c0) * t;
+}
 
-    float alpha;
-    if (length(float2(dx.x, dy.x))) {
-        alpha = 1.0;
+// Exact area of the part of the pixel column [px, px+1] left of a
+// downward-monotone quadratic piece over the window [ya, yb]:
+//     integral over [ya, yb] of clamp(x(y) - px, 0, 1) dy
+// Specialized to its one call site: the caller guarantees the window lies
+// inside the piece's y-span (so no constant extensions are needed) and
+// passes the window-end roots ta/tb and column-relative offsets xa/xb
+// (= x - px) it already computed.
+float piece_column_area(float ax, float bx, float cx, float ay, float by, float p0y,
+                        float ta, float tb, float xa, float xb) {
+    // Split the parameter interval where the curve crosses the column's
+    // boundaries; each crossing is another single-root monotone solve.
+    if (xb >= xa) {
+        float s0 = xa >= 0.0 ? ta : (xb <= 0.0 ? tb : clamp(monotone_quadratic_root(ax, bx, cx), ta, tb));
+        float s1 = xb <= 1.0 ? tb : (xa >= 1.0 ? ta : clamp(monotone_quadratic_root(ax, bx, cx - 1.0), ta, tb));
+        float y_s1 = (ay * s1 + by) * s1 + p0y;
+        float y_tb = (ay * tb + by) * tb + p0y;
+        return (y_tb - y_s1)
+             + coverage_integral(ax, bx, cx, ay, by, s1)
+             - coverage_integral(ax, bx, cx, ay, by, s0);
     } else {
-        float2 gradient = 2.0 * input.st_position.xx * float2(dx.x, dy.x) - float2(dx.y, dy.y);
-        float f = input.st_position.x * input.st_position.x - input.st_position.y;
-        float distance = f / length(gradient);
-        alpha = saturate(0.5 - distance);
+        float s1 = xa <= 1.0 ? ta : (xb >= 1.0 ? tb : clamp(monotone_quadratic_root(ax, bx, cx - 1.0), ta, tb));
+        float s0 = xb >= 0.0 ? tb : (xa <= 0.0 ? ta : clamp(monotone_quadratic_root(ax, bx, cx), ta, tb));
+        float y_s1 = (ay * s1 + by) * s1 + p0y;
+        float y_ta = (ay * ta + by) * ta + p0y;
+        return (y_s1 - y_ta)
+             + coverage_integral(ax, bx, cx, ay, by, s0)
+             - coverage_integral(ax, bx, cx, ay, by, s1);
+    }
+}
+
+// Mean winding this piece contributes to the pixel box, along the L-shaped
+// route from the bin's backdrop sample point: down to the sample's row,
+// then right to the sample. `crosses_downward_leg` and `leg_y` are the
+// CPU's booking of whether this piece's crossing of the bin's left-edge
+// line belongs to the leg, and where that crossing is; both are constant
+// over the bin and are never re-derived here.
+//
+// A leg crossing counts with the sign of cross(leg direction, contour
+// tangent). For the rightward leg that is sign(dy) = piece.sign; for the
+// downward leg it is -sign(dx) = -piece.sign * piece.sx. The rightward leg
+// matches what the CPU counted along the grid row line, so the backdrop and
+// these corrections compose into the true winding.
+float piece_winding(PathPiece piece, float2 corner, float2 pixel,
+                    bool crosses_downward_leg, float leg_y) {
+    float ax = piece.ax;
+    float bx = piece.bx;
+    float ay = piece.ay;
+    float by = piece.by;
+    float winding = 0.0;
+
+    // Rightward leg, from the bin's left edge to the sample. Clamping to the
+    // piece's y-span first is what makes the column integral usable here: it
+    // extends its boundary with constant x outside the span, but a winding
+    // crossing exists only inside the span.
+    float ya = max(pixel.y, piece.p0.y);
+    float yb = min(pixel.y + 1.0, piece.p1.y);
+    if (yb > ya) {
+        float ta = monotone_quadratic_root(ay, by, piece.p0.y - ya);
+        float tb = monotone_quadratic_root(ay, by, piece.p0.y - yb);
+        float xa = (ax * ta + bx) * ta + piece.p0.x;
+        float xb = (ax * tb + bx) * tb + piece.p0.x;
+
+        // By monotonicity the piece's x-extent over the window is exactly
+        // [min(xa, xb), max(xa, xb)], which classifies most pixels without
+        // the column integral: a piece entirely right of this pixel's
+        // column contributes zero (the pixel is wholly left of the
+        // boundary), and one entirely left of it contributes the whole
+        // window. Only the one or two columns the piece actually passes
+        // through pay for the exact area.
+        if (min(xa, xb) < pixel.x + 1.0) {
+            // A crossing left of the bin's left edge is not on the leg and
+            // must contribute zero for that y -- not a full pixel width.
+            // x-monotonicity means x_c(y) meets corner.x at most once, at
+            // the uploaded height, so the window splits into a live part
+            // and a dead one with no solve. Dead means never *strictly*
+            // right of the corner: a vertical piece lying exactly on the
+            // bin's left edge is left of every sample in the bin, and the
+            // backdrop owns it. Only the crossing-count height is clipped;
+            // the area integral keeps the full window, because over the
+            // dead part the piece is left of corner.x where this pixel's
+            // column integrand is zero anyway (short of 1/512 on the bin's
+            // leftmost column, far below visibility), which is what lets
+            // the clipped end keep its already-solved parameter bounds.
+            bool live = true;
+            if (max(xa, xb) <= corner.x) {
+                live = false;
+            } else if (min(xa, xb) < corner.x) {
+                float y_c = clamp(leg_y, ya, yb);
+                if (xa < corner.x) {
+                    ya = y_c;
+                } else {
+                    yb = y_c;
+                }
+                live = yb > ya;
+            }
+            if (live) {
+                if (max(xa, xb) <= pixel.x) {
+                    winding += piece.sign * (yb - ya);
+                } else {
+                    // clamp(px + 1 - x_c, 0, 1) = 1 - clamp(x_c - px, 0, 1).
+                    winding += piece.sign * ((yb - ya)
+                        - piece_column_area(ax, bx, piece.p0.x - pixel.x, ay, by, piece.p0.y,
+                                            ta, tb, xa - pixel.x, xb - pixel.x));
+                }
+            }
+        }
     }
 
-    float4 color = background_color(prepare_background(background, bounds), input.position.xy);
-    return float4(color.rgb * color.a * alpha, alpha * color.a);
+    // Downward leg, from the sample point down to the sample's row. Both
+    // the decision and the crossing height were made once, on the CPU,
+    // alongside the backdrop this correction must complement; re-deriving
+    // either here would repeat per-bin work at every pixel, and re-deriving
+    // the decision would reopen the possibility of the two sides
+    // disagreeing. Per pixel only the box-filter weight remains. No lower
+    // gate is needed; the weight zeroes crossings below the pixel by
+    // itself.
+    if (crosses_downward_leg) {
+        winding -= piece.sign * piece.sx * clamp(pixel.y + 1.0 - leg_y, 0.0, 1.0);
+    }
+
+    return winding;
 }
 
-/*
-**
-**              Path Sprites
-**
-*/
+float4 path_bin_fragment(PathBinFragmentInput input): SV_Target {
+    PathBin bin = path_bins[input.bin_id];
+    float2 pixel = floor(input.position.xy);
 
-struct PathSprite {
-    Bounds bounds;
-};
+    // The loop bound is per instance, so every pixel of the bin runs the
+    // same iterations in lockstep; branches inside piece_winding still
+    // diverge per pixel, but reconverge within each iteration.
+    float winding = float(bin.backdrop);
+    [loop]
+    for (uint i = 0u; i < bin.piece_count; i++) {
+        PathPieceEntry entry = path_piece_entries[bin.piece_start + i];
+        PathPiece piece = path_pieces[entry.piece & 0x7fffffffu];
+        winding += piece_winding(piece, bin.corner, pixel,
+            (entry.piece & 0x80000000u) != 0u, entry.leg_y);
+    }
 
-struct PathSpriteVertexOutput {
-    float4 position: SV_Position;
-    float2 texture_coords: TEXCOORD0;
-};
+    float coverage = bin.even_odd != 0u
+        // Distance to the nearest even integer (FreeType's fold).
+        ? abs(winding - 2.0 * round(winding * 0.5))
+        // Distance from zero, clamped.
+        : min(abs(winding), 1.0);
 
-StructuredBuffer<PathSprite> path_sprites: register(t1);
+    // Wholly-exterior pixels of boundary bins land on exactly zero (their
+    // winding is the untouched integer backdrop), and with straight-alpha
+    // blending an all-zero output is a no-op, so skip paint evaluation —
+    // gradient direction math, Oklab conversion, and dithering — for them.
+    if (coverage == 0.0) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
 
-PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
-    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
-    PathSprite sprite = path_sprites[sprite_id];
-
-    // Don't apply content mask because it was already accounted for when rasterizing the path
-    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
-
-    float2 screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
-    float2 texture_coords = screen_position / global_viewport_size;
-
-    PathSpriteVertexOutput output;
-    output.position = device_position;
-    output.texture_coords = texture_coords;
-    return output;
-}
-
-float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
-    return t_sprite.Sample(s_sprite, input.texture_coords);
+    PathPaint paint = path_paints[bin.paint];
+    float4 color = gradient_color(paint.color, input.position.xy, paint.bounds,
+        input.background_solid, input.background_color0, input.background_color1);
+    return float4(color.rgb, color.a * coverage);
 }
 
 /*

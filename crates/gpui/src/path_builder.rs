@@ -1,23 +1,26 @@
 use anyhow::Error;
 use etagere::euclid::{Point2D, Vector2D};
-use lyon::geom::Angle;
+use lyon::geom::{Angle, CubicBezierSegment};
 use lyon::math::{Vector, vector};
 use lyon::path::traits::SvgPathBuilder;
-use lyon::path::{ArcFlags, Polygon};
-use lyon::tessellation::{
-    BuffersBuilder, FillTessellator, FillVertex, StrokeTessellator, StrokeVertex, VertexBuffers,
-};
+use lyon::path::{ArcFlags, Event, Polygon};
 
 pub use lyon::math::Transform;
-pub use lyon::tessellation::{FillOptions, FillRule, StrokeOptions};
+pub use lyon::tessellation::{FillOptions, FillRule, LineCap, LineJoin, StrokeOptions};
 
 use crate::{Path, Pixels, Point, point, px};
 
 /// Style of the PathBuilder
 pub enum PathStyle {
-    /// Stroke style
+    /// Stroke style. Currently renders nothing: strokes are pending their
+    /// own instance design (see [`PathBuilder::build`]).
     Stroke(StrokeOptions),
-    /// Fill style
+    /// Fill style. Only [`FillOptions::fill_rule`] is honored: fills are
+    /// rendered analytically from the exact curves, so the tessellation
+    /// tolerance, sweep orientation, and intersection handling that
+    /// [`FillOptions`] carries for lyon's tessellator have nothing to
+    /// configure. (Cubic Béziers are approximated by quadratic chains at a
+    /// fixed internal tolerance, independent of these options.)
     Fill(FillOptions),
 }
 
@@ -249,99 +252,73 @@ impl PathBuilder {
         };
 
         match self.style {
-            PathStyle::Stroke(options) => Self::tessellate_stroke(self.dash_array, &path, &options),
-            PathStyle::Fill(options) => Self::tessellate_fill(&path, &options),
-        }
-    }
-
-    fn tessellate_fill(
-        path: &lyon::path::Path,
-        options: &FillOptions,
-    ) -> Result<Path<Pixels>, Error> {
-        // Will contain the result of the tessellation.
-        let mut buf: VertexBuffers<lyon::math::Point, u16> = VertexBuffers::new();
-        let mut tessellator = FillTessellator::new();
-
-        // Compute the tessellation.
-        tessellator.tessellate_path(
-            path,
-            options,
-            &mut BuffersBuilder::new(&mut buf, |vertex: FillVertex| vertex.position()),
-        )?;
-
-        Ok(Self::build_path(buf))
-    }
-
-    fn tessellate_stroke(
-        dash_array: Option<Vec<Pixels>>,
-        path: &lyon::path::Path,
-        options: &StrokeOptions,
-    ) -> Result<Path<Pixels>, Error> {
-        let path = if let Some(dash_array) = dash_array {
-            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(path, 0.01);
-            let mut sampler = measurements
-                .create_sampler(path, lyon::algorithms::measure::SampleType::Normalized);
-            let mut builder = lyon::path::Path::builder();
-
-            let total_length = sampler.length();
-            let dash_array_len = dash_array.len();
-            let mut pos = 0.;
-            let mut dash_index = 0;
-            while pos < total_length {
-                let dash_length = dash_array[dash_index % dash_array_len].0;
-                let next_pos = (pos + dash_length).min(total_length);
-                if dash_index % 2 == 0 {
-                    let start = pos / total_length;
-                    let end = next_pos / total_length;
-                    sampler.split_range(start..end, &mut builder);
-                }
-                pos = next_pos;
-                dash_index += 1;
+            // Strokes are pending their own instance design (SDF capsules);
+            // routing them through the fill pipeline would be thrown away, so
+            // they render nothing for now.
+            PathStyle::Stroke(_) => Ok(Path::new(Point::default())),
+            PathStyle::Fill(options) => {
+                let mut path = Self::fill_outline(&path, options.fill_rule);
+                // Do the expensive, scale-independent geometry work once at
+                // build time; painting the built path only bins it.
+                path.ensure_decomposition();
+                Ok(path)
             }
-
-            &builder.build()
-        } else {
-            path
-        };
-
-        // Will contain the result of the tessellation.
-        let mut buf: VertexBuffers<lyon::math::Point, u16> = VertexBuffers::new();
-        let mut tessellator = StrokeTessellator::new();
-
-        // Compute the tessellation.
-        tessellator.tessellate_path(
-            path,
-            options,
-            &mut BuffersBuilder::new(&mut buf, |vertex: StrokeVertex| vertex.position()),
-        )?;
-
-        Ok(Self::build_path(buf))
+        }
     }
 
-    /// Builds a [`Path`] from a [`lyon::tessellation::VertexBuffers`].
-    pub fn build_path(buf: VertexBuffers<lyon::math::Point, u16>) -> Path<Pixels> {
-        if buf.vertices.is_empty() {
-            return Path::new(Point::default());
+    /// Convert a lyon path into contours of quadratic segments; every subpath
+    /// is treated as closed, matching fill semantics.
+    fn fill_outline(path: &lyon::path::Path, fill_rule: FillRule) -> Path<Pixels> {
+        let mut output: Option<Path<Pixels>> = None;
+        for event in path.iter() {
+            match event {
+                Event::Begin { at } => match &mut output {
+                    Some(output) => output.move_to(at.into()),
+                    None => output = Some(Path::new(at.into())),
+                },
+                Event::Line { to, .. } => {
+                    if let Some(output) = &mut output {
+                        output.line_to(to.into());
+                    }
+                }
+                Event::Quadratic { ctrl, to, .. } => {
+                    if let Some(output) = &mut output {
+                        output.curve_to(to.into(), ctrl.into());
+                    }
+                }
+                Event::Cubic {
+                    from,
+                    ctrl1,
+                    ctrl2,
+                    to,
+                } => {
+                    if let Some(output) = &mut output {
+                        let cubic = CubicBezierSegment {
+                            from,
+                            ctrl1,
+                            ctrl2,
+                            to,
+                        };
+                        // Cubics are approximated by quadratic chains (the
+                        // shader evaluates quadratics); this is the only
+                        // approximation baked into a built fill path.
+                        cubic.for_each_quadratic_bezier(
+                            crate::scene::PATH_FLATTEN_TOLERANCE,
+                            &mut |quadratic| {
+                                output.curve_to(quadratic.to.into(), quadratic.ctrl.into());
+                            },
+                        );
+                    }
+                }
+                Event::End { .. } => {
+                    if let Some(output) = &mut output {
+                        output.close();
+                    }
+                }
+            }
         }
-
-        let first_point = buf.vertices[0];
-
-        let mut path = Path::new(first_point.into());
-        for i in 0..buf.indices.len() / 3 {
-            let i0 = buf.indices[i * 3] as usize;
-            let i1 = buf.indices[i * 3 + 1] as usize;
-            let i2 = buf.indices[i * 3 + 2] as usize;
-
-            let v0 = buf.vertices[i0];
-            let v1 = buf.vertices[i1];
-            let v2 = buf.vertices[i2];
-
-            path.push_triangle(
-                (v0.into(), v1.into(), v2.into()),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
-        }
-
+        let mut path = output.unwrap_or_else(|| Path::new(Point::default()));
+        path.fill_rule = fill_rule;
         path
     }
 }
