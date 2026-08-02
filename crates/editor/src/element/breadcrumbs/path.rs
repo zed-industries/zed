@@ -633,7 +633,10 @@ pub(crate) fn render_breadcrumb_directory_segment(
         PopoverMenuHandle::default()
     };
 
-    PopoverMenu::new(("breadcrumb-directory-menu", index))
+    let reveal_workspace = workspace.clone();
+    let reveal_path = path.clone();
+
+    let menu = PopoverMenu::new(("breadcrumb-directory-menu", index))
         .with_handle(popover_handle)
         .trigger(trigger)
         .menu(move |window, cx| {
@@ -665,8 +668,54 @@ pub(crate) fn render_breadcrumb_directory_segment(
                 });
             }
             Some(picker)
+        });
+
+    // Double clicking a segment reveals its directory in the project panel, the way IntelliJ's
+    // navigation bar does. Handled on mouse down, which is the only event carrying a click count:
+    // by the time a click is delivered the first one has already opened the dropdown.
+    div()
+        .on_mouse_down(gpui::MouseButton::Left, move |event, _, cx| {
+            if event.click_count < 2 {
+                return;
+            }
+            reveal_breadcrumb_directory_in_project_panel(
+                &reveal_workspace,
+                worktree_id,
+                &reveal_path,
+                cx,
+            );
         })
+        .child(menu)
         .into_any_element()
+}
+
+/// Selects `path` in the project panel, expanding whatever is needed to show it.
+fn reveal_breadcrumb_directory_in_project_panel(
+    workspace: &WeakEntity<Workspace>,
+    worktree_id: WorktreeId,
+    path: &RelPath,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+    let project = workspace.read(cx).project().clone();
+    let Some(entry_id) = project
+        .read(cx)
+        .entry_for_path(
+            &ProjectPath {
+                worktree_id,
+                path: path.into(),
+            },
+            cx,
+        )
+        .map(|entry| entry.id)
+    else {
+        return;
+    };
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::RevealInProjectPanel(entry_id));
+    });
 }
 
 /// Whether the leading segment offers navigation at all: `false` for a buffer with no project
@@ -1297,6 +1346,72 @@ mod tests {
             assert_eq!(navigation.active_path.as_unix_str(), "beta");
             assert!(navigation.navigated);
         });
+    }
+
+    /// Double clicking a segment has to reach the project panel, which listens for this event
+    /// rather than being called directly.
+    #[gpui::test]
+    async fn test_revealing_a_breadcrumb_directory_emits_for_the_project_panel(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "alpha": { "one.txt": "" } }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let revealed = Arc::new(AtomicUsize::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&project, {
+                let revealed = revealed.clone();
+                move |_, event, _| {
+                    if matches!(event, project::Event::RevealInProjectPanel(_)) {
+                        revealed.fetch_add(1, Ordering::AcqRel);
+                    }
+                }
+            })
+        });
+
+        cx.update(|cx| {
+            reveal_breadcrumb_directory_in_project_panel(
+                &workspace.downgrade(),
+                worktree_id,
+                rel_path("alpha"),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(revealed.load(Ordering::Acquire), 1);
+
+        cx.update(|cx| {
+            reveal_breadcrumb_directory_in_project_panel(
+                &workspace.downgrade(),
+                worktree_id,
+                rel_path("nope"),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            revealed.load(Ordering::Acquire),
+            1,
+            "a path with no entry reveals nothing rather than panicking"
+        );
     }
 
     /// Worktrees never scan gitignored directories proactively, so without the expansion call a
