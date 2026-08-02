@@ -98,6 +98,7 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
 - `ZED_MAIN_GIT_WORKTREE`: absolute path to the main git worktree's working directory. For normal checkouts this equals `ZED_WORKTREE_ROOT`; for linked git worktrees this is the original repository's working directory.
 - `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
+- `ZED_EXTENSION_WORK_DIR`: the absolute path to the Zed extension work directory
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
 
