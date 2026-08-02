@@ -59,8 +59,10 @@ pub fn resolve_ollama_endpoint(
             .unwrap_or_default();
         let credentials = format!("{user}:{password}");
         let encoded = base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes());
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
+        url.set_username("")
+            .map_err(|_| anyhow!("failed to clear username from Ollama API URL: {trimmed}"))?;
+        url.set_password(None)
+            .map_err(|_| anyhow!("failed to clear password from Ollama API URL: {trimmed}"))?;
         Some(format!("Basic {encoded}"))
     } else {
         api_key

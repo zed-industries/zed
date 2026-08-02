@@ -149,6 +149,18 @@ How you authenticate depends on how the Ollama server is exposed:
 }
 ```
 
+If the username or password contains reserved URL characters (`@`, `:`, `/`, `#`, `%`, etc.), percent-encode them. For example, password `p@ss:word` becomes `p%40ss%3Aword`:
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "https://user:p%40ss%3Aword@ollama.example.com"
+    }
+  }
+}
+```
+
 If the URL includes userinfo **and** an API key is also set, **Basic credentials from the URL take precedence** (the API key is not sent as Bearer). Use an API key alone when the server expects Bearer authentication, not Basic.
 
 ## LM Studio {#lm-studio}
