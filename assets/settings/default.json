@@ -125,6 +125,11 @@
     // The maximum width, in pixels, of the rendered markdown content when
     // limit_content_width is enabled.
     "max_width": 800,
+    // How PlantUML diagrams are rendered. "local" uses the `plantuml` executable
+    // from PATH. "public_server" encodes the complete diagram source in a request URL
+    // and sends it to the third-party service https://www.plantuml.com. Do not use the
+    // public server for confidential content.
+    "plantuml_render_mode": "local",
   },
   // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
   //

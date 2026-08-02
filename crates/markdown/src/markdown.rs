@@ -1,7 +1,9 @@
+mod diagram;
 pub mod html;
 mod mermaid;
 pub mod parser;
 mod path_range;
+mod plantuml;
 mod selection;
 
 use base64::Engine as _;
@@ -16,6 +18,11 @@ use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
 };
 pub use path_range::{LineCol, PathWithRange};
+use plantuml::{
+    ParsedMarkdownPlantUmlDiagram, PlantUmlState, extract_plantuml_diagrams,
+    render_plantuml_diagram,
+};
+use settings::PlantUmlRenderMode;
 use settings::Settings as _;
 use smallvec::SmallVec;
 use theme_settings::ThemeSettings;
@@ -29,7 +36,6 @@ use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use collections::{HashMap, HashSet};
 use gpui::{
@@ -407,9 +413,10 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
-    _mermaid_theme_subscription: Option<Subscription>,
+    plantuml_state: PlantUmlState,
+    _diagram_theme_subscription: Option<Subscription>,
     mermaid_showing_code: HashSet<usize>,
-    copied_code_blocks: HashSet<ElementId>,
+    plantuml_showing_code: HashSet<usize>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
@@ -424,6 +431,8 @@ pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
+    pub render_plantuml_diagrams: bool,
+    pub plantuml_render_mode: PlantUmlRenderMode,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
 }
@@ -575,15 +584,17 @@ impl Markdown {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let theme_subscription = if options.render_mermaid_diagrams {
-            Some(
-                cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
-                    this.invalidate_mermaid_cache(cx);
-                }),
-            )
-        } else {
-            None
-        };
+        let theme_subscription =
+            if options.render_mermaid_diagrams || options.render_plantuml_diagrams {
+                Some(
+                    cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
+                        this.invalidate_mermaid_cache(cx);
+                        this.invalidate_plantuml_cache(cx);
+                    }),
+                )
+            } else {
+                None
+            };
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -602,9 +613,10 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
-            _mermaid_theme_subscription: theme_subscription,
+            plantuml_state: PlantUmlState::default(),
+            _diagram_theme_subscription: theme_subscription,
             mermaid_showing_code: HashSet::default(),
-            copied_code_blocks: HashSet::default(),
+            plantuml_showing_code: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
@@ -661,7 +673,8 @@ impl Markdown {
         }
 
         self.mermaid_state.clear();
-        self.mermaid_state.update(&self.parsed_markdown, cx);
+        self.mermaid_state
+            .update(&self.parsed_markdown.mermaid_diagrams, cx);
         cx.notify();
     }
 
@@ -672,6 +685,45 @@ impl Markdown {
     pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
         if !self.mermaid_showing_code.remove(&source_offset) {
             self.mermaid_showing_code.insert(source_offset);
+        }
+    }
+
+    fn invalidate_plantuml_cache(&mut self, cx: &mut Context<Self>) {
+        if !self.options.render_plantuml_diagrams
+            || self.parsed_markdown.plantuml_diagrams.is_empty()
+        {
+            return;
+        }
+
+        self.plantuml_state.clear();
+        self.plantuml_state.update(
+            &self.parsed_markdown.plantuml_diagrams,
+            self.options.plantuml_render_mode,
+            cx,
+        );
+        cx.notify();
+    }
+
+    pub fn set_plantuml_render_mode(
+        &mut self,
+        render_mode: PlantUmlRenderMode,
+        cx: &mut Context<Self>,
+    ) {
+        if self.options.plantuml_render_mode == render_mode {
+            return;
+        }
+
+        self.options.plantuml_render_mode = render_mode;
+        self.invalidate_plantuml_cache(cx);
+    }
+
+    pub(crate) fn is_plantuml_showing_code(&self, source_offset: usize) -> bool {
+        self.plantuml_showing_code.contains(&source_offset)
+    }
+
+    pub(crate) fn toggle_plantuml_tab(&mut self, source_offset: usize) {
+        if !self.plantuml_showing_code.remove(&source_offset) {
+            self.plantuml_showing_code.insert(source_offset);
         }
     }
 
@@ -978,6 +1030,8 @@ impl Markdown {
             self.active_root_block = None;
             self.images_by_source_offset.clear();
             self.mermaid_state.clear();
+            self.plantuml_state.clear();
+            self.plantuml_showing_code.clear();
             cx.notify();
             cx.refresh_windows();
             return;
@@ -996,6 +1050,7 @@ impl Markdown {
         let should_parse_links_only = self.options.parse_links_only;
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
+        let should_render_plantuml_diagrams = self.options.render_plantuml_diagrams;
         let should_parse_heading_slugs = self.options.parse_heading_slugs;
         let should_parse_metadata_blocks = self.options.render_metadata_blocks;
         let language_registry = self.language_registry.clone();
@@ -1013,6 +1068,7 @@ impl Markdown {
                         html_blocks: BTreeMap::default(),
                         metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
+                        plantuml_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
                     },
@@ -1036,6 +1092,11 @@ impl Markdown {
             let footnote_definitions = parsed.footnote_definitions;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
+            } else {
+                BTreeMap::default()
+            };
+            let plantuml_diagrams = if should_render_plantuml_diagrams {
+                extract_plantuml_diagrams(&source, &events)
             } else {
                 BTreeMap::default()
             };
@@ -1101,6 +1162,7 @@ impl Markdown {
                     html_blocks,
                     metadata_blocks,
                     mermaid_diagrams,
+                    plantuml_diagrams,
                     heading_slugs,
                     footnote_definitions,
                 },
@@ -1120,13 +1182,27 @@ impl Markdown {
                     this.active_root_block = None;
                 }
                 if this.options.render_mermaid_diagrams {
-                    let parsed_markdown = this.parsed_markdown.clone();
-                    this.mermaid_state.update(&parsed_markdown, cx);
-                    this.mermaid_showing_code
-                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    this.mermaid_state
+                        .update(&this.parsed_markdown.mermaid_diagrams, cx);
+                    this.mermaid_showing_code.retain(|offset| {
+                        this.parsed_markdown.mermaid_diagrams.contains_key(offset)
+                    });
                 } else {
                     this.mermaid_state.clear();
                     this.mermaid_showing_code.clear();
+                }
+                if this.options.render_plantuml_diagrams {
+                    this.plantuml_state.update(
+                        &this.parsed_markdown.plantuml_diagrams,
+                        this.options.plantuml_render_mode,
+                        cx,
+                    );
+                    this.plantuml_showing_code.retain(|offset| {
+                        this.parsed_markdown.plantuml_diagrams.contains_key(offset)
+                    });
+                } else {
+                    this.plantuml_state.clear();
+                    this.plantuml_showing_code.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1238,6 +1314,7 @@ pub struct ParsedMarkdown {
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    pub(crate) plantuml_diagrams: BTreeMap<usize, ParsedMarkdownPlantUmlDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
 }
@@ -2177,7 +2254,15 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            mermaid_state,
+            render_plantuml_diagrams,
+            plantuml_state,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -2185,6 +2270,8 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.options.render_plantuml_diagrams,
+                markdown.plantuml_state.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -2196,7 +2283,7 @@ impl Element for MarkdownElement {
 
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
-        let mut rendered_mermaid_block = false;
+        let mut rendered_diagram_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
@@ -2214,9 +2301,9 @@ impl Element for MarkdownElement {
                 }
             }
 
-            if rendered_mermaid_block {
+            if rendered_diagram_block {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
-                    rendered_mermaid_block = false;
+                    rendered_diagram_block = false;
                 }
                 continue;
             }
@@ -2337,7 +2424,36 @@ impl Element for MarkdownElement {
                                         copy_button_visibility,
                                     ),
                                 );
-                                rendered_mermaid_block = true;
+                                rendered_diagram_block = true;
+                                continue;
+                            }
+
+                            if render_plantuml_diagrams
+                                && let Some(plantuml_diagram) =
+                                    parsed_markdown.plantuml_diagrams.get(&range.start)
+                            {
+                                let showing_code =
+                                    self.markdown.read(cx).is_plantuml_showing_code(range.start);
+                                let copy_button_visibility = match &self.code_block_renderer {
+                                    CodeBlockRenderer::Default {
+                                        copy_button_visibility,
+                                        ..
+                                    } => *copy_button_visibility,
+                                    _ => CopyButtonVisibility::VisibleOnHover,
+                                };
+                                builder.push_sourced_element(
+                                    plantuml_diagram.content_range.clone(),
+                                    render_plantuml_diagram(
+                                        plantuml_diagram,
+                                        &plantuml_state,
+                                        &self.style,
+                                        self.markdown.clone(),
+                                        range.start,
+                                        showing_code,
+                                        copy_button_visibility,
+                                    ),
+                                );
+                                rendered_diagram_block = true;
                                 continue;
                             }
 
@@ -3063,30 +3179,7 @@ fn render_copy_code_block_button(
         id.to_string().into(),
     );
 
-    CopyButton::new(id.clone(), code.clone()).custom_on_click({
-        let markdown = markdown;
-        move |_window, cx| {
-            let id = id.clone();
-            markdown.update(cx, |this, cx| {
-                this.copied_code_blocks.insert(id.clone());
-
-                cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-
-                cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(Duration::from_secs(2)).await;
-
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            this.copied_code_blocks.remove(&id);
-                            cx.notify();
-                        })
-                    })
-                    .ok();
-                })
-                .detach();
-            });
-        }
-    })
+    CopyButton::new(id, code)
 }
 
 impl IntoElement for MarkdownElement {

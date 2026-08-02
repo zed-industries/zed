@@ -1,5 +1,5 @@
 use gpui::{Pixels, px};
-use settings::{RegisterSetting, Settings};
+use settings::{PlantUmlRenderMode, RegisterSetting, Settings};
 
 /// The settings for the markdown preview.
 #[derive(Clone, Copy, Debug, Default, RegisterSetting)]
@@ -7,6 +7,8 @@ pub struct MarkdownPreviewSettings {
     /// The maximum width of the rendered markdown content, or `None` to render
     /// content edge to edge.
     pub max_width: Option<Pixels>,
+    /// How PlantUML diagrams are rendered.
+    pub plantuml_render_mode: PlantUmlRenderMode,
 }
 
 impl Settings for MarkdownPreviewSettings {
@@ -17,6 +19,9 @@ impl Settings for MarkdownPreviewSettings {
         } else {
             None
         };
-        Self { max_width }
+        Self {
+            max_width,
+            plantuml_render_mode: content.plantuml_render_mode.unwrap_or_default(),
+        }
     }
 }

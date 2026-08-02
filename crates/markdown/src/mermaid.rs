@@ -1,20 +1,23 @@
 use collections::HashMap;
-use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Context, Entity, ImageSource, RenderImage,
-    StyledText, Task, img, pulsating_between,
-};
+use gpui::{AnyElement, Context, Entity, RenderImage, Task};
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
-use ui::{CopyButton, TintColor, prelude::*};
+use ui::prelude::*;
+use util::ResultExt as _;
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, ParsedMarkdown};
+use super::{
+    CopyButtonVisibility, Markdown, MarkdownStyle,
+    diagram::{
+        DiagramKind, DiagramRenderState, DiagramView, fenced_code_block_contents,
+        update_diagram_cache,
+    },
+};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -48,48 +51,28 @@ impl MermaidState {
         self.order.clear();
     }
 
-    fn get_fallback_image(
-        idx: usize,
-        old_order: &[ParsedMarkdownMermaidDiagramContents],
-        new_order_len: usize,
-        cache: &MermaidDiagramCache,
-    ) -> Option<Arc<RenderImage>> {
-        if old_order.len() != new_order_len {
-            return None;
-        }
-
-        old_order.get(idx).and_then(|old_content| {
-            cache.get(old_content).and_then(|old_cached| {
-                old_cached
+    pub(crate) fn update(
+        &mut self,
+        diagrams: &BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+        cx: &mut Context<Markdown>,
+    ) {
+        let new_order = diagrams
+            .values()
+            .map(|diagram| diagram.contents.clone())
+            .collect();
+        update_diagram_cache(
+            &mut self.cache,
+            &mut self.order,
+            new_order,
+            |cached| {
+                cached
                     .render_image
                     .get()
                     .and_then(|result| result.as_ref().ok().cloned())
-                    .or_else(|| old_cached.fallback_image.clone())
-            })
-        })
-    }
-
-    pub(crate) fn update(&mut self, parsed: &ParsedMarkdown, cx: &mut Context<Markdown>) {
-        let mut new_order = Vec::new();
-        for mermaid_diagram in parsed.mermaid_diagrams.values() {
-            new_order.push(mermaid_diagram.contents.clone());
-        }
-
-        for (idx, new_content) in new_order.iter().enumerate() {
-            if !self.cache.contains_key(new_content) {
-                let fallback =
-                    Self::get_fallback_image(idx, &self.order, new_order.len(), &self.cache);
-                self.cache.insert(
-                    new_content.clone(),
-                    Arc::new(CachedMermaidDiagram::new(new_content.clone(), fallback, cx)),
-                );
-            }
-        }
-
-        let new_order_set: std::collections::HashSet<_> = new_order.iter().cloned().collect();
-        self.cache
-            .retain(|content, _| new_order_set.contains(content));
-        self.order = new_order;
+                    .or_else(|| cached.fallback_image.clone())
+            },
+            |contents, fallback_image| CachedMermaidDiagram::new(contents, fallback_image, cx),
+        );
     }
 }
 
@@ -100,26 +83,27 @@ impl CachedMermaidDiagram {
         cx: &mut Context<Markdown>,
     ) -> Self {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
-        let render_image_clone = render_image.clone();
         let svg_renderer = cx.svg_renderer();
         let mermaid_theme = build_mermaid_theme(cx);
 
-        let task = cx.spawn(async move |this, cx| {
-            let value = cx
-                .background_spawn(async move {
-                    let svg_string =
-                        mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
-                    let scale = contents.scale as f32 / 100.0;
-                    svg_renderer
-                        .render_single_frame(svg_string.as_bytes(), scale)
-                        .map_err(|error| anyhow::anyhow!("{error}"))
-                })
-                .await;
-            let _ = render_image_clone.set(value);
-            this.update(cx, |_, cx| {
-                cx.notify();
-            })
-            .ok();
+        let task = cx.spawn({
+            let render_image = render_image.clone();
+            async move |this, cx| {
+                let render_result = cx
+                    .background_spawn(async move {
+                        let svg_string =
+                            mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
+                        let scale = contents.scale as f32 / 100.0;
+                        svg_renderer
+                            .render_single_frame(svg_string.as_bytes(), scale)
+                            .map_err(|error| anyhow::anyhow!("{error}"))
+                    })
+                    .await;
+                if render_image.set(render_result).is_err() {
+                    log::error!("attempted to set a Mermaid render result more than once");
+                }
+                this.update(cx, |_, cx| cx.notify()).log_err();
+            }
         });
 
         Self {
@@ -134,12 +118,12 @@ impl CachedMermaidDiagram {
         render_image: Option<Arc<RenderImage>>,
         fallback_image: Option<Arc<RenderImage>>,
     ) -> Self {
-        let result = Arc::new(OnceLock::new());
-        if let Some(render_image) = render_image {
-            let _ = result.set(Ok(render_image));
-        }
+        let render_image = Arc::new(match render_image {
+            Some(render_image) => OnceLock::from(Ok(render_image)),
+            None => OnceLock::new(),
+        });
         Self {
-            render_image: result,
+            render_image,
             fallback_image,
             _task: Task::ready(()),
         }
@@ -288,10 +272,10 @@ pub(crate) fn extract_mermaid_diagrams(
             _ => continue,
         };
 
-        let contents = source[metadata.content_range.clone()]
-            .strip_suffix('\n')
-            .unwrap_or(&source[metadata.content_range.clone()])
-            .to_string();
+        let Some(contents) = fenced_code_block_contents(source, metadata.content_range.clone())
+        else {
+            continue;
+        };
         if !is_supported_diagram_type(&contents) {
             continue;
         }
@@ -299,10 +283,7 @@ pub(crate) fn extract_mermaid_diagrams(
             source_range.start,
             ParsedMarkdownMermaidDiagram {
                 content_range: metadata.content_range.clone(),
-                contents: ParsedMarkdownMermaidDiagramContents {
-                    contents: contents.into(),
-                    scale,
-                },
+                contents: ParsedMarkdownMermaidDiagramContents { contents, scale },
             },
         );
     }
@@ -320,241 +301,32 @@ pub(crate) fn render_mermaid_diagram(
     copy_button_visibility: CopyButtonVisibility,
 ) -> AnyElement {
     let cached = mermaid_state.cache.get(&parsed.contents);
-    let render_result = cached.and_then(|cached| cached.render_image.get());
-    let show_interactive = copy_button_visibility != CopyButtonVisibility::Hidden;
-    // Preview keeps diagrams at natural size + scroll instead of crushing them via max_w_full (#61051).
-    let allow_overflow_x = style.code_block_overflow_x_scroll;
-
-    let code = parsed.contents.contents.clone();
-
-    let mut container = div().group("code_block").relative().w_full().rounded_lg();
-    container.style().refine(&style.code_block);
-
-    match render_result {
-        Some(Ok(render_image)) => {
-            let body = if showing_code {
-                render_mermaid_code_view(&parsed.contents.contents)
-            } else {
-                render_mermaid_image(render_image.clone(), allow_overflow_x, source_offset)
-            };
-
-            container
-                .when(show_interactive, |container| {
-                    container.child(render_mermaid_tab_header(
-                        source_offset,
-                        showing_code,
-                        markdown.clone(),
-                    ))
-                })
-                .child(body)
-                .when(show_interactive, |container| {
-                    container.child(render_mermaid_copy_button(
-                        source_offset,
-                        code.to_string(),
-                        markdown,
-                    ))
-                })
-                .into_any_element()
-        }
-        Some(Err(_)) => {
-            // Render failed — show the source code without tabs
-            container
-                .child(render_mermaid_code_view(&parsed.contents.contents))
-                .when(show_interactive, |container| {
-                    container.child(render_mermaid_copy_button(
-                        source_offset,
-                        code.to_string(),
-                        markdown,
-                    ))
-                })
-                .into_any_element()
-        }
-        None => {
-            // Still rendering
-            if let Some(fallback) = cached.and_then(|cached| cached.fallback_image.as_ref()) {
-                container
-                    .child(
-                        div()
-                            .child(render_mermaid_image(
-                                fallback.clone(),
-                                allow_overflow_x,
-                                source_offset,
-                            ))
-                            .with_animation(
-                                "mermaid-fallback-pulse",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.6, 1.0)),
-                                |element, delta| element.opacity(delta),
-                            ),
-                    )
-                    .when(show_interactive, |container| {
-                        container.child(render_mermaid_copy_button(
-                            source_offset,
-                            code.to_string(),
-                            markdown,
-                        ))
-                    })
-                    .into_any_element()
-            } else {
-                // No fallback — show the code so the user has something to look at
-                container
-                    .child(render_mermaid_code_view(&parsed.contents.contents))
-                    .child(
-                        div().absolute().top_1().right_2().child(
-                            Label::new("Rendering...")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .with_animation(
-                                    "mermaid-loading-pulse",
-                                    Animation::new(Duration::from_secs(2))
-                                        .repeat()
-                                        .with_easing(pulsating_between(0.4, 0.8)),
-                                    |label, delta| label.alpha(delta),
-                                ),
-                        ),
-                    )
-                    .when(show_interactive, |container| {
-                        container.child(render_mermaid_copy_button(
-                            source_offset,
-                            code.to_string(),
-                            markdown,
-                        ))
-                    })
-                    .into_any_element()
-            }
-        }
+    let render_state = DiagramRenderState::from_result(
+        cached.and_then(|cached| cached.render_image.get()),
+        || cached.and_then(|cached| cached.fallback_image.clone()),
+    );
+    DiagramView {
+        kind: DiagramKind::Mermaid,
+        render_state,
+        contents: &parsed.contents.contents,
+        style,
+        markdown,
+        source_offset,
+        showing_code,
+        copy_button_visibility,
     }
-}
-
-/// Renders a mermaid diagram image, scrolling at intrinsic size in preview or fit-to-pane elsewhere.
-fn render_mermaid_image(
-    render_image: Arc<RenderImage>,
-    allow_overflow_x: bool,
-    source_offset: usize,
-) -> AnyElement {
-    let image = img(ImageSource::Render(render_image))
-        .with_fallback(|| Label::new("Failed to Load Mermaid Diagram").into_any_element());
-
-    if allow_overflow_x {
-        div()
-            .id(("mermaid-scroll", source_offset))
-            .w_full()
-            .map(|mut container| {
-                container.style().restrict_scroll_to_axis = Some(true);
-                container.overflow_x_scroll()
-            })
-            .child(image)
-            .into_any_element()
-    } else {
-        div().w_full().child(image.max_w_full()).into_any_element()
-    }
-}
-
-fn render_mermaid_tab_header(
-    source_offset: usize,
-    showing_code: bool,
-    markdown: Entity<Markdown>,
-) -> impl IntoElement {
-    let preview_id = ElementId::NamedChild(
-        Arc::new(ElementId::from((
-            "mermaid-tab-preview",
-            markdown.entity_id(),
-        ))),
-        source_offset.to_string().into(),
-    );
-    let code_id = ElementId::NamedChild(
-        Arc::new(ElementId::from(("mermaid-tab-code", markdown.entity_id()))),
-        source_offset.to_string().into(),
-    );
-    let preview_markdown = markdown.clone();
-    let code_markdown = markdown;
-
-    h_flex()
-        .gap_0p5()
-        .mb_2p5()
-        .child(
-            Button::new(preview_id, "Preview")
-                .label_size(LabelSize::Small)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(!showing_code)
-                .on_click(move |_event, _window, cx| {
-                    preview_markdown.update(cx, |md, cx| {
-                        if md.is_mermaid_showing_code(source_offset) {
-                            md.toggle_mermaid_tab(source_offset);
-                            cx.notify();
-                        }
-                    });
-                }),
-        )
-        .child(
-            Button::new(code_id, "Code")
-                .label_size(LabelSize::Small)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(showing_code)
-                .on_click(move |_event, _window, cx| {
-                    code_markdown.update(cx, |md, cx| {
-                        if !md.is_mermaid_showing_code(source_offset) {
-                            md.toggle_mermaid_tab(source_offset);
-                            cx.notify();
-                        }
-                    });
-                }),
-        )
-}
-
-fn render_mermaid_copy_button(
-    source_offset: usize,
-    code: String,
-    markdown: Entity<Markdown>,
-) -> impl IntoElement {
-    let id = ElementId::NamedChild(
-        Arc::new(ElementId::from(("copy-mermaid-code", markdown.entity_id()))),
-        source_offset.to_string().into(),
-    );
-
-    div().absolute().top_1().right_1().justify_end().child(
-        CopyButton::new(id.clone(), code.clone())
-            .visible_on_hover("code_block")
-            .custom_on_click({
-                move |_window, cx| {
-                    let id = id.clone();
-                    markdown.update(cx, |this, cx| {
-                        this.copied_code_blocks.insert(id.clone());
-                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-                        cx.spawn(async move |this, cx| {
-                            cx.background_executor().timer(Duration::from_secs(2)).await;
-                            cx.update(|cx| {
-                                this.update(cx, |this, cx| {
-                                    this.copied_code_blocks.remove(&id);
-                                    cx.notify();
-                                })
-                            })
-                            .ok();
-                        })
-                        .detach();
-                    });
-                }
-            }),
-    )
-}
-
-fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
-    div()
-        .w_full()
-        .child(StyledText::new(contents.clone()))
-        .into_any_element()
+    .render()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        CachedMermaidDiagram, MermaidDiagramCache, ParsedMarkdownMermaidDiagramContents,
+        extract_mermaid_diagrams, parse_mermaid_info,
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
-        MarkdownStyle, WrapButtonVisibility,
+        MarkdownStyle, WrapButtonVisibility, diagram::fallback_image_for_edit,
     };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
@@ -640,10 +412,22 @@ mod tests {
         cache: &MermaidDiagramCache,
     ) -> Option<Arc<RenderImage>> {
         let new_content = mermaid_contents(new_diagram);
-        let idx = new_full_order
+        let index = new_full_order
             .iter()
             .position(|diagram| diagram == &new_content)?;
-        MermaidState::get_fallback_image(idx, old_full_order, new_full_order.len(), cache)
+        fallback_image_for_edit(
+            index,
+            old_full_order,
+            new_full_order.len(),
+            cache,
+            |cached| {
+                cached
+                    .render_image
+                    .get()
+                    .and_then(|result| result.as_ref().ok().cloned())
+                    .or_else(|| cached.fallback_image.clone())
+            },
+        )
     }
 
     #[test]

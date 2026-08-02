@@ -56,6 +56,7 @@ pub struct MarkdownPreviewView {
     focus_handle: FocusHandle,
     markdown: Entity<Markdown>,
     _markdown_subscription: Subscription,
+    _settings_subscription: Subscription,
     active_source_index: Option<usize>,
     scroll_handle: ScrollHandle,
     image_cache: Entity<RetainAllImageCache>,
@@ -283,6 +284,7 @@ impl MarkdownPreviewView {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
+            let plantuml_render_mode = MarkdownPreviewSettings::get_global(cx).plantuml_render_mode;
             let markdown = cx.new(|cx| {
                 Markdown::new_with_options(
                     SharedString::default(),
@@ -291,6 +293,8 @@ impl MarkdownPreviewView {
                     MarkdownOptions {
                         parse_html: true,
                         render_mermaid_diagrams: true,
+                        render_plantuml_diagrams: true,
+                        plantuml_render_mode,
                         parse_heading_slugs: true,
                         render_metadata_blocks: true,
                         ..Default::default()
@@ -306,6 +310,15 @@ impl MarkdownPreviewView {
                     &markdown,
                     |this: &mut Self, _: Entity<Markdown>, cx| {
                         this.sync_active_root_block(cx);
+                    },
+                ),
+                _settings_subscription: cx.observe_global::<MarkdownPreviewSettings>(
+                    |this: &mut Self, cx| {
+                        let render_mode =
+                            MarkdownPreviewSettings::get_global(cx).plantuml_render_mode;
+                        this.markdown.update(cx, |markdown, cx| {
+                            markdown.set_plantuml_render_mode(render_mode, cx);
+                        });
                     },
                 ),
                 markdown,

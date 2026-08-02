@@ -9977,7 +9977,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 3] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
@@ -10056,6 +10056,29 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         metadata: None,
                     }],
                 ],
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
+                title: "PlantUML Rendering",
+                description: "Choose how Markdown preview renders PlantUML diagrams. Public Server encodes the complete diagram source in a request URL and sends it to the third-party service https://www.plantuml.com; do not use it for confidential content.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.plantuml_render_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .markdown_preview
+                            .as_ref()?
+                            .plantuml_render_mode
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .markdown_preview
+                            .get_or_insert_default()
+                            .plantuml_render_mode = value;
+                    },
+                }),
+                metadata: None,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Drop Size Target",

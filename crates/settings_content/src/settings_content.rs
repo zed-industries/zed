@@ -1211,6 +1211,22 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<f32>,
+    /// How PlantUML diagrams are rendered. The `public_server` option encodes the
+    /// complete diagram source in a request URL and sends it to the third-party
+    /// service https://www.plantuml.com. Do not enable it for confidential content.
+    ///
+    /// Default: local
+    pub plantuml_render_mode: Option<PlantUmlRenderMode>,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PlantUmlRenderMode {
+    #[default]
+    Local,
+    PublicServer,
 }
 
 /// The settings for the image viewer.
