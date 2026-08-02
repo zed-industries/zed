@@ -855,6 +855,17 @@ impl VsCodeSettings {
             auto_open: None,
             diagnostic_badges: None,
             git_status_indicator: None,
+            file_nesting: {
+                let enabled = self.read_bool("explorer.fileNesting.enabled");
+                let patterns = self
+                    .read_value("explorer.fileNesting.patterns")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok());
+                if enabled.is_some() || patterns.is_some() {
+                    Some(FileNestingSettingsContent { enabled, patterns })
+                } else {
+                    None
+                }
+            },
         };
 
         if let (Some(false), Some(false)) = (

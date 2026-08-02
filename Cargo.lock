@@ -14321,6 +14321,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rayon",
+ "regex",
  "remote_connection",
  "schemars 1.0.4",
  "serde",
