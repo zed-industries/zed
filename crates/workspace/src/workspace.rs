@@ -3528,7 +3528,7 @@ impl Workspace {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
                         item.tab_content_text(0, cx);
-                        Some((pane.downgrade(), item.boxed_clone()))
+                        Some((pane.clone(), item.boxed_clone()))
                     } else {
                         None
                     }
@@ -3604,7 +3604,7 @@ impl Workspace {
                     )
                 })?;
                 if (singleton || !project_entry_ids.is_empty())
-                    && !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await?
+                    && !Pane::save_item(project.clone(), pane, &*item, save_intent, cx).await?
                 {
                     return Ok(false);
                 }
@@ -3996,13 +3996,12 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
-        let pane = self.active_pane();
+        let pane = self.active_pane().clone();
         let item = pane.read(cx).active_item();
-        let pane = pane.downgrade();
 
         window.spawn(cx, async move |cx| {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item.as_ref(), save_intent, cx)
+                Pane::save_item(project, pane, item.as_ref(), save_intent, cx)
                     .await
                     .map(|_| ())
             } else {
@@ -4206,8 +4205,8 @@ impl Workspace {
                         focus_center = true;
                     }
                 } else {
-                    let focus_handle = &active_panel.panel_focus_handle(cx);
-                    window.focus(focus_handle, cx);
+                    let focus_handle = active_panel.activation_focus_handle(cx);
+                    window.focus(&focus_handle, cx);
                     reveal_dock = true;
                 }
             }
@@ -4408,7 +4407,7 @@ impl Workspace {
                     if let Some(panel) = panel.as_ref() {
                         if should_focus(&**panel, window, cx) {
                             dock.set_open(true, window, cx);
-                            panel.panel_focus_handle(cx).focus(window, cx);
+                            panel.activation_focus_handle(cx).focus(window, cx);
                         } else {
                             focus_center = true;
                         }
@@ -5396,7 +5395,7 @@ impl Workspace {
                 window.defer(cx, move |window, cx| {
                     let dock = dock.read(cx);
                     if let Some(panel) = dock.active_panel() {
-                        panel.panel_focus_handle(cx).focus(window, cx);
+                        panel.activation_focus_handle(cx).focus(window, cx);
                     } else {
                         log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.position());
                     }
@@ -6870,8 +6869,6 @@ impl Workspace {
 
     pub fn on_window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.is_window_active() {
-            self.update_active_view_for_followers(window, cx);
-
             if let Some(database_id) = self.database_id {
                 let db = WorkspaceDb::global(cx);
                 cx.background_spawn(async move { db.update_timestamp(database_id).await })
@@ -8187,7 +8184,7 @@ impl Workspace {
         fn dock_content_handle(dock: &Entity<Dock>, cx: &App) -> FocusHandle {
             let dock = dock.read(cx);
             dock.active_panel()
-                .map(|panel| panel.panel_focus_handle(cx))
+                .map(|panel| panel.activation_focus_handle(cx))
                 .unwrap_or_else(|| dock.focus_handle(cx))
         }
 
@@ -9757,6 +9754,7 @@ pub async fn apply_restored_multiworkspace_state(
                 if key.host().is_none()
                     && let Some(common_dir) =
                         project::discover_root_repo_common_dir(path, fs.as_ref()).await
+                    && !project::is_submodule_git_dir(&common_dir)
                 {
                     let main_path = project::repo_identity_path(&common_dir);
                     resolved_paths.push(main_path.to_path_buf());
@@ -11127,6 +11125,7 @@ pub fn client_side_decorations(
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
+    let is_resizable = window.is_resizable();
     let tiling = match decorations {
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
@@ -11159,38 +11158,40 @@ pub fn client_side_decorations(
                 .when(!tiling.right, |div| {
                     div.pr(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
-                .on_mouse_move(move |e, window, cx| {
-                    let size = window.window_bounds().get_bounds().size;
-                    let pos = e.position;
+                .when(is_resizable, |div| {
+                    div.on_mouse_move(move |e, window, cx| {
+                        let size = window.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                    let new_edge =
-                        resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
+                        let new_edge =
+                            resize_edge(pos, theme::CLIENT_SIDE_DECORATION_SHADOW, size, tiling);
 
-                    let edge = cx.try_global::<GlobalResizeEdge>();
-                    if new_edge != edge.map(|edge| edge.0) {
-                        window
-                            .window_handle()
-                            .update(cx, |workspace, _, cx| {
-                                cx.notify(workspace.entity_id());
-                            })
-                            .ok();
-                    }
-                })
-                .on_mouse_down(MouseButton::Left, move |e, window, _| {
-                    let size = window.window_bounds().get_bounds().size;
-                    let pos = e.position;
+                        let edge = cx.try_global::<GlobalResizeEdge>();
+                        if new_edge != edge.map(|edge| edge.0) {
+                            window
+                                .window_handle()
+                                .update(cx, |workspace, _, cx| {
+                                    cx.notify(workspace.entity_id());
+                                })
+                                .ok();
+                        }
+                    })
+                    .on_mouse_down(MouseButton::Left, move |e, window, _| {
+                        let size = window.window_bounds().get_bounds().size;
+                        let pos = e.position;
 
-                    let edge = match resize_edge(
-                        pos,
-                        theme::CLIENT_SIDE_DECORATION_SHADOW,
-                        size,
-                        tiling,
-                    ) {
-                        Some(value) => value,
-                        None => return,
-                    };
+                        let edge = match resize_edge(
+                            pos,
+                            theme::CLIENT_SIDE_DECORATION_SHADOW,
+                            size,
+                            tiling,
+                        ) {
+                            Some(value) => value,
+                            None => return,
+                        };
 
-                    window.start_window_resize(edge);
+                        window.start_window_resize(edge);
+                    })
                 }),
         })
         .size_full()
@@ -11230,7 +11231,7 @@ pub fn client_side_decorations(
         )
         .map(|div| match decorations {
             Decorations::Server => div,
-            Decorations::Client { tiling, .. } => div.child(
+            Decorations::Client { tiling, .. } if is_resizable => div.child(
                 canvas(
                     |_bounds, window, _| {
                         window.insert_hitbox(
@@ -11270,6 +11271,7 @@ pub fn client_side_decorations(
                 .size_full()
                 .absolute(),
             ),
+            Decorations::Client { .. } => div,
         })
 }
 
@@ -13431,6 +13433,49 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_panel_activation_and_region_navigation_focus_activation_handle(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel =
+                cx.new(|cx| TestPanel::new_with_activation_child(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+
+        let activation_focus_handle = workspace.update_in(cx, |_workspace, window, cx| {
+            let activation_focus_handle = panel
+                .read(cx)
+                .activation_focus_handle
+                .clone()
+                .expect("test panel should have an activation child");
+            assert!(activation_focus_handle.is_focused(window));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            activation_focus_handle
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().focus_handle(cx).focus(window, cx);
+            workspace.move_part_focus(true, window, cx);
+        });
+        workspace.update_in(cx, |_workspace, window, _cx| {
+            assert!(activation_focus_handle.is_focused(window));
+        });
+    }
+
+    #[gpui::test]
     async fn test_close_panel_on_toggle(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -14510,6 +14555,75 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_default_size_change_resets_saved_size(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+            workspace.bounds.size.width = px(800.);
+        });
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            panel
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.resize_left_dock(px(350.), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let dock_size = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .left_dock()
+                .read(cx)
+                .panel::<TestPanel>()
+                .and_then(|panel| {
+                    workspace
+                        .left_dock()
+                        .read(cx)
+                        .stored_panel_size_state(&panel)
+                })
+                .and_then(|s| s.size)
+        });
+        assert_eq!(dock_size, Some(px(350.)));
+
+        panel.update(cx, |panel, cx| {
+            panel.default_size = px(500.);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        cx.run_until_parked();
+
+        let dock_size = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .left_dock()
+                .read(cx)
+                .panel::<TestPanel>()
+                .and_then(|panel| {
+                    workspace
+                        .left_dock()
+                        .read(cx)
+                        .stored_panel_size_state(&panel)
+                })
+                .and_then(|s| s.size)
+        });
+        assert_eq!(
+            dock_size, None,
+            "saved size should be cleared after default_size changes"
+        );
     }
 
     #[gpui::test]

@@ -28,7 +28,7 @@ use git::repository::{FetchOptions, Remote};
 use util::ResultExt as _;
 
 use crate::askpass_modal::AskPassModal;
-use crate::git_panel::{open_output, show_error_toast};
+use crate::notifications::{open_output, show_error_toast};
 use crate::worktree_names;
 
 /// A remote-tracking branch reference parsed into its remote and branch parts,
@@ -1367,7 +1367,7 @@ async fn open_worktree_workspace(
                 if activate && let Some(dock_position) = focused_dock {
                     let dock = workspace.dock_at_position(dock_position);
                     if let Some(panel) = dock.read(cx).active_panel() {
-                        panel.panel_focus_handle(cx).focus(window, cx);
+                        panel.activation_focus_handle(cx).focus(window, cx);
                     }
                 }
             });
