@@ -316,10 +316,17 @@ message FindSearchCandidates {
   uint64 handle = 4;
 }
 
-message FindSearchCandidatesDone {}
+message FindSearchCandidatesDone {
+  bool limit_reached = 1;
+}
 
 message FindSearchCandidatesMatches {
   repeated uint64 buffer_ids = 1;
+  repeated FindSearchCandidateRanges ranges_for_buffer = 2;
+}
+
+message FindSearchCandidateRanges {
+  repeated AnchorRange ranges = 1;
 }
 
 message FindSearchCandidatesChunk {
