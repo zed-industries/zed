@@ -418,6 +418,10 @@ impl Editor {
             }
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
+            let initial_template_literal_buffer_versions =
+                template_literal_conversion::construct_initial_buffer_versions_map(
+                    this, &edits, cx,
+                );
 
             this.buffer.update(cx, |buffer, cx| {
                 if has_adjacent_edits {
@@ -531,6 +535,12 @@ impl Editor {
                 cx,
             );
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
+            template_literal_conversion::handle_from(
+                this,
+                initial_template_literal_buffer_versions,
+                window,
+                cx,
+            );
         });
     }
 

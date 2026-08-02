@@ -45,6 +45,7 @@ mod selections_collection;
 pub mod semantic_tokens;
 mod split;
 pub mod split_editor_view;
+mod template_literal_conversion;
 
 mod bookmarks;
 #[cfg(test)]
