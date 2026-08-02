@@ -578,8 +578,6 @@ actions!(
         /// edits outside the selected ranges are discarded. External command formatters do not
         /// support range formatting and are skipped.
         FormatSelections,
-        /// Goes to the declaration of the symbol at cursor.
-        GoToDeclaration,
         /// Goes to declaration in a split pane.
         GoToDeclarationSplit,
         /// Goes to definition in a split pane.
@@ -608,8 +606,6 @@ actions!(
         GoToNextReference,
         /// Goes to the previous reference to the symbol under the cursor.
         GoToPreviousReference,
-        /// Goes to the type definition of the symbol at cursor.
-        GoToTypeDefinition,
         /// Goes to type definition in a split pane.
         GoToTypeDefinitionSplit,
         /// Goes to the next document highlight.
@@ -958,12 +954,34 @@ pub struct GoToDefinition {
     pub open_results_in: Option<OpenResultsIn>,
 }
 
+/// Goes to the declaration of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDeclaration {
+    /// Where to show the declarations. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
 /// Goes to the implementation of the symbol at cursor.
 #[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct GoToImplementation {
     /// Where to show the implementations. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
+/// Goes to the type definition of the symbol at cursor.
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToTypeDefinition {
+    /// Where to show the definitions. Falls back to the `lsp_results_location`
     /// setting when omitted. A single result is always opened directly.
     #[serde(default)]
     pub open_results_in: Option<OpenResultsIn>,
