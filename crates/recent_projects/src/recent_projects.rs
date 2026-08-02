@@ -771,20 +771,13 @@ impl RecentProjects {
 
             match picker.delegate.filtered_entries.get(ix) {
                 Some(ProjectPickerEntry::OpenFolder { index, .. }) => {
-                    if let Some(folder) = picker.delegate.open_folders.get(*index) {
-                        let worktree_id = folder.worktree_id;
-                        let Some(workspace) = picker.delegate.workspace.upgrade() else {
-                            return;
-                        };
-                        workspace.update(cx, |workspace, cx| {
-                            let project = workspace.project().clone();
-                            project.update(cx, |project, cx| {
-                                project.remove_worktree(worktree_id, cx);
-                            });
-                        });
-                        picker.delegate.open_folders = get_open_folders(workspace.read(cx), cx);
-                        let query = picker.query(cx);
-                        picker.update_matches(query, window, cx);
+                    if let Some(worktree_id) = picker
+                        .delegate
+                        .open_folders
+                        .get(*index)
+                        .map(|f| f.worktree_id)
+                    {
+                        RecentProjectsDelegate::remove_open_folder(picker, worktree_id, window, cx);
                     }
                 }
                 Some(ProjectPickerEntry::ProjectGroup(hit)) => {
@@ -794,9 +787,6 @@ impl RecentProjects {
                         .get(hit.candidate_id)
                         .cloned()
                     {
-                        if picker.delegate.is_active_project_group(&key, cx) {
-                            return;
-                        }
                         picker.delegate.remove_project_group(key, window, cx);
                         let query = picker.query(cx);
                         picker.update_matches(query, window, cx);
@@ -1271,19 +1261,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }
                             })
                             .on_click(cx.listener(move |picker, _, window, cx| {
-                                let Some(workspace) = picker.delegate.workspace.upgrade() else {
-                                    return;
-                                };
-                                workspace.update(cx, |workspace, cx| {
-                                    let project = workspace.project().clone();
-                                    project.update(cx, |project, cx| {
-                                        project.remove_worktree(worktree_id, cx);
-                                    });
-                                });
-                                picker.delegate.open_folders =
-                                    get_open_folders(workspace.read(cx), cx);
-                                let query = picker.query(cx);
-                                picker.update_matches(query, window, cx);
+                                RecentProjectsDelegate::remove_open_folder(
+                                    picker,
+                                    worktree_id,
+                                    window,
+                                    cx,
+                                );
                             })),
                     )
                     .into_any_element();
@@ -1427,37 +1410,34 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }),
                         )
                     })
-                    .when(!is_active, |this| {
-                        this.child(
-                            IconButton::new("remove_open_project", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip({
-                                    let focus_handle = self.focus_handle.clone();
-                                    move |_, cx| {
-                                        Tooltip::for_action_in(
-                                            "Remove Project from Window",
-                                            &RemoveSelected,
-                                            &focus_handle,
-                                            cx,
-                                        )
-                                    }
+                    .child(
+                        IconButton::new("remove_open_project", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = self.focus_handle.clone();
+                                move |_, cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove Project from Window",
+                                        &RemoveSelected,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click({
+                                cx.listener(move |picker, _, window, cx| {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    picker.delegate.remove_project_group(
+                                        project_group_key.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                    let query = picker.query(cx);
+                                    picker.update_matches(query, window, cx);
                                 })
-                                .on_click({
-                                    let project_group_key = project_group_key.clone();
-                                    cx.listener(move |picker, _, window, cx| {
-                                        cx.stop_propagation();
-                                        window.prevent_default();
-                                        picker.delegate.remove_project_group(
-                                            project_group_key.clone(),
-                                            window,
-                                            cx,
-                                        );
-                                        let query = picker.query(cx);
-                                        picker.update_matches(query, window, cx);
-                                    })
-                                }),
-                        )
-                    })
+                            }),
+                    )
                     .into_any_element();
 
                 Some(
@@ -2383,6 +2363,39 @@ impl RecentProjectsDelegate {
         }
     }
 
+    fn remove_open_folder(
+        picker: &mut Picker<Self>,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(workspace) = picker.delegate.workspace.upgrade() else {
+            return;
+        };
+
+        let old_key = workspace.read(cx).project_group_key(cx);
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                project.remove_worktree(worktree_id, cx);
+            });
+        });
+
+        let new_key = workspace.read(cx).project_group_key(cx);
+        if let Some(entry) = picker
+            .delegate
+            .window_project_groups
+            .iter_mut()
+            .find(|key| **key == old_key)
+        {
+            *entry = new_key;
+        }
+
+        picker.delegate.open_folders = get_open_folders(workspace.read(cx), cx);
+        let query = picker.query(cx);
+        picker.update_matches(query, window, cx);
+    }
+
     fn remove_project_group(
         &mut self,
         key: ProjectGroupKey,
@@ -2541,7 +2554,7 @@ mod tests {
     }
 
     fn draw(cx: &mut VisualTestContext) {
-        cx.update(|window, cx| window.draw(cx).clear());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
 
     fn build_picker(
@@ -3183,6 +3196,120 @@ mod tests {
         assert!(
             !has_local,
             "remote project group confirm should not create a local workspace"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_open_folder_rekeys_this_window_group(cx: &mut TestAppContext) {
+        // Regression test: removing a folder from the active project while the
+        // picker is open must update the "This Window" group so it no longer
+        // lists the removed folder.
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/a"), json!({ "1.txt": "" }))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/b"), json!({ "2.txt": "" }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/a")), PathBuf::from(path!("/b"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let mw = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let (workspace, active_key, fh) = mw
+            .read_with(cx, |mw, cx| {
+                let ws = mw.workspace().clone();
+                (
+                    ws.clone(),
+                    ws.read(cx).project_group_key(cx),
+                    ws.read(cx).focus_handle(cx),
+                )
+            })
+            .unwrap();
+
+        assert_eq!(
+            active_key.path_list().paths().len(),
+            2,
+            "group should span both folders before removal"
+        );
+        let groups = vec![active_key];
+
+        let popover: Entity<RecentProjects> = cx.update(|cx| {
+            let window = cx.windows()[0];
+            window
+                .update(cx, |_, window, cx| {
+                    RecentProjects::popover(
+                        workspace.downgrade(),
+                        groups,
+                        Some(false),
+                        fh,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap()
+        });
+        cx.run_until_parked();
+
+        let picker: Entity<Picker<RecentProjectsDelegate>> = cx.update(|cx| {
+            let window = cx.windows()[0];
+            window
+                .update(cx, |_, _window, cx| popover.read(cx).picker.clone())
+                .unwrap()
+        });
+        cx.run_until_parked();
+
+        let a_worktree_id = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .find(|wt| wt.read(cx).abs_path().ends_with("a"))
+                    .map(|wt| wt.read(cx).id())
+            })
+            .expect("a worktree should exist");
+
+        cx.update(|cx| {
+            let window = cx.windows()[0];
+            window
+                .update(cx, |_, window, cx| {
+                    picker.update(cx, |picker, cx| {
+                        RecentProjectsDelegate::remove_open_folder(
+                            picker,
+                            a_worktree_id,
+                            window,
+                            cx,
+                        );
+                    });
+                })
+                .unwrap();
+        });
+        cx.run_until_parked();
+
+        let groups_after = picker.read_with(cx, |picker, _| {
+            picker.delegate.window_project_groups.clone()
+        });
+        assert!(
+            !groups_after.iter().any(|key| key
+                .path_list()
+                .paths()
+                .iter()
+                .any(|path| path.ends_with("a"))),
+            "the removed folder should no longer appear in any This Window group, got {groups_after:?}"
         );
     }
 }
