@@ -4,10 +4,10 @@ use mach2::exception_types::{
 use mach2::port::{MACH_PORT_NULL, mach_port_t};
 use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
 use smol::Async;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::io::FromRawFd;
 use std::path::{Path, PathBuf};
@@ -64,6 +64,7 @@ unsafe extern "C" {
 #[derive(Debug)]
 pub struct Command {
     program: OsString,
+    arg0: Option<OsString>,
     args: Vec<OsString>,
     envs: BTreeMap<OsString, Option<OsString>>,
     env_clear: bool,
@@ -71,13 +72,41 @@ pub struct Command {
     stdin_cfg: Option<Stdio>,
     stdout_cfg: Option<Stdio>,
     stderr_cfg: Option<Stdio>,
+    fd_mappings: Vec<FdMapping>,
+    file_actions: Vec<FileAction>,
+    /// Rust ignores `SIGPIPE` before `main`, and ignored dispositions survive
+    /// `exec`, so children must reset it to match `std::process::Command`.
+    default_signals: BTreeSet<libc::c_int>,
+    clear_signal_mask: bool,
+    start_new_session: bool,
     kill_on_drop: bool,
+}
+
+#[derive(Debug)]
+struct FdMapping {
+    parent_fd: OwnedFd,
+    child_fd: RawFd,
+}
+
+#[derive(Debug)]
+enum FileAction {
+    Open {
+        child_fd: RawFd,
+        path: PathBuf,
+        flags: libc::c_int,
+        mode: libc::mode_t,
+    },
+    Duplicate {
+        source_fd: RawFd,
+        child_fd: RawFd,
+    },
 }
 
 impl Command {
     pub fn new(program: impl AsRef<OsStr>) -> Self {
         Self {
             program: program.as_ref().to_owned(),
+            arg0: None,
             args: Vec::new(),
             envs: BTreeMap::new(),
             env_clear: false,
@@ -85,8 +114,18 @@ impl Command {
             stdin_cfg: None,
             stdout_cfg: None,
             stderr_cfg: None,
+            fd_mappings: Vec::new(),
+            file_actions: Vec::new(),
+            default_signals: BTreeSet::from([libc::SIGPIPE]),
+            clear_signal_mask: false,
+            start_new_session: false,
             kill_on_drop: false,
         }
+    }
+
+    pub fn arg0(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
+        self.arg0 = Some(arg.as_ref().to_owned());
+        self
     }
 
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
@@ -163,6 +202,73 @@ impl Command {
         self
     }
 
+    /// Transfers a parent file descriptor into the child on the next spawn.
+    pub fn fd_mapping(&mut self, parent_fd: OwnedFd, child_fd: RawFd) -> io::Result<&mut Self> {
+        validate_file_descriptor(child_fd)?;
+        let parent_raw_fd = parent_fd.as_raw_fd();
+        if self.fd_mappings.iter().any(|mapping| {
+            mapping.child_fd == child_fd
+                || mapping.child_fd == parent_raw_fd
+                || mapping.parent_fd.as_raw_fd() == child_fd
+        }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "file descriptor mappings must not have overlapping sources or destinations",
+            ));
+        }
+        self.fd_mappings.push(FdMapping {
+            parent_fd,
+            child_fd,
+        });
+        Ok(self)
+    }
+
+    pub fn open_file_descriptor(
+        &mut self,
+        child_fd: RawFd,
+        path: impl AsRef<Path>,
+        flags: libc::c_int,
+        mode: libc::mode_t,
+    ) -> io::Result<&mut Self> {
+        validate_file_descriptor(child_fd)?;
+        self.file_actions.push(FileAction::Open {
+            child_fd,
+            path: path.as_ref().to_owned(),
+            flags,
+            mode,
+        });
+        Ok(self)
+    }
+
+    pub fn duplicate_file_descriptor(
+        &mut self,
+        source_fd: RawFd,
+        child_fd: RawFd,
+    ) -> io::Result<&mut Self> {
+        validate_file_descriptor(source_fd)?;
+        validate_file_descriptor(child_fd)?;
+        self.file_actions.push(FileAction::Duplicate {
+            source_fd,
+            child_fd,
+        });
+        Ok(self)
+    }
+
+    pub fn reset_signals(&mut self, signals: impl IntoIterator<Item = libc::c_int>) -> &mut Self {
+        self.default_signals.extend(signals);
+        self
+    }
+
+    pub fn clear_signal_mask(&mut self, clear: bool) -> &mut Self {
+        self.clear_signal_mask = clear;
+        self
+    }
+
+    pub fn start_new_session(&mut self, start_new_session: bool) -> &mut Self {
+        self.start_new_session = start_new_session;
+        self
+    }
+
     pub fn kill_on_drop(&mut self, kill_on_drop: bool) -> &mut Self {
         self.kill_on_drop = kill_on_drop;
         self
@@ -173,6 +279,7 @@ impl Command {
             .current_dir
             .as_deref()
             .unwrap_or_else(|| Path::new("."));
+        let fd_mappings = std::mem::take(&mut self.fd_mappings);
 
         // Optimization: if no environment modifications were requested, pass None
         // to spawn_posix so it uses the `environ` global directly, avoiding a
@@ -198,12 +305,18 @@ impl Command {
 
         spawn_posix_spawn(
             &self.program,
+            self.arg0.as_deref(),
             &self.args,
             current_dir,
             envs.as_deref(),
             self.stdin_cfg.unwrap_or_default(),
             self.stdout_cfg.unwrap_or_default(),
             self.stderr_cfg.unwrap_or_default(),
+            &fd_mappings,
+            &self.file_actions,
+            &self.default_signals,
+            self.clear_signal_mask,
+            self.start_new_session,
             self.kill_on_drop,
         )
     }
@@ -246,6 +359,10 @@ impl Child {
 
     pub fn try_status(&mut self) -> io::Result<Option<ExitStatus>> {
         self.inner.try_status()
+    }
+
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        smol::block_on(self.status())
     }
 
     pub fn status(
@@ -292,12 +409,18 @@ impl Child {
 
 fn spawn_posix_spawn(
     program: &OsStr,
+    arg0: Option<&OsStr>,
     args: &[OsString],
     current_dir: &Path,
     envs: Option<&[(OsString, OsString)]>,
     stdin_cfg: Stdio,
     stdout_cfg: Stdio,
     stderr_cfg: Stdio,
+    fd_mappings: &[FdMapping],
+    configured_file_actions: &[FileAction],
+    default_signals: &BTreeSet<libc::c_int>,
+    clear_signal_mask: bool,
+    start_new_session: bool,
     kill_on_drop: bool,
 ) -> io::Result<Child> {
     // posix_spawnp resolves programs against the parent's cwd/PATH, not the child's.
@@ -318,7 +441,8 @@ fn spawn_posix_spawn(
         )
     };
     let program_cstr = CString::new(resolved_program).map_err(|_| invalid_input_error())?;
-    let argv0_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
+    let argv0_cstr =
+        CString::new(arg0.unwrap_or(program).as_bytes()).map_err(|_| invalid_input_error())?;
 
     let current_dir_cstr =
         CString::new(current_dir.as_os_str().as_bytes()).map_err(|_| invalid_input_error())?;
@@ -396,24 +520,37 @@ fn spawn_posix_spawn(
         cvt_nz(libc::posix_spawnattr_init(&mut attr))?;
         cvt_nz(libc::posix_spawn_file_actions_init(&mut file_actions))?;
 
-        // The Rust runtime sets SIGPIPE to SIG_IGN before `main`, and ignored
-        // dispositions survive exec, so without this children would never die
-        // from writing to a closed pipe. Reset it to SIG_DFL, like std does
-        // (rust-lang/rust#101077). Like std, we don't touch the signal mask,
-        // so deliberately blocked signals (e.g. via `nohup`) stay blocked.
         let mut default_set: libc::sigset_t = std::mem::zeroed();
         if libc::sigemptyset(&mut default_set) == -1 {
             return Err(io::Error::last_os_error());
         }
-        if libc::sigaddset(&mut default_set, libc::SIGPIPE) == -1 {
-            return Err(io::Error::last_os_error());
+        for signal in default_signals {
+            if libc::sigaddset(&mut default_set, *signal) == -1 {
+                return Err(io::Error::last_os_error());
+            }
         }
         cvt_nz(libc::posix_spawnattr_setsigdefault(&mut attr, &default_set))?;
 
-        cvt_nz(libc::posix_spawnattr_setflags(
-            &mut attr,
-            (libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF) as libc::c_short,
-        ))?;
+        let mut flags =
+            (libc::POSIX_SPAWN_CLOEXEC_DEFAULT | libc::POSIX_SPAWN_SETSIGDEF) as libc::c_short;
+        if clear_signal_mask {
+            let mut empty_signal_mask: libc::sigset_t = std::mem::zeroed();
+            if libc::sigemptyset(&mut empty_signal_mask) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            cvt_nz(libc::posix_spawnattr_setsigmask(
+                &mut attr,
+                &empty_signal_mask,
+            ))?;
+            flags |= libc::POSIX_SPAWN_SETSIGMASK as libc::c_short;
+        }
+        if start_new_session {
+            // This constant is available in the macOS SDK but not in libc's
+            // Apple bindings.
+            const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
+            flags |= POSIX_SPAWN_SETSID;
+        }
+        cvt_nz(libc::posix_spawnattr_setflags(&mut attr, flags))?;
 
         cvt_nz(posix_spawnattr_setexceptionports_np(
             &mut attr,
@@ -471,6 +608,61 @@ fn spawn_posix_spawn(
             cvt_nz(posix_spawn_file_actions_addinherit_np(
                 &mut file_actions,
                 libc::STDERR_FILENO,
+            ))?;
+        }
+
+        for action in configured_file_actions {
+            match action {
+                FileAction::Open {
+                    child_fd,
+                    path,
+                    flags,
+                    mode,
+                } => {
+                    let path = CString::new(path.as_os_str().as_bytes())
+                        .map_err(|_| invalid_input_error())?;
+                    cvt_nz(libc::posix_spawn_file_actions_addopen(
+                        &mut file_actions,
+                        *child_fd,
+                        path.as_ptr(),
+                        *flags,
+                        *mode,
+                    ))?;
+                    cvt_nz(posix_spawn_file_actions_addinherit_np(
+                        &mut file_actions,
+                        *child_fd,
+                    ))?;
+                }
+                FileAction::Duplicate {
+                    source_fd,
+                    child_fd,
+                } => {
+                    if source_fd != child_fd {
+                        cvt_nz(libc::posix_spawn_file_actions_adddup2(
+                            &mut file_actions,
+                            *source_fd,
+                            *child_fd,
+                        ))?;
+                    }
+                    cvt_nz(posix_spawn_file_actions_addinherit_np(
+                        &mut file_actions,
+                        *child_fd,
+                    ))?;
+                }
+            }
+        }
+
+        for mapping in fd_mappings {
+            if mapping.parent_fd.as_raw_fd() != mapping.child_fd {
+                cvt_nz(libc::posix_spawn_file_actions_adddup2(
+                    &mut file_actions,
+                    mapping.parent_fd.as_raw_fd(),
+                    mapping.child_fd,
+                ))?;
+            }
+            cvt_nz(posix_spawn_file_actions_addinherit_np(
+                &mut file_actions,
+                mapping.child_fd,
             ))?;
         }
 
@@ -569,12 +761,147 @@ fn invalid_input_error() -> io::Error {
     )
 }
 
+fn validate_file_descriptor(file_descriptor: RawFd) -> io::Result<()> {
+    if file_descriptor < 0 {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "file descriptor must be nonnegative",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::Read as _;
     use std::os::unix::process::ExitStatusExt as _;
 
     use super::*;
     use futures_lite::AsyncWriteExt;
+
+    #[test]
+    fn test_spawn_with_custom_arg0_session_and_fd_mapping() {
+        smol::block_on(async {
+            let (mut reader, writer) = std::io::pipe().expect("failed to create pipe");
+            let mut command = Command::new("/bin/sh");
+            command
+                .arg0("custom-argv0")
+                .args(["-c", "printf '%s' \"$0\" >&0; sleep 10"])
+                .fd_mapping(writer.into(), 0)
+                .expect("failed to map pipe")
+                .start_new_session(true);
+
+            let mut child = command.spawn().expect("failed to spawn command");
+            assert_eq!(
+                unsafe { libc::getsid(child.id() as libc::pid_t) },
+                child.id() as libc::pid_t
+            );
+
+            let mut output = vec![0; "custom-argv0".len()];
+            reader
+                .read_exact(&mut output)
+                .expect("failed to read mapped descriptor");
+            assert_eq!(output, b"custom-argv0");
+
+            child.kill().expect("failed to kill command");
+            child.status().await.expect("failed to wait for command");
+            let mut trailing_output = Vec::new();
+            reader
+                .read_to_end(&mut trailing_output)
+                .expect("failed to read mapped descriptor to EOF");
+            assert!(trailing_output.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_ordered_open_and_duplicate_file_actions() {
+        smol::block_on(async {
+            let output_file = tempfile::NamedTempFile::new().expect("failed to create output file");
+            let mut command = Command::new("/bin/sh");
+            command
+                .args(["-c", "printf file-actions"])
+                .stdout(Stdio::inherit())
+                .open_file_descriptor(3, output_file.path(), libc::O_WRONLY | libc::O_TRUNC, 0)
+                .expect("failed to open child file descriptor")
+                .duplicate_file_descriptor(3, libc::STDOUT_FILENO)
+                .expect("failed to duplicate child file descriptor");
+
+            assert!(
+                command
+                    .status()
+                    .await
+                    .expect("failed to run command")
+                    .success()
+            );
+
+            let mut output = String::new();
+            output_file
+                .reopen()
+                .expect("failed to reopen output file")
+                .read_to_string(&mut output)
+                .expect("failed to read output file");
+            assert_eq!(output, "file-actions");
+        });
+    }
+
+    #[test]
+    fn test_file_actions_attach_controlling_terminal() {
+        use std::ffi::CStr;
+        use std::os::fd::FromRawFd as _;
+
+        let mut master_fd = -1;
+        let mut slave_fd = -1;
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master_fd,
+                    &mut slave_fd,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0,
+            "failed to open pty: {}",
+            io::Error::last_os_error()
+        );
+        let master = unsafe { OwnedFd::from_raw_fd(master_fd) };
+        let slave = unsafe { OwnedFd::from_raw_fd(slave_fd) };
+        let tty_path = unsafe {
+            let path = libc::ttyname(slave.as_raw_fd());
+            assert!(!path.is_null(), "failed to resolve pty slave path");
+            PathBuf::from(OsStr::from_bytes(CStr::from_ptr(path).to_bytes()))
+        };
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", ": </dev/tty"])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .start_new_session(true)
+            .reset_signals([
+                libc::SIGCHLD,
+                libc::SIGHUP,
+                libc::SIGINT,
+                libc::SIGQUIT,
+                libc::SIGTERM,
+                libc::SIGALRM,
+            ])
+            .clear_signal_mask(true)
+            .open_file_descriptor(libc::STDIN_FILENO, tty_path, libc::O_RDWR, 0)
+            .expect("failed to open pty slave")
+            .duplicate_file_descriptor(libc::STDIN_FILENO, libc::STDOUT_FILENO)
+            .expect("failed to map stdout")
+            .duplicate_file_descriptor(libc::STDIN_FILENO, libc::STDERR_FILENO)
+            .expect("failed to map stderr");
+
+        let mut child = command.spawn().expect("failed to spawn command");
+        drop(slave);
+        assert!(child.wait().expect("failed to wait for command").success());
+        drop(master);
+    }
 
     // Verifies that pipes returned by `create_pipe` aren't visible to unrelated
     // child processes spawned via `std::process::Command`. On macOS, `std`

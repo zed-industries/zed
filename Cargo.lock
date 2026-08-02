@@ -20160,7 +20160,6 @@ dependencies = [
  "itertools 0.14.0",
  "libc",
  "log",
- "mach2 0.5.0",
  "nix 0.29.0",
  "path",
  "percent-encoding",
@@ -20183,6 +20182,7 @@ dependencies = [
  "walkdir",
  "which 6.0.3",
  "windows 0.61.3",
+ "zed_process",
 ]
 
 [[package]]
@@ -23608,6 +23608,18 @@ name = "zed_html"
 version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.7.0",
+]
+
+[[package]]
+name = "zed_process"
+version = "0.1.0"
+dependencies = [
+ "futures-lite 1.13.0",
+ "libc",
+ "mach2 0.5.0",
+ "smol",
+ "tempfile",
+ "which 6.0.3",
 ]
 
 [[package]]

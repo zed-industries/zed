@@ -233,6 +233,7 @@ members = [
     "crates/worktree",
     "crates/worktree_benchmarks",
     "crates/x_ai",
+    "crates/zed_process",
     "crates/zed",
     "crates/zed_actions",
     "crates/windows_resources",
@@ -498,6 +499,7 @@ web_search_providers = { path = "crates/web_search_providers" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
+zed_process = { path = "crates/zed_process" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }

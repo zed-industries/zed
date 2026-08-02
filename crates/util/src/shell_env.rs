@@ -77,14 +77,21 @@ async fn capture_unix(
     args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
+    #[cfg(not(target_os = "macos"))]
     use std::os::unix::process::CommandExt;
 
+    #[cfg(target_os = "macos")]
+    use crate::command::new_command;
+    #[cfg(not(target_os = "macos"))]
     use crate::command::new_std_command;
 
     let shell_kind = ShellKind::new(shell_path, false);
     let quoted_zed_path = super::get_shell_safe_zed_path(shell_kind)?;
 
     let mut command_string = String::new();
+    #[cfg(target_os = "macos")]
+    let mut command = new_command(shell_path);
+    #[cfg(not(target_os = "macos"))]
     let mut command = new_std_command(shell_path);
     command.args(args);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
@@ -151,6 +158,9 @@ async fn capture_unix(
 
     command.arg(&command_string);
 
+    #[cfg(target_os = "macos")]
+    command.start_new_session(true);
+    #[cfg(not(target_os = "macos"))]
     super::set_pre_exec_to_start_new_session(&mut command);
 
     let (env_output, process_output) = spawn_and_read_fd(command, fd_num).await?;
@@ -177,7 +187,30 @@ async fn capture_unix(
     )
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
+async fn spawn_and_read_fd(
+    mut command: crate::command::Command,
+    child_fd: std::os::fd::RawFd,
+) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
+    use std::io::Read;
+
+    use crate::command::Stdio;
+
+    let (mut reader, writer) = std::io::pipe()?;
+    command
+        .fd_mapping(writer.into(), child_fd)?
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let process = command.spawn()?;
+
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+
+    Ok((buffer, process.output().await?))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 async fn spawn_and_read_fd(
     mut command: std::process::Command,
     child_fd: std::os::fd::RawFd,

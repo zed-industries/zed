@@ -1,0 +1,26 @@
+[package]
+name = "zed_process"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Process spawning primitives used by Zed"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zed_process.rs"
+doctest = true
+
+[dependencies]
+smol.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+futures-lite.workspace = true
+libc.workspace = true
+mach2.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
