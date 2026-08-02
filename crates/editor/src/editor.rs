@@ -1044,6 +1044,7 @@ pub struct Editor {
     prev_pressure_stage: Option<PressureStage>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
+    hovered_inline_blame: bool,
     edit_prediction_provider: Option<RegisteredEditPredictionDelegate>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_edit_prediction: Option<EditPredictionState>,
@@ -2361,6 +2362,7 @@ impl Editor {
             pending_mouse_down: None,
             prev_pressure_stage: None,
             hovered_link_state: None,
+            hovered_inline_blame: false,
             edit_prediction_provider: None,
             active_edit_prediction: None,
             stale_edit_prediction_in_menu: None,
@@ -3903,10 +3905,24 @@ impl Editor {
 
         let mouse_position = window.mouse_position();
         if !position_map.text_hitbox.is_hovered(window) {
+            if self.hovered_inline_blame {
+                self.hovered_inline_blame = false;
+                cx.notify();
+            }
             if self.gutter_hover_button.0.is_some() {
                 cx.notify();
             }
             return;
+        }
+
+        let was_hovered_inline_blame = self.hovered_inline_blame;
+        self.hovered_inline_blame = position_map
+            .inline_blame_bounds
+            .as_ref()
+            .is_some_and(|(bounds, _, _)| bounds.contains(&mouse_position))
+            && Self::is_cmd_or_ctrl_pressed(&modifiers, cx);
+        if was_hovered_inline_blame != self.hovered_inline_blame {
+            cx.notify();
         }
 
         self.update_hovered_link(

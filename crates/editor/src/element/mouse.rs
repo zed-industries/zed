@@ -112,6 +112,17 @@ impl EditorElement {
             }
         }
 
+        let was_hovered_inline_blame = editor.hovered_inline_blame;
+        editor.hovered_inline_blame = text_hovered
+            && Editor::is_cmd_or_ctrl_pressed(&modifiers, cx)
+            && position_map
+                .inline_blame_bounds
+                .as_ref()
+                .is_some_and(|(bounds, _, _)| bounds.contains(&event.position));
+        if was_hovered_inline_blame != editor.hovered_inline_blame {
+            cx.notify();
+        }
+
         // Handle diff review indicator when gutter is hovered in diff mode with AI enabled
         let show_diff_review = editor.show_diff_review_button()
             && cx.has_flag::<DiffReviewFeatureFlag>()
