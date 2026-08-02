@@ -20,6 +20,7 @@ use path::rel_path::RelPathBuf;
 pub use path::PathStyle;
 
 /// Returns the path to the user's home directory.
+#[cfg(not(target_family = "wasm"))]
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
@@ -1507,6 +1508,54 @@ mod tests {
         assert_eq!(
             PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
             "C:\\Users\\user\\dev\\worktrees"
+        );
+    }
+
+    #[test]
+    fn test_normalize_windows_path_regardless_of_host_platform() {
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\user\dev\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\.\worktrees"),
+            r"C:\Users\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users\user\dev\sub\..\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize("C:/Users/user/dev/../worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:/Users\user/dev\..\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\Users/user\.\worktrees"),
+            r"C:\Users\user\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"\\server\share\dev\..\worktrees"),
+            r"\\server\share\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"//server\share/dev\..\worktrees"),
+            r"\\server\share\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"\dev\..\worktrees"),
+            r"\worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"dev\..\worktrees"),
+            r"worktrees"
+        );
+        assert_eq!(
+            PathStyle::Windows.normalize(r"C:\..\worktrees"),
+            r"C:\worktrees"
         );
     }
 
