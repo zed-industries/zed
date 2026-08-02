@@ -1370,6 +1370,10 @@ struct PreparedBreadcrumbSegment {
     /// icons. This is what tells the file apart from the directories leading to it, the way
     /// IntelliJ's navigation bar does.
     icon: Option<SharedString>,
+    /// Colour for the segment's own text. The path stays muted so the file it leads to reads as
+    /// the subject rather than as one more directory, and the file carries its git status, the
+    /// same mapping multi buffer headers use for file names.
+    label_color: Color,
 }
 
 /// Per-segment "slot" width [`BreadcrumbsRow`] plans against: the segment's own label plus one
@@ -1594,7 +1598,7 @@ impl BreadcrumbsRow {
     ) -> gpui::AnyElement {
         let segment = &self.segments[index];
         let mut text_style = self.effective_text_style(window);
-        text_style.color = Color::Muted.color(cx);
+        text_style.color = segment.label_color.color(cx);
 
         let text = if segment.dirty_filename_style
             && let Some(styled_element) =
@@ -1890,6 +1894,7 @@ pub fn render_breadcrumb_text(
     // The open file's own path, for the file segment's icon. Only that segment shows one; the
     // directory segments carry their own paths in their targets.
     let mut file_path_for_icon: Option<Arc<RelPath>> = None;
+    let mut file_status = None;
 
     if !multibuffer_header
         && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
@@ -1908,6 +1913,12 @@ pub fn render_breadcrumb_text(
             file_path_for_icon = real_project_path
                 .as_ref()
                 .map(|project_path| project_path.path.clone());
+            file_status = editor_ref
+                .project()
+                .zip(real_project_path.as_ref())
+                .and_then(|(project, project_path)| {
+                    project.read(cx).project_path_git_status(project_path, cx)
+                });
             // Set once a directory row has been chosen inside an open dropdown (see
             // `Editor::navigate_breadcrumb_to`); while set, the bar shows that directory's own
             // path instead of the open file's, with no symbol segments.
@@ -2050,12 +2061,18 @@ pub fn render_breadcrumb_text(
         .enumerate()
         .map(|(index, ((label, target), kind))| {
             let icon = breadcrumb_segment_icon(&target, file_path_for_icon.as_deref(), cx);
+            let label_color = if kind == BreadcrumbSegmentKind::File {
+                crate::element::file_status_label_color(file_status)
+            } else {
+                Color::Muted
+            };
             PreparedBreadcrumbSegment {
                 kind,
                 label,
                 target,
                 dirty_filename_style: apply_dirty_filename_style && index == file_segment_index,
                 icon,
+                label_color,
             }
         })
         .collect();
@@ -3097,6 +3114,99 @@ mod tests {
     /// snapshot shows them as empty. Opening one has to trigger the same scan the project panel
     /// triggers when a directory is expanded — one level per dropdown, so reaching a file nested
     /// two levels inside `.gitignore`d territory takes two of them.
+    /// The reviewer asked for the whole flow driven by `menu::` actions rather than by simulated
+    /// keystrokes: move the selection, submit it, and end up somewhere new.
+    #[gpui::test]
+    async fn test_breadcrumb_directory_picker_navigates_from_the_keyboard(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "alpha": { "one.txt": "", "two.txt": "" },
+                "beta": { "three.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        struct Harness {
+            picker: Entity<BreadcrumbDirectoryPicker>,
+            editor: Entity<Editor>,
+        }
+        impl Render for Harness {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.picker.clone()
+            }
+        }
+
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let harness_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let picker = BreadcrumbDirectoryDelegate::picker(
+                editor.downgrade(),
+                workspace.downgrade(),
+                worktree_id,
+                RelPath::empty().into(),
+                None,
+                window,
+                cx,
+            );
+            Harness { picker, editor }
+        });
+        let (picker, editor) = harness_window
+            .read_with(cx, |harness, _| {
+                (harness.picker.clone(), harness.editor.clone())
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*harness_window, cx);
+        cx.run_until_parked();
+
+        picker.update_in(cx, |picker, window, cx| {
+            window.focus(&picker.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        // The listing opens on `alpha`; one step down lands on `beta`.
+        cx.dispatch_action(menu::SelectNext);
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(
+                picker
+                    .delegate
+                    .entry_at(picker.delegate.selected_index)
+                    .map(|entry| entry.name.as_ref()),
+                Some("beta"),
+            );
+        });
+
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+
+        editor.read_with(cx, |editor, _| {
+            let navigation = editor
+                .breadcrumb_navigation()
+                .expect("confirming a directory row navigates the bar into it");
+            assert_eq!(navigation.active_path.as_unix_str(), "beta");
+            assert!(navigation.navigated);
+        });
+    }
+
     #[gpui::test]
     async fn test_breadcrumb_directory_browser_expands_nested_gitignored_directories(
         cx: &mut TestAppContext,
