@@ -1782,7 +1782,7 @@ impl Editor {
             .pending_input_keystrokes()
             .into_iter()
             .flatten()
-            .filter_map(|keystroke| keystroke.key_char.clone())
+            .filter_map(|keystroke| keystroke.key_char_for_text_input().map(str::to_owned))
             .collect();
 
         if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
