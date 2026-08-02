@@ -1406,6 +1406,18 @@ impl Render for LspButton {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+    use gpui::TestAppContext;
+    use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use project::{
+        FakeFs, Project, WorktreeId,
+        lsp_store::log_store::{LanguageServerKind, LogKind, LogStore},
+    };
+    use serde_json::json;
+    use util::path;
+
     use super::*;
 
     fn server_id(n: usize) -> LanguageServerId {
@@ -1508,29 +1520,6 @@ mod tests {
         );
     }
 
-    /// `last_known_location_by_name` is the fallback that keeps a stopped
-    /// server visible in the menu (grouped under its last-known worktree)
-    /// even after its id-keyed state has been evicted by `remove_server`. It
-    /// must survive removal the same way `binary_statuses` does.
-    /// Regression test for #61896.
-    #[test]
-    fn remove_server_does_not_touch_last_known_location_by_name() {
-        let mut state = LanguageServers::default();
-        state.last_known_location_by_name.insert(
-            server_name("rust-analyzer"),
-            (SharedString::new("my-project"), server_id(1)),
-        );
-
-        state.remove_server(server_id(1));
-
-        assert!(
-            state
-                .last_known_location_by_name
-                .contains_key(&server_name("rust-analyzer")),
-            "last_known_location_by_name is name-keyed and must survive server removal",
-        );
-    }
-
     /// Simulates the full restart event sequence: remove old id, register
     /// new id with same name, write health for the new id. After restart
     /// only the new id should be visible — no leftover entry from the old
@@ -1584,5 +1573,181 @@ mod tests {
             state.health_statuses.contains_key(&server_id(2)),
             "the new server's health entry is present",
         );
+    }
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_button(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                "test.rs": "",
+                "package.json": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: (LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                })
+                .into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )));
+
+        let mut fake_rust_server = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "the-rust-language-server",
+                ..Default::default()
+            },
+        );
+
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+        log_store.update(cx, |store, cx| store.add_project(&project, cx));
+
+        let _rust_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/the-root/test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut language_server = fake_rust_server.next().await.unwrap();
+        language_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let lsp_button = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| LspButton::new(workspace, PopoverMenuHandle::default(), window, cx))
+        });
+
+        lsp_button.update(cx, |button, cx| button.regenerate_items(cx));
+
+        lsp_button.read_with(cx, |button, cx| {
+            let state = button.server_state.read(cx);
+            assert!(
+                !state.items.is_empty(),
+                "the button should show something once a server is registered"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn stopped_servers_still_render(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                "test.rs": "",
+                "package.json": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: (LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                })
+                .into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )));
+
+        let mut fake_rust_server = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "the-rust-language-server",
+                ..Default::default()
+            },
+        );
+
+        let log_store = cx.new(|cx| LogStore::new(false, cx));
+        log_store.update(cx, |store, cx| store.add_project(&project, cx));
+
+        let _rust_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/the-root/test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut language_server = fake_rust_server.next().await.unwrap();
+        language_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
+
+        let fake_rust_server_id = language_server.server.server_id();
+        let fake_rust_server_name = language_server.server.name();
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let lsp_button = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| LspButton::new(workspace, PopoverMenuHandle::default(), window, cx))
+        });
+
+        lsp_button.update(cx, |button, cx| button.regenerate_items(cx));
+        lsp_button.read_with(cx, |button, cx| {
+                let state = button.server_state.read(cx);
+                assert!(
+                    state.items.iter().any(
+                        |item| matches!(item, LspMenuItem::WithBinaryStatus { server_name, .. } if *server_name == fake_rust_server_name)
+                    ),
+                    "expected the running server to appear before it's stopped",
+                );
+            });
+
+        lsp_button.update(cx, |button, cx| {
+            button.server_state.update(cx, |state, _| {
+                state.language_servers.remove_server(fake_rust_server_id);
+                state.language_servers.update_binary_status(
+                    BinaryStatus::Stopped,
+                    None,
+                    fake_rust_server_name.clone(),
+                );
+            });
+            button.regenerate_items(cx);
+        });
+
+        lsp_button.read_with(cx, |button, cx| {
+                let state = button.server_state.read(cx);
+                assert!(
+                    state.items.iter().any(
+                        |item| matches!(item, LspMenuItem::WithBinaryStatus { server_name, .. } if *server_name == fake_rust_server_name)
+                    ),
+                    "Expected the server to continue showing in the menu after being closed",
+                );
+            });
     }
 }
