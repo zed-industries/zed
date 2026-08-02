@@ -1387,7 +1387,7 @@ impl SshSocket {
             self.connection_options.additional_args_for_scp()
         };
 
-        // draining all arguments that are explicitely denied
+        // draining all arguments that are explicitly denied
         if let Some(deny_args) = deny_args {
             args.retain(|x| !deny_args.contains(&x.as_str()));
         }
