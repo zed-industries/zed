@@ -6,8 +6,8 @@ use std::{
 
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
-use language::{Bias, Point, PointUtf16, Selection, SelectionGoal};
-use multi_buffer::{MultiBufferDimension, MultiBufferOffset, ToPoint};
+use language::{Bias, Point, Selection, SelectionGoal};
+use multi_buffer::{MultiBufferDimension, MultiBufferOffset, MultiBufferRow, ToPoint};
 use util::post_inc;
 
 use crate::{
@@ -405,7 +405,7 @@ impl SelectionsCollection {
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection(
+    pub(crate) fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
         row: DisplayRow,
@@ -444,34 +444,33 @@ impl SelectionsCollection {
     }
 
     /// Attempts to build a selection in the provided buffer row using the
-    /// same UTF-16 column range as specified.
+    /// same tab-expanded column range as specified.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    fn build_columnar_selection_from_utf16_columns(
+    fn build_columnar_selection_from_tab_expanded_columns(
         &mut self,
         display_map: &DisplaySnapshot,
-        buffer_row: u32,
-        positions: &Range<u32>,
+        multi_buffer_row: MultiBufferRow,
+        goal_columns: &Range<u32>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
-        let snapshot = display_map.buffer_snapshot();
-        let is_empty = positions.start == positions.end;
-        let line_len_utf16 = snapshot.line_len_utf16(multi_buffer::MultiBufferRow(buffer_row));
+        let is_empty = goal_columns.start == goal_columns.end;
+        let line_len = display_map.tab_expanded_line_len(multi_buffer_row);
 
         let (start, end) = if is_empty {
-            let column = std::cmp::min(positions.start, line_len_utf16);
-            let point = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, column));
+            let point =
+                display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
             (point, point)
         } else {
-            if positions.start >= line_len_utf16 {
+            if goal_columns.start >= line_len {
                 return None;
             }
 
-            let start = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, positions.start));
-            let end_column = std::cmp::min(positions.end, line_len_utf16);
-            let end = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, end_column));
+            let start =
+                display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
+            let end = display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.end);
             (start, end)
         };
 
@@ -494,7 +493,7 @@ impl SelectionsCollection {
 
     /// Finds the next columnar selection by walking display rows one at a time
     /// so that soft-wrapped lines are considered and not skipped.
-    pub fn find_next_columnar_selection_by_display_row(
+    pub(crate) fn find_next_columnar_selection_by_display_row(
         &mut self,
         display_map: &DisplaySnapshot,
         start_row: DisplayRow,
@@ -527,7 +526,7 @@ impl SelectionsCollection {
 
     /// Finds the next columnar selection by skipping to the next buffer row,
     /// ignoring soft-wrapped lines.
-    pub fn find_next_columnar_selection_by_buffer_row(
+    pub(crate) fn find_next_columnar_selection_by_buffer_row(
         &mut self,
         display_map: &DisplaySnapshot,
         start_row: DisplayRow,
@@ -543,9 +542,9 @@ impl SelectionsCollection {
             let new_row =
                 display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
             row = new_row.row();
-            let buffer_row = new_row.to_point(display_map).row;
+            let buffer_row = MultiBufferRow(new_row.to_point(display_map).row);
 
-            if let Some(selection) = self.build_columnar_selection_from_utf16_columns(
+            if let Some(selection) = self.build_columnar_selection_from_tab_expanded_columns(
                 display_map,
                 buffer_row,
                 goal_columns,

@@ -559,6 +559,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SidebarDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitDiffBaseSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
         .add_basic_renderer::<settings::InlineBlameLocation>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
@@ -4407,6 +4408,12 @@ impl SettingsWindow {
         }
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
+    }
+
+    pub(crate) fn active_project(&self, cx: &App) -> Option<Entity<Project>> {
+        let original_window = self.original_window.as_ref()?;
+        let multi_workspace = original_window.read(cx).ok()?;
+        Some(multi_workspace.workspace().read(cx).project().clone())
     }
 
     fn focus_file_at_index(&mut self, index: usize, window: &mut Window, cx: &mut App) {
