@@ -103,10 +103,11 @@ pub use editor_settings::{
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
     ui_scrollbar_settings_from_raw,
 };
-use element::BreadcrumbDirectoryPicker;
 pub use element::{
-    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
-    file_status_label_color, render_breadcrumb_text,
+    BREADCRUMB_PICKER_RENDERERS, BreadcrumbDirectoryEntry, BreadcrumbDirectoryListingSettings,
+    BreadcrumbPickerRenderers, CursorLayout, EditorElement, ErasedBreadcrumbPopoverHandle,
+    HighlightedRange, HighlightedRangeLine, PointForPosition, breadcrumb_directory_entries,
+    file_status_label_color, flatten_text_for_single_line_display, render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
 pub use git::{
@@ -164,13 +165,13 @@ use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
-    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, IsZero,
-    KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
-    Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
-    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
-    pulsating_between, px, relative, size,
+    DismissEvent, DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle,
+    Hsla, IsZero, KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad,
+    ParentElement, Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size,
+    Stateful, Styled, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point,
+    prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -258,9 +259,8 @@ use theme::{
 };
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
-    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding,
-    PopoverMenuHandle, Tooltip, prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container,
-    utils::WithRemSize,
+    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
+    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, rel_path::RelPath};
@@ -1130,8 +1130,10 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     breadcrumb_navigation: Option<BreadcrumbNavigation>,
     /// Shared by every breadcrumb directory segment, so one dropdown is open at a time and
-    /// [`Editor::navigate_breadcrumb_to`] can reopen it under a different segment.
-    breadcrumb_popover_handle: PopoverMenuHandle<BreadcrumbDirectoryPicker>,
+    /// [`Editor::navigate_breadcrumb_to`] can reopen it under a different segment. `None` when no
+    /// `breadcrumb_picker::BreadcrumbPickerRenderers` has been registered, in which case
+    /// directory segments render as plain text and there is no dropdown to share a handle with.
+    breadcrumb_popover_handle: Option<Rc<dyn ErasedBreadcrumbPopoverHandle>>,
     /// Replaced each time a dropdown opens, and dropped with the editor rather than detached.
     breadcrumb_dismiss_subscription: Option<Subscription>,
     /// Suppresses [`Editor::clear_breadcrumb_navigation`] while the dropdown is moving between
@@ -2465,7 +2467,9 @@ impl Editor {
             previous_search_ranges: None,
             breadcrumb_header: None,
             breadcrumb_navigation: None,
-            breadcrumb_popover_handle: PopoverMenuHandle::default(),
+            breadcrumb_popover_handle: BREADCRUMB_PICKER_RENDERERS
+                .get()
+                .map(|renderers| (renderers.popover_handle)()),
             breadcrumb_reanchoring: false,
             breadcrumb_dismiss_subscription: None,
             breadcrumb_pending_reanchor: false,
@@ -10993,27 +10997,27 @@ impl Editor {
 
     /// Which directory segment produced the open dropdown, and whether a row inside it has
     /// replaced the bar with that directory's own path.
-    pub(crate) fn breadcrumb_navigation(&self) -> Option<&BreadcrumbNavigation> {
+    pub fn breadcrumb_navigation(&self) -> Option<&BreadcrumbNavigation> {
         self.breadcrumb_navigation.as_ref()
     }
 
     /// Shared by whichever segment is active, so exactly one dropdown can be opened or closed
-    /// programmatically at a time.
-    pub(crate) fn breadcrumb_popover_handle(&self) -> PopoverMenuHandle<BreadcrumbDirectoryPicker> {
+    /// programmatically at a time. `None` when no picker renderers are registered.
+    pub fn breadcrumb_popover_handle(&self) -> Option<Rc<dyn ErasedBreadcrumbPopoverHandle>> {
         self.breadcrumb_popover_handle.clone()
     }
 
     /// Ends the session `path`'s segment started, on any route out of the dropdown: `Escape`,
     /// focus moving away, or another segment hiding it.
-    pub(crate) fn watch_breadcrumb_dismissal(
+    pub fn watch_breadcrumb_dismissal<T: EventEmitter<DismissEvent> + 'static>(
         &mut self,
-        picker: &Entity<BreadcrumbDirectoryPicker>,
+        entity: &Entity<T>,
         worktree_id: WorktreeId,
         path: Arc<RelPath>,
         cx: &mut Context<Self>,
     ) {
         self.breadcrumb_dismiss_subscription = Some(cx.subscribe(
-            picker,
+            entity,
             move |editor, _, _: &gpui::DismissEvent, cx| {
                 editor.clear_breadcrumb_navigation(worktree_id, &path, cx);
             },
@@ -11027,7 +11031,7 @@ impl Editor {
     /// `path` identifies the segment itself, not the directory its dropdown lists. The `hide`
     /// below is synchronous because nothing that reaches here holds an entity lease; keep it out
     /// of `Entity::update` and `cx.listener` callbacks or that stops being true.
-    pub(crate) fn open_breadcrumb_navigation(
+    pub fn open_breadcrumb_navigation(
         &mut self,
         worktree_id: WorktreeId,
         path: Arc<RelPath>,
@@ -11035,7 +11039,9 @@ impl Editor {
     ) {
         // The shared handle points at whichever segment last became active, so this closes that
         // one before this segment's opens.
-        self.breadcrumb_popover_handle.hide(cx);
+        if let Some(handle) = &self.breadcrumb_popover_handle {
+            handle.hide(cx);
+        }
 
         let navigated = self
             .breadcrumb_navigation
@@ -11059,7 +11065,7 @@ impl Editor {
     /// Reached from the picker's `confirm`, so that picker's lease is still on the stack and
     /// `PopoverMenuHandle::hide` would double-lease it. `cx.defer_in` runs once the outermost
     /// `App::update` has returned the entity.
-    pub(crate) fn navigate_breadcrumb_to(
+    pub fn navigate_breadcrumb_to(
         &mut self,
         worktree_id: WorktreeId,
         path: Arc<RelPath>,
@@ -11077,7 +11083,9 @@ impl Editor {
         let handle = self.breadcrumb_popover_handle.clone();
 
         cx.defer_in(window, move |editor, _window, cx| {
-            handle.hide(cx);
+            if let Some(handle) = &handle {
+                handle.hide(cx);
+            }
             // Reopening has to wait for `path`'s segment to exist and register the shared handle,
             // which happens while the bar lays itself out. `BreadcrumbsRow::prepaint` is the point
             // where that has just finished, so it picks this flag up rather than this code trying
@@ -11091,13 +11099,14 @@ impl Editor {
         self.breadcrumb_pending_reanchor
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn breadcrumb_reanchoring(&self) -> bool {
+        self.breadcrumb_reanchoring
+    }
+
     /// Reopens the dropdown [`Self::navigate_breadcrumb_to`] dismissed, now that the segment it
     /// belongs to has been laid out.
-    pub(crate) fn reanchor_breadcrumb_popover(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn reanchor_breadcrumb_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.breadcrumb_pending_reanchor {
             return;
         }
@@ -11108,7 +11117,9 @@ impl Editor {
         // Deferred rather than immediate: this runs mid-draw, and `show` builds and focuses the
         // dropdown's entity.
         window.defer(cx, move |window, cx| {
-            handle.show(window, cx);
+            if let Some(handle) = &handle {
+                handle.show(window, cx);
+            }
             editor
                 .update(cx, |editor, _| editor.breadcrumb_reanchoring = false)
                 .ok();
@@ -12004,7 +12015,7 @@ impl Deref for EditorSnapshot {
 
 /// See [`Editor::breadcrumb_navigation`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BreadcrumbNavigation {
+pub struct BreadcrumbNavigation {
     pub worktree_id: WorktreeId,
     pub active_path: Arc<RelPath>,
     pub navigated: bool,

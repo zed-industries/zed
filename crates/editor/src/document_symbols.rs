@@ -163,7 +163,7 @@ impl Editor {
     ///
     /// Reads what [`Self::prefetch_breadcrumb_outline`] fetched. A stale outline is used as is,
     /// since the items are anchors; an absent one yields nothing.
-    pub(crate) fn breadcrumb_symbol_menu_items(
+    pub fn breadcrumb_symbol_menu_items(
         &self,
         buffer_id: BufferId,
         target: Option<&OutlineItem<Anchor>>,
@@ -209,7 +209,7 @@ impl Editor {
 
     /// Moves the cursor to `item` and scrolls it into view, the way confirming an entry in the
     /// outline picker does.
-    pub(crate) fn navigate_to_outline_item(
+    pub fn navigate_to_outline_item(
         &mut self,
         item: &OutlineItem<Anchor>,
         window: &mut Window,

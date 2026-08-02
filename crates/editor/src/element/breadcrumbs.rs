@@ -1,6 +1,8 @@
 //! Breadcrumb path and symbol navigation: turns the bar's segments into clickable dropdowns,
 //! sharing the project panel's ordering and gitignore treatment rather than reimplementing them.
 
+use std::sync::OnceLock;
+
 use super::*;
 
 mod layout;
@@ -12,15 +14,48 @@ use layout::{
     align_symbol_segments, classify_breadcrumb_segment_kinds, hard_cap_breadcrumb_middle_segments,
 };
 use layout::{breadcrumb_layout_plan_width, plan_breadcrumb_layout};
-use outline::render_breadcrumb_symbol_segment;
-pub(crate) use outline::{
-    child_outline_indices, sibling_outline_indices, top_level_outline_indices,
+pub use outline::{child_outline_indices, sibling_outline_indices, top_level_outline_indices};
+use path::breadcrumb_path_is_navigable;
+pub(crate) use path::breadcrumb_path_segments;
+pub use path::{
+    BreadcrumbDirectoryEntry, BreadcrumbDirectoryListingSettings, breadcrumb_directory_entries,
 };
-use path::{
-    BreadcrumbDirectoryListingSettings, breadcrumb_path_is_navigable,
-    render_breadcrumb_directory_segment,
-};
-pub(crate) use path::{BreadcrumbDirectoryPicker, breadcrumb_path_segments};
+
+/// A handle to whichever breadcrumb directory popover implementation `breadcrumb_picker` has
+/// registered, erased so `editor` doesn't have to name that crate's picker type. The concrete
+/// type is a newtype over `PopoverMenuHandle<BreadcrumbDirectoryPicker>`.
+pub trait ErasedBreadcrumbPopoverHandle: 'static {
+    fn hide(&self, cx: &mut App);
+    fn show(&self, window: &mut Window, cx: &mut App);
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+/// Renderers `breadcrumb_picker` registers so `editor` can open its pickers without depending on
+/// it. Mirrors [`zed_actions::outline::TOGGLE_OUTLINE`]'s use of a `OnceLock` to sever a
+/// dependency cycle.
+pub struct BreadcrumbPickerRenderers {
+    pub directory: fn(
+        WeakEntity<Editor>,
+        WeakEntity<Workspace>,
+        WorktreeId,
+        Arc<RelPath>,
+        Option<Arc<RelPath>>,
+        bool,
+        Rc<dyn ErasedBreadcrumbPopoverHandle>,
+        gpui::AnyElement,
+        usize,
+    ) -> gpui::AnyElement,
+    pub symbol: fn(
+        WeakEntity<Editor>,
+        BufferId,
+        Option<OutlineItem<Anchor>>,
+        gpui::AnyElement,
+        usize,
+    ) -> gpui::AnyElement,
+    pub popover_handle: fn() -> Rc<dyn ErasedBreadcrumbPopoverHandle>,
+}
+
+pub static BREADCRUMB_PICKER_RENDERERS: OnceLock<BreadcrumbPickerRenderers> = OnceLock::new();
 
 /// What a segment's dropdown drills into.
 #[derive(Clone, Debug)]
@@ -44,7 +79,7 @@ pub(crate) enum BreadcrumbSegmentTarget {
 
 /// Flattens `text` to a single display line. The replacement must be the same UTF-8 length as the
 /// newline, since highlight ranges are byte offsets into the unflattened text.
-fn flatten_text_for_single_line_display(text: &str) -> String {
+pub fn flatten_text_for_single_line_display(text: &str) -> String {
     const LINE_BREAK: char = '\n';
     const REPLACEMENT: &str = " ";
     debug_assert_eq!(
@@ -273,9 +308,12 @@ impl BreadcrumbsRow {
         let interactive = segment.target.is_some() && self.editor.is_some();
         let label = self.with_separator(position, last_position, content, interactive, cx);
 
+        let Some(renderers) = BREADCRUMB_PICKER_RENDERERS.get() else {
+            return label;
+        };
         let element = match (segment.target.clone(), self.editor.clone()) {
             (Some(BreadcrumbSegmentTarget::Symbol { buffer_id, item }), Some(editor)) => {
-                render_breadcrumb_symbol_segment(editor, buffer_id, item, label, index)
+                (renderers.symbol)(editor, buffer_id, item, label, index)
             }
             (
                 Some(BreadcrumbSegmentTarget::Directory {
@@ -296,8 +334,12 @@ impl BreadcrumbsRow {
                 else {
                     return label;
                 };
-                let shared_popover_handle = upgraded_editor.read(cx).breadcrumb_popover_handle();
-                render_breadcrumb_directory_segment(
+                let Some(shared_popover_handle) =
+                    upgraded_editor.read(cx).breadcrumb_popover_handle()
+                else {
+                    return label;
+                };
+                (renderers.directory)(
                     editor,
                     workspace,
                     worktree_id,

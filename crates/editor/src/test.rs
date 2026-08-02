@@ -121,7 +121,7 @@ pub fn assert_text_with_selections(
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn build_editor(
+pub fn build_editor(
     buffer: Entity<MultiBuffer>,
     window: &mut Window,
     cx: &mut Context<Editor>,

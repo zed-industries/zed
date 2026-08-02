@@ -2446,6 +2446,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "breadcrumb_picker"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "file_icons",
+ "fuzzy",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "breadcrumbs"
 version = "0.1.0"
 dependencies = [
@@ -5777,7 +5801,6 @@ dependencies = [
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
- "picker",
  "pretty_assertions",
  "project",
  "proptest",
@@ -23272,6 +23295,7 @@ dependencies = [
  "audio",
  "auto_update",
  "auto_update_ui",
+ "breadcrumb_picker",
  "breadcrumbs",
  "call",
  "channel",

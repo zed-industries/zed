@@ -5,8 +5,10 @@ mod mouse;
 #[cfg(test)]
 pub(crate) use breadcrumbs::breadcrumb_path_segments;
 pub use breadcrumbs::render_breadcrumb_text;
-pub(crate) use breadcrumbs::{
-    BreadcrumbDirectoryPicker, child_outline_indices, sibling_outline_indices,
+pub use breadcrumbs::{
+    BREADCRUMB_PICKER_RENDERERS, BreadcrumbDirectoryEntry, BreadcrumbDirectoryListingSettings,
+    BreadcrumbPickerRenderers, ErasedBreadcrumbPopoverHandle, breadcrumb_directory_entries,
+    child_outline_indices, flatten_text_for_single_line_display, sibling_outline_indices,
     top_level_outline_indices,
 };
 #[cfg(test)]
@@ -50,8 +52,8 @@ use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::GitSummary};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
-    Bounds, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DismissEvent, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
+    Bounds, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase, Edges,
+    Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
@@ -71,7 +73,7 @@ use multi_buffer::{
 };
 
 use project::{
-    ProjectPath, WorktreeId,
+    WorktreeId,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::{InlineBlameLocation, ProjectSettings},
 };
@@ -97,10 +99,7 @@ use text::BufferId;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
-use ui::{
-    ButtonLike, ListItem, POPOVER_Y_PADDING, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
-    scrollbars::ShowScrollbar,
-};
+use ui::{POPOVER_Y_PADDING, Tooltip, prelude::*, scrollbars::ShowScrollbar};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{
