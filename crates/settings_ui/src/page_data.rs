@@ -2732,7 +2732,7 @@ fn editor_page() -> SettingsPage {
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Breadcrumbs",
-                description: "Show breadcrumbs.",
+                description: "Show breadcrumbs. Each segment opens a dropdown for navigating the project tree and the file's outline.",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("toolbar.breadcrumbs"),

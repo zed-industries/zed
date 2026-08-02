@@ -268,7 +268,7 @@ TBD: Centered layout related settings
 ```json [settings]
   // Editor toolbar related settings
   "toolbar": {
-    "breadcrumbs": true, // Whether to show breadcrumbs.
+    "breadcrumbs": true, // Whether to show breadcrumbs. Segments open navigation dropdowns.
     "quick_actions": true, // Whether to show quick action buttons.
     "selections_menu": true, // Whether to show the Selections menu
     "agent_review": true, // Whether to show agent review buttons

@@ -362,7 +362,8 @@ impl RelativeLineNumbers {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ToolbarContent {
-    /// Whether to display breadcrumbs in the editor toolbar.
+    /// Whether to display breadcrumbs in the editor toolbar. Each path and symbol segment opens
+    /// a dropdown for navigating the project tree and the file's outline.
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,

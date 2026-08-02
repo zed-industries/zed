@@ -537,7 +537,8 @@
   },
   // Toolbar related settings
   "toolbar": {
-    // Whether to show breadcrumbs.
+    // Whether to show breadcrumbs. Each path and symbol segment opens a dropdown for
+    // navigating the project tree and the file's outline.
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
