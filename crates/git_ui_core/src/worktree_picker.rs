@@ -23,7 +23,7 @@ use workspace::{
     ModalView, MultiWorkspace, Workspace, dock::DockPosition, notifications::DetachAndPromptErr,
 };
 
-use crate::git_panel::show_error_toast;
+use crate::notifications::show_error_toast;
 use crate::worktree_service::{RemoteBranchName, WorktreeCreateTarget, worktree_create_targets};
 use zed_actions::{
     CreateWorktree, NewWorktreeBranchTarget, OpenWorktreeInNewWindow, OpenWorktreeSetupTasks,
