@@ -22,7 +22,7 @@ use gpui::{
 use log::{debug, info};
 use open_path_prompt::OpenPathDelegate;
 use paths::{global_ssh_config_file, user_ssh_config_file};
-use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use picker::{Picker, PickerDelegate, PickerEditorPosition, ScrollBehavior};
 use project::{Fs, Project};
 use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
@@ -866,7 +866,7 @@ impl RemoteServerPickerDelegate {
             has_open_project,
             is_local,
         };
-        this.rebuild_matches();
+        this.rebuild_matches(None);
         this
     }
 
@@ -883,14 +883,14 @@ impl RemoteServerPickerDelegate {
         // Settings/ssh-config changes are rare, so re-applying the active query
         // synchronously here is fine; the per-keystroke path filters off-thread.
         self.state.filter_sync(self.query.trim());
-        self.rebuild_matches();
+        self.rebuild_matches(Some(self.selected_index));
     }
 
     /// Flattens the current (already-filtered) `DefaultState` into the picker's
     /// match list. The fuzzy filtering itself runs separately (off-thread on the
     /// keystroke path, see [`Self::update_matches`]); this only reads
     /// [`DefaultState::filtered_servers`].
-    fn rebuild_matches(&mut self) {
+    fn rebuild_matches(&mut self, selected_index: Option<usize>) {
         let has_open_project = self.has_open_project;
         let is_local = self.is_local;
 
@@ -982,11 +982,27 @@ impl RemoteServerPickerDelegate {
         }
 
         self.matches = matches;
-        self.selected_index = self
-            .matches
-            .iter()
-            .position(RemoteMatch::is_selectable)
+        self.selected_index = selected_index
+            .and_then(|ix| Self::selectable_index_near(&self.matches, ix))
+            .or_else(|| Self::selectable_index_near(&self.matches, 0))
             .unwrap_or(0);
+    }
+
+    fn selectable_index_near(matches: &[RemoteMatch], ix: usize) -> Option<usize> {
+        let ix = ix.min(matches.len().checked_sub(1)?);
+        matches
+            .iter()
+            .enumerate()
+            .skip(ix)
+            .find_map(|(ix, entry)| entry.is_selectable().then_some(ix))
+            .or_else(|| {
+                matches
+                    .iter()
+                    .enumerate()
+                    .take(ix)
+                    .rev()
+                    .find_map(|(ix, entry)| entry.is_selectable().then_some(ix))
+            })
     }
 
     fn render_server_header(
@@ -1105,12 +1121,14 @@ impl PickerDelegate for RemoteServerPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let preserve_selection = self.query.trim() == query.trim();
+        let selected_index = preserve_selection.then_some(self.selected_index);
         self.query = query;
         let query = self.query.trim().to_string();
 
         if query.is_empty() {
             self.state.filtered_servers = None;
-            self.rebuild_matches();
+            self.rebuild_matches(selected_index);
             cx.notify();
             return Task::ready(());
         }
@@ -1128,8 +1146,10 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             };
             picker
                 .update(cx, |picker, cx| {
+                    let selected_index =
+                        preserve_selection.then_some(picker.delegate.selected_index);
                     picker.delegate.state.filtered_servers = Some(results);
-                    picker.delegate.rebuild_matches();
+                    picker.delegate.rebuild_matches(selected_index);
                     cx.notify();
                 })
                 .ok();
@@ -1318,7 +1338,8 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                                     .shape(IconButtonShape::Square)
                                     .size(ButtonSize::Large)
                                     .tooltip(Tooltip::text("Delete Remote Project"))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                    .on_click(cx.listener(move |picker, _, window, cx| {
+                                        picker.set_selected_index(ix, None, false, window, cx);
                                         let remote_project = remote_project.clone();
                                         remote_server_projects
                                             .update(cx, |this, cx| {
@@ -1971,7 +1992,8 @@ impl RemoteServerProjects {
             picker
                 .delegate
                 .reload(&ssh_config_servers, has_open_project, is_local, cx);
-            picker.refresh(window, cx);
+            let query = picker.query(cx);
+            picker.update_matches_with_options(query, ScrollBehavior::PreserveOffset, window, cx);
         });
     }
 
@@ -3145,6 +3167,28 @@ mod filter_tests {
 
         state.filter_sync("");
         assert!(state.filtered_servers.is_none());
+    }
+
+    #[test]
+    fn test_selectable_index_near_prefers_neighboring_selectable_entry() {
+        let matches = vec![
+            RemoteMatch::Separator,
+            RemoteMatch::OpenFolder { server: 0 },
+        ];
+
+        assert_eq!(
+            RemoteServerPickerDelegate::selectable_index_near(&matches, 0),
+            Some(1)
+        );
+
+        let matches = vec![
+            RemoteMatch::OpenFolder { server: 0 },
+            RemoteMatch::Separator,
+        ];
+        assert_eq!(
+            RemoteServerPickerDelegate::selectable_index_near(&matches, 1),
+            Some(0)
+        );
     }
 }
 
