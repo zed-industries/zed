@@ -358,11 +358,14 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_google(
+        let request = match into_google(
             request,
             self.model.request_id().to_string(),
             self.model.mode(),
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(LanguageModelCompletionError::from)?;

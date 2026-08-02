@@ -493,7 +493,10 @@ pub struct ButtonLike {
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     pub(super) aria_label: Option<SharedString>,
-    aria_role: Option<Role>,
+    aria_description: Option<SharedString>,
+    pub(super) aria_value: Option<SharedString>,
+    pub(super) aria_keyshortcuts: Option<SharedString>,
+    pub(super) aria_role: Option<Role>,
     aria_expanded: Option<bool>,
     toggled: Option<bool>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -523,6 +526,9 @@ impl ButtonLike {
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::ALL),
             aria_label: None,
+            aria_description: None,
+            aria_value: None,
+            aria_keyshortcuts: None,
             aria_role: None,
             aria_expanded: None,
             toggled: None,
@@ -585,6 +591,32 @@ impl ButtonLike {
     /// Sets the label announced by assistive technology for this button.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the keyboard shortcut announced by assistive technology for this
+    /// button. Use a human-friendly display string (the accelerator shown to
+    /// sighted users), e.g. `"Ctrl-S"` - see
+    /// [`KeyBinding::keyboard_shortcut_text`](crate::KeyBinding::keyboard_shortcut_text).
+    /// [`Button`](crate::Button) sets this automatically from its displayed
+    /// keybinding.
+    pub fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.aria_keyshortcuts = Some(keyshortcuts.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the button's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
+
+    /// Sets the current value reported to assistive technology. Use this when
+    /// the button represents a control with a value, such as a combobox
+    /// trigger whose value is the current selection.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.aria_value = Some(value.into());
         self
     }
 
@@ -727,6 +759,13 @@ impl RenderOnce for ButtonLike {
             .id(self.id.clone())
             .role(self.aria_role.unwrap_or(Role::Button))
             .when_some(self.aria_label, |this, label| this.aria_label(label))
+            .when_some(self.aria_keyshortcuts, |this, keyshortcuts| {
+                this.aria_keyshortcuts(keyshortcuts)
+            })
+            .when_some(self.aria_description, |this, description| {
+                this.aria_description(description)
+            })
+            .when_some(self.aria_value, |this, value| this.aria_value(value))
             .when_some(self.aria_expanded, |this, expanded| {
                 this.aria_expanded(expanded)
             })

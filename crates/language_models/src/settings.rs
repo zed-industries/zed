@@ -95,6 +95,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 .collect(),
             bedrock: AmazonBedrockSettings {
                 available_models: bedrock.available_models.unwrap_or_default(),
+                mantle_available_models: bedrock.mantle_available_models.unwrap_or_default(),
                 custom_headers: custom_headers_from(
                     "Amazon Bedrock",
                     bedrock.custom_headers,

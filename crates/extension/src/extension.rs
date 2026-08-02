@@ -56,7 +56,7 @@ pub trait Extension: Send + Sync + 'static {
 
     /// Returns a path relative to this extension's working directory.
     fn path_from_extension(&self, path: &Path) -> PathBuf {
-        util::normalize_path(&self.work_dir().join(path))
+        path::normalize_path(&self.work_dir().join(path))
     }
 
     async fn language_server_command(

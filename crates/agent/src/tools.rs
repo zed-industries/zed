@@ -47,18 +47,25 @@ where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ValueOrJsonString<T> {
-        Value(T),
-        String(String),
+    fn to_custom_error<E>(e: serde_json::Error) -> E
+    where
+        E: serde::de::Error,
+    {
+        E::custom(format!("{e}"))
     }
 
-    match ValueOrJsonString::<T>::deserialize(deserializer)? {
-        ValueOrJsonString::Value(value) => Ok(value),
-        ValueOrJsonString::String(string) => serde_json::from_str::<T>(&string).map_err(|error| {
-            D::Error::custom(format!("failed to parse stringified value: {error}"))
-        }),
+    let raw_value = serde_json::Value::deserialize(deserializer)
+        .map_err(|error| D::Error::custom(format!("invalid JSON: {error}")))?;
+
+    match T::deserialize(&raw_value) {
+        Ok(value) => Ok(value),
+        Err(original_error) => {
+            let Some(string) = raw_value.as_str() else {
+                return Err(to_custom_error(original_error));
+            };
+
+            serde_json::from_str(string).map_err(to_custom_error)
+        }
     }
 }
 
@@ -153,12 +160,12 @@ macro_rules! tools {
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
-                LanguageModelRequestTool {
-                    name: T::NAME.to_string(),
-                    description: T::description().to_string(),
-                    input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
-                    use_input_streaming: T::supports_input_streaming(),
-                }
+                LanguageModelRequestTool::function(
+                    T::NAME.to_string(),
+                    T::description().to_string(),
+                    T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    T::supports_input_streaming(),
+                )
             }
             [
                 $(

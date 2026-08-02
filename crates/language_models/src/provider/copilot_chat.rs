@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anthropic::AnthropicModelMode;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use copilot::{GlobalCopilotAuth, Status};
 use copilot_chat::responses as copilot_responses;
 use copilot_chat::{
     ChatLocation, ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat,
@@ -144,37 +143,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated(cx) {
             return Task::ready(Ok(()));
-        };
+        }
 
-        let Some(copilot) = GlobalCopilotAuth::try_global(cx).cloned() else {
-            return Task::ready(Err(anyhow!(concat!(
-                "Copilot must be enabled for Copilot Chat to work. ",
-                "Please enable Copilot and try again."
-            ))
-            .into()));
-        };
-
-        let err = match copilot.0.read(cx).status() {
-            Status::Authorized => return Task::ready(Ok(())),
-            Status::Disabled => anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ),
-            Status::Error(err) => anyhow!(format!(
-                "Received the following error while signing into Copilot: {err}"
-            )),
-            Status::Starting { task: _ } => anyhow!(
-                "Copilot is still starting, please wait for Copilot to start then try again"
-            ),
-            Status::Unauthorized => anyhow!(
-                "Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."
-            ),
-            Status::SignedOut { .. } => {
-                anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again.")
-            }
-            Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
-        };
-
-        Task::ready(Err(err.into()))
+        Task::ready(Err(AuthenticateError::CredentialsNotFound))
     }
 
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
@@ -182,7 +153,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         let title = if is_authenticated {
             None
         } else {
-            Some("Configure Copilot".into())
+            Some("Configure Copilot Chat".into())
         };
         let description = if is_authenticated {
             None
@@ -213,6 +184,19 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
                 }),
             },
         ))
+    }
+
+    fn set_api_key(&self, key: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        // Copilot authenticates via an OAuth device flow rather than an API key,
+        // so the only meaningful credential change here is clearing it (which
+        // signs the user out of the agent provider).
+        if key.is_some() {
+            return Task::ready(Ok(()));
+        }
+        let Some(copilot_chat) = CopilotChat::global(cx) else {
+            return Task::ready(Ok(()));
+        };
+        copilot_chat.update(cx, |chat, cx| chat.sign_out(cx))
     }
 }
 
@@ -368,7 +352,8 @@ impl LanguageModel for CopilotChatLanguageModel {
                         AnthropicModelMode::Default
                     },
                     AnthropicPromptCacheMode::Legacy,
-                );
+                    &PROVIDER_ID,
+                )?;
 
                 anthropic_request.temperature = None;
 
@@ -413,7 +398,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
+                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
                         Ok(mapper.map_stream(events).boxed())
                     })
                     .await
@@ -423,7 +408,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         if self.model.supports_response() {
             let location = intent_to_chat_location(request.intent);
-            let responses_request = into_copilot_responses(&self.model, request);
+            let responses_request = match into_copilot_responses(&self.model, request) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let request_limiter = self.request_limiter.clone();
             let future = cx.spawn(async move |cx| {
                 let request = CopilotChat::stream_response(
@@ -567,7 +555,9 @@ pub fn map_to_language_model_completion_events(
                                             id: entry.id.clone().into(),
                                             name: entry.name.as_str().into(),
                                             is_input_complete: false,
-                                            input,
+                                            input: language_model::LanguageModelToolUseInput::Json(
+                                                input,
+                                            ),
                                             raw_input: entry.arguments.clone(),
                                             thought_signature: entry.thought_signature.clone(),
                                         },
@@ -629,7 +619,10 @@ pub fn map_to_language_model_completion_events(
                                                 id: tool_call.id.into(),
                                                 name: tool_call.name.as_str().into(),
                                                 is_input_complete: true,
-                                                input,
+                                                input:
+                                                    language_model::LanguageModelToolUseInput::Json(
+                                                        input,
+                                                    ),
                                                 raw_input: tool_call.arguments,
                                                 thought_signature: tool_call.thought_signature,
                                             },
@@ -734,7 +727,7 @@ impl CopilotResponsesEventMapper {
                                 id: call_id.into(),
                                 name: name.as_str().into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: arguments.clone(),
                                 thought_signature,
                             },
@@ -1054,12 +1047,15 @@ fn into_copilot_chat(
                 let mut tool_calls = Vec::new();
                 for content in &message.content {
                     if let MessageContent::ToolUse(tool_use) = content {
+                        let input = tool_use.input.as_json().ok_or_else(|| {
+                            anyhow!("Copilot Chat does not support custom tool calls")
+                        })?;
                         tool_calls.push(ToolCall {
                             id: tool_use.id.to_string(),
                             content: ToolCallContent::Function {
                                 function: FunctionContent {
                                     name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)?,
+                                    arguments: serde_json::to_string(input)?,
                                     thought_signature: tool_use.thought_signature.clone(),
                                 },
                             },
@@ -1120,14 +1116,21 @@ fn into_copilot_chat(
     let tools = request
         .tools
         .iter()
-        .map(|tool| Tool::Function {
-            function: Function {
-                name: tool.name.clone(),
-                description: tool.description.clone(),
-                parameters: tool.input_schema.clone(),
-            },
+        .map(|tool| match &tool.input {
+            language_model::LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                Ok(Tool::Function {
+                    function: Function {
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        parameters: input_schema.clone(),
+                    },
+                })
+            }
+            language_model::LanguageModelRequestToolInput::Custom { .. } => Err(anyhow::anyhow!(
+                "Copilot Chat does not support custom tools"
+            )),
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(CopilotChatRequest {
         n: 1,
@@ -1188,7 +1191,7 @@ fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {
 fn into_copilot_responses(
     model: &CopilotChatModel,
     request: LanguageModelRequest,
-) -> copilot_responses::Request {
+) -> Result<copilot_responses::Request> {
     use copilot_responses as responses;
 
     let LanguageModelRequest {
@@ -1356,13 +1359,20 @@ fn into_copilot_responses(
 
     let converted_tools: Vec<responses::ToolDefinition> = tools
         .into_iter()
-        .map(|tool| responses::ToolDefinition::Function {
-            name: tool.name,
-            description: Some(tool.description),
-            parameters: Some(tool.input_schema),
-            strict: None,
+        .map(|tool| match tool.input {
+            language_model::LanguageModelRequestToolInput::Function { input_schema, .. } => {
+                Ok(responses::ToolDefinition::Function {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(input_schema),
+                    strict: None,
+                })
+            }
+            language_model::LanguageModelRequestToolInput::Custom { .. } => Err(anyhow::anyhow!(
+                "Copilot Chat does not support custom tools"
+            )),
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     let mapped_tool_choice = tool_choice.map(|choice| match choice {
         LanguageModelToolChoice::Auto => responses::ToolChoice::Auto,
@@ -1370,7 +1380,7 @@ fn into_copilot_responses(
         LanguageModelToolChoice::None => responses::ToolChoice::None,
     });
 
-    responses::Request {
+    Ok(responses::Request {
         model: model.id().to_string(),
         input: input_items,
         stream: model.uses_streaming(),
@@ -1393,7 +1403,7 @@ fn into_copilot_responses(
             copilot_responses::ResponseIncludable::ReasoningEncryptedContent,
         ]),
         store: false,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1671,7 +1681,7 @@ mod tests {
             ..Default::default()
         };
 
-        let serialized = serde_json::to_value(into_copilot_responses(&model, request))
+        let serialized = serde_json::to_value(into_copilot_responses(&model, request).unwrap())
             .expect("serialized request");
         let input = serialized["input"].as_array().expect("input items");
 

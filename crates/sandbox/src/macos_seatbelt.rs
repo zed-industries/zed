@@ -243,8 +243,44 @@ fn generate_seatbelt_config(
 ; Allow sysctl reads (needed for many system calls)
 (allow sysctl-read)
 
-; Allow mach lookups (needed for IPC)
-(allow mach-lookup)
+; Mach service lookups. This is an ALLOWLIST, not a blanket `(allow mach-lookup)`.
+; An unrestricted mach-lookup lets a sandboxed command reach LaunchServices /
+; launchd and have a process spawned *outside* the sandbox (e.g. `open -a
+; Terminal`, or opening a crafted `.app`) — the launched process does not inherit
+; this profile, so that is a full sandbox escape. So we allow only the services
+; ordinary dev tooling needs and deliberately EXCLUDE the LaunchServices/launchd
+; endpoints (closing that escape), the pasteboard (silent clipboard theft), and
+; audio (mic/privacy). Curated from Codex's and Chromium's Seatbelt policies; add
+; an entry here (with a comment) if a legitimate toolchain needs another service.
+; A non-existent name is simply never matched, so erring toward including
+; plausible infrastructure services is safe.
+(allow mach-lookup
+    ; identity: user & group resolution (getpwuid, id, whoami, perm checks)
+    (global-name "com.apple.system.opendirectoryd.libinfo")
+    (global-name "com.apple.system.opendirectoryd.membership")
+    (global-name "com.apple.system.DirectoryService.libinfo_v1")
+    ; per-user temp/cache dir resolution ($TMPDIR, /var/folders/...)
+    (global-name "com.apple.bsd.dirhelper")
+    ; CFPreferences (pervasive in Apple frameworks linked by dev tools).
+    ; Chromium denies cfprefsd.daemon to force in-process prefs; we follow Codex
+    ; and allow it since dev commands legitimately use many prefs domains — it's
+    ; a prefs read/write, not an escape.
+    (global-name "com.apple.cfprefsd.daemon")
+    (global-name "com.apple.cfprefsd.agent")
+    (local-name "com.apple.cfprefsd.agent")
+    ; logging / diagnostics (os_log, ASL, Darwin notifications)
+    (global-name "com.apple.logd")
+    (global-name "com.apple.logd.events")
+    (global-name "com.apple.system.logger")
+    (global-name "com.apple.diagnosticd")
+    (global-name "com.apple.system.notification_center")
+    ; Apple telemetry (data goes to Apple only; harmless, avoids init latency)
+    (global-name "com.apple.analyticsd")
+    (global-name "com.apple.analyticsd.messagetracer")
+    ; power assertions (caffeinate / prevent idle sleep during long builds)
+    (global-name "com.apple.PowerManagement.control")
+    ; developer-tools automation-mode flag (our workload is dev tooling)
+    (global-name "com.apple.dt.automationmode.reader"))
 
 ; Allow pseudo-terminal operations
 (allow pseudo-tty)
@@ -345,6 +381,33 @@ fn generate_seatbelt_config(
         }
     }
 
+    // When outbound network is permitted at all, tools that do their own DNS
+    // resolution, TLS trust evaluation, and network-configuration lookups need a
+    // few more Mach services. Kept out of the base allowlist so a no-network
+    // command can't reach them. Still an allowlist (mirrors Codex's Seatbelt
+    // network policy) that excludes LaunchServices/launchd.
+    if !matches!(permissions.network, NetworkAccess::None) {
+        config.push_str(
+            r#"
+; Extra Mach services for DNS / TLS-trust / network configuration, needed only
+; when outbound network is permitted. Still an allowlist that excludes
+; LaunchServices/launchd. If hostname resolution fails, add
+; `com.apple.mDNSResponder`; if offline code-signature verification of loaded
+; dylibs/plugins fails, move the trust services into the base block above.
+(allow mach-lookup
+    ; network / DNS configuration
+    (global-name "com.apple.SystemConfiguration.configd")
+    (global-name "com.apple.SystemConfiguration.DNSConfiguration")
+    (global-name "com.apple.networkd")
+    ; TLS certificate trust / keychain / revocation
+    (global-name "com.apple.SecurityServer")
+    (global-name "com.apple.trustd")
+    (global-name "com.apple.trustd.agent")
+    (global-name "com.apple.ocspd"))
+"#,
+        );
+    }
+
     if !allowed_unix_socket_paths.is_empty() {
         config.push_str(
             r#"
@@ -396,6 +459,19 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// Strip SBPL comment lines (`;`-prefixed) from a generated Seatbelt profile
+    /// so assertions match on the actual rules rather than on documentation.
+    /// Several comments legitimately mention rule syntax (for example the
+    /// blanket `(allow mach-lookup)` form they explain we avoid), which would
+    /// otherwise cause a naive substring check to spuriously match.
+    fn seatbelt_rules_only(config: &str) -> String {
+        config
+            .lines()
+            .filter(|line| !line.trim_start().starts_with(';'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn test_generate_seatbelt_config_contains_read_and_project_write_permissions_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
@@ -441,6 +517,57 @@ mod tests {
         assert!(config.contains("(allow file-ioctl"));
         assert!(config.contains("/dev/ptmx"));
         assert!(config.contains("^/dev/ttys[0-9]+"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_scopes_mach_lookup_and_excludes_escape_services() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let config =
+            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
+                .unwrap();
+        // Assert on the rules only: the mach-lookup comment intentionally spells
+        // out the blanket `(allow mach-lookup)` form it avoids, which a raw
+        // `config.contains` would match.
+        let rules = seatbelt_rules_only(&config);
+
+        // A scoped allowlist, never the blanket form — a blanket `(allow
+        // mach-lookup)` would let a command reach LaunchServices/launchd and
+        // escape the sandbox via `open`.
+        assert!(rules.contains("(allow mach-lookup"));
+        assert!(!rules.contains("(allow mach-lookup)"));
+        assert!(rules.contains("com.apple.cfprefsd.daemon"));
+
+        // The escape/abuse endpoints must fall through to `(deny default)`.
+        assert!(!rules.contains("launchservicesd"));
+        assert!(!rules.contains("com.apple.lsd"));
+        assert!(!rules.contains("com.apple.pasteboard"));
+
+        // Network-only services must not be granted without network.
+        assert!(!rules.contains("com.apple.SecurityServer"));
+        assert!(!rules.contains("com.apple.SystemConfiguration.configd"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_adds_network_mach_services_when_network_allowed() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[],
+            &[],
+            SandboxPermissions {
+                network: NetworkAccess::All,
+                allow_fs_write: false,
+            },
+        )
+        .unwrap();
+
+        // DNS / TLS / network-config services appear only when network is allowed.
+        assert!(config.contains("com.apple.SystemConfiguration.configd"));
+        assert!(config.contains("com.apple.SecurityServer"));
+        assert!(config.contains("com.apple.trustd"));
+        assert!(config.contains("com.apple.trustd.agent"));
+        // ...but never the escape endpoints.
+        assert!(!config.contains("launchservicesd"));
     }
 
     #[test]

@@ -202,6 +202,13 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
     .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
+/// Returns whether a `--diff` argument refers to an existing path, allowing a
+/// trailing `:line:column` suffix (parsed later by the Zed side, matching how
+/// regular `zed path:line:column` arguments are handled).
+fn diff_path_exists(diff_path: &str) -> bool {
+    Path::new(diff_path).exists() || PathWithPosition::parse_str(diff_path).path.exists()
+}
+
 fn expand_directory_diff_pairs(
     diff_pairs: Vec<[String; 2]>,
 ) -> anyhow::Result<(Vec<[String; 2]>, Vec<TempDir>)> {
@@ -642,7 +649,7 @@ fn run() -> Result<()> {
         let right = parse_path_with_position(&path[1])?;
         for diff_path in [&left, &right] {
             anyhow::ensure!(
-                Path::new(diff_path).exists(),
+                diff_path_exists(diff_path),
                 "--diff path does not exist: {diff_path}"
             );
         }
