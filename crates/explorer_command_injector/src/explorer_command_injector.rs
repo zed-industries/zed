@@ -184,15 +184,15 @@ fn get_zed_exe_path() -> Option<String> {
 #[inline]
 fn retrieve_command_description() -> Result<HSTRING> {
     #[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorContextMenu";
+    const REG_PATH: &str = "Software\\Classes\\ZedContextMenu";
     #[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorPreviewContextMenu";
+    const REG_PATH: &str = "Software\\Classes\\ZedPreviewContextMenu";
     #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorNightlyContextMenu";
+    const REG_PATH: &str = "Software\\Classes\\ZedNightlyContextMenu";
 
     // Make cargo clippy happy
     #[cfg(all(feature = "nightly", feature = "stable", feature = "preview"))]
-    const REG_PATH: &str = "Software\\Classes\\ZedEditorClippyContextMenu";
+    const REG_PATH: &str = "Software\\Classes\\ZedClippyContextMenu";
 
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
     key.get_hstring("Title")
