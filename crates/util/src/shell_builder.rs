@@ -100,7 +100,12 @@ impl ShellBuilder {
             if self.redirect_stdin {
                 match self.kind {
                     ShellKind::Posix => {
-                        combined_command.insert_str(0, "exec </dev/null; ");
+                        // Perform the STDIN redirection prior to the actual
+                        // command on a separate line, so that it is already
+                        // active if the command contains a syntax error.
+                        // Otherwise, with -i, dash will fall back to an
+                        // interactive shell in this case.
+                        combined_command.insert_str(0, "exec </dev/null\n");
                     }
                     ShellKind::Fish => {
                         combined_command.insert_str(0, "begin; ");
@@ -148,7 +153,7 @@ impl ShellBuilder {
             if self.redirect_stdin {
                 match self.kind {
                     ShellKind::Posix => {
-                        combined_command.insert_str(0, "exec </dev/null; ");
+                        combined_command.insert_str(0, "exec </dev/null\n");
                     }
                     ShellKind::Fish => {
                         combined_command.insert_str(0, "begin; ");
@@ -306,7 +311,7 @@ mod test {
         assert_eq!(program, "sh");
         assert_eq!(
             args,
-            vec!["-i", "-c", "exec </dev/null; cat <<EOF\nhello\nEOF"]
+            vec!["-i", "-c", "exec </dev/null\ncat <<EOF\nhello\nEOF"]
         );
     }
 
