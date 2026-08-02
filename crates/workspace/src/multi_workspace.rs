@@ -944,80 +944,16 @@ impl MultiWorkspace {
                     return Task::ready(Ok(workspace));
                 }
 
-                let current_group_index = this
+                let group_index = this
                     .project_groups
                     .iter()
                     .position(|group| group.key == group_key);
-
-                if let Some(current_group_index) = current_group_index {
-                    for distance in 1..this.project_groups.len() {
-                        for neighboring_index in [
-                            current_group_index.checked_add(distance),
-                            current_group_index.checked_sub(distance),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        {
-                            let Some(neighboring_group) =
-                                this.project_groups.get(neighboring_index)
-                            else {
-                                continue;
-                            };
-
-                            if let Some(workspace) = this
-                                .last_active_workspace_for_group(&neighboring_group.key, cx)
-                                .or_else(|| {
-                                    this.workspaces_for_project_group(&neighboring_group.key, cx)
-                                        .unwrap_or_default()
-                                        .into_iter()
-                                        .find(|candidate| candidate != &excluded_workspace)
-                                })
-                            {
-                                return Task::ready(Ok(workspace));
-                            }
-                        }
-                    }
-                }
-
-                let neighboring_group_key = current_group_index.and_then(|index| {
-                    this.project_groups
-                        .get(index + 1)
-                        .or_else(|| {
-                            index
-                                .checked_sub(1)
-                                .and_then(|previous| this.project_groups.get(previous))
-                        })
-                        .map(|group| group.key.clone())
-                });
-
-                if let Some(neighboring_group_key) = neighboring_group_key
-                    && neighboring_group_key.host().is_none()
-                {
-                    return this.find_or_create_local_workspace(
-                        neighboring_group_key.path_list().clone(),
-                        Some(neighboring_group_key),
-                        std::slice::from_ref(&excluded_workspace),
-                        None,
-                        OpenMode::Activate,
-                        window,
-                        cx,
-                    );
-                }
-
-                let app_state = this.workspace().read(cx).app_state().clone();
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.node_runtime.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
-                    None,
-                    project::LocalProjectFlags::default(),
+                this.fallback_workspace(
+                    group_index,
+                    std::slice::from_ref(&excluded_workspace),
+                    window,
                     cx,
-                );
-                let new_workspace =
-                    cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-                Task::ready(Ok(new_workspace))
+                )
             },
             window,
             cx,
@@ -1030,63 +966,147 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        let pos = self
+        let group_index = self
             .project_groups
             .iter()
             .position(|group| group.key == *group_key);
+
+        // The active workspace can remain provisional while the sidebar is
+        // closed. Retain it before removal so switching to the fallback does
+        // not recreate the project group that is being removed.
+        let active_workspace = self.workspace().clone();
+        if active_workspace.read(cx).project_group_key(cx) == *group_key
+            && !self.is_workspace_retained(&active_workspace)
+        {
+            self.retain_workspace(active_workspace, group_key.clone(), cx);
+        }
+
         let workspaces = self
             .workspaces_for_project_group(group_key, cx)
             .unwrap_or_default();
-
-        // Compute the neighbor while the group is still in the list.
-        let neighbor_key = pos.and_then(|pos| {
-            self.project_groups
-                .get(pos + 1)
-                .or_else(|| pos.checked_sub(1).and_then(|i| self.project_groups.get(i)))
-                .map(|group| group.key.clone())
-        });
-
-        // Now remove the group.
-        self.project_groups.retain(|group| group.key != *group_key);
-        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
-
         let excluded_workspaces = workspaces.clone();
-        self.remove(
+        let removal_task = self.remove(
             workspaces,
             move |this, window, cx| {
-                if let Some(neighbor_key) = neighbor_key
-                    && neighbor_key.host().is_none()
-                {
-                    return this.find_or_create_local_workspace(
-                        neighbor_key.path_list().clone(),
-                        Some(neighbor_key.clone()),
-                        &excluded_workspaces,
-                        None,
-                        OpenMode::Activate,
-                        window,
-                        cx,
-                    );
-                }
-
-                // No other project groups remain — create an empty workspace.
-                let app_state = this.workspace().read(cx).app_state().clone();
-                let project = Project::local(
-                    app_state.client.clone(),
-                    app_state.node_runtime.clone(),
-                    app_state.user_store.clone(),
-                    app_state.languages.clone(),
-                    app_state.fs.clone(),
-                    None,
-                    project::LocalProjectFlags::default(),
-                    cx,
-                );
-                let new_workspace =
-                    cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-                Task::ready(Ok(new_workspace))
+                this.fallback_workspace(group_index, &excluded_workspaces, window, cx)
             },
             window,
             cx,
-        )
+        );
+
+        self.project_groups.retain(|group| group.key != *group_key);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+
+        removal_task
+    }
+
+    /// Finds a fallback workspace outside the project group at `group_index`.
+    ///
+    /// Prefers the nearest retained workspace in another group. If none exists,
+    /// opens the immediately neighboring group when it is local, and otherwise
+    /// creates an empty workspace.
+    fn fallback_workspace(
+        &mut self,
+        group_index: Option<usize>,
+        excluded_workspaces: &[Entity<Workspace>],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        if let Some(group_index) = group_index {
+            if let Some(workspace) =
+                self.nearest_retained_workspace(group_index, excluded_workspaces, cx)
+            {
+                return Task::ready(Ok(workspace));
+            }
+
+            let neighboring_group_key = self
+                .project_groups
+                .get(group_index + 1)
+                .or_else(|| {
+                    group_index
+                        .checked_sub(1)
+                        .and_then(|previous| self.project_groups.get(previous))
+                })
+                .map(|group| group.key.clone());
+
+            if let Some(key) = neighboring_group_key
+                && key.host().is_none()
+            {
+                return self.find_or_create_local_workspace(
+                    key.path_list().clone(),
+                    Some(key),
+                    excluded_workspaces,
+                    None,
+                    OpenMode::Activate,
+                    window,
+                    cx,
+                );
+            }
+        }
+
+        let app_state = self.workspace().read(cx).app_state().clone();
+        let project = Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags::default(),
+            cx,
+        );
+        let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+        Task::ready(Ok(new_workspace))
+    }
+
+    /// Returns the nearest retained workspace outside the project group at
+    /// `group_index`.
+    ///
+    /// Searches project groups by increasing distance, preferring the following
+    /// group over the preceding group at equal distances. Within each group,
+    /// prefers its last active workspace before falling back to any retained
+    /// workspace. Workspaces in `excluded_workspaces` are ignored by both
+    /// lookups.
+    ///
+    /// The `group_index` must identify a project group that is still present in
+    /// [`Self::project_groups`].
+    pub(super) fn nearest_retained_workspace(
+        &self,
+        group_index: usize,
+        excluded_workspaces: &[Entity<Workspace>],
+        cx: &App,
+    ) -> Option<Entity<Workspace>> {
+        for distance in 1..self.project_groups.len() {
+            for index in [
+                group_index.checked_add(distance),
+                group_index.checked_sub(distance),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(group) = self.project_groups.get(index) {
+                    let workspace_is_available = |workspace: &Entity<Workspace>| {
+                        !excluded_workspaces.contains(workspace)
+                            && !workspace.read(cx).project().read(cx).is_disconnected(cx)
+                    };
+                    let workspace = self
+                        .last_active_workspace_for_group(&group.key, cx)
+                        .filter(&workspace_is_available)
+                        .or_else(|| {
+                            self.workspaces_for_project_group(&group.key, cx)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .find(workspace_is_available)
+                        });
+
+                    if workspace.is_some() {
+                        return workspace;
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Goes through sqlite: serialize -> close -> open new window

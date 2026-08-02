@@ -28,7 +28,7 @@ use git::repository::{FetchOptions, Remote};
 use util::ResultExt as _;
 
 use crate::askpass_modal::AskPassModal;
-use crate::git_panel::{open_output, show_error_toast};
+use crate::notifications::{open_output, show_error_toast};
 use crate::worktree_names;
 
 /// A remote-tracking branch reference parsed into its remote and branch parts,
