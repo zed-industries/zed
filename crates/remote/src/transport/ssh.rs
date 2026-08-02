@@ -2291,6 +2291,17 @@ mod tests {
         let options = SshConnectionOptions::parse_command_line("ssh")?;
         assert_eq!(options.host, "ssh".into());
 
+        let options = SshConnectionOptions::parse_command_line("  ssh\tuser@example.com  ")?;
+        assert_eq!(options.host, "example.com".into());
+        assert_eq!(options.username.as_deref(), Some("user"));
+
+        let options = SshConnectionOptions::parse_command_line("ssh ssh")?;
+        assert_eq!(options.host, "ssh".into());
+        assert_eq!(options.username, None);
+
+        let options = SshConnectionOptions::parse_command_line("'ssh'")?;
+        assert_eq!(options.host, "ssh".into());
+
         let options = SshConnectionOptions::parse_command_line("'ssh' 'user@example.com'")?;
         assert_eq!(options.host, "example.com".into());
         assert_eq!(options.username.as_deref(), Some("user"));
