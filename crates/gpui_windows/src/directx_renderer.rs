@@ -664,7 +664,9 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.mono_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
@@ -688,7 +690,9 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.subpixel_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
@@ -712,7 +716,9 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        let texture_view = self.atlas.get_texture_view(texture_id);
+        let Some(texture_view) = self.atlas.get_texture_view(texture_id) else {
+            return Ok(());
+        };
         self.pipelines.poly_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
