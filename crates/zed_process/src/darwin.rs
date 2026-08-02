@@ -342,7 +342,7 @@ impl Command {
 
 #[derive(Debug)]
 pub struct Child {
-    inner: smol::process::Child,
+    inner: async_process::Child,
     pub stdin: Option<Async<std::fs::File>>,
     pub stdout: Option<Async<std::fs::File>>,
     pub stderr: Option<Async<std::fs::File>>,
@@ -686,7 +686,7 @@ fn spawn_posix_spawn(
 
         cvt_nz(spawn_result)?;
 
-        let inner = smol::process::Child::adopt_raw_pid(pid as u32, true, kill_on_drop)?;
+        let inner = async_process::Child::adopt_raw_pid(pid as u32, true, kill_on_drop)?;
 
         Ok(Child {
             inner,

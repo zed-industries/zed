@@ -23614,6 +23614,7 @@ dependencies = [
 name = "zed_process"
 version = "0.1.0"
 dependencies = [
+ "async-process",
  "futures-lite 1.13.0",
  "libc",
  "mach2 0.5.0",

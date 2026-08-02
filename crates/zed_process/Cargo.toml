@@ -17,6 +17,7 @@ doctest = true
 smol.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 futures-lite.workspace = true
 libc.workspace = true
 mach2.workspace = true
