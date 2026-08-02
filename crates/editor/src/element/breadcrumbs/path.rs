@@ -671,8 +671,8 @@ pub(crate) fn render_breadcrumb_directory_segment(
         });
 
     // Double clicking a segment reveals its directory in the project panel, the way IntelliJ's
-    // navigation bar does. Handled on mouse down, which is the only event carrying a click count:
-    // by the time a click is delivered the first one has already opened the dropdown.
+    // navigation bar does. On mouse down rather than on click because `ButtonLike` stops click
+    // propagation, so an outer click handler never runs; mouse down it leaves alone.
     div()
         .on_mouse_down(gpui::MouseButton::Left, move |event, _, cx| {
             if event.click_count < 2 {
