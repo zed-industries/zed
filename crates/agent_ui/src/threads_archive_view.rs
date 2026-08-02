@@ -18,12 +18,13 @@ use editor::Editor;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, list,
-    prelude::*, px,
+    AnyElement, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
+    list, prelude::*, px,
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use notifications::status_toast::StatusToast;
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
@@ -32,8 +33,8 @@ use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, ScrollAxes,
-    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader,
+    ScrollAxes, Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*, right_click_menu,
     utils::platform_title_bar_height,
 };
 use util::ResultExt;
@@ -687,7 +688,7 @@ impl ThreadsArchiveView {
                         }
                     }));
 
-                if is_restoring {
+                let inner = if is_restoring {
                     base.status(AgentThreadStatus::Running)
                         .action_slot(
                             IconButton::new("cancel-restore", IconName::Close)
@@ -779,7 +780,44 @@ impl ThreadsArchiveView {
                         })
                     })
                     .into_any_element()
+                };
+
+                // Only threads with a session id (i.e. real ACP or Zed threads that
+                // have been used at least once) get a Copy Session ID menu. Skip
+                // wrapping in-flight restore items so users don't right-click
+                // something whose click also triggers a cancel.
+                if is_restoring {
+                    return inner;
                 }
+                let Some(session_id) = thread.session_id.clone() else {
+                    return inner;
+                };
+
+                let workspace = self.workspace.clone();
+                right_click_menu(("archive-context", ix))
+                    .trigger(move |_, _, _| inner)
+                    .menu(move |window, cx| {
+                        let session_id = session_id.clone();
+                        let workspace = workspace.clone();
+                        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                            menu.entry("Copy Session ID", None, move |_window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    session_id.to_string(),
+                                ));
+                                if let Some(workspace) = workspace.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        let toast = StatusToast::new(
+                                            "Session ID copied to clipboard",
+                                            cx,
+                                            |this, _cx| this,
+                                        );
+                                        workspace.toggle_status_toast(toast, cx);
+                                    });
+                                }
+                            })
+                        })
+                    })
+                    .into_any_element()
             }
         }
     }
