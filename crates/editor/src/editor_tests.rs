@@ -448,7 +448,7 @@ fn test_stale_breadcrumb_dismissal_does_not_clobber_newer_navigation(cx: &mut Te
     };
 
     // Navigate into "bin" — an empty directory, so `descend_single_child_directories` (see its own
-    // unit tests) resolves it to itself, exactly what `BreadcrumbDirectoryBrowser::choose` would
+    // unit tests) resolves it to itself, exactly what confirming an empty directory's row would
     // produce for choosing an empty directory's row.
     _ = editor.update(cx, |editor, window, cx| {
         editor.navigate_breadcrumb_to(worktree_id, bin_path.clone(), window, cx);

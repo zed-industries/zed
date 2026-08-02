@@ -158,14 +158,11 @@ impl Editor {
         });
     }
 
-    /// Returns the entries for a breadcrumb segment's dropdown, in document order: `target`'s
-    /// children, falling back to its siblings when it has none, so the deepest segment (usually
-    /// the method the cursor sits in) can still switch methods instead of being a dead end.
-    /// `target: None` is the file segment, which lists the buffer's top-level symbols.
+    /// A segment's dropdown rows in document order: `target`'s children, or its siblings when it
+    /// has none, so the deepest segment isn't a dead end. `target: None` lists top-level symbols.
     ///
-    /// Reads the outline [`Self::prefetch_breadcrumb_outline`] fetched. A stale one is used as
-    /// is, since outline items are anchors and survive edits; an absent one yields no entries,
-    /// which the caller treats like a buffer with no outline at all.
+    /// Reads what [`Self::prefetch_breadcrumb_outline`] fetched. A stale outline is used as is,
+    /// since the items are anchors; an absent one yields nothing.
     pub(crate) fn breadcrumb_symbol_menu_items(
         &self,
         buffer_id: BufferId,
@@ -210,9 +207,8 @@ impl Editor {
             .collect()
     }
 
-    /// Moves the cursor to `item`'s selection range and scrolls it into view. Used when
-    /// choosing a symbol from the breadcrumb sibling dropdown; mirrors what confirming an
-    /// entry in the outline picker does.
+    /// Moves the cursor to `item` and scrolls it into view, the way confirming an entry in the
+    /// outline picker does.
     pub(crate) fn navigate_to_outline_item(
         &mut self,
         item: &OutlineItem<Anchor>,
