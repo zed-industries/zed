@@ -36,11 +36,11 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
-    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
+    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
+    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -166,6 +166,16 @@ pub trait Platform: 'static {
 
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
+
+    /// Overrides the appearance (light/dark) applied to the app's windows, independent
+    /// of the OS-wide setting. Pass `None` to clear the override and follow the system
+    /// again. The override is reflected by [`Platform::window_appearance`].
+    ///
+    /// Currently only implemented on macOS, where it sets `NSApplication.appearance` so
+    /// the native window chrome (the window border and titlebar) of every window matches
+    /// a dark app theme even when the system is in light mode (or vice versa). A no-op on
+    /// other platforms.
+    fn set_window_appearance(&self, _appearance: Option<WindowAppearance>) {}
 
     /// Returns the window button layout configuration when supported.
     fn button_layout(&self) -> Option<WindowButtonLayout> {
@@ -855,7 +865,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
-    fn titlebar_double_click(&self) {}
+    fn titlebar_double_click(&self, _is_resizable: bool, _is_minimizable: bool) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
     fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
@@ -876,6 +886,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
+    fn can_start_external_drag(&self) -> bool {
+        false
+    }
+    fn start_external_drag(&self, _payload: &ExternalDragPayload) -> bool {
+        false
+    }
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn set_exclusive_zone(&self, _zone: Pixels) {}
     #[cfg(all(target_os = "linux", feature = "wayland"))]
@@ -996,6 +1012,19 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
+    fn dispatch_on_main_thread_when_idle(
+        &self,
+        runnable: RunnableVariant,
+        timeout: Option<Duration>,
+    ) {
+        let _ = timeout;
+        self.dispatch_on_main_thread(runnable, Priority::Low);
+    }
+
+    fn idle_time_remaining(&self) -> Option<Duration> {
+        None
+    }
 
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 
@@ -1280,6 +1309,11 @@ pub trait PlatformAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn contains(&self, _key: &AtlasKey) -> bool {
+        false
+    }
 }
 
 #[doc(hidden)]
@@ -1579,10 +1613,18 @@ impl PlatformInputHandler {
             .unwrap_or(true)
     }
 
-    #[allow(dead_code)]
+    /// See [`InputHandler::prefers_ime_for_printable_keys`].
+    ///
+    /// This is not a pure delegation to the handler: while a multi-stroke binding is pending this
+    /// returns `false` regardless of the handler's preference, because the next printable key may
+    /// complete a binding whose prefix already bypassed the IME.
     pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
         self.cx
-            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .update(|window, cx| {
+                // The next printable key may complete a chord whose prefix bypassed the IME.
+                !window.has_pending_keystrokes()
+                    && self.handler.prefers_ime_for_printable_keys(window, cx)
+            })
             .unwrap_or(false)
     }
 }
@@ -1801,8 +1843,8 @@ pub struct WindowOptions {
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
 
-    /// Whether to use client or server side decorations. Wayland only
-    /// Note that this may be ignored.
+    /// Whether to use client or server-side decorations on X11 and Wayland.
+    /// The platform may ignore requests it cannot satisfy.
     pub window_decorations: Option<WindowDecorations>,
 
     /// Icon image (X11 only)
@@ -2523,6 +2565,13 @@ impl Image {
     /// Use the GPUI `remove_asset` API to drop this image, if possible.
     pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
         ImageSource::Image(self).remove_asset(cx);
+    }
+
+    /// Check whether this image is present in GPUI's asset cache (loading or
+    /// loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(self: &Arc<Self>, cx: &App) -> bool {
+        ImageSource::Image(self.clone()).is_asset_cached(cx)
     }
 
     /// Convert the clipboard image to an `ImageData` object.
