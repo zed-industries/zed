@@ -2695,6 +2695,10 @@ impl Editor {
             key_context.add("showing_signature_help");
         }
 
+        if self.hover_state.keyboard_debugger_hover_active() {
+            key_context.add("DebuggerHover");
+        }
+
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
         if !self.focus_handle(cx).contains_focused(window, cx)
             || (self.is_focused(window) || self.mouse_menu_is_focused(window, cx))
