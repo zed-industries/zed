@@ -1,7 +1,9 @@
+mod file_nesting;
 pub mod project_panel_settings;
 mod undo;
 mod utils;
 
+use crate::file_nesting::FileNestingPatterns;
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
@@ -39,7 +41,7 @@ use project::{
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
-use project_panel_settings::ProjectPanelSettings;
+use project_panel_settings::{FileNestingSettings, ProjectPanelSettings};
 use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -79,7 +81,7 @@ use workspace::{
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Snapshot as WorktreeSnapshot};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -93,10 +95,37 @@ use crate::{
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
+#[derive(Debug, Default)]
+struct FileNesting {
+    child_to_parent: HashMap<ProjectEntryId, ProjectEntryId>,
+    parents: HashSet<ProjectEntryId>,
+}
+
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
     entries: Vec<GitEntry>,
     index: OnceCell<HashSet<Arc<RelPath>>>,
+    nesting: FileNesting,
+}
+
+impl VisibleEntriesForWorktree {
+    fn paths(&self) -> &HashSet<Arc<RelPath>> {
+        self.index.get_or_init(|| {
+            self.entries
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect()
+        })
+    }
+
+    fn depth_and_difference(&self, entry: &Entry) -> (usize, usize) {
+        let (mut depth, difference) =
+            ProjectPanel::calculate_depth_and_difference(entry, self.paths());
+        if self.nesting.child_to_parent.contains_key(&entry.id) {
+            depth += 1;
+        }
+        (depth, difference)
+    }
 }
 
 struct State {
@@ -153,6 +182,7 @@ pub struct ProjectPanel {
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
+    file_nesting_patterns: Option<Arc<FileNestingPatterns>>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
     diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticCount>,
     diagnostic_summary_update: Task<()>,
@@ -288,6 +318,7 @@ struct EntryDetails {
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+    is_nested_parent: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -799,7 +830,15 @@ impl ProjectPanel {
             .detach();
 
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
+            let mut file_nesting_settings = FileNestingSettings::get_global(cx).clone();
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let new_file_nesting_settings = FileNestingSettings::get_global(cx).clone();
+                if file_nesting_settings != new_file_nesting_settings {
+                    file_nesting_settings = new_file_nesting_settings;
+                    this.file_nesting_patterns = build_file_nesting_patterns(cx);
+                    this.update_visible_entries(None, false, false, window, cx);
+                    cx.notify();
+                }
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
                     if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
@@ -844,6 +883,7 @@ impl ProjectPanel {
                 clipboard: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
+                file_nesting_patterns: build_file_nesting_patterns(cx),
                 diagnostics: Default::default(),
                 diagnostic_counts: Default::default(),
                 diagnostic_summary_update: Task::ready(()),
@@ -1296,9 +1336,10 @@ impl ProjectPanel {
                 cx.notify();
                 return;
             }
-            if entry.is_dir() {
-                let worktree_id = worktree.id();
-                let entry_id = entry.id;
+            let worktree_id = worktree.id();
+            let entry_id = entry.id;
+            let is_dir = entry.is_dir();
+            if is_dir || self.is_nested_parent(worktree_id, entry_id) {
                 let expanded_dir_ids = if let Some(expanded_dir_ids) =
                     self.state.expanded_dir_ids.get_mut(&worktree_id)
                 {
@@ -1310,9 +1351,11 @@ impl ProjectPanel {
                 match expanded_dir_ids.binary_search(&entry_id) {
                     Ok(_) => self.select_next(&SelectNext, window, cx),
                     Err(ix) => {
-                        self.project.update(cx, |project, cx| {
-                            project.expand_entry(worktree_id, entry_id, cx);
-                        });
+                        if is_dir {
+                            self.project.update(cx, |project, cx| {
+                                project.expand_entry(worktree_id, entry_id, cx);
+                            });
+                        }
 
                         expanded_dir_ids.insert(ix, entry_id);
                         self.update_visible_entries(None, false, false, window, cx);
@@ -1351,12 +1394,28 @@ impl ProjectPanel {
             return;
         }
         let worktree_id = worktree.id();
+        let nesting_parent = self.nesting_parent_of(worktree_id, entry.id);
         let expanded_dir_ids =
             if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
                 expanded_dir_ids
             } else {
                 return;
             };
+
+        if let Some(nesting_parent) = nesting_parent
+            && let Ok(ix) = expanded_dir_ids.binary_search(&nesting_parent)
+        {
+            expanded_dir_ids.remove(ix);
+            self.update_visible_entries(
+                Some((worktree_id, nesting_parent)),
+                false,
+                false,
+                window,
+                cx,
+            );
+            cx.notify();
+            return;
+        }
 
         let mut entry = &entry;
         loop {
@@ -4259,6 +4318,7 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         let hide_hidden = settings.hide_hidden;
+        let file_nesting_patterns = self.file_nesting_patterns.clone();
 
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
@@ -4284,6 +4344,8 @@ impl ProjectPanel {
                         let mut entry_iter =
                             GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
                         let mut auto_folded_ancestors = vec![];
+                        let mut nesting = FileNesting::default();
+                        let mut nesting_computed_dirs = HashSet::<Arc<RelPath>>::new();
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         while let Some(entry) = entry_iter.entry() {
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
@@ -4355,10 +4417,37 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
+                            if let Some(patterns) = &file_nesting_patterns
+                                && entry.is_file()
+                                && let Some(dir_path) = entry.path.parent()
+                                && !nesting_computed_dirs.contains(dir_path)
+                            {
+                                for (child_id, parent_id) in dir_nesting_pairs(
+                                    patterns,
+                                    &worktree_snapshot,
+                                    dir_path,
+                                    hide_gitignore,
+                                    hide_hidden,
+                                ) {
+                                    nesting.child_to_parent.insert(child_id, parent_id);
+                                    nesting.parents.insert(parent_id);
+                                }
+                                nesting_computed_dirs.insert(dir_path.into());
+                            }
                             if (!hide_gitignore || !entry.is_ignored)
                                 && (!hide_hidden || !entry.is_hidden)
                             {
-                                visible_worktree_entries.push(entry.to_owned());
+                                let hidden_nested_child =
+                                    nesting.child_to_parent.get(&entry.id).is_some_and(
+                                        |parent_id| {
+                                            new_state.expanded_dir_ids.get(&worktree_id).is_none_or(
+                                                |ids| ids.binary_search(parent_id).is_err(),
+                                            )
+                                        },
+                                    );
+                                if !hidden_nested_child {
+                                    visible_worktree_entries.push(entry.to_owned());
+                                }
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
                             {
@@ -4401,7 +4490,10 @@ impl ProjectPanel {
                                 else {
                                     continue;
                                 };
-                                let depth = entry.path.ancestors().count() - 1;
+                                let mut depth = entry.path.ancestors().count() - 1;
+                                if nesting.child_to_parent.contains_key(&entry.id) {
+                                    depth += 1;
+                                }
                                 (depth, path_name.chars().count())
                             } else {
                                 let path = new_state
@@ -4478,10 +4570,17 @@ impl ProjectPanel {
                             sort_mode,
                             sort_order,
                         );
+                        if !nesting.child_to_parent.is_empty() {
+                            visible_worktree_entries = group_nested_children(
+                                visible_worktree_entries,
+                                &nesting.child_to_parent,
+                            );
+                        }
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
                             entries: visible_worktree_entries,
                             index: OnceCell::new(),
+                            nesting,
                         })
                     }
                     if let Some((project_entry_id, worktree_id, _)) = max_width_item {
@@ -4566,6 +4665,28 @@ impl ProjectPanel {
                 let worktree = worktree.read(cx);
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
+                    if let Some(patterns) = &self.file_nesting_patterns
+                        && entry.is_file()
+                        && let Some(dir_path) = entry.path.parent()
+                    {
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        let nesting_parent = dir_nesting_pairs(
+                            patterns,
+                            &worktree.snapshot(),
+                            dir_path,
+                            settings.hide_gitignore,
+                            settings.hide_hidden,
+                        )
+                        .into_iter()
+                        .find_map(|(child_id, parent_id)| {
+                            (child_id == entry_id).then_some(parent_id)
+                        });
+                        if let Some(parent_id) = nesting_parent
+                            && let Err(ix) = expanded_dir_ids.binary_search(&parent_id)
+                        {
+                            expanded_dir_ids.insert(ix, parent_id);
+                        }
+                    }
                     loop {
                         if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
                             expanded_dir_ids.insert(ix, entry.id);
@@ -5089,6 +5210,30 @@ impl ProjectPanel {
         None
     }
 
+    fn worktree_nesting(&self, worktree_id: WorktreeId) -> Option<&FileNesting> {
+        self.state
+            .visible_entries
+            .iter()
+            .find(|visible| visible.worktree_id == worktree_id)
+            .map(|visible| &visible.nesting)
+    }
+
+    fn is_nested_parent(&self, worktree_id: WorktreeId, entry_id: ProjectEntryId) -> bool {
+        self.worktree_nesting(worktree_id)
+            .is_some_and(|nesting| nesting.parents.contains(&entry_id))
+    }
+
+    fn nesting_parent_of(
+        &self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+    ) -> Option<ProjectEntryId> {
+        self.worktree_nesting(worktree_id)?
+            .child_to_parent
+            .get(&entry_id)
+            .copied()
+    }
+
     fn iter_visible_entries(
         &self,
         range: Range<usize>,
@@ -5097,7 +5242,7 @@ impl ProjectPanel {
         callback: &mut dyn FnMut(
             &Entry,
             usize,
-            &HashSet<Arc<RelPath>>,
+            &VisibleEntriesForWorktree,
             &mut Window,
             &mut Context<ProjectPanel>,
         ),
@@ -5115,13 +5260,10 @@ impl ProjectPanel {
 
             let end_ix = range.end.min(ix + visible.entries.len());
             let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-            let entries = visible
-                .index
-                .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
             let base_index = ix + entry_range.start;
             for (i, entry) in visible.entries[entry_range].iter().enumerate() {
                 let global_index = base_index + i;
-                callback(entry, global_index, entries, window, cx);
+                callback(entry, global_index, visible, window, cx);
             }
             ix = end_ix;
         }
@@ -5164,9 +5306,6 @@ impl ProjectPanel {
                 let root_name = snapshot.root_name();
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let entries = visible
-                    .index
-                    .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
                 for entry in visible.entries[entry_range].iter() {
                     let status = git_status_setting
                         .then_some(entry.git_summary)
@@ -5176,7 +5315,7 @@ impl ProjectPanel {
                         entry,
                         visible.worktree_id,
                         root_name,
-                        entries,
+                        visible,
                         status,
                         None,
                         window,
@@ -5633,6 +5772,8 @@ impl ProjectPanel {
         const GROUP_NAME: &str = "project_entry";
 
         let kind = details.kind;
+        let is_nested_parent = details.is_nested_parent;
+        let is_expanded = details.is_expanded;
         let is_sticky = details.sticky.is_some();
         let sticky_index = details.sticky.as_ref().map(|this| this.sticky_index);
         let settings = ProjectPanelSettings::get_global(cx);
@@ -6114,6 +6255,13 @@ impl ProjectPanel {
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
+                    .when(is_nested_parent, |this| {
+                        this.toggle(is_expanded).on_toggle(cx.listener(
+                            move |project_panel, _, window, cx| {
+                                project_panel.toggle_expanded(entry_id, window, cx);
+                            },
+                        ))
+                    })
                     .when(
                         canonical_path.is_some()
                             || diagnostic_count.is_some()
@@ -6517,7 +6665,7 @@ impl ProjectPanel {
         entry: &Entry,
         worktree_id: WorktreeId,
         root_name: &RelPath,
-        entries_paths: &HashSet<Arc<RelPath>>,
+        visible: &VisibleEntriesForWorktree,
         git_status: GitSummary,
         sticky: Option<StickyDetails>,
         _window: &mut Window,
@@ -6554,8 +6702,7 @@ impl ProjectPanel {
         };
 
         let path_style = self.project.read(cx).path_style(cx);
-        let (depth, difference) =
-            ProjectPanel::calculate_depth_and_difference(entry, entries_paths);
+        let (depth, difference) = visible.depth_and_difference(entry);
 
         let filename = if difference > 1 {
             entry
@@ -6618,6 +6765,7 @@ impl ProjectPanel {
             is_private: entry.is_private,
             worktree_id,
             canonical_path: entry.canonical_path.clone(),
+            is_nested_parent: visible.nesting.parents.contains(&entry.id),
         }
     }
 
@@ -6733,16 +6881,9 @@ impl ProjectPanel {
             let end = start + child_count;
 
             let visible_worktree = &self.state.visible_entries[worktree_ix];
-            let visible_worktree_entries = visible_worktree.index.get_or_init(|| {
-                visible_worktree
-                    .entries
-                    .iter()
-                    .map(|e| e.path.clone())
-                    .collect()
-            });
 
             // Calculate the actual depth of the entry, taking into account that directories can be auto-folded.
-            let (depth, _) = Self::calculate_depth_and_difference(entry, visible_worktree_entries);
+            let (depth, _) = visible_worktree.depth_and_difference(entry);
             (start..end, depth)
         };
 
@@ -6788,9 +6929,7 @@ impl ProjectPanel {
         };
         let worktree = worktree.read(cx).snapshot();
 
-        let paths = visible
-            .index
-            .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
+        let paths = visible.paths();
 
         let mut sticky_parents = Vec::new();
         let mut current_path = entry_ref.path.clone();
@@ -6848,7 +6987,7 @@ impl ProjectPanel {
                     entry,
                     worktree_id,
                     root_name,
-                    paths,
+                    visible,
                     git_status,
                     sticky_details,
                     window,
@@ -7136,11 +7275,9 @@ impl Render for ProjectPanel {
                                                 range,
                                                 window,
                                                 cx,
-                                                &mut |entry, _, entries, _, _| {
+                                                &mut |entry, _, visible, _, _| {
                                                     let (depth, _) =
-                                                        Self::calculate_depth_and_difference(
-                                                            entry, entries,
-                                                        );
+                                                        visible.depth_and_difference(entry);
                                                     items.push(depth);
                                                 },
                                             );
@@ -7250,11 +7387,9 @@ impl Render for ProjectPanel {
                                             range,
                                             window,
                                             cx,
-                                            &mut |entry, index, entries, _, _| {
+                                            &mut |entry, index, visible, _, _| {
                                                 let (depth, _) =
-                                                    Self::calculate_depth_and_difference(
-                                                        entry, entries,
-                                                    );
+                                                    visible.depth_and_difference(entry);
                                                 let candidate =
                                                     StickyProjectPanelCandidate { index, depth };
                                                 items.push(candidate);
@@ -7753,6 +7888,78 @@ pub fn par_sort_worktree_entries(
     order: settings::ProjectPanelSortOrder,
 ) {
     entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order));
+}
+
+fn build_file_nesting_patterns(cx: &App) -> Option<Arc<FileNestingPatterns>> {
+    let settings = FileNestingSettings::get_global(cx);
+    if !settings.enabled {
+        return None;
+    }
+    let patterns = FileNestingPatterns::new(&settings.patterns);
+    (!patterns.is_empty()).then(|| Arc::new(patterns))
+}
+
+/// Computes the file nesting assignment among the files of one directory,
+/// returning `(child, parent)` entry id pairs.
+fn dir_nesting_pairs(
+    patterns: &FileNestingPatterns,
+    snapshot: &WorktreeSnapshot,
+    dir_path: &RelPath,
+    hide_gitignore: bool,
+    hide_hidden: bool,
+) -> Vec<(ProjectEntryId, ProjectEntryId)> {
+    let files: Vec<(ProjectEntryId, &str)> = snapshot
+        .child_entries(dir_path)
+        .filter(|entry| {
+            entry.is_file()
+                && (!hide_gitignore || !entry.is_ignored)
+                && (!hide_hidden || !entry.is_hidden)
+        })
+        .filter_map(|entry| Some((entry.id, entry.path.file_name()?)))
+        .collect();
+    let names: Vec<&str> = files.iter().map(|(_, name)| *name).collect();
+    files
+        .iter()
+        .zip(patterns.nesting_parents(&names))
+        .filter_map(|((child_id, _), parent_index)| {
+            let (parent_id, _) = files.get(parent_index?)?;
+            Some((*child_id, *parent_id))
+        })
+        .collect()
+}
+
+fn group_nested_children(
+    entries: Vec<GitEntry>,
+    child_to_parent: &HashMap<ProjectEntryId, ProjectEntryId>,
+) -> Vec<GitEntry> {
+    let mut children_by_parent: HashMap<ProjectEntryId, Vec<GitEntry>> = HashMap::default();
+    let mut top_level = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match child_to_parent.get(&entry.id) {
+            Some(parent_id) => children_by_parent
+                .entry(*parent_id)
+                .or_default()
+                .push(entry),
+            None => top_level.push(entry),
+        }
+    }
+    let mut result = Vec::with_capacity(top_level.len());
+    for entry in top_level {
+        let entry_id = entry.id;
+        result.push(entry);
+        if let Some(children) = children_by_parent.remove(&entry_id) {
+            result.extend(children);
+        }
+    }
+    // A nested file whose parent is not part of `entries` cannot occur,
+    // because the parent passes the same visibility filters as its children.
+    // Still, keep any such file at the end rather than losing it.
+    if !children_by_parent.is_empty() {
+        let mut orphans: Vec<GitEntry> = children_by_parent.into_values().flatten().collect();
+        orphans.sort_by(|lhs, rhs| lhs.path.cmp(&rhs.path));
+        result.extend(orphans);
+    }
+    result
 }
 
 fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)> {
