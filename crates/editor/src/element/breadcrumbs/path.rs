@@ -714,6 +714,10 @@ fn reveal_breadcrumb_directory_in_project_panel(
         return;
     };
     project.update(cx, |_, cx| {
+        // Opened explicitly rather than relying on the reveal to do it: the panel only activates
+        // itself when the reveal succeeds, and a closed panel should open either way, which is
+        // what IntelliJ does.
+        cx.emit(project::Event::ActivateProjectPanel);
         cx.emit(project::Event::RevealInProjectPanel(entry_id));
     });
 }
@@ -1376,13 +1380,19 @@ mod tests {
         let workspace = workspace_window.root(cx).unwrap();
 
         let revealed = Arc::new(AtomicUsize::new(0));
+        let activated = Arc::new(AtomicUsize::new(0));
         let _subscription = cx.update(|cx| {
             cx.subscribe(&project, {
                 let revealed = revealed.clone();
-                move |_, event, _| {
-                    if matches!(event, project::Event::RevealInProjectPanel(_)) {
+                let activated = activated.clone();
+                move |_, event, _| match event {
+                    project::Event::RevealInProjectPanel(_) => {
                         revealed.fetch_add(1, Ordering::AcqRel);
                     }
+                    project::Event::ActivateProjectPanel => {
+                        activated.fetch_add(1, Ordering::AcqRel);
+                    }
+                    _ => {}
                 }
             })
         });
@@ -1397,6 +1407,11 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(revealed.load(Ordering::Acquire), 1);
+        assert_eq!(
+            activated.load(Ordering::Acquire),
+            1,
+            "a closed panel has to open, not just have its selection moved"
+        );
 
         cx.update(|cx| {
             reveal_breadcrumb_directory_in_project_panel(
@@ -1412,6 +1427,7 @@ mod tests {
             1,
             "a path with no entry reveals nothing rather than panicking"
         );
+        assert_eq!(activated.load(Ordering::Acquire), 1);
     }
 
     /// Worktrees never scan gitignored directories proactively, so without the expansion call a
