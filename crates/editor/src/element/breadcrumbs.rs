@@ -7,18 +7,20 @@ mod layout;
 mod outline;
 mod path;
 
+pub(crate) use layout::BreadcrumbSegmentKind;
 use layout::{
     align_symbol_segments, classify_breadcrumb_segment_kinds, hard_cap_breadcrumb_middle_segments,
 };
-pub(crate) use layout::BreadcrumbSegmentKind;
 use layout::{breadcrumb_layout_plan_width, plan_breadcrumb_layout};
-pub(crate) use outline::{child_outline_indices, sibling_outline_indices, top_level_outline_indices};
 use outline::render_breadcrumb_symbol_segment;
-pub(crate) use path::{BreadcrumbDirectoryPicker, breadcrumb_path_segments};
+pub(crate) use outline::{
+    child_outline_indices, sibling_outline_indices, top_level_outline_indices,
+};
 use path::{
     BreadcrumbDirectoryListingSettings, breadcrumb_path_is_navigable,
     render_breadcrumb_directory_segment,
 };
+pub(crate) use path::{BreadcrumbDirectoryPicker, breadcrumb_path_segments};
 
 /// What a segment's dropdown drills into.
 #[derive(Clone, Debug)]
@@ -122,22 +124,13 @@ const BREADCRUMB_LABEL_PADDING: Pixels = px(4.);
 /// Matches the project panel's own entry icons, so the two read as the same tree.
 const BREADCRUMB_ICON_SIZE: IconSize = IconSize::Small;
 
-/// Only the file's segment gets an icon. Directories get none, and symbols name code rather than
-/// an entry in the tree.
-fn breadcrumb_segment_icon(
-    target: &Option<BreadcrumbSegmentTarget>,
-    file_path: Option<&RelPath>,
-    cx: &App,
-) -> Option<SharedString> {
+/// Only the open file's segment gets an icon. Directories get none, and symbols name code rather
+/// than an entry in the tree.
+fn breadcrumb_file_icon(file_path: Option<&RelPath>, cx: &App) -> Option<SharedString> {
     if !BreadcrumbDirectoryListingSettings::get_global(cx).file_icons {
         return None;
     }
-    match target {
-        Some(BreadcrumbSegmentTarget::Symbol { item: None, .. }) => {
-            file_icons::FileIcons::get_icon(file_path?.as_std_path(), cx)
-        }
-        _ => None,
-    }
+    file_icons::FileIcons::get_icon(file_path?.as_std_path(), cx)
 }
 
 fn breadcrumb_separator_width(window: &Window) -> Pixels {
@@ -651,6 +644,11 @@ pub fn render_breadcrumb_text(
     let (segments, symbol_segments, kinds, file_segment_index) =
         hard_cap_breadcrumb_middle_segments(segments, symbol_segments, kinds, file_segment_index);
 
+    // Resolved once rather than per segment: the icon lookup reads settings, and only one segment
+    // can use either value.
+    let file_icon = breadcrumb_file_icon(file_path_for_icon.as_deref(), cx);
+    let file_status_color = crate::element::file_status_label_color(file_status);
+
     let apply_dirty_filename_style =
         !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
 
@@ -660,19 +658,22 @@ pub fn render_breadcrumb_text(
         .zip(kinds)
         .enumerate()
         .map(|(index, ((label, target), kind))| {
-            let icon = breadcrumb_segment_icon(&target, file_path_for_icon.as_deref(), cx);
-            let label_color = if kind == BreadcrumbSegmentKind::File {
-                crate::element::file_status_label_color(file_status)
-            } else {
-                Color::Muted
-            };
+            let is_file_segment = kind == BreadcrumbSegmentKind::File
+                && matches!(
+                    target,
+                    Some(BreadcrumbSegmentTarget::Symbol { item: None, .. })
+                );
             PreparedBreadcrumbSegment {
                 kind,
                 label,
                 target,
                 dirty_filename_style: apply_dirty_filename_style && index == file_segment_index,
-                icon,
-                label_color,
+                icon: is_file_segment.then(|| file_icon.clone()).flatten(),
+                label_color: if kind == BreadcrumbSegmentKind::File {
+                    file_status_color
+                } else {
+                    Color::Muted
+                },
             }
         })
         .collect();
