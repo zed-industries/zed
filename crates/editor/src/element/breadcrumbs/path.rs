@@ -1049,8 +1049,8 @@ mod tests {
 
         // `PopoverMenu` only wires itself up during a real layout pass, so this needs an honest
         // `Render` mounted as a window root rather than a bare drawn element. The `Editor` is
-        // created inside this same window too, since `on_next_frame` calls from re-anchoring
-        // would otherwise get stuck on a window nothing here drains.
+        // created inside this same window too, since the re-anchor's deferred work is associated
+        // with the window it starts on and nothing else here drains another one.
         struct Harness {
             handle: PopoverMenuHandle<BreadcrumbDirectoryPicker>,
             editor: Entity<Editor>,
