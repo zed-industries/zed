@@ -330,7 +330,15 @@ impl LanguageServerState {
                 .lsp_store
                 .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
                 .unwrap_or(false);
-            let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
+            let has_logs = is_remote
+                || self.workspace.upgrade().is_some_and(|workspace| {
+                    let project = workspace.read(cx).project();
+                    lsp_logs.read(cx).has_server_logs(
+                        &server_selector,
+                        &project.downgrade(),
+                        &self.lsp_store,
+                    )
+                });
 
             let (status_color, status_label) = server_info
                 .binary_status
