@@ -401,7 +401,7 @@ impl WgpuRenderer {
             .min(device.limits().max_storage_buffer_binding_size)
             .min(MAX_INSTANCE_BUFFER_SIZE);
         let storage_buffer_alignment = device.limits().min_storage_buffer_offset_alignment as u64;
-        let initial_instance_buffer_capacity = 2 * 1024 * 1024;
+        let initial_instance_buffer_capacity = (2 * 1024 * 1024).min(max_buffer_size);
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instance_buffer"),
             size: initial_instance_buffer_capacity,
@@ -1285,13 +1285,13 @@ impl WgpuRenderer {
                     PrimitiveBatch::Quads(range) => self.draw_instances(
                         &instance_bindings.quads,
                         &self.resources().pipelines.quads,
-                        instance_range(range)?,
+                        instance_range(range),
                         &mut pass,
                     ),
                     PrimitiveBatch::Shadows(range) => self.draw_instances(
                         &instance_bindings.shadows,
                         &self.resources().pipelines.shadows,
-                        instance_range(range)?,
+                        instance_range(range),
                         &mut pass,
                     ),
                     PrimitiveBatch::Paths(range) => {
@@ -1333,14 +1333,14 @@ impl WgpuRenderer {
                     PrimitiveBatch::Underlines(range) => self.draw_instances(
                         &instance_bindings.underlines,
                         &self.resources().pipelines.underlines,
-                        instance_range(range)?,
+                        instance_range(range),
                         &mut pass,
                     ),
                     PrimitiveBatch::MonochromeSprites { texture_id, range } => self.draw_sprites(
                         &instance_bindings.monochrome_sprites,
                         texture_id,
                         &self.resources().pipelines.mono_sprites,
-                        instance_range(range)?,
+                        instance_range(range),
                         &mut pass,
                     ),
                     PrimitiveBatch::SubpixelSprites { texture_id, range } => {
@@ -1353,7 +1353,7 @@ impl WgpuRenderer {
                                 .subpixel_sprites
                                 .as_ref()
                                 .unwrap_or(&resources.pipelines.mono_sprites),
-                            instance_range(range)?,
+                            instance_range(range),
                             &mut pass,
                         );
                     }
@@ -1361,7 +1361,7 @@ impl WgpuRenderer {
                         &instance_bindings.polychrome_sprites,
                         texture_id,
                         &self.resources().pipelines.poly_sprites,
-                        instance_range(range)?,
+                        instance_range(range),
                         &mut pass,
                     ),
                     // Surfaces are macOS-only for video playback and are not
@@ -1518,14 +1518,12 @@ impl WgpuRenderer {
             "path_intermediate_texture_bind_group",
             &path_intermediate_view,
         );
-        let instance_count = u32::try_from(sprites.len()).context("too many path sprites")?;
-
         let resources = self.resources();
         pass.set_pipeline(&resources.pipelines.paths);
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &instances, &[]);
         pass.set_bind_group(2, &texture, &[]);
-        pass.draw(0..4, 0..instance_count);
+        pass.draw(0..4, 0..sprites.len() as u32);
         Ok(())
     }
 
@@ -1555,7 +1553,6 @@ impl WgpuRenderer {
             instance_offset,
             unsafe { Self::instance_bytes(&vertices) },
         )?;
-        let vertex_count = u32::try_from(vertices.len()).context("too many path vertices")?;
 
         let resources = self.resources();
         let Some(path_intermediate_view) = resources.path_intermediate_view.as_ref() else {
@@ -1587,7 +1584,7 @@ impl WgpuRenderer {
             pass.set_pipeline(&resources.pipelines.path_rasterization);
             pass.set_bind_group(0, &resources.path_globals_bind_group, &[]);
             pass.set_bind_group(1, &data_bind_group, &[]);
-            pass.draw(0..vertex_count, 0..1);
+            pass.draw(0..vertices.len() as u32, 0..1);
         }
 
         Ok(true)
@@ -1599,29 +1596,16 @@ impl WgpuRenderer {
         instance_offset: &mut u64,
         data: &[u8],
     ) -> Result<wgpu::BindGroup> {
-        let size = u64::try_from(data.len())
-            .context("instance data length exceeds u64")?
-            .max(16);
-        let alignment = self.storage_buffer_alignment.max(1);
-        let remainder = *instance_offset % alignment;
-        let mut offset = if remainder == 0 {
-            *instance_offset
-        } else {
-            (*instance_offset)
-                .checked_add(alignment - remainder)
-                .context("instance buffer offset overflow")?
-        };
-        let end = offset
-            .checked_add(size)
-            .context("instance buffer allocation overflow")?;
-        if end > self.instance_buffer_capacity {
+        // wgpu rejects zero-sized bindings, so empty primitive arrays still
+        // reserve the 16-byte minimum.
+        let size = (data.len() as u64).max(16);
+        let mut offset = (*instance_offset).next_multiple_of(self.storage_buffer_alignment.max(1));
+        if offset + size > self.instance_buffer_capacity {
             self.grow_instance_buffer(size)?;
             offset = 0;
         }
+        *instance_offset = offset + size;
 
-        let allocation_end = offset
-            .checked_add(size)
-            .context("instance buffer allocation overflow")?;
         let resources = self.resources();
         if !data.is_empty() {
             resources
@@ -1638,25 +1622,16 @@ impl WgpuRenderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &resources.instance_buffer,
                         offset,
-                        size: Some(
-                            NonZeroU64::new(size)
-                                .context("instance buffer allocation cannot be empty")?,
-                        ),
+                        size: NonZeroU64::new(size),
                     }),
                 }],
             });
-        *instance_offset = allocation_end;
         Ok(bind_group)
     }
 
     fn grow_instance_buffer(&mut self, required: u64) -> Result<()> {
-        let required_capacity = required
-            .checked_next_power_of_two()
-            .context("instance buffer allocation is too large")?;
-        let capacity = self
-            .instance_buffer_capacity
-            .saturating_mul(2)
-            .max(required_capacity)
+        let capacity = (self.instance_buffer_capacity * 2)
+            .max(required.next_power_of_two())
             .min(self.max_buffer_size);
         anyhow::ensure!(
             capacity >= required,
@@ -1847,11 +1822,8 @@ impl WgpuRenderer {
     }
 }
 
-fn instance_range(range: Range<usize>) -> Result<Range<u32>> {
-    Ok(
-        u32::try_from(range.start).context("instance range start exceeds u32")?
-            ..u32::try_from(range.end).context("instance range end exceeds u32")?,
-    )
+fn instance_range(range: Range<usize>) -> Range<u32> {
+    range.start as u32..range.end as u32
 }
 
 #[cfg(not(target_family = "wasm"))]

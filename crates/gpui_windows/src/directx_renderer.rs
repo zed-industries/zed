@@ -500,7 +500,6 @@ impl DirectXRenderer {
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            4,
             start as u32,
             len as u32,
         )
@@ -517,7 +516,6 @@ impl DirectXRenderer {
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            4,
             start as u32,
             len as u32,
         )
@@ -641,7 +639,6 @@ impl DirectXRenderer {
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            4,
             start as u32,
             len as u32,
         )
@@ -1041,13 +1038,7 @@ impl<T> PipelineState<T> {
     ) -> Result<()> {
         if self.buffer_size < data.len() {
             let element_size = std::mem::size_of::<T>();
-            anyhow::ensure!(
-                element_size > 0,
-                "DirectX buffers cannot contain zero-sized elements"
-            );
-            let required_size = element_size
-                .checked_mul(data.len())
-                .context("DirectX buffer size overflow")?;
+            let required_size = std::mem::size_of_val(data);
             anyhow::ensure!(
                 required_size <= MAX_INSTANCE_BUFFER_SIZE,
                 "{} buffer needs {required_size} bytes, above the maximum of {MAX_INSTANCE_BUFFER_SIZE}",
@@ -1055,8 +1046,7 @@ impl<T> PipelineState<T> {
             );
             let new_buffer_size = data
                 .len()
-                .checked_next_power_of_two()
-                .context("DirectX buffer element count is too large")?
+                .next_power_of_two()
                 .min(MAX_INSTANCE_BUFFER_SIZE / element_size);
             log::debug!(
                 "Updating {} buffer size from {} to {}",
@@ -1123,7 +1113,6 @@ impl<T> PipelineState<T> {
         &self,
         device_context: &ID3D11DeviceContext,
         batch_params_buffer: &ID3D11Buffer,
-        vertex_count: u32,
         first_instance: u32,
         instance_count: u32,
     ) -> Result<()> {
@@ -1142,7 +1131,7 @@ impl<T> PipelineState<T> {
             &self.blend_state,
         );
         unsafe {
-            device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
+            device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())
     }
@@ -1504,14 +1493,9 @@ fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11P
 
 #[inline]
 fn create_constant_buffer<T>(device: &ID3D11Device) -> Result<Option<ID3D11Buffer>> {
-    let byte_width = u32::try_from(std::mem::size_of::<T>())
-        .context("constant buffer size exceeds DirectX limits")?;
-    anyhow::ensure!(
-        byte_width != 0 && byte_width % 16 == 0,
-        "constant buffer size must be a non-zero multiple of 16 bytes"
-    );
+    const { assert!(std::mem::size_of::<T>() != 0 && std::mem::size_of::<T>().is_multiple_of(16)) };
     let desc = D3D11_BUFFER_DESC {
-        ByteWidth: byte_width,
+        ByteWidth: std::mem::size_of::<T>() as u32,
         Usage: D3D11_USAGE_DYNAMIC,
         BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
         CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
@@ -1529,17 +1513,13 @@ fn create_buffer(
     element_size: usize,
     buffer_size: usize,
 ) -> Result<ID3D11Buffer> {
-    let byte_width = element_size
-        .checked_mul(buffer_size)
-        .context("DirectX buffer size overflow")?;
     let desc = D3D11_BUFFER_DESC {
-        ByteWidth: u32::try_from(byte_width).context("DirectX buffer exceeds u32 limits")?,
+        ByteWidth: (element_size * buffer_size) as u32,
         Usage: D3D11_USAGE_DYNAMIC,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
         MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
-        StructureByteStride: u32::try_from(element_size)
-            .context("DirectX buffer element size exceeds u32 limits")?,
+        StructureByteStride: element_size as u32,
     };
     let mut buffer = None;
     unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;

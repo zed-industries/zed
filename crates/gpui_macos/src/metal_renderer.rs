@@ -103,7 +103,7 @@ impl InstanceBufferPool {
     }
 
     pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
-        if buffer.size == self.buffer_size && self.buffers.is_empty() {
+        if buffer.size == self.buffer_size {
             self.buffers.push(buffer.metal_buffer)
         }
     }
@@ -1395,13 +1395,10 @@ fn write_instances(scene: &Scene, writer: &mut InstanceBufferWriter) -> Result<I
         underlines: writer.write(&scene.underlines)?,
         monochrome_sprites: writer.write(&scene.monochrome_sprites)?,
         polychrome_sprites: writer.write(&scene.polychrome_sprites)?,
-        surfaces: writer.write_iter(
-            scene.surfaces.len(),
-            scene.surfaces.iter().map(|surface| SurfaceBounds {
-                bounds: surface.bounds,
-                content_mask: surface.content_mask,
-            }),
-        )?,
+        surfaces: writer.write_iter(scene.surfaces.iter().map(|surface| SurfaceBounds {
+            bounds: surface.bounds,
+            content_mask: surface.content_mask,
+        }))?,
     })
 }
 
@@ -1432,11 +1429,9 @@ impl InstanceBufferWriter {
     }
 
     fn allocate<T>(&mut self, count: usize) -> Result<(InstanceBinding, &mut [MaybeUninit<T>])> {
-        let size = mem::size_of::<T>()
-            .checked_mul(count)
-            .context("instance buffer allocation size overflow")?;
+        let size = mem::size_of::<T>() * count;
         let mut offset = self.offset.next_multiple_of(INSTANCE_BUFFER_ALIGNMENT);
-        if offset.saturating_add(size) > self.current.size {
+        if offset + size > self.current.size {
             self.grow(size)?;
             offset = 0;
         }
@@ -1469,28 +1464,19 @@ impl InstanceBufferWriter {
 
     fn write_iter<T>(
         &mut self,
-        count: usize,
-        values: impl IntoIterator<Item = T>,
+        values: impl ExactSizeIterator<Item = T>,
     ) -> Result<InstanceBinding> {
-        let (binding, destination) = self.allocate::<T>(count)?;
-        let mut written = 0;
+        let (binding, destination) = self.allocate::<T>(values.len())?;
         for (slot, value) in destination.iter_mut().zip(values) {
             slot.write(value);
-            written += 1;
         }
-        debug_assert_eq!(written, count, "instance count did not match the iterator");
         Ok(binding)
     }
 
     fn grow(&mut self, required: usize) -> Result<()> {
         let mut pool = self.pool.lock();
-        let required_buffer_size = required
-            .checked_next_power_of_two()
-            .context("instance buffer reservation is too large")?;
-        let buffer_size = pool
-            .buffer_size
-            .saturating_mul(2)
-            .max(required_buffer_size)
+        let buffer_size = (pool.buffer_size * 2)
+            .max(required.next_power_of_two())
             .min(MAX_INSTANCE_BUFFER_SIZE);
         anyhow::ensure!(
             buffer_size >= required,
