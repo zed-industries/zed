@@ -89,10 +89,7 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     }
 
     fn enabled_for_all() -> bool {
-        !matches!(
-            *release_channel::RELEASE_CHANNEL,
-            release_channel::ReleaseChannel::Stable
-        )
+        true
     }
 }
 register_feature_flag!(ProjectPanelUndoRedoFeatureFlag);

@@ -10774,7 +10774,6 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         );
 }
 
-#[gpui::test]
 /// A different number of tabs can align the same column on each row, so a cursor has to
 /// be placed by the column the tabs expand to. Counting a tab as a single column lands it
 /// wherever that many characters happen to reach on the next row.
@@ -10809,51 +10808,36 @@ async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
+/// Regression test for a panic ("display point out of range"): with a multi-line fold,
+/// buffer rows below the fold exceed the fold map's max row, so they must be converted
+/// to tab map rows instead of being used directly.
+async fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("one\ntwo\nthree\nfour\nfive\nsix", cx);
-        build_editor(buffer, window, cx)
-    });
 
-    _ = editor.update(cx, |editor, window, cx| {
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        one
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
         editor.fold_creases(
             vec![Crease::simple(
-                Point::new(0, 0)..Point::new(3, 0),
+                Point::new(0, 10)..Point::new(3, 0),
                 FoldPlaceholder::test(),
             )],
             true,
             window,
             cx,
         );
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-            selections.select_ranges([Point::new(4, 0)..Point::new(4, 0)]);
-        });
-        editor.add_selection_below(
-            &AddSelectionBelow {
-                skip_soft_wrap: true,
-            },
-            window,
-            cx,
-        );
+    });
 
-        let display_map = editor.display_snapshot(cx);
-        assert_eq!(
-            editor
-                .selections
-                .all::<Point>(&display_map)
-                .into_iter()
-                .map(|selection| selection.range())
-                .collect::<Vec<_>>(),
-            [
-                Point::new(4, 0)..Point::new(4, 0),
-                Point::new(5, 0)..Point::new(5, 0),
-            ]
-        );
-
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-            selections.select_ranges([Point::new(5, 0)..Point::new(5, 0)]);
-        });
+    cx.update_editor(|editor, window, cx| {
         editor.add_selection_above(
             &AddSelectionAbove {
                 skip_soft_wrap: true,
@@ -10861,21 +10845,75 @@ fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
             window,
             cx,
         );
+    });
 
-        let display_map = editor.display_snapshot(cx);
-        assert_eq!(
-            editor
-                .selections
-                .all::<Point>(&display_map)
-                .into_iter()
-                .map(|selection| selection.range())
-                .collect::<Vec<_>>(),
-            [
-                Point::new(4, 0)..Point::new(4, 0),
-                Point::new(5, 0)..Point::new(5, 0),
-            ]
+    cx.assert_editor_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
         );
     });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn ˇfoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.set_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        one
+        two"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        two"#
+    ));
 }
 
 #[gpui::test]

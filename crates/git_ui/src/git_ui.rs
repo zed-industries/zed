@@ -33,7 +33,6 @@ use crate::{
     text_diff_view::TextDiffView,
 };
 
-mod askpass_modal;
 pub mod branch_diff;
 pub mod branch_picker;
 mod commit_context_menu;
@@ -41,9 +40,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
-pub mod created_worktrees;
 mod diff_multibuffer;
-pub mod file_diff_view;
 pub mod git_graph;
 pub mod git_panel;
 mod git_panel_settings;
@@ -59,9 +56,6 @@ pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod unstaged_diff;
-pub mod worktree_names;
-pub mod worktree_picker;
-pub mod worktree_service;
 
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
@@ -85,6 +79,40 @@ pub fn init(cx: &mut App) {
     commit_view::init(cx);
     git_graph::init(cx);
 
+    git_ui_core::set_branch_picker_builder(
+        |workspace, repository, window, cx| {
+            let picker = git_picker::popover(
+                workspace,
+                repository,
+                git_picker::GitPickerTab::Branches,
+                gpui::rems(34.),
+                window,
+                cx,
+            );
+            cx.new(|cx| git_ui_core::GitPickerPopover::new(picker, cx))
+        },
+        cx,
+    );
+
+    git_ui_core::set_file_history_opener(
+        |workspace, project_path, window, cx| {
+            let Some((repo_id, log_source)) =
+                git_graph::resolve_file_history_target_from_project_path(
+                    workspace,
+                    project_path,
+                    cx,
+                )
+            else {
+                return;
+            };
+            let git_store = workspace.project().read(cx).git_store().clone();
+            git_graph::open_or_reuse_graph(
+                workspace, repo_id, git_store, log_source, None, window, cx,
+            );
+        },
+        cx,
+    );
+
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
     })
@@ -102,12 +130,16 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(
             |workspace, action: &zed_actions::CreateWorktree, window, cx| {
-                worktree_service::handle_create_worktree(workspace, action, window, None, cx);
+                git_ui_core::worktree_service::handle_create_worktree(
+                    workspace, action, window, None, cx,
+                );
             },
         );
         workspace.register_action(
             |workspace, action: &zed_actions::SwitchWorktree, window, cx| {
-                worktree_service::handle_switch_worktree(workspace, action, window, None, cx);
+                git_ui_core::worktree_service::handle_switch_worktree(
+                    workspace, action, window, None, cx,
+                );
             },
         );
 
@@ -116,7 +148,7 @@ pub fn init(cx: &mut App) {
             let project = workspace.project().clone();
             let workspace_handle = workspace.weak_handle();
             workspace.toggle_modal(window, cx, |window, cx| {
-                worktree_picker::WorktreePicker::new_modal(
+                git_ui_core::worktree_picker::WorktreePicker::new_modal(
                     project,
                     workspace_handle,
                     focused_dock,
@@ -138,7 +170,7 @@ pub fn init(cx: &mut App) {
                     let workspace_handle = workspace.weak_handle();
                     cx.spawn_in(window, async move |_, cx| {
                         if let Some(connection_options) = connection_options {
-                            crate::worktree_picker::open_remote_worktree(
+                            git_ui_core::worktree_picker::open_remote_worktree(
                                 connection_options,
                                 vec![path],
                                 app_state,
