@@ -1721,21 +1721,37 @@ impl project::ProjectItem for NotebookItem {
 }
 
 impl NotebookItem {
+    fn file_name_for_path(path: &Path, path_style: PathStyle) -> Option<String> {
+        if path_style == PathStyle::local() {
+            return path
+                .file_name()
+                .map(|file_name| file_name.to_string_lossy().into_owned());
+        }
+
+        let path = path_style.normalize(&path.to_string_lossy());
+        let file_name = path_style.split(&path).1;
+        (!file_name.is_empty()).then(|| file_name.to_string())
+    }
+
     fn file_name(&self, project: &Project, cx: &App) -> String {
+        let worktree = project.worktree_for_id(self.project_path.worktree_id, cx);
+
         self.project_path
             .path
             .file_name()
             .map(|file_name| file_name.to_string())
             .or_else(|| {
-                self.path
-                    .file_name()
-                    .map(|file_name| file_name.to_string_lossy().into_owned())
+                worktree.as_ref().and_then(|worktree| {
+                    let worktree = worktree.read(cx);
+                    Self::file_name_for_path(&self.path, worktree.path_style())
+                })
             })
             .or_else(|| {
-                project
-                    .worktree_for_id(self.project_path.worktree_id, cx)
+                worktree
+                    .as_ref()
                     .map(|worktree| worktree.read(cx).root_name_str().to_owned())
             })
+            .or_else(|| Self::file_name_for_path(&self.path, PathStyle::local()))
             .unwrap_or_default()
     }
 
@@ -2102,13 +2118,21 @@ mod tests {
     }"#;
 
     #[test]
-    fn test_parent_directory_for_remote_windows_path() {
+    fn test_single_file_remote_windows_path() {
         assert_eq!(
             NotebookEditor::parent_directory(
                 Path::new(r"C:\notebooks\single.ipynb"),
                 PathStyle::Windows,
             ),
             Some(PathBuf::from(r"C:\notebooks\"))
+        );
+
+        assert_eq!(
+            NotebookItem::file_name_for_path(
+                Path::new(r"C:\notebooks\single.ipynb"),
+                PathStyle::Windows,
+            ),
+            Some("single.ipynb".to_string())
         );
     }
 
