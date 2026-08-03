@@ -48,7 +48,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiOpenAi)
+        IconOrSvg::Icon(IconName::AiOpenAiGptSub)
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
