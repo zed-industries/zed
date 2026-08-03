@@ -346,7 +346,7 @@ impl WslRemoteConnection {
             )
         })?;
 
-        let dst_posix = dst_path.display(PathStyle::Posix);
+        let dst_posix = dst_path.display(PathStyle::Unix);
         let mut command = wsl_command_impl(
             &self.connection_options,
             "sh",
