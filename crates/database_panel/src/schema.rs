@@ -37,20 +37,20 @@ pub enum ConnectionConfig {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DatabaseInfo {
     pub name: String,
     pub charset: Option<String>,
     pub collation: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TableType {
     Table,
     View,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TableInfo {
     pub name: String,
     pub table_type: TableType,
@@ -61,7 +61,7 @@ pub struct TableInfo {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnInfo {
     pub name: String,
     /// The full column type as reported by the database, e.g. `varchar(255)`.

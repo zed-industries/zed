@@ -5,8 +5,10 @@ mod schema;
 use std::sync::Arc;
 
 use anyhow::Result;
+use db::kvp::KeyValueStore;
 use editor::{Editor, EditorEvent};
 use fs::Fs;
+use serde::{Deserialize, Serialize};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, KeyContext, Pixels, Point, Render, ScrollStrategy, SharedString,
@@ -88,6 +90,46 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+/// Serialized snapshot of an introspected connection, persisted in the
+/// key-value store so filtering and completions work without re-indexing on
+/// every launch. Refresh (`f5`) re-reads the live schema.
+#[derive(Serialize, Deserialize)]
+struct CachedSchema {
+    databases: Vec<CachedDatabase>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedDatabase {
+    info: DatabaseInfo,
+    tables: Option<Vec<CachedTable>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedTable {
+    info: TableInfo,
+    columns: Option<Vec<ColumnInfo>>,
+}
+
+/// Identifies a connection's cache entry. The password is deliberately left
+/// out: it is a secret and does not change the schema.
+fn schema_cache_key(config: &ConnectionConfig) -> String {
+    match config {
+        ConnectionConfig::Sqlite { path } => {
+            format!("database_panel_schema::v1::sqlite::{path}")
+        }
+        ConnectionConfig::MariaDb {
+            host,
+            port,
+            username,
+            databases,
+            ..
+        } => format!(
+            "database_panel_schema::v1::mariadb::{username}@{host}:{port}/{}",
+            databases.join(",")
+        ),
+    }
 }
 
 enum LoadState<T> {
@@ -290,6 +332,9 @@ impl DatabasePanel {
             state.content_index = content_index;
             state.name = name;
             self.connections.push(state);
+        }
+        for connection_ix in 0..self.connections.len() {
+            self.load_schema_cache(connection_ix, cx);
         }
         self.rebuild_entries(cx);
     }
@@ -644,6 +689,7 @@ impl DatabasePanel {
                         }
                     }
                 }
+                this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
             })
         })
@@ -759,6 +805,108 @@ impl DatabasePanel {
         self.rebuild_entries(cx);
     }
 
+    fn save_schema_cache(&self, connection_ix: usize, cx: &mut Context<Self>) {
+        let Some(connection) = self.connections.get(connection_ix) else {
+            return;
+        };
+        let LoadState::Loaded(databases) = &connection.databases else {
+            return;
+        };
+        let snapshot = CachedSchema {
+            databases: databases
+                .iter()
+                .map(|database| CachedDatabase {
+                    info: database.info.clone(),
+                    tables: match &database.tables {
+                        LoadState::Loaded(tables) => Some(
+                            tables
+                                .iter()
+                                .map(|table| CachedTable {
+                                    info: table.info.clone(),
+                                    columns: match &table.columns {
+                                        LoadState::Loaded(columns) => Some(columns.clone()),
+                                        _ => None,
+                                    },
+                                })
+                                .collect(),
+                        ),
+                        _ => None,
+                    },
+                })
+                .collect(),
+        };
+        let key = schema_cache_key(&connection.config);
+        let kvp = KeyValueStore::global(cx);
+        cx.background_spawn(async move {
+            let value = serde_json::to_string(&snapshot)?;
+            kvp.write_kvp(key, value).await
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn load_schema_cache(&mut self, connection_ix: usize, cx: &mut Context<Self>) {
+        let Some(connection) = self.connections.get(connection_ix) else {
+            return;
+        };
+        if !matches!(connection.databases, LoadState::NotLoaded) {
+            return;
+        }
+        let config = connection.config.clone();
+        let key = schema_cache_key(&config);
+        let kvp = KeyValueStore::global(cx);
+        let task = cx.background_spawn(async move {
+            anyhow::Ok(
+                kvp.read_kvp(&key)?
+                    .map(|value| serde_json::from_str::<CachedSchema>(&value))
+                    .transpose()?,
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            let Some(cache) = task.await? else {
+                return anyhow::Ok(());
+            };
+            this.update(cx, |this, cx| {
+                let Some(connection) = this.connections.get_mut(connection_ix) else {
+                    return;
+                };
+                if connection.config != config
+                    || !matches!(connection.databases, LoadState::NotLoaded)
+                {
+                    return;
+                }
+                connection.databases = LoadState::Loaded(
+                    cache
+                        .databases
+                        .into_iter()
+                        .map(|database| DatabaseState {
+                            info: database.info,
+                            expanded: false,
+                            tables: match database.tables {
+                                Some(tables) => LoadState::Loaded(
+                                    tables
+                                        .into_iter()
+                                        .map(|table| TableState {
+                                            info: table.info,
+                                            expanded: false,
+                                            columns: match table.columns {
+                                                Some(columns) => LoadState::Loaded(columns),
+                                                None => LoadState::NotLoaded,
+                                            },
+                                        })
+                                        .collect(),
+                                ),
+                                None => LoadState::NotLoaded,
+                            },
+                        })
+                        .collect(),
+                );
+                this.rebuild_entries(cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn load_databases(&mut self, connection_ix: usize, cx: &mut Context<Self>) {
         let Some(connection) = self.connections.get_mut(connection_ix) else {
             return;
@@ -791,6 +939,7 @@ impl DatabasePanel {
                     ),
                     Err(error) => LoadState::Error(format!("{error:#}").into()),
                 };
+                this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
             })
         })
@@ -841,6 +990,7 @@ impl DatabasePanel {
                     ),
                     Err(error) => LoadState::Error(format!("{error:#}").into()),
                 };
+                this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
             })
         })
@@ -892,6 +1042,7 @@ impl DatabasePanel {
                     Ok(columns) => LoadState::Loaded(columns),
                     Err(error) => LoadState::Error(format!("{error:#}").into()),
                 };
+                this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
             })
         })
