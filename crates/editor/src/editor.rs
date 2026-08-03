@@ -1131,8 +1131,7 @@ pub struct Editor {
     breadcrumb_navigation: Option<BreadcrumbNavigation>,
     /// Shared by every breadcrumb directory segment, so one dropdown is open at a time and
     /// [`Editor::navigate_breadcrumb_to`] can reopen it under a different segment. `None` when no
-    /// `breadcrumb_picker::BreadcrumbPickerRenderers` has been registered, in which case
-    /// directory segments render as plain text and there is no dropdown to share a handle with.
+    /// picker renderers are registered and segments render as plain text.
     breadcrumb_popover_handle: Option<Rc<dyn ErasedBreadcrumbPopoverHandle>>,
     /// Replaced each time a dropdown opens, and dropped with the editor rather than detached.
     breadcrumb_dismiss_subscription: Option<Subscription>,
@@ -11059,8 +11058,7 @@ impl Editor {
         cx.emit(EditorEvent::BreadcrumbsChanged);
     }
 
-    /// Replaces the bar with `path`, root through `path` and symbols dropped, because a directory
-    /// row was chosen. The open dropdown moves with it, reopening under `path`'s own segment.
+    /// Moves the bar into `path`, reopening the open dropdown under `path`'s own segment.
     ///
     /// Reached from the picker's `confirm`, so that picker's lease is still on the stack and
     /// `PopoverMenuHandle::hide` would double-lease it. `cx.defer_in` runs once the outermost

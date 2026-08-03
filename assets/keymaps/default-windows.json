@@ -1185,8 +1185,8 @@
       "escape": "menu::Cancel",
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
-      // Delegates that don't implement select_child/select_parent leave the action
-      // unhandled and these keys fall through to ordinary cursor movement.
+      // Harmless for pickers that leave these unhandled: the key then falls
+      // through to the next binding, ordinary cursor movement.
       "left": "menu::SelectParent",
       "right": "menu::SelectChild",
       "tab": "picker::ConfirmCompletion",
