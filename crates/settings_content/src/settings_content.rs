@@ -191,6 +191,9 @@ pub struct SettingsContent {
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
 
+    /// Configuration for the database panel and its connections.
+    pub database_panel: Option<DatabasePanelSettingsContent>,
+
     pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
@@ -1082,6 +1085,74 @@ pub enum HourFormat {
     #[default]
     Hour12,
     Hour24,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct DatabasePanelSettingsContent {
+    /// Whether to show the database panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Customize default width (in pixels) taken by database panel
+    ///
+    /// Default: 300
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_width: Option<f32>,
+    /// The position of database panel
+    ///
+    /// Default: right
+    pub dock: Option<DockSide>,
+    /// The configured database connections shown in the database panel.
+    ///
+    /// Default: []
+    pub connections: Option<Vec<DatabaseConnectionContent>>,
+}
+
+/// A database connection shown in the database panel.
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct DatabaseConnectionContent {
+    /// Name used for this connection in the UI.
+    ///
+    /// Default: derived from the file path or `user@host`
+    pub name: Option<String>,
+    /// The database adapter to use for this connection.
+    pub adapter: Option<DatabaseAdapter>,
+    /// Path of the database file (SQLite only).
+    pub path: Option<String>,
+    /// Server hostname (MariaDB only).
+    ///
+    /// Default: localhost
+    pub host: Option<String>,
+    /// Server port (MariaDB only).
+    ///
+    /// Default: 3306
+    pub port: Option<u16>,
+    /// User name (MariaDB only).
+    ///
+    /// Default: root
+    pub username: Option<String>,
+    /// Password (MariaDB only). Stored in plain text in the settings file;
+    /// prefer a dedicated read-only account.
+    pub password: Option<String>,
+    /// The databases to show for this connection. When empty, all databases
+    /// except system ones are shown (MariaDB only).
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub databases: Vec<String>,
+}
+
+/// The database adapter used by a database panel connection.
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseAdapter {
+    #[default]
+    Sqlite,
+    Mariadb,
 }
 
 #[with_fallible_options]

@@ -4922,6 +4922,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
+name = "database_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "gpui",
+ "gpui_tokio",
+ "menu",
+ "project",
+ "settings",
+ "sqlx",
+ "tokio",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "db"
 version = "0.1.0"
 dependencies = [
@@ -23291,6 +23311,7 @@ dependencies = [
  "crashes",
  "csv_preview",
  "dap_adapters",
+ "database_panel",
  "db",
  "debug_adapter_extension",
  "debugger_tools",

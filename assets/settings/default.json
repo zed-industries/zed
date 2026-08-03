@@ -980,6 +980,20 @@
     // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
     "expand_outlines_with_depth": 100,
   },
+  "database_panel": {
+    // Whether to show the database panel button in the status bar.
+    "button": true,
+    // Where to dock the database panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the database panel.
+    "default_width": 300,
+    // The configured database connections. Example:
+    // "connections": [
+    //   { "adapter": "sqlite", "path": "/path/to/app.db" },
+    //   { "adapter": "mariadb", "host": "localhost", "port": 3306, "username": "root", "password": "..." }
+    // ]
+    "connections": [],
+  },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
     "button": true,

@@ -1044,6 +1044,23 @@
     },
   },
   {
+    "context": "DatabasePanel",
+    "bindings": {
+      "left": "database_panel::CollapseSelectedEntry",
+      "right": "database_panel::ExpandSelectedEntry",
+      "f5": "database_panel::Refresh",
+    },
+  },
+  {
+    "context": "DatabaseConnectionModal > Editor",
+    "bindings": {
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "GitPanel && CommitEditor",
     "use_key_equivalents": true,
     "bindings": {

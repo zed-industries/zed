@@ -47,6 +47,7 @@ members = [
     "crates/csv_preview",
     "crates/dap",
     "crates/dap_adapters",
+    "crates/database_panel",
     "crates/db",
     "crates/debug_adapter_extension",
     "crates/debugger_tools",
@@ -320,6 +321,7 @@ crossbeam = "0.8.4"
 csv_preview = { path = "crates/csv_preview"}
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
+database_panel = { path = "crates/database_panel" }
 db = { path = "crates/db" }
 debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
@@ -809,6 +811,11 @@ slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union", "const_new"] }
 smol = "2.0"
 sqlformat = "0.2"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+    "mysql",
+] }
 stacksafe = "0.1"
 streaming-iterator = "0.1"
 strsim = "0.11"
