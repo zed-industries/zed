@@ -13,6 +13,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionStore};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use git::{GitHostingProviderRegistry, parse_git_remote_url};
 use gpui::{
     Action, App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TaskExt, TextStyle,
@@ -291,6 +292,8 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ExtensionFilter {
     All,
@@ -378,6 +381,7 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
 
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
     list: UniformListScrollHandle,
     is_fetching_extensions: bool,
     fetch_failed: bool,
@@ -437,9 +441,11 @@ impl ExtensionsPage {
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
             let scroll_handle = UniformListScrollHandle::new();
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
+                provider_registry,
                 list: scroll_handle,
                 is_fetching_extensions: false,
                 fetch_failed: false,
@@ -463,6 +469,12 @@ impl ExtensionsPage {
             );
             this
         })
+    }
+
+    fn get_repository_icon(&self, repository_url: &str) -> IconName {
+        parse_git_remote_url(Arc::clone(&self.provider_registry), repository_url)
+            .map(|(provider, _)| ui::git_hosting_provider_icon(provider.name().as_str()))
+            .unwrap_or(IconName::Link)
     }
 
     fn on_extension_installed(
@@ -665,7 +677,16 @@ impl ExtensionsPage {
                 if ix < dev_extension_entries_len {
                     let dev_ix = self.filtered_dev_extension_indices[ix];
                     let extension = &self.dev_extension_entries[dev_ix];
-                    ExtensionCard::for_dev(extension.clone(), cx)
+                    let repository_icon = extension
+                        .repository
+                        .as_deref()
+                        .map(|url| self.get_repository_icon(url));
+                    let card = ExtensionCard::for_dev(extension.clone(), cx);
+                    if let Some(icon) = repository_icon {
+                        card.repository_icon(icon)
+                    } else {
+                        card
+                    }
                 } else {
                     let extension_ix =
                         self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
@@ -681,7 +702,9 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let card = ExtensionCard::for_remote(extension, cx);
+        let repository_icon = self.get_repository_icon(&extension.manifest.repository);
+        let card = ExtensionCard::for_remote(extension, cx)
+            .repository_icon(repository_icon);
         let this = cx.weak_entity();
 
         card.context_menu(move |extension_id, authors, window, cx| {
@@ -699,6 +722,7 @@ impl ExtensionsPage {
                         }),
                     )
                     .entry("Copy Extension ID", None, {
+
                         let extension_id = extension_id.clone();
                         move |_, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(
