@@ -1,6 +1,9 @@
 #![allow(unused, dead_code)]
 use std::future::Future;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
@@ -19,6 +22,7 @@ use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
+use util::paths::PathStyle;
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -110,6 +114,15 @@ pub struct NotebookEditor {
 }
 
 impl NotebookEditor {
+    fn parent_directory(path: &Path, path_style: PathStyle) -> Option<PathBuf> {
+        if path_style == PathStyle::local() {
+            return path.parent().map(Path::to_path_buf);
+        }
+
+        let path = path_style.normalize(&path.to_string_lossy());
+        path_style.split(&path).0.map(PathBuf::from)
+    }
+
     fn kernel_working_directory(
         project: &Project,
         worktree_id: project::WorktreeId,
@@ -122,7 +135,7 @@ impl NotebookEditor {
                 worktree
                     .root_dir()
                     .map(|path| path.to_path_buf())
-                    .or_else(|| worktree.abs_path().parent().map(|path| path.to_path_buf()))
+                    .or_else(|| Self::parent_directory(&worktree.abs_path(), worktree.path_style()))
             })
             .unwrap_or_else(std::env::temp_dir)
     }
@@ -1714,6 +1727,11 @@ impl NotebookItem {
             .file_name()
             .map(|file_name| file_name.to_string())
             .or_else(|| {
+                self.path
+                    .file_name()
+                    .map(|file_name| file_name.to_string_lossy().into_owned())
+            })
+            .or_else(|| {
                 project
                     .worktree_for_id(self.project_path.worktree_id, cx)
                     .map(|worktree| worktree.read(cx).root_name_str().to_owned())
@@ -2082,6 +2100,17 @@ mod tests {
             }
         ]
     }"#;
+
+    #[test]
+    fn test_parent_directory_for_remote_windows_path() {
+        assert_eq!(
+            NotebookEditor::parent_directory(
+                Path::new(r"C:\notebooks\single.ipynb"),
+                PathStyle::Windows,
+            ),
+            Some(PathBuf::from(r"C:\notebooks\"))
+        );
+    }
 
     /// When the configured interpreter doesn't exist (e.g. Python isn't installed),
     /// running a cell must not leave it stuck in the executing state. It should
