@@ -414,9 +414,57 @@ pub fn into_anthropic(
         context_management: request.compact_at_tokens.map(|value| ContextManagement {
             edits: vec![ContextManagementEdit::Compact {
                 trigger: Some(CompactionTrigger::InputTokens { value }),
+                pause_after_compaction: None,
+                instructions: None,
             }],
         }),
     })
+}
+
+/// Summarization prompt for compact-on-demand requests. Replaces the default
+/// prompt to add the documented mitigation for the model occasionally calling
+/// a tool instead of writing a summary; the rest follows the default prompt's
+/// shape.
+///
+/// <https://platform.claude.com/docs/en/build-with-claude/compaction#custom-summarization-instructions>
+pub const COMPACTION_INSTRUCTIONS: &str = "Summarize the transcript inside <summary></summary> \
+     tags. Include relevant information in the summary for continuing the task in the next \
+     context window. Do not call any tools while writing this summary; respond with text only.";
+
+/// Converts a request into Anthropic's nearest equivalent of compact-on-demand:
+/// the lowest trigger the API accepts plus `pause_after_compaction`, so the
+/// API emits a compaction block and stops instead of generating a response.
+///
+/// The API still refuses to compact input below
+/// [`crate::MIN_COMPACTION_TRIGGER_TOKENS`]; callers observe that as a
+/// completed stream without a compaction block.
+pub fn into_anthropic_compaction(
+    request: LanguageModelRequest,
+    model: String,
+    default_temperature: f32,
+    max_output_tokens: u64,
+    cache_mode: AnthropicPromptCacheMode,
+    compaction_state_owner: &LanguageModelProviderId,
+) -> Result<crate::Request> {
+    let mut request = into_anthropic(
+        request,
+        model,
+        default_temperature,
+        max_output_tokens,
+        AnthropicModelMode::Default,
+        cache_mode,
+        compaction_state_owner,
+    )?;
+    request.context_management = Some(ContextManagement {
+        edits: vec![ContextManagementEdit::Compact {
+            trigger: Some(CompactionTrigger::InputTokens {
+                value: crate::MIN_COMPACTION_TRIGGER_TOKENS,
+            }),
+            pause_after_compaction: Some(true),
+            instructions: Some(COMPACTION_INSTRUCTIONS.to_string()),
+        }],
+    });
+    Ok(request)
 }
 
 pub struct AnthropicEventMapper {
@@ -1226,6 +1274,47 @@ mod tests {
                 "edits": [{
                     "type": "compact_20260112",
                     "trigger": { "type": "input_tokens", "value": 100_000 }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_into_anthropic_compaction_pauses_at_the_trigger_floor() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            // Any configured automatic trigger is superseded: this request's
+            // whole purpose is to compact now.
+            compact_at_tokens: Some(800_000),
+            ..Default::default()
+        };
+
+        let anthropic_request = into_anthropic_compaction(
+            request,
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            AnthropicPromptCacheMode::Disabled,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&anthropic_request.context_management).unwrap(),
+            serde_json::json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": {
+                        "type": "input_tokens",
+                        "value": crate::MIN_COMPACTION_TRIGGER_TOKENS,
+                    },
+                    "pause_after_compaction": true,
+                    "instructions": COMPACTION_INSTRUCTIONS,
                 }]
             })
         );
