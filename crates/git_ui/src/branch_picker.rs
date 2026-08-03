@@ -1226,7 +1226,7 @@ fn remote_provider_icons(
             let (provider, _) = parse_git_remote_url(provider_registry.clone(), remote_url)?;
             Some((
                 remote_name.clone(),
-                crate::get_provider_icon(&provider.name()),
+                ui::git_hosting_provider_icon(provider.name().as_str()),
             ))
         })
         .collect()
