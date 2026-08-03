@@ -403,14 +403,11 @@ async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -1796,14 +1793,11 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2042,14 +2036,11 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2111,14 +2102,11 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2211,14 +2199,11 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: false,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(false);
+            });
+        });
     });
 
     app_state
@@ -2264,14 +2249,11 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_true_and_
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2594,14 +2576,11 @@ async fn test_non_project_file_matches_history_with_hidden_root(cx: &mut gpui::T
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2799,14 +2778,11 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2915,14 +2891,11 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3409,14 +3382,11 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3468,14 +3438,11 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3953,14 +3920,11 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state.fs.as_fake().insert_tree("/src", json!({})).await;
@@ -4792,14 +4756,11 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -4848,14 +4809,11 @@ async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state

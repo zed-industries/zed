@@ -1,5 +1,5 @@
 [package]
-name = "git_ui"
+name = "git_ui_core"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,92 +9,54 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-name = "git_ui"
-path = "src/git_ui.rs"
-
-[features]
-test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
-call = ["dep:call"]
+name = "git_ui_core"
+path = "src/git_ui_core.rs"
 
 [dependencies]
-agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
-async-channel.workspace = true
 buffer_diff.workspace = true
-call = { workspace = true, optional = true }
-client.workspace = true
 collections.workspace = true
-component.workspace = true
 db.workspace = true
 editor.workspace = true
-file_icons.workspace = true
-futures-lite.workspace = true
+fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
-fuzzy_nucleo.workspace = true
 git.workspace = true
 gpui.workspace = true
-itertools.workspace = true
 language.workspace = true
-language_model.workspace = true
 log.workspace = true
-markdown.workspace = true
 menu.workspace = true
-multi_buffer.workspace = true
 notifications.workspace = true
-panel.workspace = true
 picker.workspace = true
 project.workspace = true
-prompt_store.workspace = true
+proto.workspace = true
 rand.workspace = true
-release_channel.workspace = true
+remote.workspace = true
 remote_connection.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smallvec.workspace = true
-strum.workspace = true
-sysinfo.workspace = true
-task.workspace = true
-telemetry.workspace = true
 terminal.workspace = true
-theme.workspace = true
-theme_settings.workspace = true
-time.workspace = true
-time_format.workspace = true
-tracing.workspace = true
 ui.workspace = true
-ui_input.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true
-git_ui_core.workspace = true
 zed_actions.workspace = true
+zeroize.workspace = true
 ztracing.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
-ctor.workspace = true
-db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-indoc.workspace = true
-pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-rand.workspace = true
 remote_connection = { workspace = true, features = ["test-support"] }
-search.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
-
-[package.metadata.cargo-machete]
-ignored = ["remote_connection", "tracing"]
