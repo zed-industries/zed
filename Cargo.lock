@@ -6567,7 +6567,6 @@ dependencies = [
  "fs",
  "gpui",
  "inventory",
- "release_channel",
  "schemars 1.0.4",
  "serde_json",
  "settings",
@@ -16200,6 +16199,7 @@ dependencies = [
  "serde_json",
  "smol",
  "tempfile",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
