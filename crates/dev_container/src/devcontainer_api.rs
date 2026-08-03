@@ -308,9 +308,9 @@ pub async fn start_dev_container_with_config(
 
 async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
     let mut command = if use_podman {
-        util::command::new_command("podman")
+        zed_process::new_command("podman")
     } else {
-        util::command::new_command("docker")
+        zed_process::new_command("docker")
     };
     command.arg("--version");
 

@@ -364,7 +364,7 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
     }
 
     // Search for kernels inside the base python environment
-    let command = util::command::new_command("python")
+    let command = zed_process::new_command("python")
         .arg("-c")
         .arg("import sys; print(sys.prefix)")
         .output()

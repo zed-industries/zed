@@ -20,8 +20,8 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
-use util::command::new_command;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
+use zed_process::new_command;
 
 enum DebugpyLaunchMode<'a> {
     Normal,
@@ -121,7 +121,7 @@ impl PythonDebugAdapter {
         std::fs::create_dir_all(&download_dir)?;
         let venv_python = self.base_venv_path(toolchain, delegate).await?;
 
-        let installation_succeeded = util::command::new_command(venv_python.as_ref())
+        let installation_succeeded = zed_process::new_command(venv_python.as_ref())
             .args([
                 "-m",
                 "pip",
@@ -270,7 +270,7 @@ impl PythonDebugAdapter {
                 };
 
                 let debug_adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
-                let output = util::command::new_command(&base_python)
+                let output = zed_process::new_command(&base_python)
                     .args(["-m", "venv", "zed_base_venv"])
                     .current_dir(
                         &debug_adapter_path,

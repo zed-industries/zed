@@ -27,11 +27,11 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::command::{Stdio, new_command};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
+use zed_process::{Stdio, new_command};
 
 use crate::language_settings::LanguageSettings;
 
@@ -145,7 +145,7 @@ impl RustLspAdapter {
         use futures::pin_mut;
 
         async fn from_ldd_version() -> Option<LibcType> {
-            use util::command::new_command;
+            use zed_process::new_command;
 
             let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
@@ -617,7 +617,7 @@ impl LspAdapter for RustLspAdapter {
             .0
             .ok()?;
 
-        let mut command = util::command::new_command(&binary.path);
+        let mut command = zed_process::new_command(&binary.path);
         command
             .arg("--print-config-schema")
             .stdout(Stdio::piped())
@@ -1267,7 +1267,7 @@ async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
-    let mut command = util::command::new_command("cargo");
+    let mut command = zed_process::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -1349,7 +1349,7 @@ async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = util::command::new_command("cargo");
+    let mut command = zed_process::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }

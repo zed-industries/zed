@@ -35,11 +35,11 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::command::{Stdio, new_command};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{ResultExt, paths};
 use uuid::Uuid;
+use zed_process::{Stdio, new_command};
 
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
@@ -3798,7 +3798,7 @@ impl GitBinary {
     }
 
     #[allow(clippy::disallowed_methods)]
-    pub(crate) fn build_command<S>(&self, args: &[S]) -> util::command::Command
+    pub(crate) fn build_command<S>(&self, args: &[S]) -> zed_process::Command
     where
         S: AsRef<OsStr>,
     {
@@ -3847,7 +3847,7 @@ struct GitBinaryCommandError {
 async fn run_git_command(
     env: Arc<HashMap<String, String>>,
     ask_pass: AskPassDelegate,
-    mut command: util::command::Command,
+    mut command: zed_process::Command,
     executor: BackgroundExecutor,
 ) -> Result<RemoteCommandOutput> {
     if env.contains_key("GIT_ASKPASS") {
@@ -3888,7 +3888,7 @@ async fn run_git_command(
 
 async fn run_askpass_command(
     mut ask_pass: AskPassSession,
-    git_process: util::command::Child,
+    git_process: zed_process::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
     select_biased! {
         // Git can legitimately run long without prompting (e.g. large fetches,

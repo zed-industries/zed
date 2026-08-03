@@ -29,8 +29,8 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use util::command::new_command;
 use workspace::Workspace;
+use zed_process::new_command;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 
@@ -1308,7 +1308,7 @@ pub async fn finalize_auto_update_on_quit() {
             .parent()
             .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = util::command::new_command(helper);
+        let mut command = zed_process::new_command(helper);
         command.arg("--launch");
         command.arg("false");
         if let Ok(mut cmd) = command.spawn() {

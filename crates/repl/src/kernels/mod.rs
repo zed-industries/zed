@@ -507,7 +507,7 @@ pub fn python_env_kernel_specifications(
                     let python_path = toolchain.path.to_string();
                     let environment_kind = extract_environment_kind(&toolchain.as_json);
 
-                    let has_ipykernel = util::command::new_command(&python_path)
+                    let has_ipykernel = zed_process::new_command(&python_path)
                         .args(&["-c", "import ipykernel"])
                         .output()
                         .await
@@ -605,7 +605,7 @@ pub fn python_env_kernel_specifications(
                             .unwrap_or(std::borrow::Cow::Borrowed(&internal_path)),
                         discovery_script
                     );
-                    let output = util::command::new_command("wsl")
+                    let output = zed_process::new_command("wsl")
                         .arg("-d")
                         .arg(distro)
                         .arg("bash")

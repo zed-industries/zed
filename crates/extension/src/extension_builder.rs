@@ -21,9 +21,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, command::Stdio};
+use util::ResultExt;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
+use zed_process::Stdio;
 
 /// Currently, we compile with Rust's `wasm32-wasip2` target, which works with WASI `preview2` and the component model.
 const RUST_TARGET: &str = "wasm32-wasip2";
@@ -227,7 +228,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_command("cargo")
+        let output = zed_process::new_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -334,7 +335,7 @@ impl ExtensionBuilder {
             );
         } else {
             log::info!("compiling {grammar_name} parser");
-            let clang_output = util::command::new_command(&clang_path)
+            let clang_output = zed_process::new_command(&clang_path)
                 .args(["-fPIC", "-shared", "-Os"])
                 .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
                 .arg("-o")
@@ -363,7 +364,7 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = util::command::new_command("git")
+            let remotes_output = zed_process::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "get-url", "origin"])
@@ -383,7 +384,7 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = util::command::new_command("git")
+            let init_output = zed_process::new_command("git")
                 .arg("init")
                 .current_dir(directory)
                 .output()
@@ -395,7 +396,7 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = util::command::new_command("git")
+            let remote_add_output = zed_process::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
@@ -410,7 +411,7 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = util::command::new_command("git")
+        let fetch_output = zed_process::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
@@ -418,7 +419,7 @@ impl ExtensionBuilder {
             .await
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = util::command::new_command("git")
+        let checkout_output = zed_process::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
@@ -446,7 +447,7 @@ impl ExtensionBuilder {
     }
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_command("rustc")
+        let rustc_output = zed_process::new_command("rustc")
             .args(["--print", "target-libdir", "--target", RUST_TARGET])
             .output()
             .await
@@ -472,7 +473,7 @@ impl ExtensionBuilder {
             );
         }
 
-        let output = util::command::new_command("rustup")
+        let output = zed_process::new_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
@@ -540,7 +541,7 @@ impl ExtensionBuilder {
         log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
 
         // Shell out to tar to extract the archive
-        let tar_output = util::command::new_command("tar")
+        let tar_output = zed_process::new_command("tar")
             .arg("-xzf")
             .arg(&tar_gz_path)
             .arg("-C")

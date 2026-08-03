@@ -29,12 +29,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
-use util::command::{Child, Stdio};
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::ShellKind,
 };
+use zed_process::{Child, Stdio};
 
 /// How long to wait for SSH to connect when no askpass prompt has opened.
 const SSH_CONNECTION_PROMPT_TIMEOUT: Duration = Duration::from_secs(17);
@@ -173,7 +173,7 @@ impl MasterProcess {
             "-o",
         ];
 
-        let mut master_process = util::command::new_command("ssh");
+        let mut master_process = zed_process::new_command("ssh");
         master_process
             .kill_on_drop(true)
             .stdin(Stdio::null())
@@ -223,7 +223,7 @@ impl MasterProcess {
             &format!("echo '{}'; exec $0", Self::CONNECTION_ESTABLISHED_MAGIC),
         ];
 
-        let mut master_process = util::command::new_command("ssh");
+        let mut master_process = zed_process::new_command("ssh");
         master_process
             .kill_on_drop(true)
             .stdin(Stdio::null())
@@ -540,7 +540,7 @@ async fn find_existing_control_master(
 ) -> Option<PathBuf> {
     // Use `ssh -G` to resolve the user's effective SSH config for this host.
     // This expands ControlPath tokens (%h, %p, %r, %C, etc.) into actual paths.
-    let output = match util::command::new_command("ssh")
+    let output = match zed_process::new_command("ssh")
         .args(additional_args)
         .arg("-G")
         .arg(destination)
@@ -573,7 +573,7 @@ async fn find_existing_control_master(
     })?;
 
     // Verify the master is actually alive by sending a control command.
-    let check = match util::command::new_command("ssh")
+    let check = match zed_process::new_command("ssh")
         .args(additional_args)
         .args(["-O", "check"])
         .arg("-o")
@@ -1170,8 +1170,8 @@ impl SshRemoteConnection {
         src_path: &Path,
         dest_path_str: &str,
         args: Option<&[&str]>,
-    ) -> util::command::Command {
-        let mut command = util::command::new_command("scp");
+    ) -> zed_process::Command {
+        let mut command = zed_process::new_command("scp");
         self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
@@ -1190,8 +1190,8 @@ impl SshRemoteConnection {
         command
     }
 
-    fn build_sftp_command(&self) -> util::command::Command {
-        let mut command = util::command::new_command("sftp");
+    fn build_sftp_command(&self) -> zed_process::Command {
+        let mut command = zed_process::new_command("sftp");
         self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
@@ -1315,8 +1315,8 @@ impl SshSocket {
         program: &str,
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
-    ) -> util::command::Command {
-        let mut command = util::command::new_command("ssh");
+    ) -> zed_process::Command {
+        let mut command = zed_process::new_command("ssh");
         let program = shell_kind.prepend_command_prefix(program);
         let mut to_run = shell_kind
             .try_quote_prefix_aware(&program)
@@ -1367,9 +1367,9 @@ impl SshSocket {
 
     fn ssh_options<'a>(
         &self,
-        command: &'a mut util::command::Command,
+        command: &'a mut zed_process::Command,
         include_port_forwards: bool,
-    ) -> &'a mut util::command::Command {
+    ) -> &'a mut zed_process::Command {
         let args = if include_port_forwards {
             self.connection_options.additional_args()
         } else {

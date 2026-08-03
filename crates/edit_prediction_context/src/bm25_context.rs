@@ -12,7 +12,7 @@ use std::{
     time::Instant,
 };
 use text::Anchor;
-use util::command::new_command;
+use zed_process::new_command;
 
 const BM25_CONTEXT_QUERY_LINE_COUNT: u32 = 20;
 const BM25_CONTEXT_EDIT_HISTORY_QUERY_ENTRY_COUNT: usize = 8;

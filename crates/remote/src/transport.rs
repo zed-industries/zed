@@ -12,7 +12,7 @@ use futures::{
 };
 use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
-use util::command::Child;
+use zed_process::Child;
 
 pub mod docker;
 #[cfg(any(test, feature = "test-support"))]
@@ -247,7 +247,7 @@ async fn build_remote_server_from_source(
 ) -> Result<Option<std::path::PathBuf>> {
     use std::env::VarError;
     use std::path::Path;
-    use util::command::{Command, Stdio, new_command};
+    use zed_process::{Command, Stdio, new_command};
 
     if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
         let path = std::path::PathBuf::from(path);

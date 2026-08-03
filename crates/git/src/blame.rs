@@ -11,7 +11,7 @@ use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
-use util::command::Stdio;
+use zed_process::Stdio;
 
 #[derive(Debug, Clone, Default)]
 pub struct Blame {

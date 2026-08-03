@@ -32,6 +32,7 @@ smol.workspace = true
 util.workspace = true
 watch.workspace = true
 which.workspace = true
+zed_process.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std.workspace = true

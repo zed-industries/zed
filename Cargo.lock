@@ -1426,6 +1426,7 @@ dependencies = [
  "util",
  "which 6.0.3",
  "workspace",
+ "zed_process",
  "zlog",
 ]
 
@@ -4748,6 +4749,7 @@ dependencies = [
  "smol",
  "task",
  "util",
+ "zed_process",
 ]
 
 [[package]]
@@ -5204,6 +5206,7 @@ dependencies = [
  "workspace",
  "worktree",
  "yaml-rust2",
+ "zed_process",
 ]
 
 [[package]]
@@ -5668,6 +5671,7 @@ dependencies = [
  "text",
  "tree-sitter",
  "util",
+ "zed_process",
  "zeta_prompt",
 ]
 
@@ -6338,6 +6342,7 @@ dependencies = [
  "wasm-encoder 0.252.0",
  "wasmparser 0.252.0",
  "which 6.0.3",
+ "zed_process",
  "ztracing",
 ]
 
@@ -6420,6 +6425,7 @@ dependencies = [
  "wasmparser 0.252.0",
  "wasmtime",
  "wasmtime-wasi",
+ "zed_process",
  "zlog",
  "ztracing",
 ]
@@ -6932,6 +6938,7 @@ dependencies = [
  "unicode-normalization",
  "util",
  "windows 0.61.3",
+ "zed_process",
 ]
 
 [[package]]
@@ -7373,6 +7380,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "zed_process",
  "ztracing",
 ]
 
@@ -7464,6 +7472,7 @@ dependencies = [
  "windows 0.61.3",
  "workspace",
  "zed_actions",
+ "zed_process",
  "zlog",
  "ztracing",
 ]
@@ -9194,6 +9203,7 @@ dependencies = [
  "util_macros",
  "workspace",
  "zed_actions",
+ "zed_process",
 ]
 
 [[package]]
@@ -10099,6 +10109,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "zed_process",
 ]
 
 [[package]]
@@ -10622,6 +10633,7 @@ dependencies = [
  "serde",
  "serde_json",
  "util",
+ "zed_process",
  "zlog",
 ]
 
@@ -11610,6 +11622,7 @@ dependencies = [
  "util",
  "watch",
  "which 6.0.3",
+ "zed_process",
 ]
 
 [[package]]
@@ -14244,6 +14257,7 @@ dependencies = [
  "which 6.0.3",
  "worktree",
  "zed_credentials_provider",
+ "zed_process",
  "zeroize",
  "zlog",
  "ztracing",
@@ -15152,6 +15166,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_process",
 ]
 
 [[package]]
@@ -15324,6 +15339,7 @@ dependencies = [
  "urlencoding",
  "util",
  "which 6.0.3",
+ "zed_process",
 ]
 
 [[package]]
@@ -15424,6 +15440,7 @@ dependencies = [
  "windows 0.61.3",
  "workspace",
  "worktree",
+ "zed_process",
  "zlog",
 ]
 
@@ -15496,6 +15513,7 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+ "zed_process",
 ]
 
 [[package]]
@@ -23422,6 +23440,7 @@ dependencies = [
  "zed-reqwest",
  "zed_actions",
  "zed_env_vars",
+ "zed_process",
  "zlog",
  "zlog_settings",
  "ztracing",

@@ -57,7 +57,8 @@ use std::{
     time::Instant,
 };
 use thiserror::Error;
-use util::{ResultExt, command::new_command};
+use util::ResultExt;
+use zed_process::new_command;
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -1107,9 +1108,9 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
 fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
     let mut server_process = new_command(binary_name);
     server_process
-        .stdin(util::command::Stdio::null())
-        .stdout(util::command::Stdio::null())
-        .stderr(util::command::Stdio::null())
+        .stdin(zed_process::Stdio::null())
+        .stdout(zed_process::Stdio::null())
+        .stderr(zed_process::Stdio::null())
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)

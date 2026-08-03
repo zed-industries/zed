@@ -33,6 +33,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 util.workspace = true
+zed_process.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

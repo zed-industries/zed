@@ -63,6 +63,7 @@ tree-sitter = { workspace = true, optional = true , features = ["wasm"] }
 tree-sitter-gitcommit = { workspace = true, optional = true }
 url.workspace = true
 util.workspace = true
+zed_process.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

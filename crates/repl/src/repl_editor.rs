@@ -111,7 +111,7 @@ pub fn install_ipykernel_and_assign(
 
     let install_task = cx.background_spawn(async move {
         let output = if is_uv {
-            util::command::new_command("uv")
+            zed_process::new_command("uv")
                 .args(&[
                     "pip",
                     "install",
@@ -123,7 +123,7 @@ pub fn install_ipykernel_and_assign(
                 .await
                 .context("failed to run uv pip install ipykernel")?
         } else {
-            util::command::new_command(python_path.to_string_lossy().as_ref())
+            zed_process::new_command(python_path.to_string_lossy().as_ref())
                 .args(&["-m", "pip", "install", "ipykernel"])
                 .output()
                 .await

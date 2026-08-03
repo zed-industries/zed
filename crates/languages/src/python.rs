@@ -32,12 +32,12 @@ use terminal::terminal_settings::TerminalSettings;
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
-use util::command::Stdio;
+use zed_process::Stdio;
 
-use util::command::new_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
+use zed_process::new_command;
 
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
@@ -1737,7 +1737,7 @@ impl PyLspAdapter {
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
-            util::command::new_command(python_path)
+            zed_process::new_command(python_path)
                 .arg("-m")
                 .arg("venv")
                 .arg("pylsp-venv")
@@ -1973,7 +1973,7 @@ impl LspInstaller for PyLspAdapter {
             let venv = Self::ensure_venv(delegate.as_ref()).await?;
             let pip_path = venv.join(BINARY_DIR).join("pip3");
             ensure!(
-                util::command::new_command(pip_path.as_path())
+                zed_process::new_command(pip_path.as_path())
                     .arg("install")
                     .arg("python-lsp-server[all]")
                     .arg("--upgrade")
@@ -1984,7 +1984,7 @@ impl LspInstaller for PyLspAdapter {
                 "python-lsp-server[all] installation failed"
             );
             ensure!(
-                util::command::new_command(pip_path)
+                zed_process::new_command(pip_path)
                     .arg("install")
                     .arg("pylsp-mypy")
                     .arg("--upgrade")
@@ -2507,7 +2507,7 @@ impl LspAdapter for RuffLspAdapter {
             .0
             .ok()?;
 
-        let mut command = util::command::new_command(&binary.path);
+        let mut command = zed_process::new_command(&binary.path);
         command
             .args(&["config", "--output-format", "json"])
             .stdout(Stdio::piped())

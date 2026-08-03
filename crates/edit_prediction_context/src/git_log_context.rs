@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use util::command::new_command;
+use zed_process::new_command;
 
 pub struct GitLogIndex {
     index: HashMap<PathBuf, HashMap<PathBuf, usize>>,

@@ -2,7 +2,7 @@ use std::process::Output;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use util::command::Command;
+use zed_process::Command;
 
 use crate::devcontainer_api::DevContainerError;
 

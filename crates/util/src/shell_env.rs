@@ -80,10 +80,10 @@ async fn capture_unix(
     #[cfg(not(target_os = "macos"))]
     use std::os::unix::process::CommandExt;
 
-    #[cfg(target_os = "macos")]
-    use crate::command::new_command;
     #[cfg(not(target_os = "macos"))]
     use crate::command::new_std_command;
+    #[cfg(target_os = "macos")]
+    use zed_process::new_command;
 
     let shell_kind = ShellKind::new(shell_path, false);
     let quoted_zed_path = super::get_shell_safe_zed_path(shell_kind)?;
@@ -189,12 +189,12 @@ async fn capture_unix(
 
 #[cfg(target_os = "macos")]
 async fn spawn_and_read_fd(
-    mut command: crate::command::Command,
+    mut command: zed_process::Command,
     child_fd: std::os::fd::RawFd,
 ) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
     use std::io::Read;
 
-    use crate::command::Stdio;
+    use zed_process::Stdio;
 
     let (mut reader, writer) = std::io::pipe()?;
     command
@@ -263,7 +263,7 @@ async fn capture_windows(
             .map(|quoted| quoted.into_owned())
             .context("unexpected null in directory name")
     };
-    let mut cmd = crate::command::new_command(shell_path);
+    let mut cmd = zed_process::new_command(shell_path);
     cmd.args(args);
     let quoted_directory = quote_for_shell(&directory_string)?;
     let quoted_zed_path = quote_for_shell(&zed_path_string)?;

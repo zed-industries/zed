@@ -12,8 +12,8 @@ use ui::{
     LabelCommon, LabelSize, ParentElement, Styled, StyledExt, div, h_flex, v_flex,
 };
 use util::ResultExt;
-use util::command::new_command;
 use workspace::{ModalView, MultiWorkspace};
+use zed_process::new_command;
 
 const DONT_ASK_AGAIN_KEY: &str = "move_to_applications_dont_ask_again";
 static PROMPTED_THIS_SESSION: AtomicBool = AtomicBool::new(false);

@@ -20,7 +20,7 @@ pub struct SshRunningKernel {
     execution_state: ExecutionState,
     kernel_info: Option<KernelInfoReply>,
     working_directory: PathBuf,
-    _ssh_tunnel_process: util::command::Child,
+    _ssh_tunnel_process: zed_process::Child,
     _local_connection_file: PathBuf,
     kernel_id: String,
     project: Entity<Project>,
@@ -116,7 +116,7 @@ impl SshRunningKernel {
                 remote_client.read(cx).build_forward_ports_command(forwards)
             })??;
 
-            let mut command = util::command::new_command(&command_template.program);
+            let mut command = zed_process::new_command(&command_template.program);
             command.args(&command_template.args);
             command.envs(&command_template.env);
 

@@ -640,7 +640,7 @@ impl ManagedNodeRuntime {
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
         let valid = if fs::metadata(&node_binary).await.is_ok() {
-            let result = util::command::new_command(&node_binary)
+            let result = zed_process::new_command(&node_binary)
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
                 .arg("--version")
@@ -770,7 +770,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     ) -> Result<Output> {
         let attempt = || async {
             let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
-            let mut command = util::command::new_command(npm_command.path);
+            let mut command = zed_process::new_command(npm_command.path);
             command.args(npm_command.args);
             command.envs(npm_command.env);
             if let Some(directory) = directory {
@@ -858,7 +858,7 @@ pub struct SystemNodeRuntime {
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
-        let output = util::command::new_command(&node)
+        let output = zed_process::new_command(&node)
             .arg("--version")
             .output()
             .await
@@ -936,7 +936,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         args: &[&str],
     ) -> anyhow::Result<Output> {
         let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
-        let mut command = util::command::new_command(npm_command.path);
+        let mut command = zed_process::new_command(npm_command.path);
         command.args(npm_command.args);
         command.envs(npm_command.env);
         if let Some(directory) = directory {

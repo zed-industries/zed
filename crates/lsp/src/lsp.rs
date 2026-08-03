@@ -19,7 +19,7 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use util::command::{Child, Stdio};
+use zed_process::{Child, Stdio};
 
 use gpui_util::{ResultExt, TryFutureExt};
 use std::path::Path;
@@ -434,7 +434,7 @@ impl LanguageServer {
             working_dir,
             &binary.arguments
         );
-        let mut command = util::command::new_command(&binary.path);
+        let mut command = zed_process::new_command(&binary.path);
         command
             .current_dir(working_dir)
             .args(&binary.arguments)

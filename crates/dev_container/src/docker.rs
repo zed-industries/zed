@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de};
-use util::command::Command;
+use zed_process::Command;
 
 use crate::{
     command_json::{evaluate_json_command, evaluate_yaml_command},
@@ -769,7 +769,7 @@ mod test {
         },
     };
     #[cfg(not(target_os = "windows"))]
-    use util::command::Command;
+    use zed_process::Command;
 
     #[test]
     fn use_buildkit_setting_overrides_buildx_detection() {

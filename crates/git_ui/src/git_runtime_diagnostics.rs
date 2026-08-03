@@ -385,7 +385,7 @@ async fn collect_macos_git_child_diagnostics() -> anyhow::Result<Value> {
 
 #[cfg(target_os = "macos")]
 async fn run_capturing(program: &str, args: &[&str]) -> anyhow::Result<String> {
-    let output = util::command::new_command(program)
+    let output = zed_process::new_command(program)
         .args(args)
         .output()
         .await?;

@@ -503,7 +503,7 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
     ) else {
         return false;
     };
-    let Ok(mut child) = util::command::new_command(command.program)
+    let Ok(mut child) = zed_process::new_command(command.program)
         .args(command.args)
         .envs(command.env)
         .spawn()

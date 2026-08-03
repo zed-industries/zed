@@ -38,6 +38,7 @@ serde_json.workspace = true
 smol.workspace = true
 task.workspace = true
 util.workspace = true
+zed_process.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }

@@ -21,12 +21,12 @@ use std::{
 };
 
 use util::{
-    command::Stdio,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::{Shell, ShellKind},
     shell_builder::ShellBuilder,
 };
+use zed_process::Stdio;
 
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
@@ -629,9 +629,7 @@ pub fn wsl_path_to_windows_path(
     }
 }
 
-fn run_wsl_command_impl(
-    mut command: util::command::Command,
-) -> impl Future<Output = Result<String>> {
+fn run_wsl_command_impl(mut command: zed_process::Command) -> impl Future<Output = Result<String>> {
     async move {
         let output = command
             .output()
@@ -658,8 +656,8 @@ fn wsl_command_impl(
     program: &str,
     args: &[impl AsRef<OsStr>],
     exec: bool,
-) -> util::command::Command {
-    let mut command = util::command::new_command("wsl.exe");
+) -> zed_process::Command {
+    let mut command = zed_process::new_command("wsl.exe");
 
     if let Some(user) = &options.user {
         command.arg("--user").arg(user);

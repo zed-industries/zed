@@ -43,6 +43,7 @@ tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
+zed_process.workspace = true
 path.workspace = true
 is_executable = "1.0.5"
 notify = "9.0.0-rc.4"

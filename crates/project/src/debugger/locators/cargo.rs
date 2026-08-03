@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use smol::{io::AsyncReadExt, process::Stdio as SmolStdio};
 use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
-use util::command::{Stdio, new_command};
+use zed_process::{Stdio, new_command};
 
 pub(crate) struct CargoLocator;
 

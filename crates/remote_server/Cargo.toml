@@ -72,6 +72,7 @@ telemetry.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true
+zed_process.workspace = true
 thiserror.workspace = true
 rayon.workspace = true
 uuid = { workspace = true, features = ["v4"] }

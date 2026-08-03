@@ -18,7 +18,7 @@ use gpui::ReadGlobal as _;
 use gpui::SharedString;
 #[cfg(unix)]
 use std::ffi::CString;
-use util::command::new_command;
+use zed_process::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};

@@ -39,6 +39,7 @@ util.workspace = true
 wasm-encoder.workspace = true
 wasmparser.workspace = true
 which.workspace = true
+zed_process.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]

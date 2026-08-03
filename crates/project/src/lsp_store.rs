@@ -2557,8 +2557,8 @@ impl LocalLspStore {
             Some(worktree_path)
         });
 
-        use util::command::Stdio;
-        let mut child = util::command::new_command(command);
+        use zed_process::Stdio;
+        let mut child = zed_process::new_command(command);
 
         if let Some(buffer_env) = buffer.env.as_ref() {
             child.envs(buffer_env);
@@ -14703,7 +14703,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         };
 
         let env = self.shell_env().await;
-        let output = util::command::new_command(&npm)
+        let output = zed_process::new_command(&npm)
             .args(["root", "-g"])
             .envs(env)
             .current_dir(local_package_directory)
@@ -14738,7 +14738,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         if self.fs.is_file(&working_dir).await {
             working_dir.pop();
         }
-        let output = util::command::new_command(&command.path)
+        let output = zed_process::new_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
             .current_dir(working_dir)

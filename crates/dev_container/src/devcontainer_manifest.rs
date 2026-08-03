@@ -10,7 +10,8 @@ use regex::Regex;
 
 use fs::Fs;
 use http_client::HttpClient;
-use util::{ResultExt, command::Command, normalize_path};
+use util::{ResultExt, normalize_path};
+use zed_process::Command;
 
 use crate::{
     DevContainerConfig, DevContainerContext,
@@ -3487,7 +3488,8 @@ mod test {
         worktree_store::{WorktreeIdCounter, WorktreeStore},
     };
     use serde_json_lenient::Value;
-    use util::{command::Command, paths::SanitizedPath};
+    use util::paths::SanitizedPath;
+    use zed_process::Command;
 
     use crate::{
         DevContainerConfig, DevContainerContext,

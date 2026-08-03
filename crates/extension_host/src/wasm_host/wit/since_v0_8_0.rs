@@ -895,7 +895,7 @@ impl process::Host for WasmState {
             self.capability_granter
                 .grant_exec(&command.command, &command.args)?;
 
-            let output = util::command::new_command(command.command.as_str())
+            let output = zed_process::new_command(command.command.as_str())
                 .args(&command.args)
                 .envs(command.env)
                 .output()

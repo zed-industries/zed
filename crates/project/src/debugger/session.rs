@@ -63,10 +63,9 @@ use std::{
 use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
-use util::command::Stdio;
-use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
+use zed_process::{Stdio, new_command};
 
 const MAX_TRACKED_OUTPUT_EVENTS: usize = 5000;
 const DEBUG_HISTORY_LIMIT: usize = 10;
@@ -3103,7 +3102,7 @@ struct KillCompanionBrowserParams {
 async fn spawn_companion(
     node_runtime: NodeRuntime,
     cx: &mut AsyncApp,
-) -> Result<(u16, util::command::Child)> {
+) -> Result<(u16, zed_process::Child)> {
     let binary_path = node_runtime
         .binary_path()
         .await

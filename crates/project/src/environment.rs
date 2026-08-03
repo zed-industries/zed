@@ -5,8 +5,9 @@ use remote::RemoteClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::{Shell, shell_to_proto};
-use util::{ResultExt, command::new_command};
+use util::ResultExt;
 use worktree::Worktree;
+use zed_process::new_command;
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, WeakEntity};

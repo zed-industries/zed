@@ -14,7 +14,6 @@ use language::LanguageName;
 use log::warn;
 use serde_json::{Map, Value};
 use task::TcpArgumentsTemplate;
-use util;
 
 use std::{
     env::consts,
@@ -463,7 +462,7 @@ impl DebugAdapter for GoDebugAdapter {
 
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
 
-            let install_output = util::command::new_command(&go)
+            let install_output = zed_process::new_command(&go)
                 .env("GO111MODULE", "on")
                 .env("GOBIN", &adapter_path)
                 .args(&["install", "github.com/go-delve/delve/cmd/dlv@latest"])
