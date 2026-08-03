@@ -574,15 +574,20 @@ impl From<Underline> for Primitive {
 pub struct Shadow {
     pub order: DrawOrder,
     pub blur_radius: ScaledPixels,
+    // Only used for inset shadows: shifts the blur center in the shader so
+    // the shadow is heavier on one side. Outer shadows apply their offset
+    // to bounds before reaching the shader, so this is zero for them.
+    pub offset: Point<ScaledPixels>,
     pub bounds: Bounds<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
-    pub element_bounds: Bounds<ScaledPixels>,
-    pub element_corner_radii: Corners<ScaledPixels>,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    pub pad: u32, // align to 8 bytes
+    // Only used for inset shadows: shrinks the virtual rect the gaussian
+    // blurs against, making the shadow reach further inward. Zero for outer
+    // shadows (they apply spread to bounds before reaching the shader).
+    pub spread_radius: ScaledPixels,
 }
 
 impl From<Shadow> for Primitive {
