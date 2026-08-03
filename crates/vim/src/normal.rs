@@ -2230,6 +2230,11 @@ mod test {
         cx.set_state("    let xˇ = 1;", Mode::Normal);
         cx.simulate_keystrokes("shift-o");
         cx.assert_state("    ˇ\n    let x = 1;", Mode::Insert);
+
+        // O on an unindented line: the new line gets no indentation
+        cx.set_state("fn test() {\n    println!(\"\");\nˇ}", Mode::Normal);
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state("fn test() {\n    println!(\"\");\nˇ\n}", Mode::Insert);
     }
 
     #[gpui::test]
