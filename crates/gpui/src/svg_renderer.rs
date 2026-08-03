@@ -276,9 +276,7 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
     }
     let height = svg_size.height() * scale;
     if height > MAX_SIZE {
-        log::warn!(
-            "Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})"
-        );
+        log::warn!("Attempted to render pixmap where height ({height}) > MAX_SIZE ({MAX_SIZE})");
         scale *= MAX_SIZE / height;
     }
 

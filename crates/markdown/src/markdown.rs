@@ -2551,12 +2551,13 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let (showing_code, zoom) = self.markdown.update(cx, |markdown, cx| {
-                                    (
-                                        markdown.is_mermaid_showing_code(range.start),
-                                        markdown.effective_mermaid_zoom_level(range.start, cx),
-                                    )
-                                });
+                                let (showing_code, zoom) =
+                                    self.markdown.update(cx, |markdown, cx| {
+                                        (
+                                            markdown.is_mermaid_showing_code(range.start),
+                                            markdown.effective_mermaid_zoom_level(range.start, cx),
+                                        )
+                                    });
                                 let copy_button_visibility = match &self.code_block_renderer {
                                     CodeBlockRenderer::Default {
                                         copy_button_visibility,

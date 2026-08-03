@@ -1724,9 +1724,9 @@ mod test {
     use std::rc::Rc;
 
     use crate::{
-        self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement, IntoElement,
-        ListState,
-        Render, Styled, TestAppContext, Window, canvas, div, list, point, px, size,
+        self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement,
+        IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
+        px, size,
     };
 
     #[gpui::test]
