@@ -1,6 +1,7 @@
 use crate::{
     branch_picker,
-    diff_multibuffer::DiffMultibuffer,
+    diff_file_tree::{DiffFileTree, DiffFileTreeEvent},
+    diff_multibuffer::{DiffMultibuffer, project_diff_path_key},
     project_diff::{
         self, CompareWithBranch, DeployBranchDiff, ProjectDiff, ReviewDiff,
         render_send_review_to_agent_button,
@@ -10,14 +11,15 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use editor::{
     Addon, Editor, EditorEvent, RestoreOnlyDiffHunkDelegate, SplittableEditor,
-    actions::SendReviewToAgent,
+    actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
 };
 use git::{repository::DiffType, status::FileStatus};
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Subscription, Task, WeakEntity,
+    Action, AnyElement, App, AppContext as _, DragMoveEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Pixels, Render, SharedString, Subscription, Task, WeakEntity, actions, px,
 };
 use language::{BufferId, Capability};
+use multi_buffer::ToPoint;
 use project::{
     Project, ProjectPath,
     git_store::{
@@ -40,6 +42,20 @@ use workspace::{
 };
 use zed_actions::agent::ReviewBranchDiff;
 
+actions!(
+    branch_diff,
+    [
+        /// Toggles the changed-files tree sidebar in the branch diff view.
+        ToggleFileTree
+    ]
+);
+
+const FILE_TREE_MIN_WIDTH: f32 = 140.0;
+const FILE_TREE_MAX_WIDTH: f32 = 500.0;
+const FILE_TREE_DEFAULT_WIDTH: f32 = 240.0;
+
+struct DraggedFileTreeHandle;
+
 /// The workspace item for a branch (merge-base) diff: "Changes since {branch}".
 /// It wraps a single [`DiffMultibuffer`] over [`DiffBase::Merge`] and delegates
 /// the [`Item`] surface to it. The merge base can be changed in place via the
@@ -47,9 +63,12 @@ use zed_actions::agent::ReviewBranchDiff;
 /// the editor (the merge styling is identical for every base ref).
 pub struct BranchDiff {
     diff: Entity<DiffMultibuffer>,
+    file_tree: Entity<DiffFileTree>,
+    show_file_tree: bool,
+    file_tree_width: Pixels,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    _diff_event_subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 struct BranchDiffAddon {
@@ -334,7 +353,7 @@ impl BranchDiff {
         let branch_diff_for_addon = branch_diff.clone();
         let diff = cx.new(|cx| {
             DiffMultibuffer::new(
-                branch_diff,
+                branch_diff.clone(),
                 Capability::ReadWrite,
                 "No changes",
                 move |editor, cx| {
@@ -352,24 +371,150 @@ impl BranchDiff {
                 cx,
             )
         });
-        Self::from_diff(diff, project, workspace, cx)
+        let file_tree = cx.new(|cx| DiffFileTree::new(branch_diff, cx));
+        Self::from_diff(diff, file_tree, project, workspace, window, cx)
     }
 
     fn from_diff(
         diff: Entity<DiffMultibuffer>,
+        file_tree: Entity<DiffFileTree>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let diff_event_subscription = cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
+        let diff_event_subscription = cx.subscribe(&diff, |this, _, event: &EditorEvent, cx| {
+            if matches!(event, EditorEvent::SelectionsChanged { .. }) {
+                this.sync_file_tree_selection(cx);
+            }
             cx.emit(event.clone())
         });
+        let file_tree_subscription = cx.subscribe_in(
+            &file_tree,
+            window,
+            |this, _, event: &DiffFileTreeEvent, window, cx| {
+                // With the tree hidden its only emissions are auto-selections,
+                // which must not narrow or scroll the classic all-files view.
+                if !this.show_file_tree {
+                    return;
+                }
+                let DiffFileTreeEvent::OpenEntry {
+                    repo_path,
+                    status,
+                    target,
+                } = event;
+                let Some(repo) = this.repo(cx) else {
+                    return;
+                };
+                let path_key = project_diff_path_key(repo.read(cx), repo_path, *status, cx);
+                this.diff.update(cx, |diff, cx| {
+                    diff.set_path_filter(Some(repo_path.clone()), window, cx);
+                    diff.move_to_path_with_target(path_key, *target, window, cx);
+                });
+            },
+        );
         Self {
             diff,
+            file_tree,
+            show_file_tree: true,
+            file_tree_width: px(FILE_TREE_DEFAULT_WIDTH),
             project,
             workspace: workspace.downgrade(),
-            _diff_event_subscription: diff_event_subscription,
+            _subscriptions: vec![diff_event_subscription, file_tree_subscription],
         }
+    }
+
+    fn sync_file_tree_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(project_path) = self.diff.read(cx).active_project_path(cx) else {
+            return;
+        };
+        let Some(repo) = self.repo(cx) else {
+            return;
+        };
+        let Some(repo_path) = repo.read(cx).project_path_to_repo_path(&project_path, cx) else {
+            return;
+        };
+        self.file_tree.update(cx, |file_tree, cx| {
+            file_tree.set_active_path(Some(repo_path), cx)
+        });
+    }
+
+    fn go_to_next_hunk_across_files(
+        &mut self,
+        _: &GoToHunk,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hunk_nav_across_files(true, cx);
+    }
+
+    fn go_to_previous_hunk_across_files(
+        &mut self,
+        _: &GoToPreviousHunk,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hunk_nav_across_files(false, cx);
+    }
+
+    /// In single-file mode, hunk navigation that runs off the edge of the
+    /// displayed file moves to the neighboring file instead of wrapping within
+    /// the current one, as PhpStorm does. Runs in the capture phase so it can
+    /// preempt the editor's own wrap-around handling; when the cursor is not at
+    /// the edge, the event propagates to the editor untouched.
+    fn hunk_nav_across_files(&mut self, next: bool, cx: &mut Context<Self>) {
+        if !self.show_file_tree {
+            return;
+        }
+        let editor = self
+            .diff
+            .read(cx)
+            .editor()
+            .read(cx)
+            .focused_editor()
+            .clone();
+        let at_edge = editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let head = editor.selections.newest_anchor().head().to_point(&snapshot);
+            if next {
+                !snapshot
+                    .diff_hunks_in_range(head..snapshot.max_point())
+                    .any(|hunk| hunk.row_range.start.0 > head.row)
+            } else {
+                snapshot.diff_hunk_before(head).is_none()
+            }
+        });
+        if !at_edge {
+            return;
+        }
+        let opened = self.file_tree.update(cx, |file_tree, cx| {
+            if next {
+                file_tree.open_next_file(cx)
+            } else {
+                file_tree.open_previous_file(cx)
+            }
+        });
+        if opened {
+            cx.stop_propagation();
+        }
+    }
+
+    fn toggle_file_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_file_tree = !self.show_file_tree;
+        // The single-file filter only makes sense alongside the tree: without
+        // it there would be no way to reach the other files.
+        let path_filter = if self.show_file_tree {
+            self.file_tree
+                .read(cx)
+                .open_file()
+                .map(|(path, _)| path.clone())
+        } else {
+            None
+        };
+        self.diff.update(cx, |diff, cx| {
+            diff.set_path_filter(path_filter, window, cx);
+        });
+        cx.notify();
     }
 
     pub(crate) fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
@@ -641,12 +786,59 @@ impl Item for BranchDiff {
     }
 }
 
+impl BranchDiff {
+    fn render_file_tree_resize_handle(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("branch-diff-file-tree-resize-container")
+            .relative()
+            .h_full()
+            .flex_shrink_0()
+            .w(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("branch-diff-file-tree-resize-handle")
+                    .absolute()
+                    .left(px(-3.))
+                    .w(px(6.))
+                    .h_full()
+                    .cursor_col_resize()
+                    .block_mouse_except_scroll()
+                    .on_drag(DraggedFileTreeHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for BranchDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        h_flex()
             .size_full()
             .on_action(cx.listener(Self::review_diff))
-            .child(self.diff.clone())
+            .on_action(cx.listener(|this, _: &ToggleFileTree, window, cx| {
+                this.toggle_file_tree(window, cx);
+            }))
+            .capture_action(cx.listener(Self::go_to_next_hunk_across_files))
+            .capture_action(cx.listener(Self::go_to_previous_hunk_across_files))
+            .on_drag_move::<DraggedFileTreeHandle>(cx.listener(
+                |this, event: &DragMoveEvent<DraggedFileTreeHandle>, _window, cx| {
+                    let width = event.event.position.x - event.bounds.left();
+                    this.file_tree_width =
+                        width.clamp(px(FILE_TREE_MIN_WIDTH), px(FILE_TREE_MAX_WIDTH));
+                    cx.notify();
+                },
+            ))
+            .when(self.show_file_tree, |this| {
+                this.child(
+                    div()
+                        .h_full()
+                        .flex_shrink_0()
+                        .w(self.file_tree_width)
+                        .child(self.file_tree.clone()),
+                )
+                .child(self.render_file_tree_resize_handle(cx))
+            })
+            .child(div().h_full().flex_1().min_w_0().child(self.diff.clone()))
     }
 }
 
@@ -811,12 +1003,59 @@ impl Render for BranchDiffToolbar {
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
+        let show_file_tree = branch_diff.read(cx).show_file_tree;
+
         h_flex()
             .my_neg_1()
             .py_1()
             .gap_1p5()
             .flex_wrap()
             .justify_between()
+            .child(
+                IconButton::new("branch-diff-toggle-file-tree", IconName::FileTree)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(show_file_tree)
+                    .tooltip(Tooltip::text("Toggle Changed Files Tree"))
+                    .on_click({
+                        let branch_diff = branch_diff.downgrade();
+                        move |_, window, cx| {
+                            branch_diff
+                                .update(cx, |branch_diff, cx| {
+                                    branch_diff.toggle_file_tree(window, cx)
+                                })
+                                .ok();
+                        }
+                    }),
+            )
+            .child(
+                h_group_sm()
+                    .child(
+                        IconButton::new("branch-diff-prev-hunk", IconName::ArrowUp)
+                            .icon_size(IconSize::Small)
+                            .disabled(is_multibuffer_empty)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to Previous Hunk",
+                                &GoToPreviousHunk,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToPreviousHunk, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("branch-diff-next-hunk", IconName::ArrowDown)
+                            .icon_size(IconSize::Small)
+                            .disabled(is_multibuffer_empty)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to Next Hunk",
+                                &GoToHunk,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToHunk, window, cx)
+                            })),
+                    ),
+            )
             .when(!is_multibuffer_empty, |this| {
                 this.child(DiffStat::new(
                     "branch-diff-stat",
@@ -1135,6 +1374,8 @@ mod tests {
             })
             .await
             .unwrap();
+        // Hide the file tree so this test exercises the classic all-files view.
+        diff.update_in(cx, |diff, window, cx| diff.toggle_file_tree(window, cx));
         cx.run_until_parked();
 
         fs.set_head_for_repo(
@@ -1204,6 +1445,93 @@ mod tests {
                 )
             ])
         );
+    }
+
+    #[gpui::test]
+    async fn test_branch_diff_file_tree_single_file_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "C",
+                "b.txt": "new",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project.clone(), workspace, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", "B".into())],
+            "sha",
+        );
+        fs.set_merge_base_content_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", "A".into())],
+        );
+        cx.run_until_parked();
+
+        // With the tree visible (the default), only the auto-selected first
+        // file is excerpted in the editor.
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.diff.read(cx).excerpt_file_paths(cx), vec!["a.txt"]);
+            let open_file = diff.file_tree.read(cx).open_file().cloned();
+            assert_eq!(
+                open_file.map(|(path, _)| path.as_unix_str().to_string()),
+                Some("a.txt".to_string())
+            );
+        });
+
+        // Hiding the tree restores the classic all-files multibuffer.
+        diff.update_in(cx, |diff, window, cx| diff.toggle_file_tree(window, cx));
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(
+                diff.diff.read(cx).excerpt_file_paths(cx),
+                vec!["a.txt", "b.txt"]
+            );
+        });
+
+        // Showing it again narrows back down to the open file.
+        diff.update_in(cx, |diff, window, cx| diff.toggle_file_tree(window, cx));
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.diff.read(cx).excerpt_file_paths(cx), vec!["a.txt"]);
+        });
+
+        // Next/previous-file navigation replaces the displayed file, cycling
+        // through the change set.
+        diff.update(cx, |diff, cx| {
+            diff.file_tree.update(cx, |file_tree, cx| {
+                assert!(file_tree.open_next_file(cx));
+            });
+        });
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.diff.read(cx).excerpt_file_paths(cx), vec!["b.txt"]);
+        });
+        diff.update(cx, |diff, cx| {
+            diff.file_tree.update(cx, |file_tree, cx| {
+                assert!(file_tree.open_previous_file(cx));
+            });
+        });
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.diff.read(cx).excerpt_file_paths(cx), vec!["a.txt"]);
+        });
     }
 
     #[gpui::test]

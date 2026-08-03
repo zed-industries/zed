@@ -36,6 +36,14 @@ use workspace::{
 };
 use ztracing::instrument;
 
+/// Where to land inside a file when navigating to it: its first hunk, or its
+/// last one (used when stepping backwards into the previous file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathTarget {
+    Start,
+    End,
+}
+
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
     display_buffer: Entity<Buffer>,
@@ -51,7 +59,8 @@ pub struct DiffMultibuffer {
     buffer_subscriptions: HashMap<RepoPath, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    pending_scroll: Option<PathKey>,
+    path_filter: Option<RepoPath>,
+    pending_scroll: Option<(PathKey, PathTarget)>,
     review_comment_count: usize,
     empty_label: SharedString,
     _task: Task<Result<()>>,
@@ -163,6 +172,7 @@ impl DiffMultibuffer {
             editor,
             multibuffer,
             buffer_subscriptions: Default::default(),
+            path_filter: None,
             pending_scroll: None,
             review_comment_count: 0,
             empty_label: empty_label.into(),
@@ -253,27 +263,68 @@ impl DiffMultibuffer {
         });
     }
 
+    /// Restricts the multibuffer to a single file, in the style of PhpStorm's
+    /// diff viewer, or shows every changed file again when `None`.
+    pub(crate) fn set_path_filter(
+        &mut self,
+        path_filter: Option<RepoPath>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.path_filter == path_filter {
+            return;
+        }
+        self.path_filter = path_filter;
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
+        });
+        cx.notify();
+    }
+
     pub(crate) fn move_to_path(
         &mut self,
         path_key: PathKey,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.move_to_path_with_target(path_key, PathTarget::Start, window, cx)
+    }
+
+    pub(crate) fn move_to_path_with_target(
+        &mut self,
+        path_key: PathKey,
+        target: PathTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
-                editor.rhs_editor().update(cx, |editor, cx| {
-                    editor.change_selections(
+                editor.rhs_editor().update(cx, |editor, cx| match target {
+                    PathTarget::Start => editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::focused()),
                         window,
                         cx,
                         |s| {
                             s.select_ranges([position..position]);
                         },
-                    )
+                    ),
+                    PathTarget::End => {
+                        let snapshot = editor.snapshot(window, cx);
+                        let max_point = snapshot.buffer_snapshot().max_point();
+                        editor.go_to_hunk_before_or_after_position(
+                            &snapshot,
+                            max_point,
+                            editor::Direction::Prev,
+                            true,
+                            window,
+                            cx,
+                        );
+                    }
                 })
             });
         } else {
-            self.pending_scroll = Some(path_key);
+            self.pending_scroll = Some((path_key, target));
         }
     }
 
@@ -581,8 +632,12 @@ impl DiffMultibuffer {
                 editor.focus_handle(cx).focus(window, cx);
             });
         }
-        if self.pending_scroll.as_ref() == Some(&path_key) {
-            self.move_to_path(path_key, window, cx);
+        if let Some((pending_path, target)) = self
+            .pending_scroll
+            .clone()
+            .filter(|(pending_path, _)| pending_path == &path_key)
+        {
+            self.move_to_path_with_target(pending_path, target, window, cx);
         }
 
         needs_fold.then_some(buffer_id)
@@ -636,6 +691,13 @@ impl DiffMultibuffer {
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
                 for diff_buffer in buffers_to_load {
+                    if this
+                        .path_filter
+                        .as_ref()
+                        .is_some_and(|filter| filter != &diff_buffer.repo_path)
+                    {
+                        continue;
+                    }
                     live_repo_paths.insert(diff_buffer.repo_path.clone());
                     let path_key = project_diff_path_key(
                         &repo,

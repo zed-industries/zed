@@ -1097,6 +1097,14 @@
     },
   },
   {
+    "context": "DiffFileTree",
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "GitPanel && CommitEditor",
     "use_key_equivalents": true,
     "bindings": {
