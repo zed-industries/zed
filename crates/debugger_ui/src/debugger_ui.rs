@@ -414,14 +414,8 @@ fn spawn_task_or_modal(
             let overrides = reveal_target.map(|reveal_target| TaskOverrides {
                 reveal_target: Some(reveal_target),
             });
-            let name = task_name.clone();
-            tasks_ui::spawn_tasks_filtered(
-                move |(_, task)| task.label.eq(&name),
-                overrides,
-                window,
-                cx,
-            )
-            .detach_and_log_err(cx)
+            tasks_ui::spawn_task_by_name(task_name.clone(), overrides, window, cx)
+                .detach_and_log_err(cx)
         }
         Spawn::ByTag {
             task_tag,
