@@ -459,7 +459,8 @@ impl CommitView {
                                 this.editor.update(cx, |editor, cx| {
                                     editor.rhs_editor().update(cx, |editor, cx| {
                                         editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::center()),
+                                            SelectionEffects::scroll(Autoscroll::center())
+                                                .nav_history(false),
                                             window,
                                             cx,
                                             |s| s.select_ranges([anchor..anchor]),
