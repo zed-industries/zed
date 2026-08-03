@@ -238,6 +238,9 @@ pub(crate) fn render_breadcrumb_symbol_segment(
         .style(ButtonStyle::Transparent)
         .size(ui::ButtonSize::None)
         .height(rems_from_px(22.).into())
+        .when(target.is_none(), |this| {
+            this.tooltip(ui::Tooltip::text("Right-Click to Copy Path"))
+        })
         .child(label);
 
     PopoverMenu::new(("breadcrumb-symbol-menu", index))

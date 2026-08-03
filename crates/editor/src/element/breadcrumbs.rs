@@ -77,17 +77,10 @@ pub(crate) enum BreadcrumbSegmentTarget {
     },
 }
 
-/// Flattens `text` to a single display line. The replacement must be the same UTF-8 length as the
-/// newline, since highlight ranges are byte offsets into the unflattened text.
+/// Flattens `text` to a single display line. The replacement is a single byte like the newline,
+/// keeping the text's byte-offset highlight ranges valid.
 pub fn flatten_text_for_single_line_display(text: &str) -> String {
-    const LINE_BREAK: char = '\n';
-    const REPLACEMENT: &str = " ";
-    debug_assert_eq!(
-        LINE_BREAK.len_utf8(),
-        REPLACEMENT.len(),
-        "replacing {LINE_BREAK:?} with {REPLACEMENT:?} would shift byte-offset highlight ranges"
-    );
-    text.replace(LINE_BREAK, REPLACEMENT)
+    text.replace('\n', " ")
 }
 
 /// One segment, resolved ahead of the render pass so the element never reaches back into

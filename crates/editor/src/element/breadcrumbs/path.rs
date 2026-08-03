@@ -97,11 +97,8 @@ impl settings::Settings for BreadcrumbDirectoryListingSettings {
     }
 }
 
-/// Mirrors `ProjectPanel::update_diagnostics`'s own filtering (see
-/// `crates/project_panel/src/project_panel.rs`): errors always count, warnings only count when
-/// the setting is `all`, and the setting can turn diagnostics off entirely. Reads the aggregated
-/// per-path summary rather than walking every diagnostic, since this runs on every breadcrumb
-/// render.
+/// The project panel's severity filtering. Reads the aggregated per-path summary rather than
+/// walking diagnostics, since this runs on every render.
 pub fn breadcrumb_diagnostic_severity(
     project: &Project,
     project_path: &ProjectPath,

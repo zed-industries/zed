@@ -70,9 +70,6 @@ enum BreadcrumbEntryIconSource {
     None,
 }
 
-/// The project panel's own mapping, so an entry reads the same colour in both places. Empty
-/// (rather than `entry.git_summary`) when `git_status` is disabled, the same as the panel with
-/// the setting off.
 fn breadcrumb_entry_label_color(
     entry: &BreadcrumbDirectoryEntry,
     git_status_enabled: bool,
@@ -86,8 +83,7 @@ fn breadcrumb_entry_label_color(
     editor::items::entry_git_aware_label_color(git_summary, entry.is_ignored, is_active_file)
 }
 
-/// Diagnostics tint the icon rather than the label, matching the project panel: git status owns
-/// the label colour, diagnostics own the icon.
+// Diagnostics tint the icon and git status the label, the same split the project panel uses.
 fn breadcrumb_entry_icon_color(entry: &BreadcrumbDirectoryEntry) -> Color {
     editor::items::entry_diagnostic_aware_icon_decoration_and_color(entry.diagnostic_severity)
         .map(|(_, color)| color)
@@ -409,10 +405,8 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
         }
     }
 
-    /// Steps into the selected directory. Returns an empty query rather than `None` when it
-    /// does: `None` means unhandled, which would let the keystroke fall through to the next
-    /// binding and also move the query editor's cursor. The dropdown re-anchors under the new
-    /// segment anyway, so the reset query is never visible.
+    // Some rather than None when handled: None lets the keystroke fall through to cursor
+    // movement in the query editor.
     fn select_child(
         &mut self,
         window: &mut Window,
@@ -530,6 +524,7 @@ pub(crate) fn render_breadcrumb_directory_segment(
         .style(ButtonStyle::Transparent)
         .size(ButtonSize::None)
         .height(rems_from_px(22.).into())
+        .tooltip(ui::Tooltip::text("Double-Click to Reveal in Project Panel"))
         .child(label);
 
     // Only the active segment's popover carries the shared handle `Editor::navigate_breadcrumb_to`
@@ -678,9 +673,6 @@ mod tests {
         });
     }
 
-    /// Mirrors the entry the picker would build for a `BreadcrumbDirectoryEntry`, since the
-    /// struct's fields are all `pub` but constructing it from scratch each time would bury the
-    /// field that actually varies per test under boilerplate.
     fn test_entry(git_summary: git::status::GitSummary) -> BreadcrumbDirectoryEntry {
         BreadcrumbDirectoryEntry {
             name: "file.txt".into(),
