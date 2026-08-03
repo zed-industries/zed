@@ -7,10 +7,11 @@
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
+use futures::TryStreamExt as _;
 use sqlx::{
-    ConnectOptions as _, Row as _,
-    mysql::{MySqlConnectOptions, MySqlConnection},
-    sqlite::{SqliteConnectOptions, SqliteConnection},
+    Column as _, ConnectOptions as _, Either, Row as _, ValueRef as _,
+    mysql::{MySqlConnectOptions, MySqlConnection, MySqlRow},
+    sqlite::{SqliteConnectOptions, SqliteConnection, SqliteRow},
 };
 use std::{future::Future, path::PathBuf, time::Duration};
 
@@ -152,6 +153,13 @@ async fn open_sqlite(path: &str) -> Result<SqliteConnection> {
 }
 
 async fn open_mariadb(config: &ConnectionConfig) -> Result<MySqlConnection> {
+    open_mariadb_with_database(config, None).await
+}
+
+async fn open_mariadb_with_database(
+    config: &ConnectionConfig,
+    database: Option<&str>,
+) -> Result<MySqlConnection> {
     let ConnectionConfig::MariaDb {
         host,
         port,
@@ -168,6 +176,9 @@ async fn open_mariadb(config: &ConnectionConfig) -> Result<MySqlConnection> {
         .username(username);
     if let Some(password) = password {
         options = options.password(password);
+    }
+    if let Some(database) = database {
+        options = options.database(database);
     }
     tokio::time::timeout(CONNECT_TIMEOUT, options.connect())
         .await
@@ -456,6 +467,172 @@ async fn mariadb_list_columns(
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub affected_rows: Option<u64>,
+    pub truncated: bool,
+}
+
+pub const MAX_QUERY_ROWS: usize = 1000;
+
+pub async fn run_query(
+    config: ConnectionConfig,
+    database: Option<String>,
+    sql: String,
+) -> Result<QueryResult> {
+    with_timeout(QUERY_TIMEOUT, async move {
+        match &config {
+            ConnectionConfig::Sqlite { path } => {
+                let mut connection = open_sqlite(path).await?;
+                sqlite_run_query(&mut connection, &sql).await
+            }
+            ConnectionConfig::MariaDb { .. } => {
+                let mut connection =
+                    open_mariadb_with_database(&config, database.as_deref()).await?;
+                mariadb_run_query(&mut connection, &sql).await
+            }
+        }
+    })
+    .await
+}
+
+async fn sqlite_run_query(connection: &mut SqliteConnection, sql: &str) -> Result<QueryResult> {
+    let mut stream = sqlx::raw_sql(sql).fetch_many(connection);
+    let mut result = QueryResult {
+        columns: Vec::new(),
+        rows: Vec::new(),
+        affected_rows: None,
+        truncated: false,
+    };
+    while let Some(item) = stream.try_next().await? {
+        match item {
+            Either::Left(done) => {
+                *result.affected_rows.get_or_insert(0) += done.rows_affected();
+            }
+            Either::Right(row) => {
+                if result.columns.is_empty() {
+                    result.columns = row
+                        .columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
+                }
+                if result.rows.len() >= MAX_QUERY_ROWS {
+                    result.truncated = true;
+                    break;
+                }
+                result.rows.push(
+                    (0..row.columns().len())
+                        .map(|index| sqlite_value_to_string(&row, index))
+                        .collect(),
+                );
+            }
+        }
+    }
+    Ok(result)
+}
+
+async fn mariadb_run_query(connection: &mut MySqlConnection, sql: &str) -> Result<QueryResult> {
+    let mut stream = sqlx::raw_sql(sql).fetch_many(connection);
+    let mut result = QueryResult {
+        columns: Vec::new(),
+        rows: Vec::new(),
+        affected_rows: None,
+        truncated: false,
+    };
+    while let Some(item) = stream.try_next().await? {
+        match item {
+            Either::Left(done) => {
+                *result.affected_rows.get_or_insert(0) += done.rows_affected();
+            }
+            Either::Right(row) => {
+                if result.columns.is_empty() {
+                    result.columns = row
+                        .columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
+                }
+                if result.rows.len() >= MAX_QUERY_ROWS {
+                    result.truncated = true;
+                    break;
+                }
+                result.rows.push(
+                    (0..row.columns().len())
+                        .map(|index| mariadb_value_to_string(&row, index))
+                        .collect(),
+                );
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn sqlite_value_to_string(row: &SqliteRow, index: usize) -> String {
+    match row.try_get_raw(index) {
+        Ok(value) if value.is_null() => return "NULL".to_string(),
+        Ok(_) => {}
+        Err(_) => return "?".to_string(),
+    }
+    if let Ok(value) = row.try_get::<String, _>(index) {
+        return value;
+    }
+    if let Ok(value) = row.try_get::<i64, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<f64, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<bool, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
+        return format!("<{} bytes>", value.len());
+    }
+    "<unsupported>".to_string()
+}
+
+fn mariadb_value_to_string(row: &MySqlRow, index: usize) -> String {
+    match row.try_get_raw(index) {
+        Ok(value) if value.is_null() => return "NULL".to_string(),
+        Ok(_) => {}
+        Err(_) => return "?".to_string(),
+    }
+    if let Ok(value) = row.try_get::<String, _>(index) {
+        return value;
+    }
+    if let Ok(value) = row.try_get::<i64, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<u64, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<f64, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<bool, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<chrono::NaiveDateTime, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<chrono::NaiveDate, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<chrono::NaiveTime, _>(index) {
+        return value.to_string();
+    }
+    if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
+        return format!("<{} bytes>", value.len());
+    }
+    "<unsupported>".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +676,13 @@ mod tests {
                 .execute(&mut connection)
                 .await
                 .unwrap();
+            sqlx::query(
+                "INSERT INTO users (email, name) VALUES ('a@example.com', 'Ada'), \
+                 ('b@example.com', NULL)",
+            )
+            .execute(&mut connection)
+            .await
+            .unwrap();
             connection.close().await.unwrap();
 
             let config = ConnectionConfig::Sqlite {
@@ -536,10 +720,36 @@ mod tests {
             assert!(!columns[1].nullable && columns[1].unique && columns[1].name == "email");
             assert_eq!(columns[2].default.as_deref(), Some("'anon'"));
 
-            let columns = list_columns(config, "main".into(), "posts".into())
+            let columns = list_columns(config.clone(), "main".into(), "posts".into())
                 .await
                 .unwrap();
             assert_eq!(columns[1].foreign_key.as_deref(), Some("users.id"));
+
+            let result = run_query(
+                config.clone(),
+                None,
+                "SELECT id, email, name FROM users ORDER BY id".into(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.columns, ["id", "email", "name"]);
+            assert_eq!(
+                result.rows,
+                [
+                    ["1", "a@example.com", "Ada"],
+                    ["2", "b@example.com", "NULL"],
+                ]
+            );
+            assert!(!result.truncated);
+
+            // The SQLite connection is opened read-only, so writes must fail.
+            let write = run_query(
+                config,
+                None,
+                "INSERT INTO users (email) VALUES ('c@example.com')".into(),
+            )
+            .await;
+            assert!(write.is_err());
         });
 
         std::fs::remove_file(&path).ok();

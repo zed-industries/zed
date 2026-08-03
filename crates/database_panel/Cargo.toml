@@ -14,8 +14,12 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 collections.workspace = true
+editor.workspace = true
 fs.workspace = true
+futures.workspace = true
+language.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 menu.workspace = true

@@ -1122,6 +1122,13 @@
     },
   },
   {
+    "context": "QueryConsole > Editor",
+    "bindings": {
+      "ctrl-enter": "database_panel::RunQuery",
+      "cmd-enter": "database_panel::RunQuery",
+    },
+  },
+  {
     "context": "GitPanel && CommitEditor",
     "use_key_equivalents": true,
     "bindings": {

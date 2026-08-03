@@ -4926,10 +4926,14 @@ name = "database_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "collections",
+ "editor",
  "fs",
+ "futures 0.3.32",
  "gpui",
  "gpui_tokio",
+ "language",
  "menu",
  "project",
  "settings",

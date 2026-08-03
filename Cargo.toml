@@ -815,6 +815,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "sqlite",
     "mysql",
+    "chrono",
 ] }
 stacksafe = "0.1"
 streaming-iterator = "0.1"

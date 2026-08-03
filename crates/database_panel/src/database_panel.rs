@@ -1,4 +1,5 @@
 mod connection_modal;
+mod query_console;
 mod schema;
 
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use workspace::{
 };
 
 pub use connection_modal::ConnectionModal;
+pub use query_console::QueryConsole;
 
 actions!(
     database_panel,
@@ -41,6 +43,11 @@ actions!(
         Refresh,
         /// Copies the name of the selected entry to the clipboard.
         CopyName,
+        /// Opens a SQL query console for the selected connection, database, or
+        /// table.
+        NewQueryConsole,
+        /// Runs the query in the current query console.
+        RunQuery,
     ]
 );
 
@@ -809,6 +816,86 @@ impl DatabasePanel {
         }
     }
 
+    fn database_name(&self, connection_ix: usize, database_ix: usize) -> Option<String> {
+        match &self.connections.get(connection_ix)?.databases {
+            LoadState::Loaded(databases) => Some(databases.get(database_ix)?.info.name.clone()),
+            _ => None,
+        }
+    }
+
+    fn table_name(
+        &self,
+        connection_ix: usize,
+        database_ix: usize,
+        table_ix: usize,
+    ) -> Option<String> {
+        match &self.connections.get(connection_ix)?.databases {
+            LoadState::Loaded(databases) => match &databases.get(database_ix)?.tables {
+                LoadState::Loaded(tables) => Some(tables.get(table_ix)?.info.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn new_query_console(
+        &mut self,
+        _: &NewQueryConsole,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.selected_index else {
+            return;
+        };
+        let Some(entry) = self.entries.get(index).cloned() else {
+            return;
+        };
+        let (connection_ix, database, table) = match entry {
+            ListEntry::Connection { connection_ix } => (connection_ix, None, None),
+            ListEntry::Database {
+                connection_ix,
+                database_ix,
+            } => (
+                connection_ix,
+                self.database_name(connection_ix, database_ix),
+                None,
+            ),
+            ListEntry::Table {
+                connection_ix,
+                database_ix,
+                table_ix,
+            }
+            | ListEntry::Column {
+                connection_ix,
+                database_ix,
+                table_ix,
+                ..
+            } => (
+                connection_ix,
+                self.database_name(connection_ix, database_ix),
+                self.table_name(connection_ix, database_ix, table_ix),
+            ),
+            ListEntry::Status { .. } => return,
+        };
+        let Some(connection) = self.connections.get(connection_ix) else {
+            return;
+        };
+        let name = connection.name.clone();
+        let config = connection.config.clone();
+        let initial_query = table.map(|table| {
+            let quoted = match &config {
+                ConnectionConfig::Sqlite { .. } => format!("\"{table}\""),
+                ConnectionConfig::MariaDb { .. } => format!("`{table}`"),
+            };
+            format!("SELECT * FROM {quoted} LIMIT 100;")
+        });
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                QueryConsole::open(workspace, name, config, database, initial_query, window, cx);
+            });
+        }
+    }
+
     fn copy_name(&mut self, _: &CopyName, _: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.selected_index else {
             return;
@@ -872,7 +959,13 @@ impl DatabasePanel {
         }
         self.selected_index = Some(index);
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            let query_label = match entry {
+                ListEntry::Table { .. } | ListEntry::Column { .. } => "Query Table",
+                _ => "New Query Console",
+            };
             menu.context(self.focus_handle.clone())
+                .action(query_label, NewQueryConsole.boxed_clone())
+                .separator()
                 .action("Refresh", Refresh.boxed_clone())
                 .action("Copy Name", CopyName.boxed_clone())
                 .when(matches!(entry, ListEntry::Connection { .. }), |menu| {
@@ -1292,6 +1385,7 @@ impl Render for DatabasePanel {
             .on_action(cx.listener(Self::copy_name))
             .on_action(cx.listener(Self::add_connection))
             .on_action(cx.listener(Self::remove_connection))
+            .on_action(cx.listener(Self::new_query_console))
             .child(self.render_header(cx))
             .when(!has_connections, |this| {
                 this.child(
