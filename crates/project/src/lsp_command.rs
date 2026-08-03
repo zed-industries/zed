@@ -2959,6 +2959,28 @@ impl LspCommand for GetCodeActions {
             .filter(|entry| entry.diagnostic.is_primary)
             .map(|entry| entry.diagnostic.group_id)
             .collect::<HashSet<_>>();
+        let mut related_information_by_group_id = HashMap::<_, Vec<_>>::default();
+        if !primary_group_ids.is_empty() {
+            for entry in buffer.buffer_diagnostics(None) {
+                if entry.diagnostic.is_primary
+                    || !primary_group_ids.contains(&entry.diagnostic.group_id)
+                {
+                    continue;
+                }
+
+                let entry = entry.resolve::<language::PointUtf16>(&snapshot);
+                related_information_by_group_id
+                    .entry(entry.diagnostic.group_id)
+                    .or_default()
+                    .push(lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location {
+                            uri: text_document.uri.clone(),
+                            range: range_to_lsp(entry.range)?,
+                        },
+                        message: entry.diagnostic.message.clone(),
+                    });
+            }
+        }
         let mut relevant_diagnostics = Vec::new();
         for entry in diagnostic_entries {
             // Related information is stored as separate entries for rendering. Reassemble it on
@@ -2971,21 +2993,9 @@ impl LspCommand for GetCodeActions {
 
             let mut diagnostic = entry.to_lsp_diagnostic_stub()?;
             if entry.diagnostic.is_primary {
-                let related_information = snapshot
-                    .diagnostic_group::<language::PointUtf16>(entry.diagnostic.group_id)
-                    .filter(|entry| !entry.diagnostic.is_primary)
-                    .map(|entry| {
-                        Ok(lsp::DiagnosticRelatedInformation {
-                            location: lsp::Location {
-                                uri: text_document.uri.clone(),
-                                range: range_to_lsp(entry.range)?,
-                            },
-                            message: entry.diagnostic.message.clone(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                diagnostic.related_information =
-                    (!related_information.is_empty()).then_some(related_information);
+                diagnostic.related_information = related_information_by_group_id
+                    .remove(&entry.diagnostic.group_id)
+                    .filter(|related_information| !related_information.is_empty());
             }
             relevant_diagnostics.push(diagnostic);
         }
