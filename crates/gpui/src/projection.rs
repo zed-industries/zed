@@ -97,15 +97,23 @@ impl<E: 'static, P: ?Sized + 'static> ReadProjectionState<E, P> {
         cx: &mut Context<T>,
     ) {
         let source = source.to_projection();
-        if self.source.entity_id() != source.entity_id() {
+        let source_changed = self.source.entity_id() != source.entity_id();
+        // Best-effort comparison: the same lens body written at two call sites
+        // may compare unequal, which only costs a spurious notify. A lens
+        // literal evaluated at one call site has a stable address, so
+        // re-renders that pass the same lens don't notify.
+        let lens_changed = !std::ptr::fn_addr_eq(self.lens, lens);
+        if source_changed {
             self._subscription = source.observe(cx, |_, _, cx| cx.notify());
             self.source = source;
-            // The projected value is now read from a different source, so views
-            // that read this projection last frame must re-render even though
-            // neither the old nor the new source notified.
-            cx.notify();
         }
         self.lens = lens;
+        if source_changed || lens_changed {
+            // The projected value is now read from a different source or
+            // through a different lens, so views that read this projection
+            // last frame must re-render even though the source never notified.
+            cx.notify();
+        }
     }
 
     fn get<'a>(&self, cx: &'a App) -> &'a P {
@@ -609,6 +617,18 @@ mod tests {
         owner: Person,
     }
 
+    // Named lenses so tests that assert "an unchanged lens must not notify"
+    // pass pointer-identical functions, the way a single render call site does.
+    // Two closure literals with the same body are not guaranteed to compare
+    // equal.
+    fn read_name(person: &Person) -> &String {
+        &person.name
+    }
+
+    fn write_name(person: &mut Person) -> &mut String {
+        &mut person.name
+    }
+
     /// Runs `hook` during render so tests build projections the way callers do,
     /// through the `use_projection` hooks, and records what each frame produced.
     ///
@@ -891,14 +911,7 @@ mod tests {
             })
         });
         let state = cx.update(|cx| {
-            cx.new(|cx| {
-                MutableProjectionState::new(
-                    &first,
-                    |person| &person.name,
-                    |person| &mut person.name,
-                    cx,
-                )
-            })
+            cx.new(|cx| MutableProjectionState::new(&first, read_name, write_name, cx))
         });
         let notifications = Rc::new(Cell::new(0));
         let _subscription = cx.update(|cx| {
@@ -910,7 +923,7 @@ mod tests {
 
         cx.update(|cx| {
             state.update(cx, |state, cx| {
-                state.update_source(&first, |person| &person.name, |person| &mut person.name, cx)
+                state.update_source(&first, read_name, write_name, cx)
             });
         });
         assert_eq!(
@@ -921,12 +934,7 @@ mod tests {
 
         cx.update(|cx| {
             state.update(cx, |state, cx| {
-                state.update_source(
-                    &second,
-                    |person| &person.name,
-                    |person| &mut person.name,
-                    cx,
-                )
+                state.update_source(&second, read_name, write_name, cx)
             });
         });
         assert_eq!(notifications.get(), 1, "swapping the source should notify");
@@ -940,6 +948,53 @@ mod tests {
 
         cx.update(|cx| second.update(cx, |_, cx| cx.notify()));
         assert_eq!(notifications.get(), 2);
+    }
+
+    #[test]
+    fn changing_only_the_lens_notifies() {
+        fn name_lens(person: &Person) -> &str {
+            &person.name
+        }
+        fn fixed_lens(_person: &Person) -> &str {
+            "fixed"
+        }
+
+        let mut cx = TestAppContext::single();
+        let person = cx.update(|cx| {
+            cx.new(|_| Person {
+                name: "Ada".to_string(),
+                age: 36,
+            })
+        });
+        let state = cx.update(|cx| cx.new(|cx| ReadProjectionState::new(&person, name_lens, cx)));
+        let notifications = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.observe(&state, {
+                let notifications = notifications.clone();
+                move |_, _| notifications.set(notifications.get() + 1)
+            })
+        });
+
+        cx.update(|cx| {
+            state.update(cx, |state, cx| state.update_source(&person, name_lens, cx));
+        });
+        assert_eq!(
+            notifications.get(),
+            0,
+            "an unchanged source and lens should not notify"
+        );
+
+        // The source entity is untouched, but the projected value is different:
+        // holders of an escaped handle must still be told.
+        cx.update(|cx| {
+            state.update(cx, |state, cx| state.update_source(&person, fixed_lens, cx));
+        });
+        assert_eq!(
+            notifications.get(),
+            1,
+            "a new lens projects a different value and must notify"
+        );
+        cx.update(|cx| assert_eq!(state.read(cx).get(cx), "fixed"));
     }
 
     #[test]
