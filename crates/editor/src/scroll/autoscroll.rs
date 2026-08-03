@@ -34,16 +34,6 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Center, None)
     }
 
-    /// Like [`Autoscroll::center()`], but defers the scroll until the editor's
-    /// content is tall enough for the target to actually be centered. While the
-    /// viewport budget (`max_scroll_top`) is insufficient the request is
-    /// retained and retried on each subsequent layout. Callers that stream
-    /// content incrementally (e.g. commit diff builds) should use this to avoid
-    /// a premature scroll that gets clamped to the bottom of partial content.
-    pub fn center_when_possible() -> Self {
-        Self::Strategy(AutoscrollStrategy::CenterWhenPossible, None)
-    }
-
     /// Returns the autoscroll strategy configured for navigation to definitions
     /// and references, based on `go_to_definition_scroll_strategy`.
     pub fn for_go_to_definition(offset: Option<ScrollOffset>, cx: &App) -> Self {
@@ -112,10 +102,6 @@ pub enum AutoscrollStrategy {
     Newest,
     #[default]
     Center,
-    /// Like [`AutoscrollStrategy::Center`], but the one-shot request is
-    /// retained (and retried on the next layout) while the viewport budget
-    /// is too small to actually center the target.
-    CenterWhenPossible,
     Focused,
     Top,
     Bottom,
@@ -247,18 +233,6 @@ impl Editor {
         let visible_sticky_headers =
             self.visible_sticky_header_count_for_point(&display_map, target_point, cx);
 
-        // For CenterWhenPossible, retain the one-shot request (and skip the rest
-        // of this layout) when the viewport budget is too small to actually
-        // center the target. The next layout — after more content arrives —
-        // retries automatically.
-        if strategy == AutoscrollStrategy::CenterWhenPossible {
-            let target_y = (target_top - margin).max(0.0);
-            if target_y > max_scroll_top {
-                self.scroll_manager.autoscroll_request = Some((autoscroll, local));
-                return (NeedsHorizontalAutoscroll(false), WasScrolled(false));
-            }
-        }
-
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
@@ -282,7 +256,7 @@ impl Editor {
                     WasScrolled(false)
                 }
             }
-            AutoscrollStrategy::Center | AutoscrollStrategy::CenterWhenPossible => {
+            AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }

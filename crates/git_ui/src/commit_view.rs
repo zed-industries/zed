@@ -471,7 +471,7 @@ impl CommitView {
                                     editor.rhs_editor().update(cx, |editor, cx| {
                                         editor.change_selections(
                                             SelectionEffects::scroll(
-                                                Autoscroll::center_when_possible(),
+                                                Autoscroll::center(),
                                             )
                                             .nav_history(false),
                                             window,
@@ -505,25 +505,6 @@ impl CommitView {
                     });
                 }
             })?;
-
-            // All excerpts have been inserted and the display map is now stable.
-            // If the CenterWhenPossible request is still pending (the total
-            // content was too short to ever center the target), settle at the
-            // final boundary. If it was already consumed successfully, do
-            // nothing — set_anchor's equality short-circuit is not needed
-            // because we don't issue a second request.
-            let has_pending_autoscroll = this.update(cx, |this, cx| {
-                this.editor.read(cx).rhs_editor().read(cx).has_autoscroll_request()
-            })?;
-            if has_pending_autoscroll {
-                this.update(cx, |this, cx| {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.rhs_editor().update(cx, |editor, cx| {
-                            editor.request_autoscroll(Autoscroll::center(), cx);
-                        });
-                    });
-                })?;
-            }
 
             anyhow::Ok(())
         })
