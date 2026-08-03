@@ -299,16 +299,15 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
-        let scroll_requested = scroll_to.is_some();
 
-        // Process the target file first so the editor appears at the correct
-        // scroll position immediately, avoiding a visible jump for large commits.
+        // Sort files by path to match the multibuffer's display order. This
+        // ensures that when the target file is reached, all files sorted above
+        // it have already been inserted and its display row is final. The
+        // CenterWhenPossible autoscroll can then be consumed at the earliest
+        // layout where the viewport budget suffices, without the risk of the
+        // anchor being pinned to a row that later shifts.
         let mut commit_diff = commit_diff;
-        if let Some((target_path, _)) = &scroll_to {
-            if let Some(pos) = commit_diff.files.iter().position(|f| f.path == *target_path) {
-                commit_diff.files.swap(0, pos);
-            }
-        }
+        commit_diff.files.sort_by(|a, b| a.path.cmp(&b.path));
 
         cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
@@ -497,13 +496,15 @@ impl CommitView {
             })?;
 
             // All excerpts have been inserted and the display map is now stable.
-            // Request a final center() on the complete map. CenterWhenPossible
-            // may have been consumed too early — before files sorted above the
-            // target were inserted — pinning the scroll anchor at a wrong row.
-            // This final request corrects that. If the earlier scroll already
-            // landed at the right position, set_anchor's equality short-circuit
-            // (scroll.rs:402) makes this a no-op, so there is no visible jump.
-            if scroll_requested {
+            // If the CenterWhenPossible request is still pending (the total
+            // content was too short to ever center the target), settle at the
+            // final boundary. If it was already consumed successfully, do
+            // nothing — set_anchor's equality short-circuit is not needed
+            // because we don't issue a second request.
+            let has_pending_autoscroll = this.update(cx, |this, cx| {
+                this.editor.read(cx).rhs_editor().read(cx).has_autoscroll_request()
+            })?;
+            if has_pending_autoscroll {
                 this.update(cx, |this, cx| {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
