@@ -12,7 +12,7 @@ use util::maybe;
 use workspace::ModalView;
 use zeroize::Zeroize;
 
-pub(crate) struct AskPassModal {
+pub struct AskPassModal {
     operation: SharedString,
     prompt: SharedString,
     editor: Entity<Editor>,

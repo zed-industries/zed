@@ -95,10 +95,7 @@ fn get_context_server_store(
     settings_window: &SettingsWindow,
     cx: &App,
 ) -> Option<Entity<ContextServerStore>> {
-    let original_window = settings_window.original_window.as_ref()?;
-    let multi_workspace = original_window.read(cx).ok()?;
-    let workspace = multi_workspace.workspaces().next()?;
-    let project = workspace.read(cx).project().clone();
+    let project = settings_window.active_project(cx)?;
     Some(project.read(cx).context_server_store())
 }
 

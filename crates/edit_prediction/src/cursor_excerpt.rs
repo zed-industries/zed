@@ -27,6 +27,17 @@ pub fn compute_cursor_excerpt(
     )
 }
 
+pub fn fixed_line_window_around_cursor(
+    snapshot: &BufferSnapshot,
+    cursor: Point,
+    above: u32,
+    below: u32,
+) -> Range<Point> {
+    let start_row = cursor.row.saturating_sub(above);
+    let end_row = (cursor.row + below).min(snapshot.max_point().row);
+    Point::new(start_row, 0)..Point::new(end_row, snapshot.line_len(end_row))
+}
+
 /// Expands symmetrically from cursor, one line at a time, alternating down then up.
 /// Returns (start_row, end_row, remaining_tokens).
 fn expand_symmetric_from_cursor(
@@ -565,5 +576,34 @@ mod tests {
                 buffer
             });
         }
+    }
+
+    #[gpui::test]
+    fn test_fixed_line_window_around_cursor_start_middle_and_end(cx: &mut App) {
+        cx.new(|cx| {
+            let text = (0..30)
+                .map(|row| format!("line {row}\n"))
+                .collect::<String>()
+                .trim_end_matches('\n')
+                .to_string();
+            let buffer = Buffer::local(&text, cx);
+            let snapshot = buffer.snapshot();
+
+            let start_window = fixed_line_window_around_cursor(&snapshot, Point::new(0, 0), 10, 10);
+            assert_eq!(start_window.start.row, 0);
+            assert_eq!(start_window.end.row, 10);
+
+            let middle_window =
+                fixed_line_window_around_cursor(&snapshot, Point::new(15, 2), 10, 10);
+            assert_eq!(middle_window.start.row, 5);
+            assert_eq!(middle_window.end.row, 25);
+
+            let end_window = fixed_line_window_around_cursor(&snapshot, Point::new(29, 1), 10, 10);
+            assert_eq!(end_window.start.row, 19);
+            assert_eq!(end_window.end.row, 29);
+            assert_eq!(end_window.end.column, snapshot.line_len(29));
+
+            buffer
+        });
     }
 }
