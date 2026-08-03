@@ -1,6 +1,7 @@
 use crate::{
     branch_picker,
     diff_multibuffer::DiffMultibuffer,
+    git_panel::GitStatusEntry,
     project_diff::{
         self, CompareWithBranch, DeployBranchDiff, ProjectDiff, ReviewDiff,
         render_send_review_to_agent_button,
@@ -125,6 +126,7 @@ impl BranchDiff {
                         intended_repo,
                         base_ref,
                         branch_diff,
+                        None,
                         window,
                         cx,
                     );
@@ -172,6 +174,7 @@ impl BranchDiff {
                             repository.clone(),
                             base_ref,
                             None,
+                            None,
                             window,
                             cx,
                         );
@@ -192,12 +195,76 @@ impl BranchDiff {
         });
     }
 
+    /// Opens the branch diff for the active repository and scrolls to `entry`.
+    ///
+    /// The resolved base ref is read back off the repository's display diff
+    /// rather than resolved again, so this stays synchronous. That display diff
+    /// only exists while `git.diff_base` is `default_branch`; without it there
+    /// is no branch diff to open and this returns `None`.
+    pub(crate) fn deploy_at_entry(
+        workspace: &mut Workspace,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<()> {
+        let project = workspace.project().clone();
+        let repo = project.read(cx).active_repository(cx)?;
+        let display_diff = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .display_diff_for_repo(repo.read(cx).id)?;
+        let DiffBase::Merge { base_ref } = display_diff.read(cx).diff_base().clone() else {
+            return None;
+        };
+
+        Self::deploy_branch_diff_with_base_ref(
+            workspace,
+            project,
+            repo,
+            base_ref,
+            Some(display_diff),
+            Some(entry),
+            window,
+            cx,
+        );
+        Some(())
+    }
+
+    pub(crate) fn move_to_entry(
+        &mut self,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff.update(cx, |diff, cx| {
+            diff.move_to_entry(entry, window, cx);
+        });
+    }
+
+    /// The open branch diff item backed by the active repository's display
+    /// diff, if any. Items over other base refs (`CompareWithBranch`) or over
+    /// their own private diff list are deliberately not matched: scrolling
+    /// those to a committed entry could land on a different set of changes.
+    pub(crate) fn find_for_display_diff(workspace: &Workspace, cx: &App) -> Option<Entity<Self>> {
+        let project = workspace.project().read(cx);
+        let repo = project.active_repository(cx)?;
+        let display_diff = project
+            .git_store()
+            .read(cx)
+            .display_diff_for_repo(repo.read(cx).id)?;
+        workspace.items_of_type::<Self>(cx).find(|item| {
+            item.read(cx).diff.read(cx).branch_diff().entity_id() == display_diff.entity_id()
+        })
+    }
+
     pub(crate) fn deploy_branch_diff_with_base_ref(
         workspace: &mut Workspace,
         project: Entity<Project>,
         intended_repo: Entity<Repository>,
         base_ref: SharedString,
         branch_diff: Option<Entity<diff_buffer_list::DiffBufferList>>,
+        entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -215,6 +282,11 @@ impl BranchDiff {
         });
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
+            if let Some(entry) = entry {
+                existing.update(cx, |branch_diff, cx| {
+                    branch_diff.move_to_entry(entry, window, cx);
+                });
+            }
             return;
         }
 
@@ -237,7 +309,18 @@ impl BranchDiff {
                     .await?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(this.clone()),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                        if let Some(entry) = entry {
+                            this.update(cx, |branch_diff, cx| {
+                                branch_diff.move_to_entry(entry, window, cx);
+                            });
+                        }
                     })
                     .ok();
                 anyhow::Ok(())
@@ -848,6 +931,7 @@ impl Render for BranchDiffToolbar {
                                                 project.clone(),
                                                 repository,
                                                 base_ref,
+                                                None,
                                                 None,
                                                 window,
                                                 cx,
