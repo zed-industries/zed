@@ -993,6 +993,8 @@
     //   { "adapter": "mariadb", "host": "localhost", "port": 3306, "username": "root", "password": "..." }
     // ]
     "connections": [],
+    // How many rows a query console fetches per result page.
+    "query_page_size": 500,
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.

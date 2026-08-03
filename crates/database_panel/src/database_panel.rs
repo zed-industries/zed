@@ -66,6 +66,7 @@ pub struct DatabasePanelSettings {
     pub default_width: Pixels,
     pub dock: DockSide,
     pub connections: Vec<DatabaseConnectionContent>,
+    pub query_page_size: usize,
 }
 
 impl Settings for DatabasePanelSettings {
@@ -76,6 +77,7 @@ impl Settings for DatabasePanelSettings {
             default_width: panel.default_width.map(px).unwrap(),
             dock: panel.dock.unwrap(),
             connections: panel.connections.clone().unwrap_or_default(),
+            query_page_size: panel.query_page_size.unwrap().max(1),
         }
     }
 }

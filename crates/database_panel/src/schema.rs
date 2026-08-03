@@ -588,40 +588,54 @@ pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
     pub affected_rows: Option<u64>,
-    pub truncated: bool,
+    /// Index of the first returned row within the full result set.
+    pub offset: usize,
+    /// Whether the result set continues past the returned page.
+    pub has_more: bool,
 }
 
-pub const MAX_QUERY_ROWS: usize = 1000;
-
+/// Runs `sql` and returns the page of at most `limit` rows starting at
+/// `offset`. Paging happens while streaming the result set, so it works for
+/// any statement without rewriting the SQL; earlier rows are still produced
+/// by the database and skipped.
 pub async fn run_query(
     config: ConnectionConfig,
     database: Option<String>,
     sql: String,
+    offset: usize,
+    limit: usize,
 ) -> Result<QueryResult> {
     with_timeout(QUERY_TIMEOUT, async move {
         match &config {
             ConnectionConfig::Sqlite { path } => {
                 let mut connection = open_sqlite(path).await?;
-                sqlite_run_query(&mut connection, &sql).await
+                sqlite_run_query(&mut connection, &sql, offset, limit).await
             }
             ConnectionConfig::MariaDb { .. } => {
                 let mut connection =
                     open_mariadb_with_database(&config, database.as_deref()).await?;
-                mariadb_run_query(&mut connection, &sql).await
+                mariadb_run_query(&mut connection, &sql, offset, limit).await
             }
         }
     })
     .await
 }
 
-async fn sqlite_run_query(connection: &mut SqliteConnection, sql: &str) -> Result<QueryResult> {
+async fn sqlite_run_query(
+    connection: &mut SqliteConnection,
+    sql: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<QueryResult> {
     let mut stream = sqlx::raw_sql(sql).fetch_many(connection);
     let mut result = QueryResult {
         columns: Vec::new(),
         rows: Vec::new(),
         affected_rows: None,
-        truncated: false,
+        offset,
+        has_more: false,
     };
+    let mut skipped = 0;
     while let Some(item) = stream.try_next().await? {
         match item {
             Either::Left(done) => {
@@ -635,8 +649,12 @@ async fn sqlite_run_query(connection: &mut SqliteConnection, sql: &str) -> Resul
                         .map(|column| column.name().to_string())
                         .collect();
                 }
-                if result.rows.len() >= MAX_QUERY_ROWS {
-                    result.truncated = true;
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                if result.rows.len() >= limit {
+                    result.has_more = true;
                     break;
                 }
                 result.rows.push(
@@ -650,14 +668,21 @@ async fn sqlite_run_query(connection: &mut SqliteConnection, sql: &str) -> Resul
     Ok(result)
 }
 
-async fn mariadb_run_query(connection: &mut MySqlConnection, sql: &str) -> Result<QueryResult> {
+async fn mariadb_run_query(
+    connection: &mut MySqlConnection,
+    sql: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<QueryResult> {
     let mut stream = sqlx::raw_sql(sql).fetch_many(connection);
     let mut result = QueryResult {
         columns: Vec::new(),
         rows: Vec::new(),
         affected_rows: None,
-        truncated: false,
+        offset,
+        has_more: false,
     };
+    let mut skipped = 0;
     while let Some(item) = stream.try_next().await? {
         match item {
             Either::Left(done) => {
@@ -671,8 +696,12 @@ async fn mariadb_run_query(connection: &mut MySqlConnection, sql: &str) -> Resul
                         .map(|column| column.name().to_string())
                         .collect();
                 }
-                if result.rows.len() >= MAX_QUERY_ROWS {
-                    result.truncated = true;
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                if result.rows.len() >= limit {
+                    result.has_more = true;
                     break;
                 }
                 result.rows.push(
@@ -864,6 +893,8 @@ mod tests {
                 config.clone(),
                 None,
                 "SELECT id, email, name FROM users ORDER BY id".into(),
+                0,
+                1000,
             )
             .await
             .unwrap();
@@ -875,13 +906,40 @@ mod tests {
                     ["2", "b@example.com", "NULL"],
                 ]
             );
-            assert!(!result.truncated);
+            assert!(!result.has_more);
+
+            let first_page = run_query(
+                config.clone(),
+                None,
+                "SELECT id FROM users ORDER BY id".into(),
+                0,
+                1,
+            )
+            .await
+            .unwrap();
+            assert_eq!(first_page.rows, [["1"]]);
+            assert!(first_page.has_more);
+
+            let second_page = run_query(
+                config.clone(),
+                None,
+                "SELECT id FROM users ORDER BY id".into(),
+                1,
+                1,
+            )
+            .await
+            .unwrap();
+            assert_eq!(second_page.rows, [["2"]]);
+            assert_eq!(second_page.offset, 1);
+            assert!(!second_page.has_more);
 
             // The SQLite connection is opened read-only, so writes must fail.
             let write = run_query(
                 config,
                 None,
                 "INSERT INTO users (email) VALUES ('c@example.com')".into(),
+                0,
+                1000,
             )
             .await;
             assert!(write.is_err());

@@ -19,8 +19,10 @@ use ui::{
 };
 use workspace::{Item, Workspace};
 
+use settings::Settings as _;
+
 use crate::{
-    RunQuery,
+    DatabasePanelSettings, RunQuery,
     schema::{self, ConnectionConfig, QueryResult},
 };
 
@@ -38,6 +40,9 @@ pub struct QueryConsole {
     state: QueryState,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Option<Entity<ResizableColumnsState>>,
+    /// The SQL of the last executed run, so page navigation replays it even
+    /// after the editor content changed.
+    last_sql: Option<String>,
     /// Holding the task means starting a new query cancels the in-flight one.
     run_task: Option<Task<()>>,
 }
@@ -104,6 +109,7 @@ impl QueryConsole {
                 state: QueryState::Idle,
                 table_interaction_state: cx.new(|cx| TableInteractionState::new(cx)),
                 column_widths: None,
+                last_sql: None,
                 run_task: None,
             }
         });
@@ -158,11 +164,27 @@ impl QueryConsole {
         if sql.trim().is_empty() {
             return;
         }
+        self.last_sql = Some(sql.clone());
+        self.run_at_offset(sql, 0, cx);
+    }
+
+    fn run_page(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let Some(sql) = self.last_sql.clone() else {
+            return;
+        };
+        self.run_at_offset(sql, offset, cx);
+    }
+
+    fn run_at_offset(&mut self, sql: String, offset: usize, cx: &mut Context<Self>) {
         let config = self.config.clone();
         let database = self.database.clone();
+        let page_size = DatabasePanelSettings::get_global(cx).query_page_size;
         let started = Instant::now();
         self.state = QueryState::Running;
-        let task = Tokio::spawn_result(cx, schema::run_query(config, database, sql));
+        let task = Tokio::spawn_result(
+            cx,
+            schema::run_query(config, database, sql, offset, page_size),
+        );
         self.run_task = Some(cx.spawn(async move |this, cx| {
             let query_result = task.await;
             this.update(cx, |this, cx| {
@@ -219,13 +241,15 @@ impl QueryConsole {
                         "{} rows affected in {millis} ms",
                         result.affected_rows.unwrap_or(0)
                     )
-                } else if result.truncated {
-                    format!(
-                        "first {} rows in {millis} ms (truncated)",
-                        result.rows.len()
-                    )
-                } else {
+                } else if result.rows.is_empty() {
+                    format!("no rows in {millis} ms")
+                } else if result.offset == 0 && !result.has_more {
                     format!("{} rows in {millis} ms", result.rows.len())
+                } else {
+                    let first = result.offset + 1;
+                    let last = result.offset + result.rows.len();
+                    let more = if result.has_more { "+" } else { "" };
+                    format!("rows {first}–{last}{more} in {millis} ms")
                 };
                 Some((text.into(), Color::Muted))
             }
@@ -265,19 +289,61 @@ impl QueryConsole {
                             .truncate(),
                     ),
             )
-            .children(self.status_text().map(|(text, color)| {
+            .child(
                 h_flex()
-                    .gap_1()
-                    .when(matches!(self.state, QueryState::Running), |this| {
-                        this.child(
-                            Icon::new(IconName::LoadCircle)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted)
-                                .with_rotate_animation(2),
-                        )
-                    })
-                    .child(Label::new(text).size(LabelSize::Small).color(color))
-            }))
+                    .gap_2()
+                    .children(self.status_text().map(|(text, color)| {
+                        h_flex()
+                            .gap_1()
+                            .when(matches!(self.state, QueryState::Running), |this| {
+                                this.child(
+                                    Icon::new(IconName::LoadCircle)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted)
+                                        .with_rotate_animation(2),
+                                )
+                            })
+                            .child(Label::new(text).size(LabelSize::Small).color(color))
+                    }))
+                    .children(self.render_pagination(cx)),
+            )
+    }
+
+    /// Previous/next page buttons, shown once a result set is paginated, in
+    /// the style of PhpStorm's query console.
+    fn render_pagination(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let QueryState::Finished { result, .. } = &self.state else {
+            return None;
+        };
+        if result.columns.is_empty() || (result.offset == 0 && !result.has_more) {
+            return None;
+        }
+        let offset = result.offset;
+        let page_len = result.rows.len();
+        let has_more = result.has_more;
+        let page_size = DatabasePanelSettings::get_global(cx).query_page_size;
+        Some(
+            h_flex()
+                .gap_0p5()
+                .child(
+                    IconButton::new("query-previous-page", IconName::ChevronLeft)
+                        .icon_size(IconSize::Small)
+                        .disabled(offset == 0)
+                        .tooltip(Tooltip::text("Previous Page"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.run_page(offset.saturating_sub(page_size), cx)
+                        })),
+                )
+                .child(
+                    IconButton::new("query-next-page", IconName::ChevronRight)
+                        .icon_size(IconSize::Small)
+                        .disabled(!has_more)
+                        .tooltip(Tooltip::text("Next Page"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.run_page(offset + page_len, cx)
+                        })),
+                ),
+        )
     }
 
     fn render_results(&self, cx: &mut Context<Self>) -> AnyElement {

@@ -1107,6 +1107,10 @@ pub struct DatabasePanelSettingsContent {
     ///
     /// Default: []
     pub connections: Option<Vec<DatabaseConnectionContent>>,
+    /// How many rows a query console fetches per result page.
+    ///
+    /// Default: 500
+    pub query_page_size: Option<usize>,
 }
 
 /// A database connection shown in the database panel.
