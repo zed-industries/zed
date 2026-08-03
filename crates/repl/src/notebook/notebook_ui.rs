@@ -110,6 +110,23 @@ pub struct NotebookEditor {
 }
 
 impl NotebookEditor {
+    fn kernel_working_directory(
+        project: &Project,
+        worktree_id: project::WorktreeId,
+        cx: &App,
+    ) -> PathBuf {
+        project
+            .worktree_for_id(worktree_id, cx)
+            .and_then(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree
+                    .root_dir()
+                    .map(|path| path.to_path_buf())
+                    .or_else(|| worktree.abs_path().parent().map(|path| path.to_path_buf()))
+            })
+            .unwrap_or_else(std::env::temp_dir)
+    }
+
     pub fn new(
         project: Entity<Project>,
         notebook_item: Entity<NotebookItem>,
@@ -375,12 +392,8 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) {
         let entity_id = cx.entity_id();
-        let working_directory = self
-            .project
-            .read(cx)
-            .worktree_for_id(self.worktree_id, cx)
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-            .unwrap_or_else(std::env::temp_dir);
+        let working_directory =
+            Self::kernel_working_directory(self.project.read(cx), self.worktree_id, cx);
         let fs = self.project.read(cx).fs().clone();
         let view = cx.entity();
 
@@ -2247,6 +2260,13 @@ mod tests {
             project_path.path.extension().is_none(),
             "single-file worktree relative path should have no extension"
         );
+
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                NotebookEditor::kernel_working_directory(project, project_path.worktree_id, cx),
+                PathBuf::from(path!("/notebooks"))
+            );
+        });
 
         let notebook_item = cx
             .update(|cx| {
