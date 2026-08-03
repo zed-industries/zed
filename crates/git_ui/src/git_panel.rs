@@ -72,8 +72,8 @@ use prompt_store::RULES_FILE_NAMES;
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
-    update_settings_file,
+    GitDiffBaseSetting, GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings,
+    SettingsStore, StatusStyle, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::cell::Cell;
@@ -144,6 +144,10 @@ actions!(
         SetGroupByStatus,
         /// Groups entries by staging state.
         SetGroupByStaging,
+        /// Diffs against HEAD, showing uncommitted changes.
+        SetDiffBaseHead,
+        /// Diffs against the default branch, showing all changes on the current branch.
+        SetDiffBaseDefaultBranch,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
         /// Expands the selected entry to show its children.
@@ -194,6 +198,7 @@ struct GitPanelViewOptionsMenuState {
     sort_by: GitPanelSortBy,
     group_by: GitPanelGroupBy,
     tree_view: bool,
+    diff_base: GitDiffBaseSetting,
 }
 
 fn git_panel_context_menu(
@@ -247,6 +252,7 @@ fn git_panel_view_options_menu(
         sort_by: GitPanelSettings::get_global(cx).sort_by,
         group_by: GitPanelSettings::get_global(cx).group_by,
         tree_view: GitPanelSettings::get_global(cx).tree_view,
+        diff_base: ProjectSettings::get_global(cx).git.diff_base,
     }));
 
     ContextMenu::build_persistent(window, cx, move |context_menu, _, _| {
@@ -359,6 +365,42 @@ fn git_panel_view_options_menu(
                                 ..state
                             });
                             window.dispatch_action(Box::new(SetGroupByStaging), cx);
+                        }
+                    })
+            })
+            .separator()
+            .header("Diff Base")
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
+                ContextMenuEntry::new("HEAD")
+                    .toggle(
+                        IconPosition::End,
+                        state.diff_base == GitDiffBaseSetting::Head,
+                    )
+                    .handler(move |window, cx| {
+                        if state.diff_base != GitDiffBaseSetting::Head {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                diff_base: GitDiffBaseSetting::Head,
+                                ..state
+                            });
+                            window.dispatch_action(Box::new(SetDiffBaseHead), cx);
+                        }
+                    })
+            })
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
+                ContextMenuEntry::new("Default Branch")
+                    .toggle(
+                        IconPosition::End,
+                        state.diff_base == GitDiffBaseSetting::DefaultBranch,
+                    )
+                    .handler(move |window, cx| {
+                        if state.diff_base != GitDiffBaseSetting::DefaultBranch {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                diff_base: GitDiffBaseSetting::DefaultBranch,
+                                ..state
+                            });
+                            window.dispatch_action(Box::new(SetDiffBaseDefaultBranch), cx);
                         }
                     })
             })
@@ -4236,6 +4278,31 @@ impl GitPanel {
         }
     }
 
+    fn set_diff_base(&mut self, diff_base: GitDiffBaseSetting, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let fs = workspace.app_state().fs.clone();
+            cx.update_global::<SettingsStore, _>(|store, _cx| {
+                store.update_settings_file(fs, move |settings, _cx| {
+                    settings.git.get_or_insert_default().diff_base = Some(diff_base);
+                });
+            });
+        }
+    }
+
+    fn set_diff_base_head(&mut self, _: &SetDiffBaseHead, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_diff_base(GitDiffBaseSetting::Head, cx);
+    }
+
+    fn set_diff_base_default_branch(
+        &mut self,
+        _: &SetDiffBaseDefaultBranch,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_diff_base(GitDiffBaseSetting::DefaultBranch, cx);
+    }
+
     fn toggle_tree_view(&mut self, _: &ToggleTreeView, _: &mut Window, cx: &mut Context<Self>) {
         let current_setting = GitPanelSettings::get_global(cx).tree_view;
         if let Some(workspace) = self.workspace.upgrade() {
@@ -8105,6 +8172,8 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::set_group_by_none))
             .on_action(cx.listener(Self::set_group_by_status))
             .on_action(cx.listener(Self::set_group_by_staging))
+            .on_action(cx.listener(Self::set_diff_base_head))
+            .on_action(cx.listener(Self::set_diff_base_default_branch))
             .on_action(cx.listener(Self::toggle_tree_view))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
