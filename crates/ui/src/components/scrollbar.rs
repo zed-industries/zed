@@ -856,7 +856,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             .flat_map(move |axis| {
                 let max_offset = max_offset.along(axis);
                 let viewport_size = viewport_size.along(axis);
-                if max_offset.is_zero() || viewport_size.is_zero() {
+                // A scroll range under 2px is layout rounding noise, not scrollable content.
+                if max_offset < px(2.) || viewport_size.is_zero() {
                     return None;
                 }
                 let content_size = viewport_size + max_offset;
