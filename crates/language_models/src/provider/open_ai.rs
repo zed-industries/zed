@@ -146,8 +146,10 @@ impl OpenAiLanguageModelProvider {
             }
         });
 
-        let websocket_client: Arc<dyn WebSocketClient> =
-            Arc::new(NativeWebSocketClient::new(http_client.proxy().cloned()));
+        let websocket_client: Arc<dyn WebSocketClient> = Arc::new(NativeWebSocketClient::new(
+            http_client.proxy().cloned(),
+            crate::gpui_websocket_timer(cx.background_executor().clone()),
+        ));
         Self {
             http_client,
             state,

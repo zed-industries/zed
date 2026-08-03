@@ -148,8 +148,10 @@ impl State {
                 }
                 websocket_enabled = flags.is_staff;
                 let websocket_client = flags.is_staff.then(|| {
-                    Arc::new(NativeWebSocketClient::new(http_client.proxy().cloned()))
-                        as Arc<dyn WebSocketClient>
+                    Arc::new(NativeWebSocketClient::new(
+                        http_client.proxy().cloned(),
+                        crate::gpui_websocket_timer(cx.background_executor().clone()),
+                    )) as Arc<dyn WebSocketClient>
                 });
                 provider.update(cx, |provider, _cx| {
                     provider.set_websocket_client(websocket_client)

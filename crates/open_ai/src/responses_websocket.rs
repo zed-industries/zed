@@ -286,32 +286,35 @@ async fn receive_websocket_response(
     let mut completed = false;
     let mut next_message = first_event_text.map(|text| Ok(WebSocketMessage::Text(text)));
     loop {
+        // The loop exits as soon as a terminal event is observed, so any
+        // close or end-of-stream seen here happened before the turn finished
+        // and means the server aborted it (e.g. a policy rejection from a
+        // tunneling transport). Surface that as an error instead of silently
+        // ending the stream with no output, which the consumer could not
+        // tell apart from a successful turn.
         let message = match next_message.take() {
             Some(message) => message,
             None => match connection.receive().await {
                 Some(message) => message,
-                None => break,
+                None => Err(anyhow!("connection closed before the response completed")),
             },
         };
         let event = match message {
             Ok(WebSocketMessage::Text(text)) => serde_json::from_str::<StreamEvent>(&text)
                 .context("failed to parse OpenAI WebSocket event"),
             Ok(WebSocketMessage::Ping(_)) | Ok(WebSocketMessage::Pong(_)) => continue,
-            Ok(WebSocketMessage::Close(frame)) => {
-                // A close before the turn's terminal event means the server
-                // aborted the turn (e.g. a policy rejection from a tunneling
-                // transport); surface the reason instead of silently ending
-                // the stream with no output.
-                if let Some(frame) = frame.filter(|frame| !frame.reason.is_empty()) {
-                    Err(anyhow!(
-                        "server closed the connection ({}): {}",
-                        frame.code,
-                        frame.reason
-                    ))
-                } else {
-                    break;
-                }
-            }
+            Ok(WebSocketMessage::Close(frame)) => Err(match frame {
+                Some(frame) if !frame.reason.is_empty() => anyhow!(
+                    "server closed the connection ({}): {}",
+                    frame.code,
+                    frame.reason
+                ),
+                Some(frame) => anyhow!(
+                    "server closed the connection ({}) before the response completed",
+                    frame.code
+                ),
+                None => anyhow!("server closed the connection before the response completed"),
+            }),
             Ok(WebSocketMessage::Binary(_)) => {
                 Err(anyhow!("unexpected binary OpenAI WebSocket event"))
             }
@@ -858,6 +861,50 @@ mod tests {
         let error = events[0].as_ref().unwrap_err();
         assert!(error.to_string().contains("usage limit reached"));
         assert!(chains.lock().chains.is_empty());
+    }
+
+    #[test]
+    fn silent_close_before_the_terminal_event_surfaces_an_error() {
+        // End-of-stream without a close frame, a close frame with no
+        // payload, and a close frame with a code but an empty reason must
+        // all be reported as errors; none of them is a successful end of
+        // the turn.
+        let cases: Vec<(Vec<Result<WebSocketMessage>>, &str)> = vec![
+            (Vec::new(), "connection closed"),
+            (vec![Ok(WebSocketMessage::Close(None))], "connection"),
+            (
+                vec![Ok(WebSocketMessage::Close(Some(
+                    websocket_client::WebSocketCloseFrame {
+                        code: websocket_client::WebSocketCloseCode::Error,
+                        reason: String::new(),
+                    },
+                )))],
+                "1011",
+            ),
+        ];
+        for (incoming, expected_error_fragment) in cases {
+            let prepared = prepared_request_with_input("gpt-test", &["one"]);
+            let chains = WebSocketChains::new_shared();
+            let connection = Box::new(ScriptedWebSocketConnection { incoming });
+            let (event_sender, event_receiver) = mpsc::unbounded();
+
+            block_on(receive_websocket_response(
+                connection,
+                None,
+                prepared.input_hash,
+                chains.clone(),
+                event_sender,
+            ));
+
+            let events = block_on(event_receiver.collect::<Vec<_>>());
+            assert_eq!(events.len(), 1);
+            let error = events[0].as_ref().unwrap_err();
+            assert!(
+                error.to_string().contains(expected_error_fragment),
+                "expected error containing {expected_error_fragment:?}, got: {error}"
+            );
+            assert!(chains.lock().chains.is_empty());
+        }
     }
 
     /// A [`WebSocketConnection`] that accepts all sends and replays a fixed

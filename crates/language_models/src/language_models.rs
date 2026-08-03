@@ -33,6 +33,13 @@ use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
 
+/// Adapts a GPUI executor into the timer a [`websocket_client::NativeWebSocketClient`]
+/// uses for its connect deadline, so the timer is deterministic in tests.
+fn gpui_websocket_timer(executor: gpui::BackgroundExecutor) -> websocket_client::Timer {
+    use futures::FutureExt as _;
+    Arc::new(move |duration| executor.timer(duration).boxed())
+}
+
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     let credentials_provider = client.credentials_provider();
     let registry = LanguageModelRegistry::global(cx);

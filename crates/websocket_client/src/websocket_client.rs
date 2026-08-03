@@ -15,6 +15,7 @@ use std::net::TcpStream;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use futures::StreamExt as _;
@@ -42,6 +43,51 @@ impl std::fmt::Display for AuthRequired {
 }
 
 impl std::error::Error for AuthRequired {}
+
+/// Bounds the whole connection setup: DNS resolution, proxy tunneling, TCP
+/// connect, TLS handshake, and the WebSocket upgrade. Without it, a peer
+/// that accepts the TCP connection but never completes a handshake would
+/// stall the connect future indefinitely, and callers that fall back to
+/// another transport on connect errors would never get to do so.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The connection setup did not complete within [`CONNECT_TIMEOUT`].
+///
+/// Use `error.downcast_ref::<ConnectTimeout>()` to check for this error.
+#[derive(Debug, Clone)]
+pub struct ConnectTimeout;
+
+impl std::fmt::Display for ConnectTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "timed out while establishing the WebSocket connection"
+        )
+    }
+}
+
+impl std::error::Error for ConnectTimeout {}
+
+/// Creates a future that resolves after the given duration.
+///
+/// Injected into [`NativeWebSocketClient`] rather than created from a
+/// concrete timer so this crate stays executor-agnostic; callers running on
+/// GPUI should pass `gpui::BackgroundExecutor::timer`, which is
+/// deterministic in tests.
+pub type Timer = Arc<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// Resolves to the connect future's result, or to a [`ConnectTimeout`]
+/// error if the deadline future resolves first.
+async fn connect_with_deadline<T>(
+    connect: impl Future<Output = Result<T>>,
+    deadline: impl Future<Output = ()>,
+) -> Result<T> {
+    let timeout = async {
+        deadline.await;
+        Err(ConnectTimeout.into())
+    };
+    smol::future::or(connect, timeout).await
+}
 
 /// A factory for creating WebSocket connections.
 pub trait WebSocketClient: Send + Sync + 'static {
@@ -238,12 +284,14 @@ pub struct NativeWebSocketClient {
     /// An explicitly configured proxy URL, taking precedence over proxy
     /// environment variables for subsequent connection attempts.
     configured_proxy: parking_lot::Mutex<Option<Url>>,
+    timer: Timer,
 }
 
 impl NativeWebSocketClient {
-    pub fn new(configured_proxy: Option<Url>) -> Self {
+    pub fn new(configured_proxy: Option<Url>, timer: Timer) -> Self {
         Self {
             configured_proxy: parking_lot::Mutex::new(configured_proxy),
+            timer,
         }
     }
 
@@ -262,7 +310,8 @@ impl WebSocketClient for NativeWebSocketClient {
     ) -> BoxFuture<'static, Result<Box<dyn WebSocketConnection>>> {
         let url = url.to_string();
         let configured_proxy = self.configured_proxy.lock().clone();
-        Box::pin(async move {
+        let deadline = (self.timer)(CONNECT_TIMEOUT);
+        let connect = async move {
             let parsed = Url::parse(&url).context("failed to parse WebSocket URL")?;
             let host = parsed
                 .host_str()
@@ -347,7 +396,8 @@ impl WebSocketClient for NativeWebSocketClient {
                 stream: ws_stream,
                 upgrade_response_headers: handshake_response.into_parts().0.headers,
             }) as Box<dyn WebSocketConnection>)
-        })
+        };
+        Box::pin(connect_with_deadline(connect, deadline))
     }
 }
 
@@ -425,6 +475,22 @@ mod tests {
         assert_eq!(url.as_str(), "wss://api.openai.com/v1");
 
         assert!(websocket_url_from_http(Url::parse("ftp://example.com").unwrap()).is_err());
+    }
+
+    #[test]
+    fn connect_deadline_turns_a_stalled_connect_into_a_typed_timeout() {
+        let result = smol::block_on(connect_with_deadline::<()>(
+            std::future::pending(),
+            std::future::ready(()),
+        ));
+        let error = result.unwrap_err();
+        assert!(error.downcast_ref::<ConnectTimeout>().is_some());
+
+        let result = smol::block_on(connect_with_deadline(
+            std::future::ready(Ok("connected")),
+            std::future::pending(),
+        ));
+        assert_eq!(result.unwrap(), "connected");
     }
 
     #[test]
