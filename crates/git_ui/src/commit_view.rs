@@ -300,14 +300,25 @@ impl CommitView {
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
 
-        // Sort files by path to match the multibuffer's display order. This
-        // ensures that when the target file is reached, all files sorted above
-        // it have already been inserted and its display row is final. The
-        // CenterWhenPossible autoscroll can then be consumed at the earliest
-        // layout where the viewport budget suffices, without the risk of the
-        // anchor being pinned to a row that later shifts.
+        // Process the target file first so the blamed line is visible
+        // immediately, avoiding a jump from the top of the diff. Keep the
+        // remaining files sorted by path: files sorted above the target are
+        // inserted next (they shift the target's display row), followed by
+        // files sorted below it. The scroll anchor set when the target is
+        // selected tracks the target's buffer position, so later insertions
+        // keep the target row stable in the viewport.
         let mut commit_diff = commit_diff;
         commit_diff.files.sort_by(|a, b| a.path.cmp(&b.path));
+        if let Some((target_path, _)) = &scroll_to {
+            if let Some(pos) = commit_diff
+                .files
+                .iter()
+                .position(|f| f.path == *target_path)
+            {
+                let target = commit_diff.files.remove(pos);
+                commit_diff.files.insert(0, target);
+            }
+        }
 
         cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
