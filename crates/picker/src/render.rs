@@ -234,7 +234,7 @@ impl<D: PickerDelegate> Picker<D> {
                         )
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
-                        .child(self.render_element_container(cx))
+                        .child(self.render_element_container(window, cx))
                         .when(self.show_scrollbar, |this| {
                             let base_scrollbar_config = Scrollbars::new(ScrollAxes::Vertical);
 
