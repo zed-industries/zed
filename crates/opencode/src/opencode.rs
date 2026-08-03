@@ -183,6 +183,8 @@ pub enum Model {
     Qwen3_7Plus,
     #[serde(rename = "qwen3.7-max")]
     Qwen3_7Max,
+    #[serde(rename = "qwen3.8-max")]
+    Qwen3_8Max,
     #[serde(rename = "hy3")]
     Hy3,
 
@@ -242,6 +244,7 @@ impl Model {
             | Self::MimoV2_5
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
+            | Self::Qwen3_8Max
             | Self::Hy3 => &[OpenCodeSubscription::Go],
 
             // Deprecated on Go (per models.dev); still offered on Zen
@@ -322,6 +325,7 @@ impl Model {
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::Qwen3_7Plus => "qwen3.7-plus",
             Self::Qwen3_7Max => "qwen3.7-max",
+            Self::Qwen3_8Max => "qwen3.8-max",
             Self::Hy3 => "hy3",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3UltraFree => "nemotron-3-ultra-free",
@@ -392,6 +396,7 @@ impl Model {
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::Qwen3_7Plus => "Qwen3.7 Plus",
             Self::Qwen3_7Max => "Qwen3.7 Max",
+            Self::Qwen3_8Max => "Qwen3.8 Max",
             Self::Hy3 => "Hy3",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3UltraFree => "Nemotron 3 Ultra Free",
@@ -454,9 +459,11 @@ impl Model {
             | Self::Gemini3_5Flash
             | Self::Gemini3_6Flash => ApiProtocol::Google,
 
-            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
-                ApiProtocol::Anthropic
-            }
+            Self::Qwen3_8Max
+            | Self::Qwen3_7Max
+            | Self::Qwen3_7Plus
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_5Plus => ApiProtocol::Anthropic,
 
             Self::Glm5
             | Self::Glm5_1
@@ -572,7 +579,7 @@ impl Model {
                     262_144
                 }
             }
-            Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
+            Self::Qwen3_8Max | Self::Qwen3_7Max | Self::Qwen3_7Plus => 1_000_000,
             Self::Hy3 => 256_000,
             Self::BigPickle => 200_000,
             Self::Nemotron3UltraFree => 1_000_000,
@@ -659,6 +666,7 @@ impl Model {
             Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
                 Some(65_536)
             }
+            Self::Qwen3_8Max => Some(131_072),
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::Nemotron3UltraFree => Some(128_000),
             Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
@@ -732,6 +740,7 @@ impl Model {
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
             | Self::Qwen3_7Plus
+            | Self::Qwen3_8Max
             | Self::MiniMaxM3 => true,
 
             // OpenAI-compatible models without image support
