@@ -856,7 +856,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             .flat_map(move |axis| {
                 let max_offset = max_offset.along(axis);
                 let viewport_size = viewport_size.along(axis);
-                if max_offset.is_zero() || viewport_size.is_zero() {
+                // Below 2px of scroll range the content effectively fits: fractional padding
+                // (e.g. `py_1` at an odd rem size) plus whole-pixel layout rounding routinely
+                // leaves a 1px range, and a full-height thumb for it reads as a bug.
+                if max_offset < px(2.) || viewport_size.is_zero() {
                     return None;
                 }
                 let content_size = viewport_size + max_offset;
