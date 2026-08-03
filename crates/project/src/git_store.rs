@@ -455,6 +455,8 @@ pub struct RepositorySnapshot {
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
     pub linked_worktrees: Arc<[GitWorktree]>,
+    /// Tag names from `refs/tags/`, sorted lexicographically.
+    pub tags: Arc<[SharedString]>,
 }
 
 type JobId = u64;
@@ -607,6 +609,7 @@ pub enum RepositoryEvent {
     HeadChanged,
     BranchListChanged,
     StashEntriesChanged,
+    TagsChanged,
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
@@ -5411,6 +5414,7 @@ impl RepositorySnapshot {
             remote_upstream_url: None,
             stash_entries: Default::default(),
             linked_worktrees: Arc::from([]),
+            tags: Arc::from([]),
             path_style,
         }
     }
@@ -5460,6 +5464,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(worktree_to_proto)
                 .collect(),
+            tags: self.tags.iter().map(|tag| tag.to_string()).collect(),
         }
     }
 
@@ -5547,6 +5552,7 @@ impl RepositorySnapshot {
                 .iter()
                 .map(worktree_to_proto)
                 .collect(),
+            tags: self.tags.iter().map(|tag| tag.to_string()).collect(),
         }
     }
 
@@ -5912,7 +5918,9 @@ impl Repository {
         // scan id greater than 2 means the initial snapshot was calculated,
         // otherwise we don't need to refresh the graph state
         match event {
-            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
+            RepositoryEvent::HeadChanged
+            | RepositoryEvent::BranchListChanged
+            | RepositoryEvent::TagsChanged => {
                 if self.scan_id > 2 {
                     self.initial_graph_data.clear();
                 }
@@ -9126,6 +9134,13 @@ impl Repository {
             }
             self.snapshot.branch_list = new_branch_list;
             self.snapshot.branch_list_error = new_branch_list_error;
+
+            let new_tags: Arc<[SharedString]> =
+                update.tags.iter().map(SharedString::from).collect();
+            if *self.snapshot.tags != *new_tags {
+                cx.emit(RepositoryEvent::TagsChanged);
+            }
+            self.snapshot.tags = new_tags;
         }
 
         // We don't store any merge head state for downstream projects; the upstream
@@ -11152,9 +11167,18 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move { backend.worktrees().await.log_err().unwrap_or_default() }
     };
-    let (branches, head_commit, all_worktrees) =
-        futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
-    log::debug!("fetched branches, head commit, worktrees");
+    let tags_future = {
+        let backend = backend.clone();
+        async move { backend.tags().await.log_err().unwrap_or_default() }
+    };
+    let (branches, head_commit, all_worktrees, tags) = futures::future::join4(
+        branches_future,
+        head_commit_future,
+        worktrees_future,
+        tags_future,
+    )
+    .await;
+    log::debug!("fetched branches, head commit, worktrees, tags");
 
     let BranchesScanResult {
         branches,
@@ -11162,6 +11186,7 @@ async fn compute_snapshot(
     } = branches;
     let branch = branches.iter().find(|branch| branch.is_head).cloned();
     let branch_list: Arc<[Branch]> = branches.into();
+    let tags: Arc<[SharedString]> = tags.into();
 
     let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
         .into_iter()
@@ -11180,6 +11205,7 @@ async fn compute_snapshot(
         let branch_list_changed = *branch_list != *this.snapshot.branch_list;
         let branch_list_error_changed = branch_list_error != this.snapshot.branch_list_error;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
+        let tags_changed = *tags != *this.snapshot.tags;
 
         this.snapshot = RepositorySnapshot {
             id,
@@ -11191,6 +11217,7 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
+            tags,
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };
@@ -11205,6 +11232,10 @@ async fn compute_snapshot(
 
         if worktrees_changed {
             cx.emit(RepositoryEvent::GitWorktreeListChanged);
+        }
+
+        if tags_changed {
+            cx.emit(RepositoryEvent::TagsChanged);
         }
 
         this.snapshot.clone()

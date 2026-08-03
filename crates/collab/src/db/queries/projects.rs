@@ -384,6 +384,7 @@ impl Database {
                 linked_worktrees: ActiveValue::Set(Some(
                     serde_json::to_string(&update.linked_worktrees).unwrap(),
                 )),
+                tags: ActiveValue::Set(Some(serde_json::to_string(&update.tags).unwrap())),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -401,6 +402,7 @@ impl Database {
                     project_repository::Column::RepositoryDirAbsPath,
                     project_repository::Column::CommonDirAbsPath,
                     project_repository::Column::LinkedWorktrees,
+                    project_repository::Column::Tags,
                 ])
                 .to_owned(),
             )
@@ -904,6 +906,11 @@ impl Database {
                         common_dir_abs_path: db_repository_entry.common_dir_abs_path,
                         linked_worktrees: db_repository_entry
                             .linked_worktrees
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or_default(),
+                        tags: db_repository_entry
+                            .tags
                             .as_deref()
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_default(),
