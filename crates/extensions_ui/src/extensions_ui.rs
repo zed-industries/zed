@@ -292,8 +292,6 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ExtensionFilter {
     All,
@@ -703,8 +701,7 @@ impl ExtensionsPage {
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
         let repository_icon = self.get_repository_icon(&extension.manifest.repository);
-        let card = ExtensionCard::for_remote(extension, cx)
-            .repository_icon(repository_icon);
+        let card = ExtensionCard::for_remote(extension, cx).repository_icon(repository_icon);
         let this = cx.weak_entity();
 
         card.context_menu(move |extension_id, authors, window, cx| {
@@ -722,7 +719,6 @@ impl ExtensionsPage {
                         }),
                     )
                     .entry("Copy Extension ID", None, {
-
                         let extension_id = extension_id.clone();
                         move |_, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(
