@@ -385,8 +385,10 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
         }
     }
 
-    /// Returns `None` because stepping into a directory re-anchors the dropdown under that
-    /// directory's own segment, rather than the picker swapping its query.
+    /// Steps into the selected directory. Returns an empty query rather than `None` when it
+    /// does: `None` means unhandled, which would let the keystroke fall through to the next
+    /// binding and also move the query editor's cursor. The dropdown re-anchors under the new
+    /// segment anyway, so the reset query is never visible.
     fn select_child(
         &mut self,
         window: &mut Window,
@@ -394,6 +396,7 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
     ) -> Option<String> {
         if self.entry_at(self.selected_index)?.is_dir {
             self.confirm(false, window, cx);
+            return Some(String::new());
         }
         None
     }
@@ -409,7 +412,7 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
                 editor.navigate_breadcrumb_to(self.worktree_id, parent, window, cx);
             });
         }
-        None
+        Some(String::new())
     }
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<BreadcrumbDirectoryPicker>) {}
@@ -559,11 +562,13 @@ pub(crate) fn render_breadcrumb_directory_segment(
         });
 
     // Double clicking a segment reveals its directory in the project panel, the way IntelliJ's
-    // navigation bar does. On mouse down rather than on click because `ButtonLike` stops click
-    // propagation, so an outer click handler never runs; mouse down it leaves alone.
+    // navigation bar does. Capture phase, and on mouse down rather than on click: the first
+    // click opens the popover, whose window-level dismiss handler then swallows the second
+    // mouse down on the trigger (`PopoverMenu::paint` stops its propagation), so neither a
+    // click handler nor a bubble-phase mouse down handler ever sees a double click.
     div()
-        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
-            if event.click_count < 2 {
+        .capture_any_mouse_down(move |event, _, cx| {
+            if event.button != MouseButton::Left || event.click_count < 2 {
                 return;
             }
             reveal_breadcrumb_directory_in_project_panel(

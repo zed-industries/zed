@@ -1230,6 +1230,10 @@
       "escape": "menu::Cancel",
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
+      // Delegates that don't implement select_child/select_parent leave the action
+      // unhandled and these keys fall through to ordinary cursor movement.
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
       "tab": "picker::ConfirmCompletion",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
