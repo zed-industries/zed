@@ -65,6 +65,9 @@ use std::{
 const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
+const INTERNET_EVENT_CLASS: u32 = 0x4755524c; // 'GURL'
+const AE_GET_URL: u32 = 0x4755524c; // 'GURL'
+const DIRECT_OBJECT_KEY: u32 = 0x2d2d2d2d; // '----'
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -141,6 +144,10 @@ unsafe fn build_classes() {
             decl.add_method(
                 sel!(application:openURLs:),
                 open_urls as extern "C" fn(&mut Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(handleGetURLEvent:withReplyEvent:),
+                handle_get_url_event as extern "C" fn(&mut Object, Sel, id, id),
             );
 
             decl.add_method(
@@ -1254,8 +1261,21 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     }
 }
 
-extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
+extern "C" fn will_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
+        // application:openURLs: has no guaranteed ordering against
+        // applicationDidFinishLaunching:, so the CLI's `zed-cli://` URL can arrive after we
+        // restored the previous session and we open a duplicate window. A kAEGetURL handler is
+        // dispatched earlier, and overrides only AppKit's own: kAEOpenDocuments, which is how
+        // files dropped on the app icon arrive, still goes to openURLs.
+        let event_manager: id = msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+        let _: () = msg_send![event_manager,
+            setEventHandler: this as id
+            andSelector: sel!(handleGetURLEvent:withReplyEvent:)
+            forEventClass: INTERNET_EVENT_CLASS
+            andEventID: AE_GET_URL
+        ];
+
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
 
         // The autofill heuristic controller causes slowdown and high CPU usage.
@@ -1422,6 +1442,35 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             })
             .collect::<Vec<_>>()
     };
+    deliver_open_urls(this, urls);
+}
+
+extern "C" fn handle_get_url_event(this: &mut Object, _: Sel, event: id, _reply: id) {
+    let url = unsafe {
+        let descriptor: id = msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT_KEY];
+        if descriptor == nil {
+            return;
+        }
+        let url_string: id = msg_send![descriptor, stringValue];
+        if url_string == nil {
+            return;
+        }
+        let utf8_string = url_string.UTF8String() as *mut c_char;
+        if utf8_string.is_null() {
+            return;
+        }
+        match CStr::from_ptr(utf8_string).to_str() {
+            Ok(string) => string.to_string(),
+            Err(err) => {
+                log::error!("error converting url to string: {}", err);
+                return;
+            }
+        }
+    };
+    deliver_open_urls(this, vec![url]);
+}
+
+fn deliver_open_urls(this: &mut Object, urls: Vec<String>) {
     let platform = unsafe { get_mac_platform(this) };
     let mut lock = platform.0.lock();
     if let Some(mut callback) = lock.open_urls.take() {
