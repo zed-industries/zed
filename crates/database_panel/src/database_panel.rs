@@ -117,7 +117,7 @@ struct TableState {
     columns: LoadState<Vec<ColumnInfo>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ListEntry {
     Connection {
         connection_ix: usize,
@@ -170,6 +170,9 @@ pub struct DatabasePanel {
     scroll_handle: UniformListScrollHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filter_editor: Entity<Editor>,
+    /// Whether the previous entry rebuild used a filter query, to detect the
+    /// moment the filter is cleared and reveal the selection in the tree.
+    filter_was_active: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -252,6 +255,7 @@ impl DatabasePanel {
                 scroll_handle: UniformListScrollHandle::new(),
                 context_menu: None,
                 filter_editor,
+                filter_was_active: false,
                 _subscriptions: subscriptions,
             };
             this.settings_changed(cx);
@@ -291,21 +295,82 @@ impl DatabasePanel {
     }
 
     fn rebuild_entries(&mut self, cx: &mut Context<Self>) {
-        self.entries = match self.filter_query(cx) {
+        let filter = self.filter_query(cx);
+        let selected_entry = self
+            .selected_index
+            .and_then(|index| self.entries.get(index).cloned());
+        let clearing_filter = self.filter_was_active && filter.is_none();
+        self.filter_was_active = filter.is_some();
+        if clearing_filter && let Some(entry) = &selected_entry {
+            self.expand_ancestors(entry);
+        }
+        self.entries = match filter {
             Some(query) => {
                 self.ensure_filter_index(cx);
                 self.filtered_entries(&query)
             }
             None => self.expanded_entries(),
         };
-        if let Some(selected) = self.selected_index {
-            if self.entries.is_empty() {
-                self.selected_index = None;
-            } else if selected >= self.entries.len() {
-                self.selected_index = Some(self.entries.len() - 1);
+        // Follow the selected entry to its new position; fall back to clamping
+        // the old index when the entry is no longer listed.
+        let restored = selected_entry
+            .and_then(|entry| self.entries.iter().position(|candidate| *candidate == entry));
+        match restored {
+            Some(index) => {
+                if clearing_filter {
+                    self.scroll_handle
+                        .scroll_to_item(index, ScrollStrategy::Center);
+                }
+                self.selected_index = Some(index);
+            }
+            None => {
+                if let Some(selected) = self.selected_index {
+                    if self.entries.is_empty() {
+                        self.selected_index = None;
+                    } else if selected >= self.entries.len() {
+                        self.selected_index = Some(self.entries.len() - 1);
+                    }
+                }
             }
         }
         cx.notify();
+    }
+
+    /// Expands every ancestor of `entry` so that it stays visible in the
+    /// unfiltered tree.
+    fn expand_ancestors(&mut self, entry: &ListEntry) {
+        let (connection_ix, database_ix, table_ix) = match *entry {
+            ListEntry::Connection { .. } | ListEntry::Status { .. } => return,
+            ListEntry::Database { connection_ix, .. } => (connection_ix, None, None),
+            ListEntry::Table {
+                connection_ix,
+                database_ix,
+                ..
+            } => (connection_ix, Some(database_ix), None),
+            ListEntry::Column {
+                connection_ix,
+                database_ix,
+                table_ix,
+                ..
+            } => (connection_ix, Some(database_ix), Some(table_ix)),
+        };
+        let Some(connection) = self.connections.get_mut(connection_ix) else {
+            return;
+        };
+        connection.expanded = true;
+        let Some(database_ix) = database_ix else {
+            return;
+        };
+        let Some(database) = self.database_state_mut(connection_ix, database_ix) else {
+            return;
+        };
+        database.expanded = true;
+        let Some(table_ix) = table_ix else {
+            return;
+        };
+        if let Some(table) = self.table_state_mut(connection_ix, database_ix, table_ix) {
+            table.expanded = true;
+        }
     }
 
     fn expanded_entries(&self) -> Vec<ListEntry> {
@@ -683,7 +748,12 @@ impl DatabasePanel {
                     self.load_columns(connection_ix, database_ix, table_ix, cx);
                 }
             }
-            ListEntry::Column { .. } | ListEntry::Status { .. } => return,
+            ListEntry::Column { .. } => {
+                self.selected_index = Some(index);
+                cx.notify();
+                return;
+            }
+            ListEntry::Status { .. } => return,
         }
         self.selected_index = Some(index);
         self.rebuild_entries(cx);
