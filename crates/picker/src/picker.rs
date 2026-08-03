@@ -1452,7 +1452,11 @@ impl<D: PickerDelegate> Picker<D> {
             }))
     }
 
-    fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_element_container(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         // When the picker shrinks to fit its content, the list infers its size
         // from its items. When it fills its full height (preview visible), the
         // list fills the available space.
@@ -1474,7 +1478,8 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow_1()
-            .py_1()
+            // Rounded, as fractional padding makes a list that fits its rows scrollable by 1px.
+            .py((window.rem_size() * 0.25).round())
             .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
