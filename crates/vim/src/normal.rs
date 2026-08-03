@@ -753,17 +753,7 @@ impl Vim {
                     let indent = if auto_indent_mode == AutoIndentMode::None {
                         String::new()
                     } else {
-                        let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row)).len;
-                        let first_char = snapshot.chars_at(Point::new(row, indent_size)).next();
-                        let indent_row = if matches!(first_char, Some('}') | Some(')')) {
-                            snapshot
-                                .prev_non_blank_row(MultiBufferRow(row))
-                                .map(|r| r.0)
-                                .unwrap_or(row)
-                        } else {
-                            row
-                        };
-                        snapshot.indent_and_comment_for_line(MultiBufferRow(indent_row), cx)
+                        snapshot.indent_and_comment_for_line(MultiBufferRow(row), cx)
                     };
                     let start_of_line = Point::new(row, 0);
                     let edit = (start_of_line..start_of_line, indent + "\n");
