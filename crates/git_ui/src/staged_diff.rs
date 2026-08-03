@@ -219,8 +219,8 @@ impl StagedDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff =
-            cx.new(|cx| DiffBufferList::new(DiffBase::Staged, project.clone(), window, cx));
+        let git_store = project.read(cx).git_store().clone();
+        let branch_diff = cx.new(|cx| DiffBufferList::new(DiffBase::Staged, git_store, None, cx));
         let workspace_handle = workspace.downgrade();
         let diff = cx.new(|cx| {
             DiffMultibuffer::new(

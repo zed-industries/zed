@@ -51,7 +51,7 @@ use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
     utils::SearchInputWidth,
 };
-use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
+use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -227,6 +227,17 @@ pub fn init(cx: &mut App) {
             ProjectSearchView::new_search(workspace, action, window, cx);
             cx.notify();
         });
+        workspace.register_action(
+            move |workspace, action: &zed_actions::search::NewSearchInDirectory, window, cx| {
+                ProjectSearchView::new_search_with_filter(
+                    workspace,
+                    action.directory.clone(),
+                    window,
+                    cx,
+                );
+                cx.notify();
+            },
+        );
     })
     .detach();
 }
@@ -1193,14 +1204,12 @@ impl ProjectSearchView {
         this
     }
 
-    pub fn new_search_in_directory(
+    pub fn new_search_with_filter(
         workspace: &mut Workspace,
-        dir_path: &RelPath,
+        filter_str: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let filter_str = dir_path.display(workspace.path_style(cx));
-
         let weak_workspace = cx.entity().downgrade();
 
         let entity = cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
@@ -4143,9 +4152,20 @@ pub mod tests {
                 .clone()
         });
         assert!(a_dir_entry.is_dir());
-        workspace.update_in(cx, |workspace, window, cx| {
-            ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.path, window, cx)
+        let directory = cx.update(|_, cx| {
+            a_dir_entry
+                .path
+                .display(workspace.read(cx).path_style(cx))
+                .into_owned()
         });
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(zed_actions::search::NewSearchInDirectory { directory }),
+                    cx,
+                );
+            })
+            .unwrap();
 
         let Some(search_view) = cx.read(|cx| {
             workspace
