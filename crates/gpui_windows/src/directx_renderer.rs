@@ -44,6 +44,7 @@ pub(crate) struct DirectXRenderer {
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
     font_info: &'static FontInfo,
+    frame_scratch: FrameScratch,
 
     width: u32,
     height: u32,
@@ -71,26 +72,31 @@ struct DirectXResources {
     swap_chain: IDXGISwapChain1,
     render_target: Option<ID3D11Texture2D>,
     render_target_view: Option<ID3D11RenderTargetView>,
-
-    // Path intermediate textures (with MSAA)
     path_intermediate_texture: ID3D11Texture2D,
     path_intermediate_srv: Option<ID3D11ShaderResourceView>,
     path_intermediate_msaa_texture: ID3D11Texture2D,
     path_intermediate_msaa_view: Option<ID3D11RenderTargetView>,
-
-    // Cached viewport
+    depth_stencil_texture: ID3D11Texture2D,
+    depth_stencil_view: Option<ID3D11DepthStencilView>,
     viewport: D3D11_VIEWPORT,
 }
 
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
+    opaque_quad_pipeline: OpaqueQuadPipeline,
     path_rasterization_pipeline: PipelineState<PathRasterizationSprite>,
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     subpixel_sprites: PipelineState<SubpixelSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
+}
+
+#[derive(Default)]
+struct FrameScratch {
+    path_vertices: Vec<PathRasterizationSprite>,
+    path_sprites: Vec<PathSprite>,
 }
 
 struct DirectXGlobalElements {
@@ -189,6 +195,7 @@ impl DirectXRenderer {
             pipelines,
             direct_composition,
             font_info: Self::get_font_info(),
+            frame_scratch: FrameScratch::default(),
             width: 1,
             height: 1,
             skip_draws: false,
@@ -226,9 +233,24 @@ impl DirectXRenderer {
                     .context("missing render target view")?,
                 clear_color,
             );
-            device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            device_context.ClearDepthStencilView(
+                resources
+                    .depth_stencil_view
+                    .as_ref()
+                    .context("missing depth stencil view")?,
+                D3D11_CLEAR_DEPTH.0,
+                0.0,
+                0,
+            );
+            device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&resources.render_target_view)),
+                resources.depth_stencil_view.as_ref(),
+            );
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
+            device_context
+                .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            device_context
+                .PSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
         }
         Ok(())
     }
@@ -306,9 +328,10 @@ impl DirectXRenderer {
             .handle_device_lost(&devices.device, &devices.device_context);
 
         unsafe {
-            devices
-                .device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&resources.render_target_view)),
+                resources.depth_stencil_view.as_ref(),
+            );
         }
         self.devices = Some(devices);
         self.resources = Some(resources);
@@ -335,19 +358,62 @@ impl DirectXRenderer {
         })?;
 
         self.upload_scene_buffers(scene)?;
+        self.update_quad_indices(scene)?;
 
         let annotation = self
             .devices
             .as_ref()
             .and_then(|devices| devices.annotation.clone())
             .filter(|annotation| unsafe { annotation.GetStatus().as_bool() });
+
+        if !scene.opaque_quad_indices.is_empty() {
+            let _annotation = annotation.as_ref().map(|annotation| {
+                Annotation::new(
+                    annotation,
+                    HSTRING::from(format!(
+                        "opaque quads ({})",
+                        scene.opaque_quad_indices.len()
+                    )),
+                )
+            });
+            self.draw_opaque_quads(
+                scene.blended_quad_indices.len(),
+                scene.opaque_quad_indices.len(),
+            )?;
+        }
+
+        self.pipelines.opaque_quad_pipeline.enable_depth_test(
+            &self
+                .devices
+                .as_ref()
+                .context("devices missing")?
+                .device_context,
+        );
+
+        let mut quad_cursor: u32 = 0;
         for batch in scene.batches() {
             let _annotation = annotation
                 .as_ref()
                 .map(|annotation| Annotation::new(annotation, HSTRING::from(batch.label())));
+
+            // Quad shaders assign each quad its own depth.
+            // In every other batch type, the depth is fixed to the position of the quad cursor.
+            if matches!(&batch, PrimitiveBatch::Quads { .. }) {
+                self.set_viewport_depth_range(0.0, 1.0)?;
+            } else {
+                let depth = quad_depth(quad_cursor);
+                self.set_viewport_depth_range(depth, depth)?;
+            }
+
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
-                PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
+                PrimitiveBatch::Quads {
+                    range,
+                    blended_range,
+                } => {
+                    quad_cursor += range.len() as u32;
+                    self.draw_blended_quads(blended_range.start, blended_range.len())
+                }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
                     self.draw_paths_to_intermediate(paths)?;
@@ -380,7 +446,57 @@ impl DirectXRenderer {
                 )
             })?;
         }
+
+        self.pipelines.opaque_quad_pipeline.disable_depth(
+            &self
+                .devices
+                .as_ref()
+                .context("devices missing")?
+                .device_context,
+        );
+
         self.present()
+    }
+
+    fn set_viewport_depth_range(&self, minimum_depth: f32, maximum_depth: f32) -> Result<()> {
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_ref().context("resources missing")?;
+        // Equal endpoints collapse every shader depth to the same value.
+        let viewport = D3D11_VIEWPORT {
+            MinDepth: minimum_depth,
+            MaxDepth: maximum_depth,
+            ..resources.viewport
+        };
+        unsafe {
+            devices
+                .device_context
+                .RSSetViewports(Some(slice::from_ref(&viewport)))
+        };
+        Ok(())
+    }
+
+    fn update_quad_indices(&mut self, scene: &Scene) -> Result<()> {
+        if scene.blended_quad_indices.is_empty() && scene.opaque_quad_indices.is_empty() {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        self.pipelines.opaque_quad_pipeline.update_quad_indices(
+            &devices.device,
+            &devices.device_context,
+            &scene.blended_quad_indices,
+            &scene.opaque_quad_indices,
+        )
+    }
+
+    fn draw_opaque_quads(&self, quad_indices_start: usize, quad_count: usize) -> Result<()> {
+        let devices = self.devices.as_ref().context("devices missing")?;
+        self.pipelines.opaque_quad_pipeline.draw(
+            &devices.device,
+            &devices.device_context,
+            &self.pipelines.quad_pipeline.view,
+            quad_indices_start as u32,
+            quad_count as u32,
+        )
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
@@ -419,9 +535,10 @@ impl DirectXRenderer {
         resources.recreate_resources(devices, width, height)?;
 
         unsafe {
-            devices
-                .device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&resources.render_target_view)),
+                resources.depth_stencil_view.as_ref(),
+            );
         }
 
         Ok(())
@@ -489,40 +606,38 @@ impl DirectXRenderer {
         self.pipelines.shadow_pipeline.draw_range(
             &devices.device,
             &devices.device_context,
-            slice::from_ref(
-                &self
-                    .resources
-                    .as_ref()
-                    .context("resources missing")?
-                    .viewport,
-            ),
-            slice::from_ref(&self.globals.global_params_buffer),
             4,
             start as u32,
             len as u32,
         )
     }
 
-    fn draw_quads(&mut self, start: usize, len: usize) -> Result<()> {
-        if len == 0 {
+    fn draw_blended_quads(&mut self, quad_indices_start: usize, quad_count: usize) -> Result<()> {
+        if quad_count == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.quad_pipeline.draw_range(
+        let quad_pipeline = &self.pipelines.quad_pipeline;
+        let quad_indices_view = self.pipelines.opaque_quad_pipeline.quad_indices_view(
             &devices.device,
+            quad_indices_start as u32,
+            quad_count as u32,
+        )?;
+        let views = [quad_pipeline.view.clone(), quad_indices_view];
+        set_pipeline_state(
             &devices.device_context,
-            slice::from_ref(
-                &self
-                    .resources
-                    .as_ref()
-                    .context("resources missing")?
-                    .viewport,
-            ),
-            slice::from_ref(&self.globals.global_params_buffer),
-            4,
-            start as u32,
-            len as u32,
-        )
+            &views,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            &quad_pipeline.vertex,
+            &quad_pipeline.fragment,
+            &quad_pipeline.blend_state,
+        );
+        unsafe {
+            devices
+                .device_context
+                .DrawInstanced(4, quad_count as u32, 0, 0);
+        }
+        Ok(())
     }
 
     fn draw_paths_to_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
@@ -539,6 +654,9 @@ impl DirectXRenderer {
                 &[0.0; 4],
             );
             // Set intermediate MSAA texture as render target
+            self.pipelines
+                .opaque_quad_pipeline
+                .disable_depth(&devices.device_context);
             devices.device_context.OMSetRenderTargets(
                 Some(slice::from_ref(&resources.path_intermediate_msaa_view)),
                 None,
@@ -546,8 +664,8 @@ impl DirectXRenderer {
         }
 
         // Collect all vertices and sprites for a single draw call
-        let mut vertices = Vec::new();
-
+        let vertices = &mut self.frame_scratch.path_vertices;
+        vertices.clear();
         for path in paths {
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationSprite {
                 xy_position: v.xy_position,
@@ -560,13 +678,11 @@ impl DirectXRenderer {
         self.pipelines.path_rasterization_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
-            &vertices,
+            vertices,
         )?;
 
         self.pipelines.path_rasterization_pipeline.draw(
             &devices.device_context,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
             vertices.len() as u32,
             1,
@@ -582,9 +698,13 @@ impl DirectXRenderer {
                 RENDER_TARGET_FORMAT,
             );
             // Restore main render target
-            devices
-                .device_context
-                .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            devices.device_context.OMSetRenderTargets(
+                Some(slice::from_ref(&resources.render_target_view)),
+                resources.depth_stencil_view.as_ref(),
+            );
+            self.pipelines
+                .opaque_quad_pipeline
+                .enable_depth_test(&devices.device_context);
         }
 
         Ok(())
@@ -602,35 +722,32 @@ impl DirectXRenderer {
         // disjoint, so we can copy each path's bounds individually. If this
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
-        let sprites = if paths.last().unwrap().order == first_path.order {
-            paths
-                .iter()
-                .map(|path| PathSprite {
-                    bounds: path.clipped_bounds(),
-                })
-                .collect::<Vec<_>>()
+        let sprites = &mut self.frame_scratch.path_sprites;
+        sprites.clear();
+        if paths.last().unwrap().order == first_path.order {
+            sprites.extend(paths.iter().map(|path| PathSprite {
+                bounds: path.clipped_bounds(),
+            }));
         } else {
             let mut bounds = first_path.clipped_bounds();
             for path in paths.iter().skip(1) {
                 bounds = bounds.union(&path.clipped_bounds());
             }
-            vec![PathSprite { bounds }]
-        };
+            sprites.push(PathSprite { bounds });
+        }
 
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
         self.pipelines.path_sprite_pipeline.update_buffer(
             &devices.device,
             &devices.device_context,
-            &sprites,
+            sprites,
         )?;
 
         // Draw the sprites with the path texture
         self.pipelines.path_sprite_pipeline.draw_with_texture(
             &devices.device_context,
             slice::from_ref(&resources.path_intermediate_srv),
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
             sprites.len() as u32,
         )
@@ -641,12 +758,9 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         self.pipelines.underline_pipeline.draw_range(
             &devices.device,
             &devices.device_context,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             4,
             start as u32,
             len as u32,
@@ -663,14 +777,11 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.mono_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
             &texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -687,14 +798,11 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.subpixel_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
             &texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -711,14 +819,11 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.poly_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
             &texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -804,6 +909,8 @@ impl DirectXResources {
         let (
             render_target,
             render_target_view,
+            depth_stencil_texture,
+            depth_stencil_view,
             path_intermediate_texture,
             path_intermediate_srv,
             path_intermediate_msaa_texture,
@@ -816,6 +923,8 @@ impl DirectXResources {
             swap_chain,
             render_target: Some(render_target),
             render_target_view,
+            depth_stencil_texture,
+            depth_stencil_view,
             path_intermediate_texture,
             path_intermediate_msaa_texture,
             path_intermediate_msaa_view,
@@ -834,6 +943,8 @@ impl DirectXResources {
         let (
             render_target,
             render_target_view,
+            depth_stencil_texture,
+            depth_stencil_view,
             path_intermediate_texture,
             path_intermediate_srv,
             path_intermediate_msaa_texture,
@@ -842,6 +953,8 @@ impl DirectXResources {
         ) = create_resources(devices, &self.swap_chain, width, height)?;
         self.render_target = Some(render_target);
         self.render_target_view = render_target_view;
+        self.depth_stencil_texture = depth_stencil_texture;
+        self.depth_stencil_view = depth_stencil_view;
         self.path_intermediate_texture = path_intermediate_texture;
         self.path_intermediate_msaa_texture = path_intermediate_msaa_texture;
         self.path_intermediate_msaa_view = path_intermediate_msaa_view;
@@ -909,10 +1022,12 @@ impl DirectXRenderPipelines {
             16,
             create_blend_state(device)?,
         )?;
+        let opaque_quad_pipeline = OpaqueQuadPipeline::new(device)?;
 
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
+            opaque_quad_pipeline,
             path_rasterization_pipeline,
             path_sprite_pipeline,
             underline_pipeline,
@@ -1065,8 +1180,6 @@ impl<T> PipelineState<T> {
     fn draw(
         &self,
         device_context: &ID3D11DeviceContext,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
         topology: D3D_PRIMITIVE_TOPOLOGY,
         vertex_count: u32,
         instance_count: u32,
@@ -1075,10 +1188,8 @@ impl<T> PipelineState<T> {
             device_context,
             slice::from_ref(&self.view),
             topology,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
@@ -1091,8 +1202,6 @@ impl<T> PipelineState<T> {
         &self,
         device_context: &ID3D11DeviceContext,
         texture: &[Option<ID3D11ShaderResourceView>],
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
         sampler: &[Option<ID3D11SamplerState>],
         instance_count: u32,
     ) -> Result<()> {
@@ -1100,10 +1209,8 @@ impl<T> PipelineState<T> {
             device_context,
             slice::from_ref(&self.view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
@@ -1120,8 +1227,6 @@ impl<T> PipelineState<T> {
         &self,
         device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
         vertex_count: u32,
         first_instance: u32,
         instance_count: u32,
@@ -1131,10 +1236,8 @@ impl<T> PipelineState<T> {
             device_context,
             slice::from_ref(&view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
@@ -1148,8 +1251,6 @@ impl<T> PipelineState<T> {
         device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
         texture: &[Option<ID3D11ShaderResourceView>],
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
         sampler: &[Option<ID3D11SamplerState>],
         first_instance: u32,
         instance_count: u32,
@@ -1159,10 +1260,8 @@ impl<T> PipelineState<T> {
             device_context,
             slice::from_ref(&view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
@@ -1172,6 +1271,144 @@ impl<T> PipelineState<T> {
             device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())
+    }
+}
+
+struct OpaqueQuadPipeline {
+    vertex: ID3D11VertexShader,
+    fragment: ID3D11PixelShader,
+    quad_indices_buffer: ID3D11Buffer,
+    quad_indices_buffer_size: usize,
+    blend_state: ID3D11BlendState,
+    depth_write_state: ID3D11DepthStencilState,
+    depth_test_state: ID3D11DepthStencilState,
+    depth_disabled_state: ID3D11DepthStencilState,
+}
+
+impl OpaqueQuadPipeline {
+    fn new(device: &ID3D11Device) -> Result<Self> {
+        let vertex = {
+            let raw_shader = RawShaderBytes::new(ShaderModule::OpaqueQuad, ShaderTarget::Vertex)?;
+            create_vertex_shader(device, raw_shader.as_bytes())?
+        };
+        let fragment = {
+            let raw_shader = RawShaderBytes::new(ShaderModule::OpaqueQuad, ShaderTarget::Fragment)?;
+            create_fragment_shader(device, raw_shader.as_bytes())?
+        };
+        let quad_indices_buffer_size = 512;
+        Ok(OpaqueQuadPipeline {
+            vertex,
+            fragment,
+            quad_indices_buffer: create_buffer(
+                device,
+                std::mem::size_of::<u32>(),
+                quad_indices_buffer_size,
+            )?,
+            quad_indices_buffer_size,
+            blend_state: create_opaque_blend_state(device)?,
+            depth_write_state: create_depth_stencil_state(
+                device,
+                true,
+                D3D11_DEPTH_WRITE_MASK_ALL,
+            )?,
+            depth_test_state: create_depth_stencil_state(
+                device,
+                true,
+                D3D11_DEPTH_WRITE_MASK_ZERO,
+            )?,
+            depth_disabled_state: create_depth_stencil_state(
+                device,
+                false,
+                D3D11_DEPTH_WRITE_MASK_ZERO,
+            )?,
+        })
+    }
+
+    fn update_quad_indices(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        blended_quad_indices: &[u32],
+        opaque_quad_indices: &[u32],
+    ) -> Result<()> {
+        let quad_index_count = blended_quad_indices.len() + opaque_quad_indices.len();
+        if self.quad_indices_buffer_size < quad_index_count {
+            let new_buffer_size = quad_index_count.next_power_of_two();
+            self.quad_indices_buffer =
+                create_buffer(device, std::mem::size_of::<u32>(), new_buffer_size)?;
+            self.quad_indices_buffer_size = new_buffer_size;
+        }
+        unsafe {
+            let mut destination = std::mem::zeroed();
+            device_context.Map(
+                &self.quad_indices_buffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut destination),
+            )?;
+            let destination = destination.pData as *mut u32;
+            std::ptr::copy_nonoverlapping(
+                blended_quad_indices.as_ptr(),
+                destination,
+                blended_quad_indices.len(),
+            );
+            std::ptr::copy_nonoverlapping(
+                opaque_quad_indices.as_ptr(),
+                destination.add(blended_quad_indices.len()),
+                opaque_quad_indices.len(),
+            );
+            device_context.Unmap(&self.quad_indices_buffer, 0);
+        }
+        Ok(())
+    }
+
+    fn quad_indices_view(
+        &self,
+        device: &ID3D11Device,
+        quad_indices_start: u32,
+        quad_index_count: u32,
+    ) -> Result<Option<ID3D11ShaderResourceView>> {
+        create_buffer_view_range(
+            device,
+            &self.quad_indices_buffer,
+            quad_indices_start,
+            quad_index_count,
+        )
+    }
+
+    fn draw(
+        &self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        quad_instances_view: &Option<ID3D11ShaderResourceView>,
+        quad_indices_start: u32,
+        quad_count: u32,
+    ) -> Result<()> {
+        if quad_count == 0 {
+            return Ok(());
+        }
+        let quad_indices_view = self.quad_indices_view(device, quad_indices_start, quad_count)?;
+        let views = [quad_instances_view.clone(), quad_indices_view];
+        unsafe { device_context.OMSetDepthStencilState(&self.depth_write_state, 0) };
+        set_pipeline_state(
+            device_context,
+            &views,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            &self.vertex,
+            &self.fragment,
+            &self.blend_state,
+        );
+        unsafe { device_context.DrawInstanced(4, quad_count, 0, 0) };
+        Ok(())
+    }
+
+    fn enable_depth_test(&self, device_context: &ID3D11DeviceContext) {
+        unsafe { device_context.OMSetDepthStencilState(&self.depth_test_state, 0) };
+    }
+
+    fn disable_depth(&self, device_context: &ID3D11DeviceContext) {
+        unsafe { device_context.OMSetDepthStencilState(&self.depth_disabled_state, 0) };
     }
 }
 
@@ -1271,6 +1508,8 @@ fn create_resources(
     ID3D11Texture2D,
     Option<ID3D11RenderTargetView>,
     ID3D11Texture2D,
+    Option<ID3D11DepthStencilView>,
+    ID3D11Texture2D,
     Option<ID3D11ShaderResourceView>,
     ID3D11Texture2D,
     Option<ID3D11RenderTargetView>,
@@ -1278,14 +1517,25 @@ fn create_resources(
 )> {
     let (render_target, render_target_view) =
         create_render_target_and_its_view(swap_chain, &devices.device)?;
+    let (depth_stencil_texture, depth_stencil_view) =
+        create_depth_stencil_texture_and_view(&devices.device, width, height)?;
     let (path_intermediate_texture, path_intermediate_srv) =
         create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
         create_path_intermediate_msaa_texture_and_view(&devices.device, width, height)?;
-    let viewport = set_viewport(&devices.device_context, width as f32, height as f32);
+    let viewport = D3D11_VIEWPORT {
+        TopLeftX: 0.0,
+        TopLeftY: 0.0,
+        Width: width as f32,
+        Height: height as f32,
+        MinDepth: 0.0,
+        MaxDepth: 1.0,
+    };
     Ok((
         render_target,
         render_target_view,
+        depth_stencil_texture,
+        depth_stencil_view,
         path_intermediate_texture,
         path_intermediate_srv,
         path_intermediate_msaa_texture,
@@ -1303,6 +1553,37 @@ fn create_render_target_and_its_view(
     let mut render_target_view = None;
     unsafe { device.CreateRenderTargetView(&render_target, None, Some(&mut render_target_view))? };
     Ok((render_target, render_target_view))
+}
+
+#[inline]
+fn create_depth_stencil_texture_and_view(
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+) -> Result<(ID3D11Texture2D, Option<ID3D11DepthStencilView>)> {
+    let texture = unsafe {
+        let mut output = None;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_D32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_DEPTH_STENCIL.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        device.CreateTexture2D(&desc, None, Some(&mut output))?;
+        output.unwrap()
+    };
+    let mut view = None;
+    unsafe { device.CreateDepthStencilView(&texture, None, Some(&mut view))? };
+    Ok((texture, view))
 }
 
 #[inline]
@@ -1370,20 +1651,6 @@ fn create_path_intermediate_msaa_texture_and_view(
 }
 
 #[inline]
-fn set_viewport(device_context: &ID3D11DeviceContext, width: f32, height: f32) -> D3D11_VIEWPORT {
-    let viewport = [D3D11_VIEWPORT {
-        TopLeftX: 0.0,
-        TopLeftY: 0.0,
-        Width: width,
-        Height: height,
-        MinDepth: 0.0,
-        MaxDepth: 1.0,
-    }];
-    unsafe { device_context.RSSetViewports(Some(&viewport)) };
-    viewport[0]
-}
-
-#[inline]
 fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<()> {
     let desc = D3D11_RASTERIZER_DESC {
         FillMode: D3D11_FILL_SOLID,
@@ -1406,7 +1673,6 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
     Ok(())
 }
 
-// https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_blend_desc
 #[inline]
 fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     let mut desc = D3D11_BLEND_DESC::default();
@@ -1421,6 +1687,53 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     unsafe {
         let mut state = None;
         device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+#[inline]
+fn create_opaque_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = false.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_ZERO;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+#[inline]
+fn create_depth_stencil_state(
+    device: &ID3D11Device,
+    depth_enable: bool,
+    write_mask: D3D11_DEPTH_WRITE_MASK,
+) -> Result<ID3D11DepthStencilState> {
+    let stencil_op = D3D11_DEPTH_STENCILOP_DESC {
+        StencilFailOp: D3D11_STENCIL_OP_KEEP,
+        StencilDepthFailOp: D3D11_STENCIL_OP_KEEP,
+        StencilPassOp: D3D11_STENCIL_OP_KEEP,
+        StencilFunc: D3D11_COMPARISON_ALWAYS,
+    };
+    let desc = D3D11_DEPTH_STENCIL_DESC {
+        DepthEnable: depth_enable.into(),
+        DepthWriteMask: write_mask,
+        DepthFunc: D3D11_COMPARISON_GREATER,
+        StencilEnable: false.into(),
+        StencilReadMask: D3D11_DEFAULT_STENCIL_READ_MASK as u8,
+        StencilWriteMask: D3D11_DEFAULT_STENCIL_WRITE_MASK as u8,
+        FrontFace: stencil_op,
+        BackFace: stencil_op,
+    };
+    unsafe {
+        let mut state = None;
+        device.CreateDepthStencilState(&desc, Some(&mut state))?;
         Ok(state.unwrap())
     }
 }
@@ -1448,8 +1761,6 @@ fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID
 
 #[inline]
 fn create_blend_state_for_path_rasterization(device: &ID3D11Device) -> Result<ID3D11BlendState> {
-    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
-    // device performs the blend in linear space, which is ideal.
     let mut desc = D3D11_BLEND_DESC::default();
     desc.RenderTarget[0].BlendEnable = true.into();
     desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
@@ -1468,8 +1779,6 @@ fn create_blend_state_for_path_rasterization(device: &ID3D11Device) -> Result<ID
 
 #[inline]
 fn create_blend_state_for_path_sprite(device: &ID3D11Device) -> Result<ID3D11BlendState> {
-    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
-    // device performs the blend in linear space, which is ideal.
     let mut desc = D3D11_BLEND_DESC::default();
     desc.RenderTarget[0].BlendEnable = true.into();
     desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
@@ -1579,21 +1888,16 @@ fn set_pipeline_state(
     device_context: &ID3D11DeviceContext,
     buffer_view: &[Option<ID3D11ShaderResourceView>],
     topology: D3D_PRIMITIVE_TOPOLOGY,
-    viewport: &[D3D11_VIEWPORT],
     vertex_shader: &ID3D11VertexShader,
     fragment_shader: &ID3D11PixelShader,
-    global_params: &[Option<ID3D11Buffer>],
     blend_state: &ID3D11BlendState,
 ) {
     unsafe {
         device_context.VSSetShaderResources(1, Some(buffer_view));
         device_context.PSSetShaderResources(1, Some(buffer_view));
         device_context.IASetPrimitiveTopology(topology);
-        device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(vertex_shader, None);
         device_context.PSSetShader(fragment_shader, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
         device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
     }
 }
@@ -1614,16 +1918,14 @@ pub(crate) mod shader_resources {
 
     #[cfg(debug_assertions)]
     use windows::{
-        Win32::Graphics::Direct3D::{
-            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
-            ID3DBlob,
-        },
+        Win32::Graphics::Direct3D::{Fxc::*, ID3DBlob},
         core::{HSTRING, PCSTR},
     };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub(crate) enum ShaderModule {
         Quad,
+        OpaqueQuad,
         Shadow,
         Underline,
         PathRasterization,
@@ -1676,6 +1978,10 @@ pub(crate) mod shader_resources {
                 ShaderModule::Quad => match target {
                     ShaderTarget::Vertex => QUAD_VERTEX_BYTES,
                     ShaderTarget::Fragment => QUAD_FRAGMENT_BYTES,
+                },
+                ShaderModule::OpaqueQuad => match target {
+                    ShaderTarget::Vertex => OPAQUE_QUAD_VERTEX_BYTES,
+                    ShaderTarget::Fragment => OPAQUE_QUAD_FRAGMENT_BYTES,
                 },
                 ShaderModule::Shadow => match target {
                     ShaderTarget::Vertex => SHADOW_VERTEX_BYTES,
@@ -1788,6 +2094,7 @@ pub(crate) mod shader_resources {
         pub fn as_str(self) -> &'static str {
             match self {
                 ShaderModule::Quad => "quad",
+                ShaderModule::OpaqueQuad => "opaque_quad",
                 ShaderModule::Shadow => "shadow",
                 ShaderModule::Underline => "underline",
                 ShaderModule::PathRasterization => "path_rasterization",

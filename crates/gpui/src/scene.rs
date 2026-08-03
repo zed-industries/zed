@@ -50,6 +50,8 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub blended_quad_indices: Vec<u32>,
+    pub opaque_quad_indices: Vec<u32>,
 }
 
 #[expect(missing_docs)]
@@ -66,6 +68,8 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.blended_quad_indices.clear();
+        self.opaque_quad_indices.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -160,8 +164,26 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.partition_quads();
     }
 
+    fn partition_quads(&mut self) {
+        self.blended_quad_indices.clear();
+        self.opaque_quad_indices.clear();
+        for (quad_id, quad) in self.quads.iter().enumerate() {
+            let has_opaque_core = quad.has_opaque_core();
+            if has_opaque_core {
+                self.opaque_quad_indices.push(quad_id as u32);
+            }
+            if !has_opaque_core || quad.has_rounded_corners() {
+                self.blended_quad_indices.push(quad_id as u32);
+            }
+        }
+        // Opaque quads are drawn front-to-back in the depth-writing pass.
+        self.opaque_quad_indices.reverse();
+    }
+
+    /// Iterates the frame's batches in draw order. Only valid after `finish`.
     #[cfg_attr(
         all(
             any(target_os = "linux", target_os = "freebsd"),
@@ -175,6 +197,8 @@ impl Scene {
             shadows_iter: self.shadows.iter().peekable(),
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
+            blended_quad_indices: &self.blended_quad_indices,
+            blended_quad_indices_start: 0,
             paths_start: 0,
             paths_iter: self.paths.iter().peekable(),
             underlines_start: 0,
@@ -189,6 +213,16 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
+}
+
+/// Maps a quad's index in [`Scene::quads`] to depth, with greater values closer.
+///
+/// Zero is reserved for the cleared depth buffer. `quad_depth(n)` also
+/// represents the cursor after the first `n` quads: with a strict greater-than
+/// test, it is above quads before the cursor and ties with the quad after it.
+/// Depth-based renderers must use this mapping in both CPU and shader code.
+pub fn quad_depth(quad_id: u32) -> f32 {
+    ((quad_id + 1) as f32 * (1.0 / 16777216.0)).min(1.0)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
@@ -271,6 +305,8 @@ struct BatchIterator<'a> {
     shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
+    blended_quad_indices: &'a [u32],
+    blended_quad_indices_start: usize,
     paths_start: usize,
     paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
     underlines_start: usize,
@@ -354,7 +390,22 @@ impl<'a> Iterator for BatchIterator<'a> {
                     quads_end += 1;
                 }
                 self.quads_start = quads_end;
-                Some(PrimitiveBatch::Quads(quads_start..quads_end))
+
+                let blended_quad_indices_start = self.blended_quad_indices_start;
+                let mut blended_quad_indices_end = blended_quad_indices_start;
+                while self
+                    .blended_quad_indices
+                    .get(blended_quad_indices_end)
+                    .is_some_and(|&quad_id| (quad_id as usize) < quads_end)
+                {
+                    blended_quad_indices_end += 1;
+                }
+                self.blended_quad_indices_start = blended_quad_indices_end;
+
+                Some(PrimitiveBatch::Quads {
+                    range: quads_start..quads_end,
+                    blended_range: blended_quad_indices_start..blended_quad_indices_end,
+                })
             }
             PrimitiveKind::Path => {
                 let paths_start = self.paths_start;
@@ -476,7 +527,10 @@ impl<'a> Iterator for BatchIterator<'a> {
 #[allow(missing_docs)]
 pub enum PrimitiveBatch {
     Shadows(Range<usize>),
-    Quads(Range<usize>),
+    Quads {
+        range: Range<usize>,
+        blended_range: Range<usize>,
+    },
     Paths(Range<usize>),
     Underlines(Range<usize>),
     MonochromeSprites {
@@ -500,7 +554,7 @@ impl PrimitiveBatch {
     pub fn label(&self) -> String {
         match self {
             Self::Shadows(range) => format!("shadows ({})", range.len()),
-            Self::Quads(range) => format!("quads ({})", range.len()),
+            Self::Quads { range, .. } => format!("quads ({})", range.len()),
             Self::Paths(range) => format!("paths ({})", range.len()),
             Self::Underlines(range) => format!("underlines ({})", range.len()),
             Self::MonochromeSprites { texture_id, range } => {
@@ -541,6 +595,27 @@ pub struct Quad {
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
+}
+
+impl Quad {
+    fn has_opaque_core(&self) -> bool {
+        let zero = ScaledPixels(0.);
+        self.background
+            .as_solid()
+            .is_some_and(|solid| solid.a >= 1.0)
+            && self.border_widths.top == zero
+            && self.border_widths.right == zero
+            && self.border_widths.bottom == zero
+            && self.border_widths.left == zero
+    }
+
+    fn has_rounded_corners(&self) -> bool {
+        let zero = ScaledPixels(0.);
+        self.corner_radii.top_left != zero
+            || self.corner_radii.top_right != zero
+            || self.corner_radii.bottom_right != zero
+            || self.corner_radii.bottom_left != zero
+    }
 }
 
 impl From<Quad> for Primitive {

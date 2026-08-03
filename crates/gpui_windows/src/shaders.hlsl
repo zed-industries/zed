@@ -103,6 +103,12 @@ float4 to_device_position(float2 unit_vertex, Bounds bounds) {
     return to_device_position_impl(position);
 }
 
+// Must match gpui::quad_depth. Later quads are closer, and `+ 1` reserves
+// zero for the cleared depth buffer.
+float quad_depth(uint quad_id) {
+    return saturate(float(quad_id + 1u) * (1.0 / 16777216.0));
+}
+
 float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
     float2 tl = position - clip_bounds.origin;
     float2 br = clip_bounds.origin + clip_bounds.size - position;
@@ -524,9 +530,11 @@ struct QuadFragmentInput {
 };
 
 StructuredBuffer<Quad> quads: register(t1);
+StructuredBuffer<uint> quad_indices: register(t2);
 
-QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_InstanceID) {
+QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    uint quad_id = quad_indices[instance_id];
     Quad quad = quads[quad_id];
     float4 device_position = to_device_position(unit_vertex, quad.bounds);
 
@@ -541,6 +549,7 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
 
     QuadVertexOutput output;
     output.position = device_position;
+    output.position.z = quad_depth(quad_id);
     output.border_color = border_color;
     output.quad_id = quad_id;
     output.background_solid = gradient.solid;
@@ -839,6 +848,94 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     }
 
     return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+}
+
+/*
+**
+**              Opaque quads
+**
+*/
+
+struct OpaqueQuadVertexOutput {
+    float4 position: SV_Position;
+    nointerpolation float4 color: COLOR0;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+struct OpaqueQuadFragmentInput {
+    float4 position: SV_Position;
+    nointerpolation float4 color: COLOR0;
+};
+
+float bounds_area(Bounds bounds) {
+    return bounds.size.x * bounds.size.y;
+}
+
+Bounds opaque_quad_core(Quad quad) {
+    bool has_rounded_corners = quad.corner_radii.top_left != 0.0
+        || quad.corner_radii.top_right != 0.0
+        || quad.corner_radii.bottom_right != 0.0
+        || quad.corner_radii.bottom_left != 0.0;
+    if (!has_rounded_corners) {
+        return quad.bounds;
+    }
+
+    const float antialias_inset = 1.0;
+    float left_inset = max(quad.corner_radii.top_left, quad.corner_radii.bottom_left)
+        + antialias_inset;
+    float right_inset = max(quad.corner_radii.top_right, quad.corner_radii.bottom_right)
+        + antialias_inset;
+    float top_inset = max(quad.corner_radii.top_left, quad.corner_radii.top_right)
+        + antialias_inset;
+    float bottom_inset = max(quad.corner_radii.bottom_left, quad.corner_radii.bottom_right)
+        + antialias_inset;
+
+    // A horizontal band avoids the top and bottom corner arcs; a vertical band
+    // avoids the left and right arcs. Either is fully opaque, so use the larger.
+    Bounds horizontal_band = quad.bounds;
+    horizontal_band.origin += float2(antialias_inset, top_inset);
+    horizontal_band.size = max(
+        quad.bounds.size - float2(2.0 * antialias_inset, top_inset + bottom_inset),
+        0.0);
+
+    Bounds vertical_band = quad.bounds;
+    vertical_band.origin += float2(left_inset, antialias_inset);
+    vertical_band.size = max(
+        quad.bounds.size - float2(left_inset + right_inset, 2.0 * antialias_inset),
+        0.0);
+
+    if (bounds_area(horizontal_band) >= bounds_area(vertical_band)) {
+        return horizontal_band;
+    }
+    return vertical_band;
+}
+
+OpaqueQuadVertexOutput opaque_quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+    uint quad_id = quad_indices[instance_id];
+    Quad quad = quads[quad_id];
+    Bounds core = opaque_quad_core(quad);
+
+    OpaqueQuadVertexOutput output;
+    if (core.size.x <= 0.0 || core.size.y <= 0.0) {
+        // Zero-area triangle: rejected before rasterization.
+        output.position = float4(0.0, 0.0, 0.0, 1.0);
+        output.color = float4(0.0, 0.0, 0.0, 0.0);
+        output.clip_distance = float4(1.0, 1.0, 1.0, 1.0);
+        return output;
+    }
+
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    output.position = to_device_position(unit_vertex, core);
+    output.position.z = quad_depth(quad_id);
+    // Matches the quad shader's solid-background output exactly: tag-0 quads
+    // resolve to hsla_to_rgba(solid), and alpha-1 blending is an overwrite.
+    output.color = hsla_to_rgba(quad.background.solid);
+    output.clip_distance = distance_from_clip_rect(unit_vertex, core, quad.content_mask);
+    return output;
+}
+
+float4 opaque_quad_fragment(OpaqueQuadFragmentInput input): SV_Target {
+    return input.color;
 }
 
 /*
