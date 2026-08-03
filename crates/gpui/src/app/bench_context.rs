@@ -10,17 +10,17 @@ use anyhow::{Result, anyhow};
 use hdrhistogram::Histogram;
 
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BenchDispatcher,
-    Bounds, Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform,
-    PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Task, TestPlatform,
-    VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform, PlatformHeadlessRenderer,
+    PlatformTextSystem, Render, Reservation, Task, TestPlatform, ThreadedDispatcher, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
     profiler::{self, FrameTiming, FrameTimingCollector},
 };
 
 /// Returns a benchmark platform backed by this thread's shared dispatcher.
 ///
-/// The platform uses this thread's shared multithreaded [`BenchDispatcher`], so
+/// The platform uses this thread's shared multithreaded [`ThreadedDispatcher`], so
 /// background work runs with production concurrency in real time. The dispatcher
 /// is cached per thread and reused across benchmark invocations so worker and
 /// timer threads persist for the whole process instead of being recreated for
@@ -42,10 +42,10 @@ pub fn bench_platform(
     text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {
-        static DISPATCHER: OnceCell<Arc<BenchDispatcher>> = const { OnceCell::new() };
+        static DISPATCHER: OnceCell<Arc<ThreadedDispatcher>> = const { OnceCell::new() };
     }
     let dispatcher = DISPATCHER.with(|cell| {
-        cell.get_or_init(|| Arc::new(BenchDispatcher::new()))
+        cell.get_or_init(|| Arc::new(ThreadedDispatcher::new()))
             .clone()
     });
     let background_executor = BackgroundExecutor::new(dispatcher.clone());
@@ -276,7 +276,7 @@ pub struct BenchAppContext<'a, 'measurement> {
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context backed by the provided platform.
     ///
-    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// The platform's executors must be backed by a [`ThreadedDispatcher`]
     /// (see [`bench_platform`]) so the context can drain foreground work via
     /// [`Self::run_until_idle`]; panics otherwise.
     pub fn new(
@@ -289,7 +289,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Creates a new benchmark app context backed by the provided platform.
     ///
-    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// The platform's executors must be backed by a [`ThreadedDispatcher`]
     /// (see [`bench_platform`]) so the context can drain foreground work via
     /// [`Self::run_until_idle`]; panics otherwise.
     #[doc(hidden)]
@@ -312,9 +312,9 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         // Validate up front so misconfiguration fails at construction with a
         // clear message instead of deep inside `run_until_idle`.
         assert!(
-            background_executor.dispatcher().as_bench().is_some(),
+            background_executor.dispatcher().as_threaded().is_some(),
             "BenchAppContext requires a platform whose executors are backed by a \
-             BenchDispatcher; construct one with gpui::bench_platform"
+             ThreadedDispatcher; construct one with gpui::bench_platform"
         );
         let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
@@ -360,11 +360,11 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs queued foreground tasks on this thread and waits for in flight
     /// background work to finish. Timers that aren't due yet are not waited
-    /// for (see [`BenchDispatcher::run_until_idle`]).
+    /// for (see [`ThreadedDispatcher::run_until_idle`]).
     pub fn run_until_idle(&self) {
         self.background_executor
             .dispatcher()
-            .as_bench()
+            .as_threaded()
             .expect("validated in BenchAppContext::build")
             .run_until_idle();
     }
@@ -414,7 +414,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
         let mut benchmark = || {
             dispatcher
-                .as_bench()
+                .as_threaded()
                 .expect("validated in BenchAppContext::build")
                 .run_ready_main_tasks();
             self.with_window(view.entity_id(), |window, cx| {
@@ -496,7 +496,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
         let dispatcher = self.background_executor.dispatcher();
         let dispatcher = dispatcher
-            .as_bench()
+            .as_threaded()
             .expect("validated in BenchAppContext::build");
 
         drop(self.app);

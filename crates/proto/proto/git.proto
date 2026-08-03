@@ -547,6 +547,7 @@ message GetTreeDiff {
   bool is_merge = 3;
   string base = 4;
   string head = 5;
+  bool includes_worktree = 6;
 }
 
 message GetTreeDiffResponse {

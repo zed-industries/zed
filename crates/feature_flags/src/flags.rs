@@ -89,10 +89,7 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     }
 
     fn enabled_for_all() -> bool {
-        !matches!(
-            *release_channel::RELEASE_CHANNEL,
-            release_channel::ReleaseChannel::Stable
-        )
+        true
     }
 }
 register_feature_flag!(ProjectPanelUndoRedoFeatureFlag);
@@ -117,14 +114,6 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
     }
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
-
-pub struct AutoWatchFeatureFlag;
-
-impl FeatureFlag for AutoWatchFeatureFlag {
-    const NAME: &'static str = "auto-watch-screens";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AutoWatchFeatureFlag);
 
 /// Wraps agent-run terminal commands in an OS-level sandbox where supported,
 /// and applies the shared per-host network grants to the `fetch` tool and the
