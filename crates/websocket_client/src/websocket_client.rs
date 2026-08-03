@@ -10,17 +10,16 @@
 
 mod proxy;
 
-use std::io;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 use std::net::TcpStream;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use futures::StreamExt as _;
 use futures::future::BoxFuture;
-use futures::io::{AsyncRead, AsyncWrite};
 use http_client::http::HeaderMap;
 use smol::Async;
 use url::Url;
@@ -206,14 +205,6 @@ pub trait WebSocketConnection: Send {
     fn send(&mut self, message: WebSocketMessage) -> BoxFuture<'_, Result<()>>;
 
     fn receive(&mut self) -> BoxFuture<'_, Option<Result<WebSocketMessage>>>;
-
-    /// A header from the server's response to the upgrade request, or `None`
-    /// when the transport doesn't surface them. Callers must treat every
-    /// header as optional metadata rather than part of the connection's
-    /// contract.
-    fn upgrade_response_header(&self, _name: &str) -> Option<&str> {
-        None
-    }
 }
 
 /// Converts an `http(s)` URL into the corresponding `ws(s)` URL.
@@ -229,53 +220,6 @@ pub fn websocket_url_from_http(mut url: Url) -> Result<Url> {
     url.set_scheme(scheme)
         .map_err(|()| anyhow::anyhow!("failed to set WebSocket URL scheme"))?;
     Ok(url)
-}
-
-/// A stream that may or may not be wrapped in TLS. The inner transport is
-/// boxed because it is either a direct TCP connection or a proxy tunnel.
-enum MaybeTlsStream {
-    Plain(Box<dyn AsyncReadWrite>),
-    Tls(futures_rustls::client::TlsStream<Box<dyn AsyncReadWrite>>),
-}
-
-impl AsyncRead for MaybeTlsStream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
-            Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
-        }
-    }
-}
-
-impl AsyncWrite for MaybeTlsStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
-            Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_flush(cx),
-            Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
-        }
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<io::Result<()>> {
-        match self.get_mut() {
-            Self::Plain(stream) => Pin::new(stream).poll_close(cx),
-            Self::Tls(stream) => Pin::new(stream).poll_close(cx),
-        }
-    }
 }
 
 /// A [`WebSocketClient`] backed by async-tungstenite over a smol TCP stream
@@ -340,18 +284,19 @@ impl WebSocketClient for NativeWebSocketClient {
                     }
                 };
 
-            let stream = if parsed.scheme() == "wss" {
+            let stream: Box<dyn AsyncReadWrite> = if parsed.scheme() == "wss" {
                 let connector =
                     futures_rustls::TlsConnector::from(Arc::new(http_client_tls::tls_config()));
                 let server_name = rustls::pki_types::ServerName::try_from(host.clone())
                     .context("invalid DNS name for TLS")?;
-                let tls_stream = connector
-                    .connect(server_name, tcp_stream)
-                    .await
-                    .context("TLS handshake failed")?;
-                MaybeTlsStream::Tls(tls_stream)
+                Box::new(
+                    connector
+                        .connect(server_name, tcp_stream)
+                        .await
+                        .context("TLS handshake failed")?,
+                )
             } else {
-                MaybeTlsStream::Plain(tcp_stream)
+                tcp_stream
             };
 
             let ws_uri: async_tungstenite::tungstenite::http::Uri =
@@ -366,7 +311,7 @@ impl WebSocketClient for NativeWebSocketClient {
                         .to_string(),
                 );
             }
-            let (ws_stream, handshake_response) =
+            let (ws_stream, _handshake_response) =
                 match async_tungstenite::client_async(ws_request, stream).await {
                     Ok(result) => result,
                     Err(async_tungstenite::tungstenite::Error::Http(response)) => {
@@ -392,18 +337,15 @@ impl WebSocketClient for NativeWebSocketClient {
 
             log::debug!("WebSocket connected to {url}");
 
-            Ok(Box::new(TungsteniteConnection {
-                stream: ws_stream,
-                upgrade_response_headers: handshake_response.into_parts().0.headers,
-            }) as Box<dyn WebSocketConnection>)
+            Ok(Box::new(TungsteniteConnection { stream: ws_stream })
+                as Box<dyn WebSocketConnection>)
         };
         Box::pin(connect_with_deadline(connect, deadline))
     }
 }
 
 struct TungsteniteConnection {
-    stream: async_tungstenite::WebSocketStream<MaybeTlsStream>,
-    upgrade_response_headers: async_tungstenite::tungstenite::http::HeaderMap,
+    stream: async_tungstenite::WebSocketStream<Box<dyn AsyncReadWrite>>,
 }
 
 impl WebSocketConnection for TungsteniteConnection {
@@ -451,10 +393,6 @@ impl WebSocketConnection for TungsteniteConnection {
                 None => None,
             }
         })
-    }
-
-    fn upgrade_response_header(&self, name: &str) -> Option<&str> {
-        self.upgrade_response_headers.get(name)?.to_str().ok()
     }
 }
 

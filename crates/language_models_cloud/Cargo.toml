@@ -33,3 +33,4 @@ websocket_client.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+websocket_client = { workspace = true, features = ["test-support"] }

@@ -301,6 +301,10 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
             connection_scope.as_bytes(),
             websocket_chains,
             connect,
+            Arc::new({
+                let executor = executor.clone();
+                move |duration| executor.timer(duration).boxed()
+            }),
             envelope_turn,
             move |future| executor.spawn(future).detach(),
         )
@@ -1450,6 +1454,7 @@ mod tests {
 
     use futures::future;
     use gpui::TestAppContext;
+    use websocket_client::test_support::{FakeWebSocketClient, ScriptedWebSocketConnection};
     use websocket_client::{WebSocketConnection, WebSocketMessage};
 
     #[gpui::test]
@@ -1457,24 +1462,19 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let http_client = FakeHttpClient::with_404_response();
-        let sent_frames = Arc::new(Mutex::new(Vec::new()));
-        let connects = Arc::new(Mutex::new(Vec::new()));
-        let websocket_client = Arc::new(FakeWebSocketClient {
-            connects: connects.clone(),
-            connect_results: Mutex::new(vec![Ok(Box::new(ScriptedConnection {
-                sent: sent_frames.clone(),
-                incoming: vec![
-                    text_event(r#"{"type":"response.created","response":{"id":"resp_1"}}"#),
-                    text_event(
-                        r#"{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"Hello.","annotations":[]}]}]}}"#,
-                    ),
-                    text_event(r#"{"type":"response.created","response":{"id":"resp_2"}}"#),
-                    text_event(
-                        r#"{"type":"response.completed","response":{"id":"resp_2","output":[]}}"#,
-                    ),
-                ],
-            }) as Box<dyn WebSocketConnection>)]),
-        });
+        let connection = ScriptedWebSocketConnection::new(vec![
+            text_event(r#"{"type":"response.created","response":{"id":"resp_1"}}"#),
+            text_event(
+                r#"{"type":"response.completed","response":{"id":"resp_1","output":[{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"Hello.","annotations":[]}]}]}}"#,
+            ),
+            text_event(r#"{"type":"response.created","response":{"id":"resp_2"}}"#),
+            text_event(r#"{"type":"response.completed","response":{"id":"resp_2","output":[]}}"#),
+        ]);
+        let sent_messages = connection.sent_messages();
+        let websocket_client = Arc::new(FakeWebSocketClient::new(vec![Ok(
+            Box::new(connection) as Box<dyn WebSocketConnection>
+        )]));
+        let connection_attempts = websocket_client.connection_attempts();
         let token_provider = FakeTokenProvider::default();
         let websocket_chains = WebSocketChains::new_shared();
 
@@ -1502,19 +1502,24 @@ mod tests {
                 if response.id.as_deref() == Some("resp_1")
         ));
         {
-            let connects = connects.lock().unwrap();
+            let connection_attempts = connection_attempts.lock();
+            assert_eq!(connection_attempts.len(), 1);
             assert_eq!(
-                connects.as_slice(),
-                &[(
-                    "ws://test.example/completions/session".to_string(),
-                    Some("cached-token".to_string())
-                )]
+                connection_attempts[0].0,
+                "ws://test.example/completions/session"
+            );
+            assert_eq!(
+                bearer_token(&connection_attempts[0].1).as_deref(),
+                Some("cached-token")
             );
         }
         let first_frame: CompletionBody = {
-            let sent_frames = sent_frames.lock().unwrap();
-            assert_eq!(sent_frames.len(), 1);
-            serde_json::from_str(&sent_frames[0]).unwrap()
+            let sent_messages = sent_messages.lock();
+            assert_eq!(sent_messages.len(), 1);
+            let WebSocketMessage::Text(text) = &sent_messages[0] else {
+                panic!("expected a text message")
+            };
+            serde_json::from_str(text).unwrap()
         };
         assert_eq!(first_frame.thread_id.as_deref(), Some("thread-1"));
         assert_eq!(
@@ -1570,14 +1575,17 @@ mod tests {
                 if response.id.as_deref() == Some("resp_2")
         ));
         assert_eq!(
-            connects.lock().unwrap().len(),
+            connection_attempts.lock().len(),
             1,
             "expected connection reuse"
         );
         let second_frame: CompletionBody = {
-            let sent_frames = sent_frames.lock().unwrap();
-            assert_eq!(sent_frames.len(), 2);
-            serde_json::from_str(&sent_frames[1]).unwrap()
+            let sent_messages = sent_messages.lock();
+            assert_eq!(sent_messages.len(), 2);
+            let WebSocketMessage::Text(text) = &sent_messages[1] else {
+                panic!("expected a text message")
+            };
+            serde_json::from_str(text).unwrap()
         };
         assert_eq!(
             second_frame.provider_request["previous_response_id"],
@@ -1591,19 +1599,13 @@ mod tests {
     #[gpui::test]
     async fn websocket_connect_refreshes_a_rejected_llm_token_once(cx: &mut TestAppContext) {
         let http_client = FakeHttpClient::with_404_response();
-        let connects = Arc::new(Mutex::new(Vec::new()));
-        let websocket_client = Arc::new(FakeWebSocketClient {
-            connects: connects.clone(),
-            connect_results: Mutex::new(vec![
-                Err(anyhow::anyhow!(websocket_client::AuthRequired)),
-                Ok(Box::new(ScriptedConnection {
-                    sent: Arc::default(),
-                    incoming: vec![text_event(
-                        r#"{"type":"response.completed","response":{"id":"resp_1","output":[]}}"#,
-                    )],
-                }) as Box<dyn WebSocketConnection>),
-            ]),
-        });
+        let websocket_client = Arc::new(FakeWebSocketClient::new(vec![
+            Err(anyhow::anyhow!(websocket_client::AuthRequired)),
+            Ok(Box::new(ScriptedWebSocketConnection::new(vec![text_event(
+                r#"{"type":"response.completed","response":{"id":"resp_1","output":[]}}"#,
+            )])) as Box<dyn WebSocketConnection>),
+        ]));
+        let connection_attempts = websocket_client.connection_attempts();
         let token_provider = FakeTokenProvider::default();
 
         let events = CloudLanguageModel::<FakeTokenProvider>::stream_open_ai_websocket_completion(
@@ -1624,15 +1626,30 @@ mod tests {
         .await;
 
         assert_eq!(events.len(), 1);
-        let connects = connects.lock().unwrap();
-        assert_eq!(connects.len(), 2);
-        assert_eq!(connects[0].1.as_deref(), Some("cached-token"));
-        assert_eq!(connects[1].1.as_deref(), Some("refreshed-token"));
+        let connection_attempts = connection_attempts.lock();
+        assert_eq!(connection_attempts.len(), 2);
+        assert_eq!(
+            bearer_token(&connection_attempts[0].1).as_deref(),
+            Some("cached-token")
+        );
+        assert_eq!(
+            bearer_token(&connection_attempts[1].1).as_deref(),
+            Some("refreshed-token")
+        );
         assert_eq!(*token_provider.refresh_count.lock().unwrap(), 1);
     }
 
     fn text_event(json: &str) -> anyhow::Result<WebSocketMessage> {
         Ok(WebSocketMessage::Text(json.to_string()))
+    }
+
+    fn bearer_token(headers: &HeaderMap) -> Option<String> {
+        headers
+            .get(http_client::http::header::AUTHORIZATION)?
+            .to_str()
+            .ok()?
+            .strip_prefix("Bearer ")
+            .map(str::to_string)
     }
 
     fn user_message(text: &str) -> open_ai::responses::ResponseInputItem {
@@ -1700,69 +1717,6 @@ mod tests {
 
         fn has_data_retention_consent(&self, _cx: &impl AppContext) -> bool {
             true
-        }
-    }
-
-    /// A [`WebSocketClient`] that records connection attempts and hands out
-    /// scripted connections.
-    struct FakeWebSocketClient {
-        connects: Arc<Mutex<Vec<(String, Option<String>)>>>,
-        connect_results: Mutex<Vec<Result<Box<dyn WebSocketConnection>>>>,
-    }
-
-    impl WebSocketClient for FakeWebSocketClient {
-        fn connect(
-            &self,
-            url: &str,
-            headers: HeaderMap,
-        ) -> futures::future::BoxFuture<'static, Result<Box<dyn WebSocketConnection>>> {
-            let auth_token = headers
-                .get(http_client::http::header::AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.strip_prefix("Bearer "))
-                .map(str::to_string);
-            self.connects
-                .lock()
-                .unwrap()
-                .push((url.to_string(), auth_token));
-            let result = {
-                let mut connect_results = self.connect_results.lock().unwrap();
-                if connect_results.is_empty() {
-                    Err(anyhow::anyhow!("no scripted connection left"))
-                } else {
-                    connect_results.remove(0)
-                }
-            };
-            future::ready(result).boxed()
-        }
-    }
-
-    /// A [`WebSocketConnection`] that records sent text frames and replays a
-    /// fixed sequence of incoming messages, reporting closure once they run
-    /// out.
-    struct ScriptedConnection {
-        sent: Arc<Mutex<Vec<String>>>,
-        incoming: Vec<Result<WebSocketMessage>>,
-    }
-
-    impl WebSocketConnection for ScriptedConnection {
-        fn send(
-            &mut self,
-            message: WebSocketMessage,
-        ) -> futures::future::BoxFuture<'_, Result<()>> {
-            if let WebSocketMessage::Text(text) = message {
-                self.sent.lock().unwrap().push(text);
-            }
-            future::ready(Ok(())).boxed()
-        }
-
-        fn receive(&mut self) -> futures::future::BoxFuture<'_, Option<Result<WebSocketMessage>>> {
-            let message = if self.incoming.is_empty() {
-                None
-            } else {
-                Some(self.incoming.remove(0))
-            };
-            future::ready(message).boxed()
         }
     }
 

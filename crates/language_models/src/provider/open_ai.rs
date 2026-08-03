@@ -564,6 +564,7 @@ impl OpenAiLanguageModel {
                 connection_scope.as_bytes(),
                 websocket_chains,
                 websocket_client.connect(&websocket_url, headers),
+                crate::gpui_websocket_timer(executor.clone()),
                 responses_websocket::response_create_envelope,
                 |future| executor.spawn(future).detach(),
             )

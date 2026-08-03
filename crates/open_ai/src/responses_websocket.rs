@@ -15,18 +15,19 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::mpsc;
-use futures::future::BoxFuture;
+use futures::future::{self, BoxFuture};
 use futures::stream::BoxStream;
 use futures::{Future, StreamExt as _};
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use websocket_client::{WebSocketConnection, WebSocketMessage};
+use websocket_client::{Timer, WebSocketConnection, WebSocketMessage};
 
 use crate::responses::{Request, ResponseOutputItem, StreamEvent};
 
 const MAX_WEBSOCKET_CHAINS: usize = 8;
 const WEBSOCKET_CHAIN_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const REUSED_CONNECTION_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Completed WebSocket connections cached for continuation, shared by all
 /// models of a provider. Chains for different models never match because the
@@ -128,6 +129,7 @@ pub async fn stream_websocket_response(
     connection_scope: &[u8],
     websocket_chains: SharedWebSocketChains,
     connect: impl Future<Output = Result<Box<dyn WebSocketConnection>>>,
+    timer: Timer,
     envelope_turn: impl Fn(Map<String, Value>) -> Result<String>,
     spawn: impl FnOnce(BoxFuture<'static, ()>),
 ) -> Result<BoxStream<'static, Result<StreamEvent>>> {
@@ -159,7 +161,13 @@ pub async fn stream_websocket_response(
             Some(&chain.previous_response_id),
             input_count,
         ))?;
-        match send_and_confirm_reused_connection(chain.connection, message).await {
+        match send_and_confirm_reused_connection(
+            chain.connection,
+            message,
+            (timer)(REUSED_CONNECTION_CONFIRMATION_TIMEOUT),
+        )
+        .await
+        {
             Ok(connection_and_first_event) => {
                 confirmed_continuation = Some(connection_and_first_event);
             }
@@ -230,28 +238,37 @@ fn turn_payload(
 async fn send_and_confirm_reused_connection(
     mut connection: Box<dyn WebSocketConnection>,
     message: String,
+    deadline: BoxFuture<'static, ()>,
 ) -> Result<(Box<dyn WebSocketConnection>, String)> {
-    connection
-        .send(WebSocketMessage::Text(message))
-        .await
-        .context("failed to send OpenAI response.create")?;
-    loop {
-        match connection.receive().await {
-            Some(Ok(WebSocketMessage::Text(text))) => {
-                if let Some(code) = continuation_rejected_error_code(&text) {
-                    return Err(anyhow!("server rejected the continuation: {code}"));
+    let confirm = async move {
+        connection
+            .send(WebSocketMessage::Text(message))
+            .await
+            .context("failed to send OpenAI response.create")?;
+        loop {
+            match connection.receive().await {
+                Some(Ok(WebSocketMessage::Text(text))) => {
+                    if let Some(code) = continuation_rejected_error_code(&text) {
+                        return Err(anyhow!("server rejected the continuation: {code}"));
+                    }
+                    return Ok((connection, text));
                 }
-                return Ok((connection, text));
+                Some(Ok(WebSocketMessage::Ping(_))) | Some(Ok(WebSocketMessage::Pong(_))) => {}
+                Some(Ok(WebSocketMessage::Close(_))) | None => {
+                    return Err(anyhow!("connection closed before the first response event"));
+                }
+                Some(Ok(WebSocketMessage::Binary(_))) => {
+                    return Err(anyhow!("unexpected binary OpenAI WebSocket event"));
+                }
+                Some(Err(error)) => return Err(error),
             }
-            Some(Ok(WebSocketMessage::Ping(_))) | Some(Ok(WebSocketMessage::Pong(_))) => {}
-            Some(Ok(WebSocketMessage::Close(_))) | None => {
-                return Err(anyhow!("connection closed before the first response event"));
-            }
-            Some(Ok(WebSocketMessage::Binary(_))) => {
-                return Err(anyhow!("unexpected binary OpenAI WebSocket event"));
-            }
-            Some(Err(error)) => return Err(error),
         }
+    };
+    match future::select(Box::pin(confirm), deadline).await {
+        future::Either::Left((result, _deadline)) => result,
+        future::Either::Right(((), _confirm)) => Err(anyhow!(
+            "timed out waiting for the first event on a reused WebSocket connection"
+        )),
     }
 }
 
@@ -570,6 +587,7 @@ mod tests {
     use futures::executor::block_on;
     use futures::future;
     use serde_json::json;
+    use websocket_client::test_support::ScriptedWebSocketConnection;
 
     #[test]
     fn websocket_chain_lookup_prefers_the_longest_matching_prefix() {
@@ -727,16 +745,15 @@ mod tests {
 
     #[test]
     fn reused_connection_is_confirmed_by_the_first_response_event() {
-        let connection = Box::new(ScriptedWebSocketConnection {
-            incoming: vec![
-                Ok(WebSocketMessage::Ping(Vec::new())),
-                Ok(WebSocketMessage::Text("{\"type\":\"stub\"}".to_string())),
-            ],
-        });
+        let connection = Box::new(ScriptedWebSocketConnection::new(vec![
+            Ok(WebSocketMessage::Ping(Vec::new())),
+            Ok(WebSocketMessage::Text("{\"type\":\"stub\"}".to_string())),
+        ]));
 
         let (_connection, first_event_text) = block_on(send_and_confirm_reused_connection(
             connection,
             "request".to_string(),
+            future::pending().boxed(),
         ))
         .unwrap();
 
@@ -744,25 +761,40 @@ mod tests {
     }
 
     #[test]
+    fn reused_connection_confirmation_times_out() {
+        let result = block_on(send_and_confirm_reused_connection(
+            Box::new(NeverRespondingWebSocketConnection),
+            "request".to_string(),
+            future::ready(()).boxed(),
+        ));
+
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("timed out"))
+        );
+    }
+
+    #[test]
     fn reused_connection_closed_by_the_server_is_reported_as_stale() {
-        let closed_connection = Box::new(ScriptedWebSocketConnection {
-            incoming: vec![Ok(WebSocketMessage::Close(None))],
-        });
+        let closed_connection = Box::new(ScriptedWebSocketConnection::new(vec![Ok(
+            WebSocketMessage::Close(None),
+        )]));
         assert!(
             block_on(send_and_confirm_reused_connection(
                 closed_connection,
-                "request".to_string()
+                "request".to_string(),
+                future::pending().boxed(),
             ))
             .is_err()
         );
 
-        let dropped_connection = Box::new(ScriptedWebSocketConnection {
-            incoming: Vec::new(),
-        });
+        let dropped_connection = Box::new(ScriptedWebSocketConnection::new(Vec::new()));
         assert!(
             block_on(send_and_confirm_reused_connection(
                 dropped_connection,
-                "request".to_string()
+                "request".to_string(),
+                future::pending().boxed(),
             ))
             .is_err()
         );
@@ -773,13 +805,14 @@ mod tests {
         let previous_response_not_found = r#"{"type":"error","status":400,"error":{"code":"previous_response_not_found","message":"Previous response with id 'resp_abc' not found.","param":"previous_response_id"}}"#;
         let connection_limit_reached = r#"{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"websocket_connection_limit_reached","message":"Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue."}}"#;
         for rejection in [previous_response_not_found, connection_limit_reached] {
-            let connection = Box::new(ScriptedWebSocketConnection {
-                incoming: vec![Ok(WebSocketMessage::Text(rejection.to_string()))],
-            });
+            let connection = Box::new(ScriptedWebSocketConnection::new(vec![Ok(
+                WebSocketMessage::Text(rejection.to_string()),
+            )]));
             assert!(
                 block_on(send_and_confirm_reused_connection(
                     connection,
-                    "request".to_string()
+                    "request".to_string(),
+                    future::pending().boxed(),
                 ))
                 .is_err()
             );
@@ -788,12 +821,13 @@ mod tests {
         // Other errors are not stale-connection signals; they pass through
         // to the caller like any other first event.
         let other_error = r#"{"type":"error","status":429,"error":{"code":"rate_limit_exceeded","message":"Rate limit exceeded"}}"#;
-        let connection = Box::new(ScriptedWebSocketConnection {
-            incoming: vec![Ok(WebSocketMessage::Text(other_error.to_string()))],
-        });
+        let connection = Box::new(ScriptedWebSocketConnection::new(vec![Ok(
+            WebSocketMessage::Text(other_error.to_string()),
+        )]));
         let (_connection, first_event_text) = block_on(send_and_confirm_reused_connection(
             connection,
             "request".to_string(),
+            future::pending().boxed(),
         ))
         .unwrap();
         assert_eq!(first_event_text, other_error);
@@ -803,15 +837,15 @@ mod tests {
     fn completed_response_caches_the_connection_as_a_chain() {
         let prepared = prepared_request_with_input("gpt-test", &["one"]);
         let chains = WebSocketChains::new_shared();
-        let connection = Box::new(ScriptedWebSocketConnection {
-            incoming: vec![Ok(WebSocketMessage::Text(
+        let connection = Box::new(ScriptedWebSocketConnection::new(vec![Ok(
+            WebSocketMessage::Text(
                 serde_json::to_string(&json!({
                     "type": "response.completed",
                     "response": {"id": "resp_1", "output": []},
                 }))
                 .unwrap(),
-            ))],
-        });
+            ),
+        )]));
         let (event_sender, event_receiver) = mpsc::unbounded();
 
         block_on(receive_websocket_response(
@@ -838,14 +872,12 @@ mod tests {
     fn abnormal_close_before_the_terminal_event_surfaces_an_error() {
         let prepared = prepared_request_with_input("gpt-test", &["one"]);
         let chains = WebSocketChains::new_shared();
-        let connection = Box::new(ScriptedWebSocketConnection {
-            incoming: vec![Ok(WebSocketMessage::Close(Some(
-                websocket_client::WebSocketCloseFrame {
-                    code: websocket_client::WebSocketCloseCode::Policy,
-                    reason: "usage limit reached".to_string(),
-                },
-            )))],
-        });
+        let connection = Box::new(ScriptedWebSocketConnection::new(vec![Ok(
+            WebSocketMessage::Close(Some(websocket_client::WebSocketCloseFrame {
+                code: websocket_client::WebSocketCloseCode::Policy,
+                reason: "usage limit reached".to_string(),
+            })),
+        )]));
         let (event_sender, event_receiver) = mpsc::unbounded();
 
         block_on(receive_websocket_response(
@@ -885,7 +917,7 @@ mod tests {
         for (incoming, expected_error_fragment) in cases {
             let prepared = prepared_request_with_input("gpt-test", &["one"]);
             let chains = WebSocketChains::new_shared();
-            let connection = Box::new(ScriptedWebSocketConnection { incoming });
+            let connection = Box::new(ScriptedWebSocketConnection::new(incoming));
             let (event_sender, event_receiver) = mpsc::unbounded();
 
             block_on(receive_websocket_response(
@@ -907,24 +939,15 @@ mod tests {
         }
     }
 
-    /// A [`WebSocketConnection`] that accepts all sends and replays a fixed
-    /// sequence of incoming messages, reporting closure once they run out.
-    struct ScriptedWebSocketConnection {
-        incoming: Vec<Result<WebSocketMessage>>,
-    }
+    struct NeverRespondingWebSocketConnection;
 
-    impl WebSocketConnection for ScriptedWebSocketConnection {
+    impl WebSocketConnection for NeverRespondingWebSocketConnection {
         fn send(&mut self, _message: WebSocketMessage) -> BoxFuture<'_, Result<()>> {
             future::ready(Ok(())).boxed()
         }
 
         fn receive(&mut self) -> BoxFuture<'_, Option<Result<WebSocketMessage>>> {
-            let message = if self.incoming.is_empty() {
-                None
-            } else {
-                Some(self.incoming.remove(0))
-            };
-            future::ready(message).boxed()
+            future::pending().boxed()
         }
     }
 
@@ -933,9 +956,7 @@ mod tests {
             input_hash: prepared.input_hash,
             previous_response_id: "resp_test".to_string(),
             response_output_fingerprints: Vec::new(),
-            connection: Box::new(ScriptedWebSocketConnection {
-                incoming: Vec::new(),
-            }),
+            connection: Box::new(ScriptedWebSocketConnection::new(Vec::new())),
             last_used_at: Instant::now(),
         }
     }
