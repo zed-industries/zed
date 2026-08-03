@@ -76,6 +76,8 @@ pub fn init(cx: &mut App) {
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();
+    cx.observe_new(OpenPathPrompt::register_for_open_files)
+        .detach();
 }
 
 impl FileFinder {

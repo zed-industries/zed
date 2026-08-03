@@ -10,6 +10,7 @@ file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+menu.workspace = true
 picker.workspace = true
 project.workspace = true
 schemars.workspace = true

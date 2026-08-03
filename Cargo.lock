@@ -12475,6 +12475,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "gpui",
+ "menu",
  "picker",
  "project",
  "schemars 1.0.4",
