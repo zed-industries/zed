@@ -8104,6 +8104,17 @@ impl Element for EditorElement {
 
                     let height_in_lines = f64::from(bounds.size.height / line_height);
                     let max_row = snapshot.max_point().row().as_f64();
+                    // Use the expected (virtual) max row for scroll clamping and
+                    // scrollbar sizing when set, so manual scrolling and the scrollbar
+                    // thumb reflect the final document size rather than the partially
+                    // loaded content during incremental builds.
+                    let effective_max_row = self
+                        .editor
+                        .read(cx)
+                        .scroll_manager
+                        .expected_max_row()
+                        .map(|expected| expected.max(max_row))
+                        .unwrap_or(max_row);
 
                     // Calculate how much of the editor is clipped by parent containers (e.g., List).
                     // This allows us to only render lines that are actually visible, which is
@@ -8119,11 +8130,14 @@ impl Element for EditorElement {
                     // The max scroll position for the top of the window
                     let scroll_beyond_last_line = self.editor.read(cx).scroll_beyond_last_line(cx);
                     let max_scroll_top = match scroll_beyond_last_line {
-                        ScrollBeyondLastLine::OnePage => max_row,
-                        ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
+                        ScrollBeyondLastLine::OnePage => effective_max_row,
+                        ScrollBeyondLastLine::Off => {
+                            (effective_max_row - height_in_lines + 1.).max(0.)
+                        }
                         ScrollBeyondLastLine::VerticalScrollMargin => {
                             let settings = EditorSettings::get_global(cx);
-                            (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
+                            (effective_max_row - height_in_lines + 1.
+                                + settings.vertical_scroll_margin)
                                 .max(0.)
                         }
                     };
@@ -8654,7 +8668,7 @@ impl Element for EditorElement {
                         glyph_grid_cell,
                         size(
                             longest_line_width,
-                            Pixels::from(max_row.as_f64() * f64::from(line_height)),
+                            Pixels::from(effective_max_row * f64::from(line_height)),
                         ),
                         longest_line_blame_width,
                         EditorSettings::get_global(cx),

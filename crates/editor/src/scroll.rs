@@ -162,7 +162,7 @@ pub struct ScrollManager {
     visible_line_count: Option<f64>,
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
-    forbid_user_vertical_scroll: bool,
+    expected_max_row: Option<f64>,
     minimap_thumb_state: Option<ScrollbarThumbState>,
     _save_scroll_position_task: Task<()>,
 }
@@ -186,7 +186,7 @@ impl ScrollManager {
             visible_line_count: None,
             visible_column_count: None,
             forbid_vertical_scroll: false,
-            forbid_user_vertical_scroll: false,
+            expected_max_row: None,
             minimap_thumb_state: None,
             _save_scroll_position_task: Task::ready(()),
         }
@@ -328,11 +328,19 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
         let scroll_top = scroll_position.y.max(0.);
+        let real_max_row = map.max_point().row().as_f64();
+        // For user-initiated scrolls, use the expected (virtual) max row as the
+        // clamp bound so manual scrolling isn't pinned to partially-loaded
+        // content. Programmatic autoscroll always uses the real max row to
+        // preserve scrollTo semantics (e.g. centering on the blamed line).
+        let max_row = match self.expected_max_row {
+            Some(expected) if !autoscroll => expected.max(real_max_row),
+            _ => real_max_row,
+        };
         let scroll_top = match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scroll_top,
             ScrollBeyondLastLine::Off => {
                 if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().as_f64();
                     scroll_top.min(max_row - height_in_lines + 1.).max(0.)
                 } else {
                     scroll_top
@@ -340,7 +348,6 @@ impl ScrollManager {
             }
             ScrollBeyondLastLine::VerticalScrollMargin => {
                 if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().as_f64();
                     scroll_top
                         .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
                         .max(0.)
@@ -577,12 +584,12 @@ impl ScrollManager {
         self.forbid_vertical_scroll
     }
 
-    pub fn set_forbid_user_vertical_scroll(&mut self, forbid: bool) {
-        self.forbid_user_vertical_scroll = forbid;
+    pub fn set_expected_max_row(&mut self, max_row: Option<f64>) {
+        self.expected_max_row = max_row;
     }
 
-    pub fn forbid_user_vertical_scroll(&self) -> bool {
-        self.forbid_user_vertical_scroll
+    pub fn expected_max_row(&self) -> Option<f64> {
+        self.expected_max_row
     }
 }
 
@@ -595,8 +602,8 @@ impl Editor {
         self.scroll_manager.set_forbid_vertical_scroll(forbid);
     }
 
-    pub fn set_forbid_user_vertical_scroll(&mut self, forbid: bool) {
-        self.scroll_manager.set_forbid_user_vertical_scroll(forbid);
+    pub fn set_expected_max_row(&mut self, max_row: Option<f64>) {
+        self.scroll_manager.set_expected_max_row(max_row);
     }
 
     pub fn scroll_top_display_point(&self, snapshot: &DisplaySnapshot, cx: &App) -> DisplayPoint {
@@ -663,9 +670,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let mut delta = scroll_delta;
-        if self.scroll_manager.forbid_vertical_scroll
-            || self.scroll_manager.forbid_user_vertical_scroll
-        {
+        if self.scroll_manager.forbid_vertical_scroll {
             delta.y = 0.0;
         }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -680,9 +685,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> WasScrolled {
         let mut position = scroll_position;
-        if self.scroll_manager.forbid_vertical_scroll
-            || self.scroll_manager.forbid_user_vertical_scroll
-        {
+        if self.scroll_manager.forbid_vertical_scroll {
             let current_position = self.scroll_position(cx);
             position.y = current_position.y;
         }
