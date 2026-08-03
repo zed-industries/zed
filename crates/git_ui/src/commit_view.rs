@@ -299,6 +299,7 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
+        let scroll_requested = scroll_to.is_some();
 
         // Process the target file first so the editor appears at the correct
         // scroll position immediately, avoiding a visible jump for large commits.
@@ -496,13 +497,13 @@ impl CommitView {
             })?;
 
             // All excerpts have been inserted and the display map is now stable.
-            // Replace a still-pending CenterWhenPossible request with a plain
-            // center() so a short diff settles at its final boundary. Do not
-            // request another scroll after the earlier attempt has succeeded.
-            let has_pending_autoscroll = this.update(cx, |this, cx| {
-                this.editor.read(cx).rhs_editor().read(cx).has_autoscroll_request()
-            })?;
-            if has_pending_autoscroll {
+            // Request a final center() on the complete map. CenterWhenPossible
+            // may have been consumed too early — before files sorted above the
+            // target were inserted — pinning the scroll anchor at a wrong row.
+            // This final request corrects that. If the earlier scroll already
+            // landed at the right position, set_anchor's equality short-circuit
+            // (scroll.rs:402) makes this a no-op, so there is no visible jump.
+            if scroll_requested {
                 this.update(cx, |this, cx| {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
