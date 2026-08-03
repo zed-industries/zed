@@ -669,7 +669,7 @@ mod tests {
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let _ = workspace::AppState::test(cx);
+            let _app_state = workspace::AppState::test(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
@@ -808,8 +808,6 @@ mod tests {
             )]
         });
 
-        // The walk must terminate rather than loop forever; the cap bounds how many `/x` segments
-        // it can add on top of the starting `a`.
         assert_eq!(
             result.as_unix_str().matches('/').count(),
             MAX_BREADCRUMB_DESCENT_DEPTH

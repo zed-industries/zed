@@ -354,12 +354,8 @@ fn test_breadcrumb_navigation_state_transitions(cx: &mut TestAppContext) {
         assert_eq!(navigation.active_path.as_unix_str(), "src/main");
         assert!(navigation.navigated);
 
-        // `navigate_breadcrumb_to` re-anchors the popover a couple of frames later (see its doc
-        // comment) and, until then, suppresses `clear_breadcrumb_navigation` so the outgoing
-        // popover's own dismissal can't wipe the navigation state just set above. Identifying the
-        // dismissal as the now-active segment itself (`src/main`) isolates this from the separate
-        // identity check `clear_breadcrumb_navigation` also applies — see
-        // `test_stale_breadcrumb_dismissal_does_not_clobber_newer_navigation` below.
+        // While the re-anchor is in flight, the outgoing popover's dismissal must not wipe the
+        // navigation state just set above, even when it identifies the now-active segment.
         editor.clear_breadcrumb_navigation(worktree_id, &rel_path("src/main").into_arc(), cx);
         assert!(
             editor.breadcrumb_navigation().is_some(),
@@ -390,38 +386,12 @@ fn test_breadcrumb_navigation_state_transitions(cx: &mut TestAppContext) {
     });
 }
 
-/// Regression test for the empty-directory breadcrumb bug: navigating into a directory with no
-/// children (`bin`), then clicking back to a different segment (the root) while still navigated
-/// to `bin`, must not lose the navigation session — even though the dropdown that gets dismissed
-/// along the way (`bin`'s own) identifies a segment that is no longer the active one by the time
-/// its dismissal is actually processed.
-///
-/// Root cause: `Editor::open_breadcrumb_navigation`'s call to
-/// `self.breadcrumb_popover_handle.hide(cx)` emits a `DismissEvent` on the *previously* active
-/// segment's popover to close it — but `cx.emit`'s effects are queued and only flush once the
-/// outermost `App::update` on the call stack returns (see `App::finish_update`/`flush_effects`),
-/// not synchronously. So that dismissal — and the `Editor::clear_breadcrumb_navigation` call its
-/// subscription makes — lands only *after* `open_breadcrumb_navigation` has already finished
-/// overwriting `Editor::breadcrumb_navigation` with the newly clicked segment's own state.
-/// `clear_breadcrumb_navigation` used to clear unconditionally whenever it ran, silently wiping
-/// out that just-set state out from under it. It's the same "identity, not just call order,
-/// matters" class of bug `open_breadcrumb_navigation`'s `navigated`-preserving check already had
-/// fixed once for a different reason (see `058ed0958c`) — `clear_breadcrumb_navigation` needed the
-/// same treatment: it must only clear a session if the dismissal it's reacting to still identifies
-/// the segment that's actually active, not just whichever one happened to be active when the
-/// popover was originally opened.
-///
-/// This models the queued-dismissal reordering directly — calling `clear_breadcrumb_navigation`
-/// with `bin`'s identity only *after* `open_breadcrumb_navigation` has already moved the active
-/// segment to the root — rather than reproducing the full `PopoverMenu`/focus machinery that
-/// produces this interleaving in the real app (covered end-to-end by the `element.rs` breadcrumb
-/// tests, which drive real `PopoverMenu`s but always through a single already-current handle, so
-/// they don't hit this particular reordering).
-///
-/// Fails without the fix: reverting `clear_breadcrumb_navigation` to take no identity and clear
-/// unconditionally makes the assertion after the stale dismissal fail — `breadcrumb_navigation()`
-/// comes back `None` (and the root segment is no longer the active one) instead of staying on the
-/// root, and the final navigation to `frontend` then starts from a corrupted state.
+/// Clicking a new segment while another's dropdown is still open must not lose the new
+/// navigation: the old popover's `DismissEvent` is queued by `cx.emit` and only lands after
+/// `open_breadcrumb_navigation` has already overwritten `breadcrumb_navigation`, and
+/// `clear_breadcrumb_navigation` used to clear unconditionally when it ran. This drives that
+/// reordering directly rather than through the full `PopoverMenu` machinery, which the
+/// `element.rs` breadcrumb tests cover but always through an already-current handle.
 #[gpui::test]
 fn test_stale_breadcrumb_dismissal_does_not_clobber_newer_navigation(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

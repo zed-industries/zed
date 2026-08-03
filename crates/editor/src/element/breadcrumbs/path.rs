@@ -68,7 +68,8 @@ pub(crate) fn breadcrumb_path_segments(
 /// Mirrors `project_panel`'s ordering, visibility and icon settings so the dropdown agrees with
 /// the panel. Read from `SettingsContent` independently rather than through `project_panel`'s
 /// resolved settings, since `project_panel` depends on `editor` and the reverse would be
-/// circular.
+/// circular. Deliberately exposes no breadcrumb-specific overrides yet; the bar always follows
+/// the panel.
 #[derive(Clone, Copy, settings::RegisterSetting)]
 pub struct BreadcrumbDirectoryListingSettings {
     pub sort_mode: settings::ProjectPanelSortMode,

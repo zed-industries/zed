@@ -271,3 +271,265 @@ pub(crate) fn render_breadcrumb_symbol_segment(
     })
     .into_any_element()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use editor::MultiBuffer;
+    use editor::MultiBufferSnapshot;
+    use editor::test::build_editor;
+    use gpui::{Focusable, Render, TestAppContext, VisualTestContext};
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use text::Point;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let _app_state = workspace::AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    /// A zero-width item anchored at the start of `row`, standing in for a real outline entry.
+    fn test_item(snapshot: &MultiBufferSnapshot, row: u32, text: &str) -> OutlineItem<Anchor> {
+        let range =
+            snapshot.anchor_before(Point::new(row, 0))..snapshot.anchor_after(Point::new(row, 0));
+        OutlineItem {
+            depth: 0,
+            range: range.clone(),
+            selection_range: range.clone(),
+            source_range_for_text: range,
+            text: text.into(),
+            highlight_ranges: Vec::new(),
+            name_ranges: Vec::new(),
+            body_range: None,
+            annotation_range: None,
+        }
+    }
+
+    fn build_test_editor(cx: &mut TestAppContext) -> (gpui::WindowHandle<Editor>, Entity<Editor>) {
+        let buffer = cx.new(|cx| language::Buffer::local("alpha\nbeta\ngamma\n", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor_window =
+            cx.add_window(|window, cx| build_editor(multi_buffer.clone(), window, cx));
+        let editor = editor_window.root(cx).unwrap();
+        (editor_window, editor)
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_symbol_picker_preselects_current_symbol(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (editor_window, editor) = build_test_editor(cx);
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+
+        let snapshot = editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx));
+        let items = vec![
+            test_item(&snapshot, 0, "alpha"),
+            test_item(&snapshot, 1, "beta"),
+            test_item(&snapshot, 2, "gamma"),
+        ];
+        let current_range = items[1].range.clone();
+
+        let picker = editor_window
+            .update(cx, |_, window, cx| {
+                BreadcrumbSymbolDelegate::picker(
+                    editor.downgrade(),
+                    items,
+                    Some(current_range),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.selected_index, 1,
+                "the segment's own symbol is preselected"
+            );
+        });
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker.delegate.update_matches(String::new(), window, cx)
+            })
+            .await;
+
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.selected_index, 1,
+                "clearing the query keeps the current symbol selected"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_symbol_picker_fuzzy_filtering_resets_selection(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (editor_window, editor) = build_test_editor(cx);
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+
+        let snapshot = editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx));
+        let items = vec![
+            test_item(&snapshot, 0, "alpha"),
+            test_item(&snapshot, 1, "beta"),
+            test_item(&snapshot, 2, "gamma"),
+        ];
+
+        let picker = editor_window
+            .update(cx, |_, window, cx| {
+                BreadcrumbSymbolDelegate::picker(editor.downgrade(), items, None, window, cx)
+            })
+            .unwrap();
+
+        // "gam" is a subsequence of "gamma" only: neither "alpha" nor "beta" contains a 'g' or
+        // 'm', so this discriminates cleanly under fuzzy matching.
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker
+                    .delegate
+                    .update_matches("gam".to_string(), window, cx)
+            })
+            .await;
+
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.matches.len(),
+                1,
+                "the query narrows the listing to the one discriminating match"
+            );
+            assert_eq!(
+                picker.delegate.item_at(0).map(|item| item.text.as_ref()),
+                Some("gamma")
+            );
+            assert_eq!(
+                picker.delegate.selected_index, 0,
+                "filtering resets the selection to the top match"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_confirming_breadcrumb_symbol_navigates_and_dismisses(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (editor_window, editor) = build_test_editor(cx);
+        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
+
+        let snapshot = editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx));
+        let items = vec![
+            test_item(&snapshot, 0, "alpha"),
+            test_item(&snapshot, 1, "beta"),
+            test_item(&snapshot, 2, "gamma"),
+        ];
+
+        let picker = editor_window
+            .update(cx, |_, window, cx| {
+                BreadcrumbSymbolDelegate::picker(editor.downgrade(), items, None, window, cx)
+            })
+            .unwrap();
+
+        let dismissed = Rc::new(Cell::new(false));
+        let subscription = cx.update(|_, cx| {
+            cx.subscribe(&picker, {
+                let dismissed = dismissed.clone();
+                move |_, _: &DismissEvent, _| dismissed.set(true)
+            })
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.delegate.selected_index = 2;
+            picker.delegate.confirm(false, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<Point>(&snapshot).head();
+            assert_eq!(
+                cursor,
+                Point::new(2, 0),
+                "confirming navigates the cursor to the chosen symbol"
+            );
+        });
+        assert!(dismissed.get(), "confirming a row dismisses the popover");
+        drop(subscription);
+    }
+
+    /// The whole flow driven by `menu::` actions rather than by simulated keystrokes: move the
+    /// selection, submit it, and end up with the cursor on the chosen symbol.
+    #[gpui::test]
+    async fn test_breadcrumb_symbol_picker_navigates_from_the_keyboard(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let buffer = cx.new(|cx| language::Buffer::local("alpha\nbeta\ngamma\n", cx));
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct Harness {
+            picker: Entity<BreadcrumbSymbolPicker>,
+            editor: Entity<Editor>,
+        }
+        impl Render for Harness {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.picker.clone()
+            }
+        }
+
+        let harness_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+            let items = vec![
+                test_item(&snapshot, 0, "alpha"),
+                test_item(&snapshot, 1, "beta"),
+                test_item(&snapshot, 2, "gamma"),
+            ];
+            let picker =
+                BreadcrumbSymbolDelegate::picker(editor.downgrade(), items, None, window, cx);
+            Harness { picker, editor }
+        });
+        let (picker, editor) = harness_window
+            .read_with(cx, |harness, _| {
+                (harness.picker.clone(), harness.editor.clone())
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*harness_window, cx);
+        cx.run_until_parked();
+
+        picker.update_in(cx, |picker, window, cx| {
+            window.focus(&picker.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        // The listing opens on `alpha`; one step down lands on `beta`.
+        cx.dispatch_action(menu::SelectNext);
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(
+                picker
+                    .delegate
+                    .item_at(picker.delegate.selected_index)
+                    .map(|item| item.text.as_ref()),
+                Some("beta"),
+            );
+        });
+
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<Point>(&snapshot).head();
+            assert_eq!(
+                cursor,
+                Point::new(1, 0),
+                "confirming the selected row navigates the cursor there"
+            );
+        });
+    }
+}

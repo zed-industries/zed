@@ -8,10 +8,6 @@ use editor::{
 };
 use gpui::App;
 
-pub use directory::{BreadcrumbDirectoryDelegate, BreadcrumbDirectoryPicker};
-pub use symbol::{BreadcrumbSymbolDelegate, BreadcrumbSymbolPicker};
-
-/// Caps how many entries one dropdown lists.
 pub(crate) const MAX_BREADCRUMB_MENU_ENTRIES: usize = 200;
 
 pub fn init(_cx: &mut App) {
