@@ -12,6 +12,11 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 360
     steps:
+      - name: Enable long paths for Git and Windows
+        shell: pwsh
+        run: |
+          git config --system core.longpaths true
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
       - name: Checkout repo
         uses: actions/checkout@v4
       - name: Shim Visual Studio Community path expected by bundle-windows.ps1
