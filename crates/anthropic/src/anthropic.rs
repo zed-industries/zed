@@ -46,6 +46,13 @@ pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
 
+/// The lowest compaction `trigger` value the API accepts; smaller values are
+/// rejected. Anthropic offers no compact-on-demand operation, so a request
+/// that wants compaction now sets its trigger to this floor (see
+/// [`crate::into_anthropic_compaction`]); the API then compacts as soon as
+/// the request's input tokens allow.
+pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum AnthropicModelMode {
@@ -855,6 +862,14 @@ pub enum ContextManagementEdit {
     Compact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<CompactionTrigger>,
+        /// Stop after emitting the compaction block instead of continuing
+        /// the response, turning a completion request into compact-on-demand.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_after_compaction: Option<bool>,
+        /// Custom summarization prompt. Replaces the default prompt entirely
+        /// when present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instructions: Option<String>,
     },
 }
 

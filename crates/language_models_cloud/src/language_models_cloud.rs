@@ -19,13 +19,13 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
-    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
-    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, CompactionUpdate,
+    DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, TokenUsage, X_AI_PROVIDER_ID,
+    X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -39,7 +39,9 @@ use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 
-use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
+use anthropic::completion::{
+    AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic, into_anthropic_compaction,
+};
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
@@ -326,6 +328,194 @@ impl From<ApiError> for LanguageModelCompletionError {
     }
 }
 
+impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
+    /// Explicit compaction via OpenAI's dedicated compact operation, proxied
+    /// through the cloud's `/completions/compact` endpoint.
+    fn compact_open_ai(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let thread_id = request.thread_id.clone();
+        let prompt_id = request.prompt_id.clone();
+        let app_version = self.app_version.clone();
+        let model_provider = self.model.provider;
+        let provider_name = provider_name(&self.model.provider);
+        let supports_none_reasoning_effort =
+            self.model.supported_effort_levels.iter().any(|effort| {
+                open_ai::ReasoningEffort::from_str(&effort.value)
+                    .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
+            });
+        // Cloud proxies to OpenAI's own infrastructure, so the resulting
+        // compaction state is owned by (and interchangeable with) OpenAI
+        // proper, not by the cloud transport.
+        let request = match into_open_ai_response(
+            request,
+            &self.model.id.0,
+            self.model.supports_parallel_tool_calls,
+            true,
+            None,
+            None,
+            supports_none_reasoning_effort,
+            &OPEN_AI_PROVIDER_ID,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let compact_request = request.into_compact_request();
+        let http_client = self.http_client.clone();
+        let token_provider = self.token_provider.clone();
+        let auth_context = token_provider.auth_context(cx);
+        let future = self.request_limiter.run(async move {
+            let PerformLlmCompletionResponse {
+                response,
+                includes_status_messages,
+            } = Self::perform_llm_compaction(
+                &http_client,
+                &*token_provider,
+                auth_context,
+                app_version,
+                CompletionBody {
+                    thread_id,
+                    prompt_id,
+                    provider: model_provider,
+                    model: compact_request.model.clone(),
+                    provider_request: serde_json::to_value(compact_request).map_err(|error| {
+                        LanguageModelCompletionError::SerializeRequest {
+                            provider: provider_name.clone(),
+                            error,
+                        }
+                    })?,
+                },
+            )
+            .await?;
+
+            let events = response_lines::<open_ai::responses::CompactedResponse>(
+                response,
+                includes_status_messages,
+            );
+            futures::pin_mut!(events);
+            while let Some(event) = events.next().await {
+                match event.map_err(|error| error.into_completion_error(provider_name.clone()))? {
+                    CompletionEvent::Event(response) => {
+                        let usage = token_usage_from_response_usage(&response.usage);
+                        let context = response
+                            .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                            .map_err(LanguageModelCompletionError::Other)?;
+                        return Ok(CompactionResult { context, usage });
+                    }
+                    CompletionEvent::Status(_) => {}
+                }
+            }
+
+            Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+                provider: provider_name,
+            })
+        });
+        future.boxed()
+    }
+
+    /// Explicit compaction for Anthropic, which has no compact-on-demand
+    /// operation: a normal completion request carries the lowest trigger the
+    /// API accepts plus `pause_after_compaction`, so the response is just a
+    /// compaction block (see [`into_anthropic_compaction`]). Fails when the
+    /// provider does not compact — a summarization gone wrong, or input
+    /// below the trigger floor.
+    fn compact_anthropic(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let thread_id = request.thread_id.clone();
+        let prompt_id = request.prompt_id.clone();
+        let app_version = self.app_version.clone();
+        let provider_name = provider_name(&self.model.provider);
+        // Cloud proxies to Anthropic's own infrastructure, so compaction
+        // state is owned by (and interchangeable with) Anthropic proper, not
+        // by the cloud transport.
+        let request = match into_anthropic_compaction(
+            request,
+            self.model.id.to_string(),
+            1.0,
+            self.model.max_output_tokens as u64,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let http_client = self.http_client.clone();
+        let token_provider = self.token_provider.clone();
+        let auth_context = token_provider.auth_context(cx);
+        let future = self.request_limiter.run(async move {
+            let PerformLlmCompletionResponse {
+                response,
+                includes_status_messages,
+            } = Self::perform_llm_completion(
+                &http_client,
+                &*token_provider,
+                auth_context,
+                app_version,
+                CompletionBody {
+                    thread_id,
+                    prompt_id,
+                    provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+                    model: request.model.clone(),
+                    provider_request: serde_json::to_value(&request).map_err(|error| {
+                        LanguageModelCompletionError::SerializeRequest {
+                            provider: provider_name.clone(),
+                            error,
+                        }
+                    })?,
+                },
+            )
+            .await?;
+
+            let mut mapper =
+                AnthropicEventMapper::new(provider_name.clone(), ANTHROPIC_PROVIDER_ID);
+            let events = map_cloud_completion_events(
+                Box::pin(response_lines(response, includes_status_messages)),
+                &provider_name,
+                move |event| mapper.map_event(event),
+            );
+            futures::pin_mut!(events);
+            // The final usage arrives after the compaction block closes, so
+            // hold the finished context and keep consuming to the end of the
+            // stream.
+            let mut usage = TokenUsage::default();
+            let mut context = None;
+            while let Some(event) = events.next().await {
+                match event? {
+                    LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                        usage = updated_usage;
+                    }
+                    LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                        finished_context,
+                    )) => {
+                        context = Some(finished_context);
+                    }
+                    LanguageModelCompletionEvent::Compaction(CompactionUpdate::Failed) => {
+                        return Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                            "the provider abandoned compaction without producing a summary"
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+
+            let Some(context) = context else {
+                return Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "the provider did not compact; conversations below {} input tokens \
+                     cannot be compacted",
+                    anthropic::MIN_COMPACTION_TRIGGER_TOKENS
+                )));
+            };
+            Ok(CompactionResult { context, usage })
+        });
+        future.boxed()
+    }
+}
+
 impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<TP> {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -421,8 +611,11 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
     }
 
     fn supports_explicit_compaction(&self) -> bool {
-        self.model.provider == cloud_llm_client::LanguageModelProvider::OpenAi
-            && self.model.supports_server_side_compaction
+        matches!(
+            self.model.provider,
+            cloud_llm_client::LanguageModelProvider::OpenAi
+                | cloud_llm_client::LanguageModelProvider::Anthropic
+        ) && self.model.supports_server_side_compaction
     }
 
     fn compact(
@@ -439,83 +632,16 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             .boxed();
         }
 
-        let thread_id = request.thread_id.clone();
-        let prompt_id = request.prompt_id.clone();
-        let app_version = self.app_version.clone();
-        let model_provider = self.model.provider;
-        let provider_name = provider_name(&self.model.provider);
-        let supports_none_reasoning_effort =
-            self.model.supported_effort_levels.iter().any(|effort| {
-                open_ai::ReasoningEffort::from_str(&effort.value)
-                    .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
-            });
-        // Cloud proxies to OpenAI's own infrastructure, so the resulting
-        // compaction state is owned by (and interchangeable with) OpenAI
-        // proper, not by the cloud transport.
-        let request = match into_open_ai_response(
-            request,
-            &self.model.id.0,
-            self.model.supports_parallel_tool_calls,
-            true,
-            None,
-            None,
-            supports_none_reasoning_effort,
-            &OPEN_AI_PROVIDER_ID,
-        ) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let compact_request = request.into_compact_request();
-        let http_client = self.http_client.clone();
-        let token_provider = self.token_provider.clone();
-        let auth_context = token_provider.auth_context(cx);
-        let future = self.request_limiter.run(async move {
-            let PerformLlmCompletionResponse {
-                response,
-                includes_status_messages,
-            } = Self::perform_llm_compaction(
-                &http_client,
-                &*token_provider,
-                auth_context,
-                app_version,
-                CompletionBody {
-                    thread_id,
-                    prompt_id,
-                    provider: model_provider,
-                    model: compact_request.model.clone(),
-                    provider_request: serde_json::to_value(compact_request).map_err(|error| {
-                        LanguageModelCompletionError::SerializeRequest {
-                            provider: provider_name.clone(),
-                            error,
-                        }
-                    })?,
-                },
-            )
-            .await?;
-
-            let events = response_lines::<open_ai::responses::CompactedResponse>(
-                response,
-                includes_status_messages,
-            );
-            futures::pin_mut!(events);
-            while let Some(event) = events.next().await {
-                match event.map_err(|error| error.into_completion_error(provider_name.clone()))? {
-                    CompletionEvent::Event(response) => {
-                        let usage = token_usage_from_response_usage(&response.usage);
-                        let context = response
-                            .into_compacted_context(OPEN_AI_PROVIDER_ID)
-                            .map_err(LanguageModelCompletionError::Other)?;
-                        return Ok(CompactionResult { context, usage });
-                    }
-                    CompletionEvent::Status(_) => {}
-                }
+        match self.model.provider {
+            cloud_llm_client::LanguageModelProvider::OpenAi => self.compact_open_ai(request, cx),
+            cloud_llm_client::LanguageModelProvider::Anthropic => {
+                self.compact_anthropic(request, cx)
             }
-
-            Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
-                provider: provider_name,
-            })
-        });
-        future.boxed()
+            cloud_llm_client::LanguageModelProvider::Google
+            | cloud_llm_client::LanguageModelProvider::XAi => unreachable!(
+                "supports_explicit_compaction is limited to OpenAI and Anthropic models"
+            ),
+        }
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
