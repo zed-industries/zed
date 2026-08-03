@@ -838,7 +838,8 @@ List of `string` values
     "runnables": true,
     "breakpoints": true,
     "folds": true,
-    "min_line_number_digits": 4
+    "min_line_number_digits": 4,
+    "git_gutter_width": null
   }
 }
 ```
@@ -850,6 +851,7 @@ List of `string` values
 - `breakpoints`: Whether to show breakpoints in the gutter
 - `folds`: Whether to show fold buttons in the gutter
 - `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
+- `git_gutter_width`: The width, in pixels, of the git diff hunk indicators in the gutter. When `null`, the width scales with the buffer font size
 
 ## Hide Mouse
 
@@ -2540,6 +2542,42 @@ Example:
 {
   "git": {
     "hunk_style": "unstaged_hollow"
+  }
+}
+```
+
+### Diff Base
+
+- Description: Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch). Also available in the editor controls menu as "Diff Against Default Branch".
+- Setting: `diff_base`
+- Default:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+**Options**
+
+1. Show working changes relative to HEAD:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+2. Show all branch changes relative to the merge base with the repository's default branch:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "default_branch"
   }
 }
 ```
@@ -4500,6 +4538,24 @@ The name of any font family installed on the user's system
 }
 ```
 
+### Terminal: Font Fallbacks
+
+- Description: The font fallbacks to use for text in the terminal. Uses the buffer's font fallback if unset.
+- Setting: "font_fallbacks"
+- Default: `null`
+
+**Options**
+
+For example, to use Nerd Font as a fallback, add the following to your settings:
+
+```json [settings]
+{
+  "terminal": {
+    "font_fallbacks": ["Nerd Font"]
+  }
+}
+```
+
 ### Terminal: Font Features
 
 - Description: What font features to use for the terminal. When not set, defaults to matching the editor's font features.
@@ -5071,7 +5127,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "project_panel": {
     "button": true,
     "default_width": 240,
-    "dock": "left",
+    "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
@@ -5107,7 +5163,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 - Description: Control the position of the dock
 - Setting: `dock`
-- Default: `left`
+- Default: `right`
 
 **Options**
 

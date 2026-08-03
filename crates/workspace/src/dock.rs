@@ -364,7 +364,7 @@ pub struct PanelSizeState {
 struct PanelEntry {
     panel: Arc<dyn PanelHandle>,
     size_state: PanelSizeState,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 pub struct PanelButtons {
@@ -671,6 +671,29 @@ impl Dock {
                         .ok();
                 }
             }),
+            {
+                let panel = panel.clone();
+                let mut last_default_size = panel.read(cx).default_size(window, cx);
+
+                cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                    let default_size = panel.read(cx).default_size(window, cx);
+                    if default_size == last_default_size {
+                        return;
+                    }
+                    last_default_size = default_size;
+
+                    let panel_id = Entity::entity_id(&panel);
+                    if let Some(entry) = this
+                        .panel_entries
+                        .iter_mut()
+                        .find(|entry| entry.panel.panel_id() == panel_id)
+                    {
+                        entry.size_state.size = None;
+                        entry.panel.size_state_changed(window, cx);
+                        cx.notify();
+                    }
+                })
+            },
             cx.subscribe_in(
                 &panel,
                 window,

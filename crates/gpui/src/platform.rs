@@ -9,8 +9,8 @@ pub mod layer_shell;
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
 
-#[cfg(any(test, feature = "bench"))]
-mod bench_dispatcher;
+#[cfg(any(test, feature = "test-support"))]
+mod threaded_dispatcher;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
@@ -83,8 +83,8 @@ pub(crate) use test::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(any(test, feature = "bench"))]
-pub use bench_dispatcher::BenchDispatcher;
+#[cfg(any(test, feature = "test-support"))]
+pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -865,7 +865,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
     fn show_character_palette(&self) {}
-    fn titlebar_double_click(&self) {}
+    fn titlebar_double_click(&self, _is_resizable: bool, _is_minimizable: bool) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
     fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
@@ -1041,10 +1041,10 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
-    // This cfg must match the `bench_dispatcher` module's, which implements
+    // This cfg must match the `threaded_dispatcher` module's, which implements
     // this method whenever it compiles.
-    #[cfg(any(test, feature = "bench"))]
-    fn as_bench(&self) -> Option<&BenchDispatcher> {
+    #[cfg(any(test, feature = "test-support"))]
+    fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }
 }
@@ -1309,6 +1309,11 @@ pub trait PlatformAtlas {
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn contains(&self, _key: &AtlasKey) -> bool {
+        false
+    }
 }
 
 #[doc(hidden)]
@@ -2560,6 +2565,13 @@ impl Image {
     /// Use the GPUI `remove_asset` API to drop this image, if possible.
     pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
         ImageSource::Image(self).remove_asset(cx);
+    }
+
+    /// Check whether this image is present in GPUI's asset cache (loading or
+    /// loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(self: &Arc<Self>, cx: &App) -> bool {
+        ImageSource::Image(self.clone()).is_asset_cached(cx)
     }
 
     /// Convert the clipboard image to an `ImageData` object.
