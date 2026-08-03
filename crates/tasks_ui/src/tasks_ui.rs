@@ -954,11 +954,14 @@ mod tests {
         cx.run_until_parked();
 
         let scheduled_tasks = take_scheduled_tasks(task_inventory, cx);
-        let scheduled_task = scheduled_tasks[0].clone();
+        let scheduled_task = scheduled_tasks
+            .get(0)
+            .expect("should have at least one task");
+
         assert_eq!(scheduled_tasks.len(), 1);
         assert_eq!(scheduled_task.1.resolved.args, ["project-a"]);
         assert!(matches!(
-            scheduled_task.0,
+            &scheduled_task.0,
             TaskSourceKind::Worktree {
                 directory_in_worktree,
                 ..
