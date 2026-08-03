@@ -816,6 +816,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "sqlite",
     "mysql",
     "chrono",
+    "json",
 ] }
 stacksafe = "0.1"
 streaming-iterator = "0.1"

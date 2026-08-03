@@ -5,11 +5,13 @@ mod schema;
 use std::sync::Arc;
 
 use anyhow::Result;
+use editor::{Editor, EditorEvent};
 use fs::Fs;
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Pixels, Point, Render, ScrollStrategy, SharedString, Subscription,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, px, uniform_list,
+    FocusHandle, Focusable, KeyContext, Pixels, Point, Render, ScrollStrategy, SharedString,
+    Subscription, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, px,
+    uniform_list,
 };
 use gpui_tokio::Tokio;
 use schema::{ColumnInfo, ConnectionConfig, DatabaseInfo, TableInfo, TableType};
@@ -48,6 +50,8 @@ actions!(
         NewQueryConsole,
         /// Runs the query in the current query console.
         RunQuery,
+        /// Focuses the database panel's filter field.
+        FocusFilter,
     ]
 );
 
@@ -165,7 +169,8 @@ pub struct DatabasePanel {
     selected_index: Option<usize>,
     scroll_handle: UniformListScrollHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    _settings_subscription: Subscription,
+    filter_editor: Entity<Editor>,
+    _subscriptions: Vec<Subscription>,
 }
 
 fn resolve_connection(
@@ -209,13 +214,34 @@ impl DatabasePanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
-        workspace.update_in(&mut cx, |workspace, _, cx| Self::new(workspace, cx))
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            Self::new(workspace, window, cx)
+        })
     }
 
-    fn new(workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+    fn new(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let fs = workspace.project().read(cx).fs().clone();
         let weak_workspace = workspace.weak_handle();
         cx.new(|cx| {
+            let filter_editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Filter tables and columns…", window, cx);
+                editor
+            });
+            let subscriptions = vec![
+                cx.observe_global::<SettingsStore>(|this: &mut Self, cx| {
+                    this.settings_changed(cx)
+                }),
+                cx.subscribe(&filter_editor, |this: &mut Self, _, event, cx| {
+                    if let EditorEvent::BufferEdited = event {
+                        this.rebuild_entries(cx);
+                    }
+                }),
+            ];
             let mut this = Self {
                 workspace: weak_workspace,
                 fs,
@@ -225,13 +251,18 @@ impl DatabasePanel {
                 selected_index: None,
                 scroll_handle: UniformListScrollHandle::new(),
                 context_menu: None,
-                _settings_subscription: cx.observe_global::<SettingsStore>(
-                    |this: &mut Self, cx| this.settings_changed(cx),
-                ),
+                filter_editor,
+                _subscriptions: subscriptions,
             };
             this.settings_changed(cx);
             this
         })
+    }
+
+    fn filter_query(&self, cx: &App) -> Option<String> {
+        let query = self.filter_editor.read(cx).text(cx);
+        let query = query.trim().to_lowercase();
+        (!query.is_empty()).then_some(query)
     }
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
@@ -260,6 +291,24 @@ impl DatabasePanel {
     }
 
     fn rebuild_entries(&mut self, cx: &mut Context<Self>) {
+        self.entries = match self.filter_query(cx) {
+            Some(query) => {
+                self.ensure_filter_index(cx);
+                self.filtered_entries(&query)
+            }
+            None => self.expanded_entries(),
+        };
+        if let Some(selected) = self.selected_index {
+            if self.entries.is_empty() {
+                self.selected_index = None;
+            } else if selected >= self.entries.len() {
+                self.selected_index = Some(self.entries.len() - 1);
+            }
+        }
+        cx.notify();
+    }
+
+    fn expanded_entries(&self) -> Vec<ListEntry> {
         let mut entries = Vec::new();
         for (connection_ix, connection) in self.connections.iter().enumerate() {
             entries.push(ListEntry::Connection { connection_ix });
@@ -341,15 +390,199 @@ impl DatabasePanel {
                 }
             }
         }
-        self.entries = entries;
-        if let Some(selected) = self.selected_index {
-            if self.entries.is_empty() {
-                self.selected_index = None;
-            } else if selected >= self.entries.len() {
-                self.selected_index = Some(self.entries.len() - 1);
+        entries
+    }
+
+    /// Builds the flat list shown while a filter query is active: every loaded
+    /// table or column whose name contains the query, with its ancestors,
+    /// ignoring the collapse state of the tree.
+    fn filtered_entries(&self, query: &str) -> Vec<ListEntry> {
+        let matches = |name: &str| name.to_lowercase().contains(query);
+        let mut entries = Vec::new();
+        for (connection_ix, connection) in self.connections.iter().enumerate() {
+            let mut children = Vec::new();
+            match &connection.databases {
+                LoadState::Loading => children.push(ListEntry::Status {
+                    depth: 1,
+                    loading: true,
+                    message: "Connecting…".into(),
+                }),
+                LoadState::Loaded(databases) => {
+                    for (database_ix, database) in databases.iter().enumerate() {
+                        let mut database_children = Vec::new();
+                        match &database.tables {
+                            LoadState::Loading => database_children.push(ListEntry::Status {
+                                depth: 2,
+                                loading: true,
+                                message: "Loading tables…".into(),
+                            }),
+                            LoadState::Loaded(tables) => {
+                                let mut indexing = false;
+                                for (table_ix, table) in tables.iter().enumerate() {
+                                    let mut columns_entries = Vec::new();
+                                    match &table.columns {
+                                        LoadState::Loaded(columns) => {
+                                            for (column_ix, column) in columns.iter().enumerate() {
+                                                if matches(&column.name) {
+                                                    columns_entries.push(ListEntry::Column {
+                                                        connection_ix,
+                                                        database_ix,
+                                                        table_ix,
+                                                        column_ix,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        LoadState::Loading => indexing = true,
+                                        _ => {}
+                                    }
+                                    if matches(&table.info.name) || !columns_entries.is_empty() {
+                                        database_children.push(ListEntry::Table {
+                                            connection_ix,
+                                            database_ix,
+                                            table_ix,
+                                        });
+                                        database_children.append(&mut columns_entries);
+                                    }
+                                }
+                                if indexing {
+                                    database_children.push(ListEntry::Status {
+                                        depth: 2,
+                                        loading: true,
+                                        message: "Indexing columns…".into(),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                        if !database_children.is_empty() || matches(&database.info.name) {
+                            children.push(ListEntry::Database {
+                                connection_ix,
+                                database_ix,
+                            });
+                            children.append(&mut database_children);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if !children.is_empty() || matches(&connection.name) {
+                entries.push(ListEntry::Connection { connection_ix });
+                entries.append(&mut children);
             }
         }
-        cx.notify();
+        entries
+    }
+
+    /// Kicks off the schema loads needed for the filter to see the whole tree:
+    /// tables of every known database, then columns of every table, one bulk
+    /// request per database. Connections that were never expanded are left
+    /// untouched so filtering does not connect anywhere by surprise.
+    fn ensure_filter_index(&mut self, cx: &mut Context<Self>) {
+        for connection_ix in 0..self.connections.len() {
+            let Some(connection) = self.connections.get(connection_ix) else {
+                continue;
+            };
+            let LoadState::Loaded(databases) = &connection.databases else {
+                continue;
+            };
+            for database_ix in 0..databases.len() {
+                let Some(connection) = self.connections.get(connection_ix) else {
+                    break;
+                };
+                let LoadState::Loaded(databases) = &connection.databases else {
+                    break;
+                };
+                let Some(database) = databases.get(database_ix) else {
+                    break;
+                };
+                match &database.tables {
+                    LoadState::NotLoaded => self.load_tables(connection_ix, database_ix, cx),
+                    LoadState::Loaded(tables) => {
+                        if tables
+                            .iter()
+                            .any(|table| matches!(table.columns, LoadState::NotLoaded))
+                        {
+                            self.load_all_columns(connection_ix, database_ix, cx);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn load_all_columns(
+        &mut self,
+        connection_ix: usize,
+        database_ix: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(connection) = self.connections.get(connection_ix) else {
+            return;
+        };
+        let config = connection.config.clone();
+        let Some(database) = self.database_state_mut(connection_ix, database_ix) else {
+            return;
+        };
+        let database_name = database.info.name.clone();
+        if let LoadState::Loaded(tables) = &mut database.tables {
+            for table in tables.iter_mut() {
+                if matches!(table.columns, LoadState::NotLoaded) {
+                    table.columns = LoadState::Loading;
+                }
+            }
+        }
+        let task = Tokio::spawn_result(cx, {
+            let config = config.clone();
+            let database_name = database_name.clone();
+            async move { schema::list_all_columns(config, database_name).await }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if this
+                    .connections
+                    .get(connection_ix)
+                    .is_none_or(|connection| connection.config != config)
+                {
+                    return;
+                }
+                let Some(database) = this.database_state_mut(connection_ix, database_ix) else {
+                    return;
+                };
+                if database.info.name != database_name {
+                    return;
+                }
+                let LoadState::Loaded(tables) = &mut database.tables else {
+                    return;
+                };
+                match result {
+                    Ok(mut columns) => {
+                        for table in tables.iter_mut() {
+                            if matches!(table.columns, LoadState::Loading) {
+                                // A table missing from the bulk result (dropped
+                                // meanwhile) is marked Loaded to avoid retrying
+                                // on every rebuild.
+                                table.columns = LoadState::Loaded(
+                                    columns.remove(&table.info.name).unwrap_or_default(),
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let error = SharedString::from(format!("{error:#}"));
+                        for table in tables.iter_mut() {
+                            if matches!(table.columns, LoadState::Loading) {
+                                table.columns = LoadState::Error(error.clone());
+                            }
+                        }
+                    }
+                }
+                this.rebuild_entries(cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn database_state_mut(
@@ -643,6 +876,27 @@ impl DatabasePanel {
         if let Some(index) = self.selected_index {
             self.toggle_expanded(index, cx);
         }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.context_menu.is_some() {
+            self.context_menu.take();
+            cx.notify();
+            return;
+        }
+        let filter_focused = self.filter_editor.focus_handle(cx).is_focused(window);
+        if self.filter_query(cx).is_some() {
+            self.filter_editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        }
+        if filter_focused {
+            self.focus_handle.focus(window, cx);
+        }
+    }
+
+    fn focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_editor.focus_handle(cx).focus(window, cx);
     }
 
     fn expand_selected_entry(
@@ -1302,6 +1556,50 @@ impl DatabasePanel {
             .into_any_element()
     }
 
+    fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add(DATABASE_PANEL_KEY);
+        dispatch_context.add("menu");
+        dispatch_context.add(
+            if self.filter_editor.focus_handle(cx).is_focused(window) {
+                "editing"
+            } else {
+                "not_editing"
+            },
+        );
+        dispatch_context
+    }
+
+    fn render_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_query = self.filter_query(cx).is_some();
+        h_flex()
+            .px_2()
+            .py_1()
+            .gap_1p5()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Icon::new(IconName::MagnifyingGlass)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(div().flex_1().child(self.filter_editor.clone()))
+            .when(has_query, |this| {
+                this.child(
+                    IconButton::new("database-panel-clear-filter", IconName::Close)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Clear Filter"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.filter_editor.update(cx, |editor, cx| {
+                                editor.set_text("", window, cx);
+                            });
+                        })),
+                )
+            })
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .px_2()
@@ -1364,13 +1662,13 @@ fn format_size(bytes: u64) -> String {
 }
 
 impl Render for DatabasePanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entry_count = self.entries.len();
         let has_connections = !self.connections.is_empty();
 
         v_flex()
             .id("database-panel")
-            .key_context(DATABASE_PANEL_KEY)
+            .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
@@ -1379,6 +1677,8 @@ impl Render for DatabasePanel {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::focus_filter))
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::refresh))
@@ -1387,6 +1687,7 @@ impl Render for DatabasePanel {
             .on_action(cx.listener(Self::remove_connection))
             .on_action(cx.listener(Self::new_query_console))
             .child(self.render_header(cx))
+            .when(has_connections, |this| this.child(self.render_filter_bar(cx)))
             .when(!has_connections, |this| {
                 this.child(
                     v_flex()

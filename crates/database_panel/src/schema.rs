@@ -121,6 +121,25 @@ pub async fn list_columns(
     .await
 }
 
+/// Lists the columns of every table of a database, keyed by table name.
+/// Used to index a whole schema for filtering and completions without opening
+/// one connection per table.
+pub async fn list_all_columns(
+    config: ConnectionConfig,
+    database: String,
+) -> Result<HashMap<String, Vec<ColumnInfo>>> {
+    with_timeout(QUERY_TIMEOUT, async move {
+        match &config {
+            ConnectionConfig::Sqlite { path } => sqlite_list_all_columns(path, &database).await,
+            ConnectionConfig::MariaDb { .. } => {
+                let mut connection = open_mariadb(&config).await?;
+                mariadb_list_all_columns(&mut connection, &database).await
+            }
+        }
+    })
+    .await
+}
+
 async fn with_timeout<T>(duration: Duration, future: impl Future<Output = Result<T>>) -> Result<T> {
     tokio::time::timeout(duration, future)
         .await
@@ -238,12 +257,43 @@ async fn sqlite_list_tables(path: &str, database: &str) -> Result<Vec<TableInfo>
 
 async fn sqlite_list_columns(path: &str, database: &str, table: &str) -> Result<Vec<ColumnInfo>> {
     let mut connection = open_sqlite(path).await?;
+    sqlite_table_columns(&mut connection, database, table).await
+}
 
+async fn sqlite_list_all_columns(
+    path: &str,
+    database: &str,
+) -> Result<HashMap<String, Vec<ColumnInfo>>> {
+    let mut connection = open_sqlite(path).await?;
+    let query = format!(
+        "SELECT name FROM {}.sqlite_master \
+         WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        quote_identifier(database)
+    );
+    let tables: Vec<String> = sqlx::query(&query)
+        .fetch_all(&mut connection)
+        .await?
+        .into_iter()
+        .map(|row| Ok(row.try_get("name")?))
+        .collect::<Result<_>>()?;
+    let mut columns = HashMap::default();
+    for table in tables {
+        let table_columns = sqlite_table_columns(&mut connection, database, &table).await?;
+        columns.insert(table, table_columns);
+    }
+    Ok(columns)
+}
+
+async fn sqlite_table_columns(
+    connection: &mut SqliteConnection,
+    database: &str,
+    table: &str,
+) -> Result<Vec<ColumnInfo>> {
     let foreign_keys: HashMap<String, String> =
         sqlx::query("SELECT \"from\", \"table\", \"to\" FROM pragma_foreign_key_list(?1, ?2)")
             .bind(table)
             .bind(database)
-            .fetch_all(&mut connection)
+            .fetch_all(&mut *connection)
             .await?
             .into_iter()
             .map(|row| {
@@ -267,7 +317,7 @@ async fn sqlite_list_columns(path: &str, database: &str, table: &str) -> Result<
     )
     .bind(table)
     .bind(database)
-    .fetch_all(&mut connection)
+    .fetch_all(&mut *connection)
     .await?;
     let mut index_columns: HashMap<String, Vec<String>> = HashMap::default();
     for row in unique_index_columns {
@@ -290,7 +340,7 @@ async fn sqlite_list_columns(path: &str, database: &str, table: &str) -> Result<
     )
     .bind(table)
     .bind(database)
-    .fetch_all(&mut connection)
+    .fetch_all(&mut *connection)
     .await?;
     rows.into_iter()
         .map(|row| {
@@ -467,6 +517,72 @@ async fn mariadb_list_columns(
         .collect()
 }
 
+async fn mariadb_list_all_columns(
+    connection: &mut MySqlConnection,
+    database: &str,
+) -> Result<HashMap<String, Vec<ColumnInfo>>> {
+    let foreign_keys: HashMap<(String, String), String> = sqlx::query(
+        "SELECT table_name, column_name, referenced_table_name, referenced_column_name \
+         FROM information_schema.key_column_usage \
+         WHERE table_schema = ? AND referenced_table_name IS NOT NULL",
+    )
+    .bind(database)
+    .fetch_all(&mut *connection)
+    .await?
+    .into_iter()
+    .map(|row| {
+        let table: String = row.try_get("table_name")?;
+        let column: String = row.try_get("column_name")?;
+        let target_table: String = row.try_get("referenced_table_name")?;
+        let target_column: String = row.try_get("referenced_column_name")?;
+        Ok(((table, column), format!("{target_table}.{target_column}")))
+    })
+    .collect::<Result<_>>()?;
+
+    let rows = sqlx::query(
+        "SELECT table_name, \
+                column_name AS name, \
+                column_type, \
+                is_nullable, \
+                column_default, \
+                column_key, \
+                extra, \
+                character_set_name AS charset, \
+                collation_name AS collation, \
+                column_comment AS comment \
+         FROM information_schema.columns \
+         WHERE table_schema = ? \
+         ORDER BY table_name, ordinal_position",
+    )
+    .bind(database)
+    .fetch_all(connection)
+    .await?;
+    let mut columns: HashMap<String, Vec<ColumnInfo>> = HashMap::default();
+    for row in rows {
+        let table: String = row.try_get("table_name")?;
+        let name: String = row.try_get("name")?;
+        let is_nullable: String = row.try_get("is_nullable")?;
+        let column_key: String = row.try_get("column_key")?;
+        let extra: String = row.try_get("extra")?;
+        let comment: Option<String> = row.try_get("comment")?;
+        let column = ColumnInfo {
+            data_type: row.try_get("column_type")?,
+            nullable: is_nullable == "YES",
+            default: row.try_get("column_default")?,
+            primary_key: column_key == "PRI",
+            unique: column_key == "UNI",
+            auto_increment: extra.contains("auto_increment"),
+            foreign_key: foreign_keys.get(&(table.clone(), name.clone())).cloned(),
+            charset: row.try_get("charset")?,
+            collation: row.try_get("collation")?,
+            comment: comment.filter(|comment| !comment.is_empty()),
+            name,
+        };
+        columns.entry(table).or_default().push(column);
+    }
+    Ok(columns)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryResult {
     pub columns: Vec<String>,
@@ -589,7 +705,7 @@ fn sqlite_value_to_string(row: &SqliteRow, index: usize) -> String {
         return value.to_string();
     }
     if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
-        return format!("<{} bytes>", value.len());
+        return bytes_to_string(value);
     }
     "<unsupported>".to_string()
 }
@@ -627,10 +743,24 @@ fn mariadb_value_to_string(row: &MySqlRow, index: usize) -> String {
     if let Ok(value) = row.try_get::<chrono::NaiveTime, _>(index) {
         return value.to_string();
     }
+    // MySQL's native JSON type is not decodable as String.
+    if let Ok(value) = row.try_get::<serde_json::Value, _>(index) {
+        return value.to_string();
+    }
     if let Ok(value) = row.try_get::<Vec<u8>, _>(index) {
-        return format!("<{} bytes>", value.len());
+        return bytes_to_string(value);
     }
     "<unsupported>".to_string()
+}
+
+/// MariaDB stores JSON as `LONGTEXT` with a binary collation, and columns of
+/// binary types often hold readable text; show the text when the bytes are
+/// valid UTF-8 instead of hiding it behind a byte count.
+fn bytes_to_string(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => format!("<{} bytes>", error.as_bytes().len()),
+    }
 }
 
 #[cfg(test)]
@@ -724,6 +854,11 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(columns[1].foreign_key.as_deref(), Some("users.id"));
+
+            let all_columns = list_all_columns(config.clone(), "main".into()).await.unwrap();
+            assert_eq!(all_columns.len(), 3);
+            assert_eq!(all_columns["users"].len(), 3);
+            assert_eq!(all_columns["posts"][1].foreign_key.as_deref(), Some("users.id"));
 
             let result = run_query(
                 config.clone(),

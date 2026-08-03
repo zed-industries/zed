@@ -1,11 +1,17 @@
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use editor::Editor;
+use collections::HashSet;
+use editor::{CompletionProvider, Editor};
+use fuzzy::StringMatchCandidate;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString,
     Task, Window,
 };
+use language::ToOffset as _;
+use project::CompletionDisplayOptions;
 use gpui_tokio::Tokio;
 use ui::{
     AbsoluteLength, ColumnWidthConfig, CommonAnimationExt as _, ResizableColumnsState, Table,
@@ -60,14 +66,19 @@ impl QueryConsole {
     ) {
         let language_registry = workspace.project().read(cx).languages().clone();
         let console = cx.new(|cx| {
+            let schema_index = Rc::new(RefCell::new(None));
             let editor = cx.new(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
                 editor.set_placeholder_text("SELECT * FROM …", window, cx);
                 if let Some(initial_query) = initial_query {
                     editor.set_text(initial_query, window, cx);
                 }
+                editor.set_completion_provider(Some(Rc::new(SqlCompletionProvider {
+                    schema: schema_index.clone(),
+                })));
                 editor
             });
+            Self::load_schema_index(&config, &database, schema_index, cx);
             // The SQL language ships as an extension; skip highlighting when
             // it is not installed.
             cx.spawn({
@@ -97,6 +108,49 @@ impl QueryConsole {
             }
         });
         workspace.add_item_to_active_pane(Box::new(console), None, true, window, cx);
+    }
+
+    /// Fetches the table and column names of the console's database in the
+    /// background so [`SqlCompletionProvider`] can offer them. Without a
+    /// selected MariaDB database there is no schema to index and completions
+    /// fall back to keywords only.
+    fn load_schema_index(
+        config: &ConnectionConfig,
+        database: &Option<String>,
+        schema_index: Rc<RefCell<Option<SchemaIndex>>>,
+        cx: &mut Context<Self>,
+    ) {
+        let index_database = match (config, database) {
+            (ConnectionConfig::Sqlite { .. }, _) => "main".to_string(),
+            (ConnectionConfig::MariaDb { .. }, Some(database)) => database.clone(),
+            (ConnectionConfig::MariaDb { .. }, None) => return,
+        };
+        let task = Tokio::spawn_result(cx, {
+            let config = config.clone();
+            async move {
+                let tables = schema::list_tables(config.clone(), index_database.clone()).await?;
+                let columns = schema::list_all_columns(config, index_database).await?;
+                anyhow::Ok((tables, columns))
+            }
+        });
+        cx.spawn(async move |_, _| {
+            let (tables, mut columns) = task.await?;
+            let tables = tables
+                .into_iter()
+                .map(|table| {
+                    let column_names = columns
+                        .remove(&table.name)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|column| column.name)
+                        .collect();
+                    (table.name, column_names)
+                })
+                .collect();
+            *schema_index.borrow_mut() = Some(SchemaIndex { tables });
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn run_query(&mut self, _: &RunQuery, _: &mut Window, cx: &mut Context<Self>) {
@@ -356,6 +410,156 @@ impl Render for QueryConsole {
                     .child(self.editor.clone()),
             )
             .child(div().flex_1().min_h_0().child(self.render_results(cx)))
+    }
+}
+
+/// Table and column names of the console's database, filled asynchronously
+/// after the console opens.
+struct SchemaIndex {
+    /// `(table name, column names)` pairs.
+    tables: Vec<(String, Vec<String>)>,
+}
+
+const SQL_KEYWORDS: &[&str] = &[
+    "SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "ON", "USING",
+    "GROUP", "BY", "ORDER", "ASC", "DESC", "LIMIT", "OFFSET", "HAVING", "DISTINCT", "AS", "AND",
+    "OR", "NOT", "NULL", "IS", "IN", "LIKE", "BETWEEN", "EXISTS", "UNION", "ALL", "CASE", "WHEN",
+    "THEN", "ELSE", "END", "COUNT", "SUM", "AVG", "MIN", "MAX", "INSERT", "INTO", "VALUES",
+    "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "ALTER", "DROP", "INDEX", "VIEW", "EXPLAIN",
+];
+
+/// Completes SQL keywords plus the table and column names indexed by
+/// [`QueryConsole::load_schema_index`]. After `table.` only that table's
+/// columns are offered.
+struct SqlCompletionProvider {
+    schema: Rc<RefCell<Option<SchemaIndex>>>,
+}
+
+impl CompletionProvider for SqlCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Entity<language::Buffer>,
+        buffer_position: language::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<anyhow::Result<Vec<project::CompletionResponse>>> {
+        let buffer = buffer.read(cx);
+        let snapshot = buffer.text_snapshot();
+        let offset = buffer_position.to_offset(buffer);
+        let word_start = offset
+            - snapshot
+                .reversed_chars_at(offset)
+                .take_while(|char| char.is_ascii_alphanumeric() || *char == '_')
+                .map(char::len_utf8)
+                .sum::<usize>();
+        let replace_range = buffer.anchor_before(word_start)..buffer_position;
+
+        // An identifier right before `table.` restricts candidates to that
+        // table's columns. Quoted table names are not resolved.
+        let mut qualifier = None;
+        let mut before_word = snapshot.reversed_chars_at(word_start);
+        if before_word.next() == Some('.') {
+            let name: String = before_word
+                .take_while(|char| char.is_ascii_alphanumeric() || *char == '_')
+                .collect();
+            if !name.is_empty() {
+                qualifier = Some(name.chars().rev().collect::<String>());
+            }
+        }
+
+        let mut items: Vec<String> = Vec::new();
+        let schema = self.schema.borrow();
+        match (schema.as_ref(), qualifier) {
+            (Some(index), Some(qualifier)) => {
+                let qualifier = qualifier.to_lowercase();
+                if let Some((_, columns)) = index
+                    .tables
+                    .iter()
+                    .find(|(table, _)| table.to_lowercase() == qualifier)
+                {
+                    items.extend(columns.iter().cloned());
+                }
+            }
+            (None, Some(_)) => {}
+            (index, None) => {
+                if let Some(index) = index {
+                    let mut seen_columns = HashSet::default();
+                    for (table, columns) in &index.tables {
+                        items.push(table.clone());
+                        for column in columns {
+                            if seen_columns.insert(column.as_str()) {
+                                items.push(column.clone());
+                            }
+                        }
+                    }
+                }
+                items.extend(SQL_KEYWORDS.iter().map(|keyword| keyword.to_string()));
+            }
+        }
+        drop(schema);
+
+        let query: String = snapshot.text_for_range(word_start..offset).collect();
+        let candidates: Vec<StringMatchCandidate> = items
+            .iter()
+            .enumerate()
+            .map(|(ix, item)| StringMatchCandidate::new(ix, item))
+            .collect();
+        let executor = cx.background_executor().clone();
+        let executor_for_fuzzy = executor.clone();
+        executor.spawn(async move {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                items.len(),
+                &Default::default(),
+                executor_for_fuzzy,
+            )
+            .await;
+            let completions: Vec<project::Completion> = matches
+                .iter()
+                .take(50)
+                .filter_map(|string_match| {
+                    let item = items.get(string_match.candidate_id)?;
+                    Some(project::Completion {
+                        replace_range: replace_range.clone(),
+                        label: language::CodeLabel::plain(item.clone(), None),
+                        new_text: item.clone(),
+                        documentation: None,
+                        source: project::CompletionSource::Custom,
+                        icon_path: None,
+                        icon_color: None,
+                        match_start: None,
+                        snippet_deduplication_key: None,
+                        insert_text_mode: None,
+                        confirm: None,
+                        group: None,
+                    })
+                })
+                .collect();
+            Ok(vec![project::CompletionResponse {
+                completions,
+                display_options: CompletionDisplayOptions {
+                    dynamic_width: true,
+                },
+                is_incomplete: false,
+            }])
+        })
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Entity<language::Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut Context<Editor>,
+    ) -> bool {
+        text.chars().last().is_some_and(|last_char| {
+            last_char.is_ascii_alphanumeric() || last_char == '_' || last_char == '.'
+        })
     }
 }
 
