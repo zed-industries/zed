@@ -950,10 +950,13 @@ impl EditPreview {
     }
 }
 
+/// Which newline boundary of an insertion is excluded from auto-indentation.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum EditDirection {
-    TopDown,
-    BottomUp,
+pub enum AutoIndentBoundary {
+    /// When the inserted text starts with a newline, the previous line is not auto-indented.
+    LeadingNewLine,
+    /// When the inserted text ends with a newline, the following line is not auto-indented.
+    TrailingNewLine,
 }
 
 impl Buffer {
@@ -2742,14 +2745,14 @@ impl Buffer {
             edits_iter,
             autoindent_mode,
             true,
-            EditDirection::TopDown,
+            AutoIndentBoundary::LeadingNewLine,
             cx,
         )
     }
 
     /// Like [`edit`](Self::edit), but for edits made before the cursor. Used for Vim actions like
     /// `InsertLineAbove`
-    pub fn edit_bottom_up<I, S, T>(
+    pub fn edit_before<I, S, T>(
         &mut self,
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
@@ -2764,7 +2767,7 @@ impl Buffer {
             edits_iter,
             autoindent_mode,
             true,
-            EditDirection::BottomUp,
+            AutoIndentBoundary::TrailingNewLine,
             cx,
         )
     }
@@ -2785,7 +2788,7 @@ impl Buffer {
             edits_iter,
             autoindent_mode,
             false,
-            EditDirection::TopDown,
+            AutoIndentBoundary::LeadingNewLine,
             cx,
         )
     }
@@ -2795,7 +2798,7 @@ impl Buffer {
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
-        edit_direction: EditDirection,
+        autoindent_boundary: AutoIndentBoundary,
         cx: &mut Context<Self>,
     ) -> Option<clock::Lamport>
     where
@@ -2902,10 +2905,13 @@ impl Buffer {
 
                     // When inserting text starting with a newline, avoid auto-indenting the
                     // previous line.
-                    if edit_direction == EditDirection::TopDown && new_text.starts_with('\n') {
+                    if autoindent_boundary == AutoIndentBoundary::LeadingNewLine
+                        && new_text.starts_with('\n')
+                    {
                         range_of_insertion_to_indent.start += 1;
                         first_line_is_new = true;
-                    } else if edit_direction == EditDirection::BottomUp && new_text.ends_with('\n')
+                    } else if autoindent_boundary == AutoIndentBoundary::TrailingNewLine
+                        && new_text.ends_with('\n')
                     {
                         range_of_insertion_to_indent.end -= 1;
                         first_line_is_new = true;

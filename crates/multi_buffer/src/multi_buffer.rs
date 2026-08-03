@@ -20,12 +20,12 @@ use futures_lite::future::yield_now;
 use gpui::{App, Context, Entity, EventEmitter};
 use itertools::Itertools;
 use language::{
-    AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow, BufferSnapshot, Capability,
-    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef,
-    EditDirection, File, IndentGuideSettings, IndentSize, Language, LanguageAwareStyling,
-    LanguageScope, OffsetRangeExt,
-    OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject,
-    ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
+    AutoIndentBoundary, AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow,
+    BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape,
+    DiagnosticEntryRef, File, IndentGuideSettings, IndentSize, Language, LanguageAwareStyling,
+    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
+    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
+    Unclipped,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
@@ -1378,10 +1378,16 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits, autoindent_mode, true, EditDirection::TopDown, cx);
+        self.edit_internal(
+            edits,
+            autoindent_mode,
+            true,
+            AutoIndentBoundary::LeadingNewLine,
+            cx,
+        );
     }
 
-    pub fn edit_bottom_up<I, S, T>(
+    pub fn edit_before<I, S, T>(
         &mut self,
         edits: I,
         autoindent_mode: Option<AutoindentMode>,
@@ -1391,7 +1397,13 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits, autoindent_mode, true, EditDirection::BottomUp, cx);
+        self.edit_internal(
+            edits,
+            autoindent_mode,
+            true,
+            AutoIndentBoundary::TrailingNewLine,
+            cx,
+        );
     }
 
     pub fn edit_non_coalesce<I, S, T>(
@@ -1404,7 +1416,13 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits, autoindent_mode, false, EditDirection::TopDown, cx);
+        self.edit_internal(
+            edits,
+            autoindent_mode,
+            false,
+            AutoIndentBoundary::LeadingNewLine,
+            cx,
+        );
     }
 
     fn edit_internal<I, S, T>(
@@ -1412,7 +1430,7 @@ impl MultiBuffer {
         edits: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
-        edit_direction: EditDirection,
+        autoindent_boundary: AutoIndentBoundary,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -1440,7 +1458,7 @@ impl MultiBuffer {
             edits,
             autoindent_mode,
             coalesce_adjacent,
-            edit_direction,
+            autoindent_boundary,
             cx,
         );
 
@@ -1450,7 +1468,7 @@ impl MultiBuffer {
             edits: Vec<(Range<MultiBufferOffset>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
             coalesce_adjacent: bool,
-            edit_direction: EditDirection,
+            autoindent_boundary: AutoIndentBoundary,
             cx: &mut Context<MultiBuffer>,
         ) {
             let original_indent_columns = match &mut autoindent_mode {
@@ -1538,12 +1556,12 @@ impl MultiBuffer {
                         };
 
                     if coalesce_adjacent {
-                        if edit_direction == EditDirection::TopDown {
+                        if autoindent_boundary == AutoIndentBoundary::LeadingNewLine {
                             buffer.edit(deletions, deletion_autoindent_mode, cx);
                             buffer.edit(insertions, insertion_autoindent_mode, cx);
                         } else {
-                            buffer.edit_bottom_up(deletions, deletion_autoindent_mode, cx);
-                            buffer.edit_bottom_up(insertions, insertion_autoindent_mode, cx);
+                            buffer.edit_before(deletions, deletion_autoindent_mode, cx);
+                            buffer.edit_before(insertions, insertion_autoindent_mode, cx);
                         }
                     } else {
                         buffer.edit_non_coalesce(deletions, deletion_autoindent_mode, cx);
