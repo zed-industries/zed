@@ -1,3 +1,8 @@
+---
+title: reStructuredText
+description: "Configure reStructuredText language support in Zed, including language servers, formatting, and debugging."
+---
+
 # ReStructuredText (rst)
 
 ReStructuredText language support in Zed is provided by the community-maintained [reST extension](https://github.com/elmarco/zed-rst).

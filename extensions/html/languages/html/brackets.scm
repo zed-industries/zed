@@ -2,11 +2,11 @@
   "/>" @close)
   (#set! rainbow.exclude))
 
-(("</" @open
+(("<" @open
   ">" @close)
   (#set! rainbow.exclude))
 
-(("<" @open
+(("</" @open
   ">" @close)
   (#set! rainbow.exclude))
 

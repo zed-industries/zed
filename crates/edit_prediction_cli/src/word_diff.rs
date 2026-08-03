@@ -1,5 +1,7 @@
 //! Word-diff utilities for converting unified diffs to word-diff format.
 
+use similar::{DiffTag, TextDiff};
+
 /// Convert unified diff to word-diff format.
 ///
 /// This transforms line-based diffs into word-level diffs where:
@@ -129,29 +131,38 @@ fn compute_word_diff(old_text: &str, new_text: &str) -> String {
     result
 }
 
-/// Tokenize text into words and whitespace sequences.
-fn tokenize(text: &str) -> Vec<&str> {
+/// Classify a character into one of three token classes:
+/// - 0: identifier (alphanumeric or `_`)
+/// - 1: whitespace
+/// - 2: punctuation (everything else, each character becomes its own token)
+fn char_class(ch: char) -> u8 {
+    if ch.is_alphanumeric() || ch == '_' {
+        0
+    } else if ch.is_whitespace() {
+        1
+    } else {
+        2
+    }
+}
+
+/// Tokenize text into identifier words, whitespace runs, and individual punctuation characters.
+///
+/// This splitting aligns with the syntactic atoms of source code so that the
+/// LCS-based diff can produce fine-grained, meaningful change regions.
+pub(crate) fn tokenize(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut chars = text.char_indices().peekable();
 
     while let Some((start, ch)) = chars.next() {
-        if ch.is_whitespace() {
-            // Collect contiguous whitespace
-            let mut end = start + ch.len_utf8();
-            while let Some(&(_, next_ch)) = chars.peek() {
-                if next_ch.is_whitespace() {
-                    end += next_ch.len_utf8();
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            tokens.push(&text[start..end]);
+        let class = char_class(ch);
+        if class == 2 {
+            // Punctuation: each character is a separate token
+            tokens.push(&text[start..start + ch.len_utf8()]);
         } else {
-            // Collect contiguous non-whitespace
+            // Identifier or whitespace: collect contiguous run of same class
             let mut end = start + ch.len_utf8();
             while let Some(&(_, next_ch)) = chars.peek() {
-                if !next_ch.is_whitespace() {
+                if char_class(next_ch) == class {
                     end += next_ch.len_utf8();
                     chars.next();
                 } else {
@@ -166,7 +177,7 @@ fn tokenize(text: &str) -> Vec<&str> {
 }
 
 #[derive(Debug)]
-enum DiffOp {
+pub(crate) enum DiffOp {
     Equal(usize, usize),
     Delete(usize, usize),
     Insert(usize, usize),
@@ -178,130 +189,28 @@ enum DiffOp {
     },
 }
 
-/// Compute diff operations between two token sequences using a simple LCS-based algorithm.
-fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
-    // Build LCS table
-    let m = old.len();
-    let n = new.len();
-
-    if m == 0 && n == 0 {
-        return vec![];
-    }
-    if m == 0 {
-        return vec![DiffOp::Insert(0, n)];
-    }
-    if n == 0 {
-        return vec![DiffOp::Delete(0, m)];
-    }
-
-    // LCS dynamic programming
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for i in 1..=m {
-        for j in 1..=n {
-            if old[i - 1] == new[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+/// Compute diff operations between two token sequences using `similar`'s Myers diff.
+pub(crate) fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
+    let diff = TextDiff::from_slices(old, new);
+    diff.ops()
+        .iter()
+        .map(|op| {
+            let tag = op.tag();
+            let old_range = op.old_range();
+            let new_range = op.new_range();
+            match tag {
+                DiffTag::Equal => DiffOp::Equal(old_range.start, old_range.end),
+                DiffTag::Delete => DiffOp::Delete(old_range.start, old_range.end),
+                DiffTag::Insert => DiffOp::Insert(new_range.start, new_range.end),
+                DiffTag::Replace => DiffOp::Replace {
+                    old_start: old_range.start,
+                    old_end: old_range.end,
+                    new_start: new_range.start,
+                    new_end: new_range.end,
+                },
             }
-        }
-    }
-
-    // Backtrack to find operations
-    let mut ops = Vec::new();
-    let mut i = m;
-    let mut j = n;
-
-    // We'll collect in reverse order, then reverse at the end
-    let mut stack: Vec<(usize, usize, bool)> = Vec::new(); // (index, end, is_old)
-
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
-            stack.push((i - 1, i, true)); // Equal marker (using old index)
-            stack.push((j - 1, j, false)); // Paired with new index
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            // Insert from new
-            stack.push((j - 1, j, false));
-            j -= 1;
-        } else {
-            // Delete from old
-            stack.push((i - 1, i, true));
-            i -= 1;
-        }
-    }
-
-    // Process the stack to build proper DiffOps
-    // This is a simplified approach - just iterate through and build ops
-    let mut old_idx = 0;
-    let mut new_idx = 0;
-
-    while old_idx < m || new_idx < n {
-        // Find next matching pair
-        let mut old_match = None;
-        let mut new_match = None;
-
-        for oi in old_idx..m {
-            for ni in new_idx..n {
-                if old[oi] == new[ni] {
-                    old_match = Some(oi);
-                    new_match = Some(ni);
-                    break;
-                }
-            }
-            if old_match.is_some() {
-                break;
-            }
-        }
-
-        match (old_match, new_match) {
-            (Some(om), Some(nm)) => {
-                // Handle any deletions/insertions before the match
-                if old_idx < om && new_idx < nm {
-                    ops.push(DiffOp::Replace {
-                        old_start: old_idx,
-                        old_end: om,
-                        new_start: new_idx,
-                        new_end: nm,
-                    });
-                } else if old_idx < om {
-                    ops.push(DiffOp::Delete(old_idx, om));
-                } else if new_idx < nm {
-                    ops.push(DiffOp::Insert(new_idx, nm));
-                }
-
-                // Find the extent of the equal sequence
-                let mut eq_end_old = om;
-                let mut eq_end_new = nm;
-                while eq_end_old < m && eq_end_new < n && old[eq_end_old] == new[eq_end_new] {
-                    eq_end_old += 1;
-                    eq_end_new += 1;
-                }
-
-                ops.push(DiffOp::Equal(om, eq_end_old));
-                old_idx = eq_end_old;
-                new_idx = eq_end_new;
-            }
-            _ => {
-                // No more matches, handle remaining
-                if old_idx < m && new_idx < n {
-                    ops.push(DiffOp::Replace {
-                        old_start: old_idx,
-                        old_end: m,
-                        new_start: new_idx,
-                        new_end: n,
-                    });
-                } else if old_idx < m {
-                    ops.push(DiffOp::Delete(old_idx, m));
-                } else if new_idx < n {
-                    ops.push(DiffOp::Insert(new_idx, n));
-                }
-                break;
-            }
-        }
-    }
-
-    ops
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -315,6 +224,24 @@ mod tests {
 
         let tokens = tokenize("  multiple   spaces  ");
         assert_eq!(tokens, vec!["  ", "multiple", "   ", "spaces", "  "]);
+
+        let tokens = tokenize("self.name");
+        assert_eq!(tokens, vec!["self", ".", "name"]);
+
+        let tokens = tokenize("foo(bar, baz)");
+        assert_eq!(tokens, vec!["foo", "(", "bar", ",", " ", "baz", ")"]);
+
+        let tokens = tokenize("hello_world");
+        assert_eq!(tokens, vec!["hello_world"]);
+
+        let tokens = tokenize("fn();");
+        assert_eq!(tokens, vec!["fn", "(", ")", ";"]);
+
+        let tokens = tokenize("foo_bar123 + baz");
+        assert_eq!(tokens, vec!["foo_bar123", " ", "+", " ", "baz"]);
+
+        let tokens = tokenize("print(\"hello\")");
+        assert_eq!(tokens, vec!["print", "(", "\"", "hello", "\"", ")"]);
     }
 
     #[test]

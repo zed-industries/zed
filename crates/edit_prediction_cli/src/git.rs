@@ -91,7 +91,7 @@ pub async fn ensure_repo_cloned(repo_url: &str) -> Result<PathBuf> {
     }
 
     // Always fetch to get latest commits
-    run_git(&repo_path, &["fetch", "origin"]).await?;
+    run_git(&repo_path, &["fetch", "--depth", "1000", "origin"]).await?;
 
     // Check if we have a valid HEAD, if not checkout FETCH_HEAD
     let has_head = run_git(&repo_path, &["rev-parse", "HEAD"]).await.is_ok();

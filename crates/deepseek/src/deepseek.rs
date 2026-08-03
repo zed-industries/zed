@@ -4,7 +4,9 @@ use futures::{
     io::BufReader,
     stream::{BoxStream, StreamExt},
 };
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -48,15 +50,15 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum Model {
-    #[serde(rename = "deepseek-chat")]
+    #[serde(rename = "deepseek-v4-flash")]
+    V4Flash,
+    #[serde(rename = "deepseek-v4-pro")]
     #[default]
-    Chat,
-    #[serde(rename = "deepseek-reasoner")]
-    Reasoner,
+    V4Pro,
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,
@@ -65,29 +67,29 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Model::Chat
+        Model::V4Flash
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "deepseek-chat" => Ok(Self::Chat),
-            "deepseek-reasoner" => Ok(Self::Reasoner),
+            "deepseek-v4-flash" => Ok(Self::V4Flash),
+            "deepseek-v4-pro" => Ok(Self::V4Pro),
             _ => anyhow::bail!("invalid model id {id}"),
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Chat => "deepseek-chat",
-            Self::Reasoner => "deepseek-reasoner",
+            Self::V4Flash => "deepseek-v4-flash",
+            Self::V4Pro => "deepseek-v4-pro",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Chat => "DeepSeek Chat",
-            Self::Reasoner => "DeepSeek Reasoner",
+            Self::V4Flash => "DeepSeek V4 Flash",
+            Self::V4Pro => "DeepSeek V4 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name).as_str(),
@@ -96,16 +98,14 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Chat | Self::Reasoner => 128_000,
+            Self::V4Flash | Self::V4Pro => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            // Their API treats this max against the context window, which means we hit the limit a lot
-            // Using the default value of None in the API instead
-            Self::Chat | Self::Reasoner => None,
+            Self::V4Flash | Self::V4Pro => Some(384_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -123,9 +123,35 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Thinking {
+    #[serde(rename = "type")]
+    pub kind: ThinkingType,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingType {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    High,
+    Max,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +160,14 @@ pub enum ResponseFormat {
     Text,
     #[serde(rename = "json_object")]
     JsonObject,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoice {
+    None,
+    Auto,
+    Required,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -265,15 +299,16 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
@@ -287,10 +322,7 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
-                            }
+                            Some(serde_json::from_str(line).map_err(Into::into))
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),

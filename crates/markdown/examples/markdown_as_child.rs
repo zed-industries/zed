@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions, rgb};
+use gpui::{Entity, KeyBinding, Length, StyleRefinement, WindowOptions, rgb};
 use language::LanguageRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -19,7 +19,7 @@ wow so cool
 pub fn main() {
     env_logger::init();
 
-    Application::new().with_assets(Assets).run(|cx| {
+    gpui_platform::application().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
@@ -28,7 +28,7 @@ pub fn main() {
         let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         languages::init(language_registry, fs, node_runtime, cx);
-        theme::init(LoadThemes::JustBase, cx);
+        theme_settings::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);

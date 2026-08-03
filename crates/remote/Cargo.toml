@@ -39,6 +39,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 urlencoding.workspace = true
@@ -48,3 +49,4 @@ which.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

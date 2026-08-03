@@ -3,18 +3,20 @@ use std::{collections::hash_map, ops::Range, slice::ChunksExact, sync::Arc};
 use anyhow::Result;
 
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     FutureExt as _,
     future::{Shared, join_all},
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
-use itertools::Itertools;
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
 use lsp::{AdapterServerCapabilities, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
-use settings::{SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore};
+use settings::{
+    DefaultSemanticTokenRules, SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore,
+};
 use smol::future::yield_now;
+
 use text::{Anchor, Bias, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
 
@@ -24,6 +26,7 @@ use crate::{
         LspCommand, SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFull,
         SemanticTokensResponse,
     },
+    lsp_store::missing_servers_to_query,
     project_settings::ProjectSettings,
 };
 
@@ -59,6 +62,15 @@ impl SemanticTokenConfig {
         }
     }
 
+    /// Clears all cached stylizers.
+    ///
+    /// This is called when settings change to ensure that any modifications to
+    /// language-specific semantic token rules (e.g. from extension install/uninstall)
+    /// are picked up. Stylizers are recreated lazily on next use.
+    pub(super) fn clear_stylizers(&mut self) {
+        self.stylizers.clear();
+    }
+
     pub(super) fn update_global_mode(&mut self, new_mode: settings::SemanticTokens) -> bool {
         if new_mode != self.global_mode {
             self.global_mode = new_mode;
@@ -69,50 +81,38 @@ impl SemanticTokenConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct RefreshForServer {
-    pub server_id: LanguageServerId,
-    pub request_id: Option<usize>,
-}
-
 impl LspStore {
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
+        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
-        if let Some(refresh) = refresh {
-            let mut invalidate_cache = true;
-            match semantic_tokens_data
-                .latest_invalidation_requests
-                .entry(refresh.server_id)
-            {
-                hash_map::Entry::Occupied(mut o) => {
-                    if refresh.request_id > *o.get() {
-                        o.insert(refresh.request_id);
-                    } else {
-                        invalidate_cache = false;
-                    }
-                }
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(refresh.request_id);
-                }
-            }
-
-            if invalidate_cache {
-                let SemanticTokensData {
-                    raw_tokens,
-                    latest_invalidation_requests: _,
-                    update,
-                } = semantic_tokens_data;
-                *update = None;
-                raw_tokens.servers.clear();
-            }
+        let mut refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
+        refreshed_servers.retain(|server_id| current_servers.contains(server_id));
+        if !refreshed_servers.is_empty() {
+            semantic_tokens_data.update = None;
+            semantic_tokens_data.generation += 1;
         }
+        for refreshed_server in &refreshed_servers {
+            semantic_tokens_data
+                .raw_tokens
+                .servers
+                .remove(refreshed_server);
+        }
+        let missing_servers = missing_servers_to_query(
+            &mut semantic_tokens_data.raw_tokens.servers,
+            &mut semantic_tokens_data.fetched_servers,
+            &current_servers,
+        )
+        .unwrap_or_default();
+        if !missing_servers.is_empty() {
+            semantic_tokens_data.update = None;
+        }
+        let query_generation = semantic_tokens_data.generation;
 
         if let Some((updating_for, task)) = &semantic_tokens_data.update
             && !version_queried_for.changed_since(updating_for)
@@ -120,11 +120,23 @@ impl LspStore {
             return task.clone();
         }
 
-        let new_tokens = self.fetch_semantic_tokens_for_buffer(
-            &buffer,
-            refresh.map(|refresh| refresh.server_id),
-            cx,
-        );
+        let mut servers_to_fetch = refreshed_servers;
+        servers_to_fetch.extend(missing_servers);
+        let for_server = if servers_to_fetch.len() == 1 {
+            servers_to_fetch.iter().next().copied()
+        } else {
+            // With multiple servers refreshed, query all of them instead of fanning out
+            // filtered queries — the non-refreshed ones kept their tokens and answer
+            // with cheap deltas.
+            None
+        };
+        semantic_tokens_data
+            .fetched_servers
+            .extend(match for_server {
+                Some(server_id) => HashSet::from_iter([server_id]),
+                None => current_servers,
+            });
+        let new_tokens = self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
 
         let task_buffer = buffer.clone();
         let task_version_queried_for = version_queried_for.clone();
@@ -139,7 +151,9 @@ impl LspStore {
                             let semantic_tokens_data =
                                 lsp_data.semantic_tokens.get_or_insert_default();
 
-                            if version_queried_for == lsp_data.buffer_version {
+                            if version_queried_for == lsp_data.buffer_version
+                                && semantic_tokens_data.generation == query_generation
+                            {
                                 for (server_id, new_tokens_response) in new_tokens {
                                     match new_tokens_response {
                                         SemanticTokensResponse::Full { data, result_id } => {
@@ -169,18 +183,47 @@ impl LspStore {
                             (semantic_tokens_data.raw_tokens.clone(), buffer_snapshot)
                         })
                         .map_err(Arc::new)?;
-                    Some(raw_to_buffer_semantic_tokens(raw_tokens, &buffer_snapshot).await)
+                    Some(
+                        cx.background_spawn(raw_to_buffer_semantic_tokens(
+                            raw_tokens,
+                            buffer_snapshot.text.clone(),
+                        ))
+                        .await,
+                    )
                 } else {
-                    lsp_store.update(cx, |lsp_store, cx| {
+                    let remaining_tokens = lsp_store.update(cx, |lsp_store, cx| {
+                        let mut remaining_tokens = None;
                         if let Some(current_lsp_data) =
                             lsp_store.current_lsp_data(buffer.read(cx).remote_id())
+                            && current_lsp_data.buffer_version == version_queried_for
+                            && let Some(semantic_tokens) = current_lsp_data.semantic_tokens.as_mut()
+                            && semantic_tokens.generation == query_generation
                         {
-                            if current_lsp_data.buffer_version == version_queried_for {
-                                current_lsp_data.semantic_tokens = None;
+                            if for_server.is_none() || semantic_tokens.raw_tokens.servers.is_empty()
+                            {
+                                semantic_tokens.evict_all();
+                            } else {
+                                // A targeted fetch that sent no requests (e.g. the server
+                                // lost the capability or does not serve this buffer) must
+                                // not drop the other servers' cached tokens.
+                                let buffer_snapshot =
+                                    buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                                remaining_tokens =
+                                    Some((semantic_tokens.raw_tokens.clone(), buffer_snapshot));
                             }
                         }
+                        remaining_tokens
                     })?;
-                    None
+                    match remaining_tokens {
+                        Some((raw_tokens, buffer_snapshot)) => Some(
+                            cx.background_spawn(raw_to_buffer_semantic_tokens(
+                                raw_tokens,
+                                buffer_snapshot.text.clone(),
+                            ))
+                            .await,
+                        ),
+                        None => None,
+                    }
                 };
                 Ok(BufferSemanticTokens { tokens: res })
             })
@@ -334,18 +377,83 @@ impl LspStore {
         }
     }
 
+    /// Marks the server's semantic tokens as refresh-pending in every buffer, to be
+    /// invalidated by the next query, and notifies the observers.
+    pub(crate) fn refresh_semantic_tokens(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        for lsp_data in self.lsp_data.values_mut() {
+            if let Some(semantic_tokens) = &mut lsp_data.semantic_tokens {
+                semantic_tokens.pending_refreshes.insert(server_id);
+            }
+        }
+        cx.emit(LspStoreEvent::RefreshSemanticTokens { server_id });
+        if let Some((client, project_id)) = self.downstream_client.as_ref() {
+            client
+                .send(proto::RefreshSemanticTokens {
+                    project_id: *project_id,
+                    server_id: server_id.to_proto(),
+                    request_id: Some(super::next_wire_refresh_request_id()),
+                })
+                .log_err();
+        }
+    }
+
     pub(crate) async fn handle_refresh_semantic_tokens(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::RefreshSemanticTokens>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        lsp_store.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshSemanticTokens {
-                server_id: LanguageServerId::from_proto(envelope.payload.server_id),
-                request_id: envelope.payload.request_id.map(|id| id as usize),
-            });
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.refresh_semantic_tokens(
+                LanguageServerId::from_proto(envelope.payload.server_id),
+                cx,
+            );
         });
         Ok(proto::Ack {})
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn semantic_token_servers(&self, buffer_id: text::BufferId) -> Vec<LanguageServerId> {
+        let mut servers = self
+            .lsp_data
+            .get(&buffer_id)
+            .and_then(|lsp_data| lsp_data.semantic_tokens.as_ref())
+            .map(|semantic_tokens| {
+                semantic_tokens
+                    .raw_tokens
+                    .servers
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        servers.sort();
+        servers
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn semantic_token_data(
+        &self,
+        buffer_id: text::BufferId,
+    ) -> Vec<(LanguageServerId, Vec<u32>)> {
+        let mut data = self
+            .lsp_data
+            .get(&buffer_id)
+            .and_then(|lsp_data| lsp_data.semantic_tokens.as_ref())
+            .map(|semantic_tokens| {
+                semantic_tokens
+                    .raw_tokens
+                    .servers
+                    .iter()
+                    .map(|(server_id, tokens)| (*server_id, tokens.data.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        data.sort_by_key(|(server_id, _)| *server_id);
+        data
     }
 
     fn semantic_tokens_result_id(
@@ -414,6 +522,9 @@ pub struct TokenType(pub u32);
 
 #[derive(Debug, Clone)]
 pub struct BufferSemanticToken {
+    /// The range of the token in the buffer.
+    ///
+    /// Guaranteed to contain a buffer id.
     pub range: Range<Anchor>,
     pub token_type: TokenType,
     pub token_modifiers: u32,
@@ -454,6 +565,7 @@ impl SemanticTokenStylizer {
         let global_rules = &ProjectSettings::get_global(cx)
             .global_lsp_settings
             .semantic_token_rules;
+        let default_rules = cx.global::<DefaultSemanticTokenRules>();
 
         let rules_by_token_type = token_types
             .iter()
@@ -467,6 +579,7 @@ impl SemanticTokenStylizer {
                     .rules
                     .iter()
                     .chain(language_rules.into_iter().flat_map(|lr| &lr.rules))
+                    .chain(default_rules.0.rules.iter())
                     .rev()
                     .filter(filter)
                     .cloned()
@@ -521,45 +634,62 @@ impl SemanticTokenStylizer {
 
 async fn raw_to_buffer_semantic_tokens(
     raw_tokens: RawSemanticTokens,
-    buffer_snapshot: &text::BufferSnapshot,
+    buffer_snapshot: text::BufferSnapshot,
 ) -> HashMap<LanguageServerId, Arc<[BufferSemanticToken]>> {
     let mut res = HashMap::default();
     for (&server_id, server_tokens) in &raw_tokens.servers {
+        let mut last = 0;
         // We don't do `collect` here due to the filter map not pre-allocating
         // we'd rather over allocate here than not since we have to re-allocate into an arc slice anyways
         let mut buffer_tokens = Vec::with_capacity(server_tokens.data.len() / 5);
+        let mut tokens = server_tokens.tokens();
         // 5000 was chosen by profiling, on a decent machine this will take about 1ms per chunk
         // This is to avoid blocking the main thread for hundreds of milliseconds at a time for very big files
         // If we every change the below code to not query the underlying rope 6 times per token we can bump this up
-        for chunk in server_tokens.tokens().chunks(5000).into_iter() {
-            buffer_tokens.extend(chunk.filter_map(|token| {
-                let start = Unclipped(PointUtf16::new(token.line, token.start));
-                let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
-                let start_offset = buffer_snapshot
-                    .as_rope()
-                    .point_utf16_to_offset_utf16(clipped_start);
-                let end_offset = start_offset + OffsetUtf16(token.length as usize);
+        const CHUNK_LEN: usize = 5000;
+        loop {
+            let mut changed = false;
+            let chunk = tokens
+                .by_ref()
+                .take(CHUNK_LEN)
+                .inspect(|_| changed = true)
+                .filter_map(|token| {
+                    let start = Unclipped(PointUtf16::new(token.line, token.start));
+                    let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
+                    let start_offset = buffer_snapshot
+                        .as_rope()
+                        .point_utf16_to_offset_utf16(clipped_start);
+                    let end_offset = start_offset + OffsetUtf16(token.length as usize);
 
-                let start = buffer_snapshot
-                    .as_rope()
-                    .offset_utf16_to_offset(start_offset);
-                let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
+                    let start = buffer_snapshot
+                        .as_rope()
+                        .offset_utf16_to_offset(start_offset);
+                    if start < last {
+                        return None;
+                    }
 
-                if start == end {
-                    return None;
-                }
+                    let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
+                    last = end;
 
-                Some(BufferSemanticToken {
-                    range: buffer_snapshot.anchor_before(start)..buffer_snapshot.anchor_after(end),
-                    token_type: token.token_type,
-                    token_modifiers: token.token_modifiers,
-                })
-            }));
+                    if start == end {
+                        return None;
+                    }
+
+                    Some(BufferSemanticToken {
+                        range: buffer_snapshot.anchor_range_inside(start..end),
+                        token_type: token.token_type,
+                        token_modifiers: token.token_modifiers,
+                    })
+                });
+            buffer_tokens.extend(chunk);
+
+            if !changed {
+                break;
+            }
             yield_now().await;
         }
 
         res.insert(server_id, buffer_tokens.into());
-        yield_now().await;
     }
     res
 }
@@ -567,8 +697,29 @@ async fn raw_to_buffer_semantic_tokens(
 #[derive(Default, Debug)]
 pub struct SemanticTokensData {
     pub(super) raw_tokens: RawSemanticTokens,
-    pub(super) latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
+    pub(super) pending_refreshes: HashSet<LanguageServerId>,
+    fetched_servers: HashSet<LanguageServerId>,
     update: Option<(Global, SemanticTokensTask)>,
+    /// Bumped on every eviction so that fetches started against the evicted state
+    /// cannot write their stale results into the new one.
+    generation: u64,
+}
+
+impl SemanticTokensData {
+    pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
+        self.raw_tokens.servers.remove(&server_id);
+        self.pending_refreshes.remove(&server_id);
+        self.fetched_servers.remove(&server_id);
+        self.update = None;
+        self.generation += 1;
+    }
+
+    fn evict_all(&mut self) {
+        self.raw_tokens.servers.clear();
+        self.fetched_servers.clear();
+        self.update = None;
+        self.generation += 1;
+    }
 }
 
 /// All the semantic token tokens for a buffer.
@@ -627,8 +778,8 @@ impl ServerSemanticTokens {
 
     pub(crate) fn apply(&mut self, edits: &[SemanticTokensEdit]) {
         for edit in edits {
-            let start = edit.start as usize;
-            let end = start + edit.delete_count as usize;
+            let start = (edit.start as usize).min(self.data.len());
+            let end = (start + edit.delete_count as usize).min(self.data.len());
             self.data.splice(start..end, edit.data.iter().copied());
         }
     }
@@ -973,5 +1124,39 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn applies_out_of_bounds_delta_edit_without_panic() {
+        let mut tokens = ServerSemanticTokens::from_full(vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0], None);
+
+        // start beyond data length
+        tokens.apply(&[SemanticTokensEdit {
+            start: 100,
+            delete_count: 5,
+            data: vec![1, 2, 3, 4, 5],
+        }]);
+        assert_eq!(
+            tokens.data,
+            vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0, 1, 2, 3, 4, 5]
+        );
+
+        // delete_count extends past data length
+        let mut tokens = ServerSemanticTokens::from_full(vec![2, 5, 3, 0, 3], None);
+        tokens.apply(&[SemanticTokensEdit {
+            start: 3,
+            delete_count: 100,
+            data: vec![9, 9],
+        }]);
+        assert_eq!(tokens.data, vec![2, 5, 3, 9, 9]);
+
+        // empty data
+        let mut tokens = ServerSemanticTokens::from_full(Vec::new(), None);
+        tokens.apply(&[SemanticTokensEdit {
+            start: 0,
+            delete_count: 5,
+            data: vec![1, 2, 3, 4, 5],
+        }]);
+        assert_eq!(tokens.data, vec![1, 2, 3, 4, 5]);
     }
 }

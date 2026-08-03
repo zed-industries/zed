@@ -1,4 +1,5 @@
 use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
+use language_model::DisabledReason;
 use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
@@ -52,7 +53,9 @@ pub struct ModelSelectorListItem {
     is_focused: bool,
     is_latest: bool,
     is_favorite: bool,
+    disabled: Option<DisabledReason>,
     on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    cost_info: Option<SharedString>,
 }
 
 impl ModelSelectorListItem {
@@ -65,7 +68,9 @@ impl ModelSelectorListItem {
             is_focused: false,
             is_latest: false,
             is_favorite: false,
+            disabled: None,
             on_toggle_favorite: None,
+            cost_info: None,
         }
     }
 
@@ -81,6 +86,11 @@ impl ModelSelectorListItem {
 
     pub fn is_selected(mut self, is_selected: bool) -> Self {
         self.is_selected = is_selected;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: Option<DisabledReason>) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -106,12 +116,21 @@ impl ModelSelectorListItem {
         self.on_toggle_favorite = Some(Box::new(handler));
         self
     }
+
+    pub fn cost_info(mut self, cost_info: Option<SharedString>) -> Self {
+        self.cost_info = cost_info;
+        self
+    }
 }
 
 impl RenderOnce for ModelSelectorListItem {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let is_disabled = self.disabled.is_some();
+
         let model_icon_color = if self.is_selected {
             Color::Accent
+        } else if is_disabled {
+            Color::Disabled
         } else {
             Color::Muted
         };
@@ -122,6 +141,10 @@ impl RenderOnce for ModelSelectorListItem {
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(self.is_focused)
+            .when_some(self.disabled, |this, disabled_reason| {
+                this.disabled(true)
+                    .tooltip(Tooltip::text(disabled_reason.0))
+            })
             .child(
                 h_flex()
                     .w_full()
@@ -136,29 +159,56 @@ impl RenderOnce for ModelSelectorListItem {
                             .size(IconSize::Small),
                         )
                     })
-                    .child(Label::new(self.title).truncate())
-                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest"))),
-            )
-            .end_slot(div().pr_2().when(self.is_selected, |this| {
-                this.child(Icon::new(IconName::Check).color(Color::Accent))
-            }))
-            .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
-                |this, handle_click| {
-                    let (icon, color, tooltip) = if is_favorite {
-                        (IconName::StarFilled, Color::Accent, "Unfavorite Model")
-                    } else {
-                        (IconName::Star, Color::Default, "Favorite Model")
-                    };
-                    this.child(
-                        IconButton::new(("toggle-favorite", self.index), icon)
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .icon_color(color)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text(tooltip))
-                            .on_click(move |event, window, cx| (handle_click)(event, window, cx)),
+                    .child(
+                        Label::new(self.title)
+                            .when(is_disabled, |this| this.color(Color::Disabled))
+                            .truncate(),
                     )
-                }
-            }))
+                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest")))
+                    .when_some(self.cost_info, |this, cost_info| {
+                        let tooltip_text = if cost_info.ends_with('×') {
+                            format!("Cost Multiplier: {}", cost_info)
+                        } else if cost_info.contains('$') {
+                            format!("Cost per Million Tokens: {}", cost_info)
+                        } else {
+                            format!("Cost: {}", cost_info)
+                        };
+
+                        this.child(Chip::new(cost_info).tooltip(Tooltip::text(tooltip_text)))
+                    }),
+            )
+            .end_slot(
+                h_flex()
+                    .pr_2()
+                    .gap_1p5()
+                    .when(self.is_selected, |this| {
+                        this.child(Icon::new(IconName::Check).color(Color::Accent))
+                    })
+                    .when(is_disabled, |this| {
+                        this.child(Icon::new(IconName::Info).color(Color::Muted))
+                    }),
+            )
+            .when(!is_disabled, |this| {
+                this.end_slot_on_hover(div().pr_1p5().when_some(self.on_toggle_favorite, {
+                    |this, handle_click| {
+                        let (icon, color, tooltip) = if is_favorite {
+                            (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                        } else {
+                            (IconName::Star, Color::Default, "Favorite Model")
+                        };
+                        this.child(
+                            IconButton::new(("toggle-favorite", self.index), icon)
+                                .layer(ElevationIndex::ElevatedSurface)
+                                .icon_color(color)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text(tooltip))
+                                .on_click(move |event, window, cx| {
+                                    (handle_click)(event, window, cx)
+                                }),
+                        )
+                    }
+                }))
+            })
     }
 }
 
@@ -239,7 +289,7 @@ impl RenderOnce for ModelSelectorTooltip {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .justify_between()
-                        .child(Label::new("Cycle Favorited Models"))
+                        .child(Label::new("Cycle Favorite Models"))
                         .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
                 )
             })

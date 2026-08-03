@@ -1,10 +1,13 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use gpui::{
-    App, Application, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task,
-    Window, WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
+    App, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task, Window,
+    WindowBounds, WindowOptions, div, hsla, img, prelude::*, px, rgb, size, svg,
 };
+use gpui_platform::application;
 
 struct Assets {
     base: PathBuf,
@@ -111,12 +114,11 @@ impl Render for HelloWorld {
                             .bg(gpui::blue())
                             .border_3()
                             .border_color(gpui::black())
-                            .shadow(vec![BoxShadow {
-                                color: hsla(0.0, 0.0, 0.0, 0.5),
-                                blur_radius: px(1.0),
-                                spread_radius: px(5.0),
-                                offset: point(px(10.0), px(10.0)),
-                            }])
+                            .shadow(vec![
+                                BoxShadow::new(px(10.0), px(10.0), hsla(0.0, 0.0, 0.0, 0.5))
+                                    .blur_radius(px(1.0))
+                                    .spread_radius(px(5.0)),
+                            ])
                             .child(img("image/app-icon.png").size_8())
                             .child("Opacity Panel (Click to test)")
                             .child(
@@ -155,8 +157,8 @@ impl Render for HelloWorld {
     }
 }
 
-fn main() {
-    Application::new()
+fn run_example() {
+    application()
         .with_assets(Assets {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples"),
         })
@@ -172,4 +174,16 @@ fn main() {
             .unwrap();
             cx.activate(true);
         });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

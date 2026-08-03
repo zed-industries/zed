@@ -1,8 +1,13 @@
-# Installing Extensions
+---
+title: Installing Extensions
+description: "Browse, install, and manage extensions from the Zed Extension Gallery."
+---
 
-You can search for extensions by launching the Zed Extension Gallery by pressing {#kb zed::Extensions} , opening the command palette and selecting {#action zed::Extensions} or by selecting "Zed > Extensions" from the menu bar.
+# Installing Extensions {#installing-extensions}
 
-Here you can view the extensions that you currently have installed or search and install new ones.
+Extensions add functionality to Zed, including languages, themes, and AI tools. Browse and install them from the Extension Gallery.
+
+Open the Extension Gallery with {#kb zed::Extensions}, or select "Zed > Extensions" from the menu bar.
 
 ## Installation Location
 
@@ -15,6 +20,6 @@ This directory contains two subdirectories:
 - `installed`, which contains the source code for each extension.
 - `work` which contains files created by the extension itself, such as downloaded language servers.
 
-## Auto installing
+## Auto-installing
 
 To automate extension installation/uninstallation see the docs for [auto_install_extensions](../reference/all-settings.md#auto-install-extensions).

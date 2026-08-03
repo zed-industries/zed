@@ -2,10 +2,10 @@ use codestral::{CODESTRAL_API_URL, codestral_api_key_state, codestral_api_url};
 use edit_prediction::{
     ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
-    sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
+    open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
-use gpui::{Entity, ScrollHandle, prelude::*};
+use gpui::{App, Entity, ScrollHandle, TaskExt, prelude::*};
 use language::language_settings::AllLanguageSettings;
 
 use settings::Settings as _;
@@ -14,6 +14,9 @@ use workspace::AppState;
 
 const OLLAMA_API_URL_PLACEHOLDER: &str = "http://localhost:11434";
 const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
+
+const OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER: &str = "http://localhost:8080/v1/completions";
+const OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -33,7 +36,9 @@ pub(crate) fn render_edit_prediction_setup_page(
             render_api_key_provider(
                 IconName::Inception,
                 "Mercury",
-                "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
+                },
                 mercury_api_token(cx),
                 |_cx| MERCURY_CREDENTIALS_URL,
                 None,
@@ -44,15 +49,17 @@ pub(crate) fn render_edit_prediction_setup_page(
         ),
         Some(
             render_api_key_provider(
-                IconName::SweepAi,
-                "Sweep",
-                "https://app.sweep.dev/".into(),
-                sweep_api_token(cx),
-                |_cx| SWEEP_CREDENTIALS_URL,
+                IconName::AiMistral,
+                "Codestral",
+                ApiKeyDocs::Link {
+                    dashboard_url: "https://console.mistral.ai/codestral".into(),
+                },
+                codestral_api_key_state(cx),
+                |cx| codestral_api_url(cx),
                 Some(
                     settings_window
                         .render_sub_page_items_section(
-                            sweep_settings().iter().enumerate(),
+                            codestral_settings().iter().enumerate(),
                             true,
                             window,
                             cx,
@@ -67,15 +74,17 @@ pub(crate) fn render_edit_prediction_setup_page(
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
-                IconName::AiMistral,
-                "Codestral",
-                "https://console.mistral.ai/codestral".into(),
-                codestral_api_key_state(cx),
-                |cx| codestral_api_url(cx),
+                IconName::AiOpenAiCompat,
+                "OpenAI Compatible API",
+                ApiKeyDocs::Custom {
+                    message: "The API key sent as Authorization: Bearer {key}.".into(),
+                },
+                open_ai_compatible_api_token(cx),
+                |cx| open_ai_compatible_api_url(cx),
                 Some(
                     settings_window
                         .render_sub_page_items_section(
-                            codestral_settings().iter().enumerate(),
+                            open_ai_compatible_settings().iter().enumerate(),
                             true,
                             window,
                             cx,
@@ -140,10 +149,12 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
             h_flex()
                 .pt_2p5()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
+                        .min_w_0()
                         .max_w_1_2()
                         .child(Label::new("Provider"))
                         .child(
@@ -161,10 +172,15 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
+enum ApiKeyDocs {
+    Link { dashboard_url: SharedString },
+    Custom { message: SharedString },
+}
+
 fn render_api_key_provider(
     icon: IconName,
     title: &'static str,
-    link: SharedString,
+    docs: ApiKeyDocs,
     api_key_state: Entity<ApiKeyState>,
     current_url: fn(&mut App) -> SharedString,
     additional_fields: Option<AnyElement>,
@@ -172,9 +188,15 @@ fn render_api_key_provider(
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
+    let credentials_provider = zed_credentials_provider::global(cx);
     _ = window.use_keyed_state(current_url(cx), cx, |_, cx| {
         let task = api_key_state.update(cx, |key_state, cx| {
-            key_state.load_if_needed(current_url(cx), |state| state, cx)
+            key_state.load_if_needed(
+                current_url(cx),
+                |state| state,
+                credentials_provider.clone(),
+                cx,
+            )
         });
         cx.spawn(async move |_, cx| {
             task.await.ok();
@@ -195,38 +217,56 @@ fn render_api_key_provider(
     });
 
     let write_key = move |api_key: Option<String>, cx: &mut App| {
+        let credentials_provider = zed_credentials_provider::global(cx);
         api_key_state
             .update(cx, |key_state, cx| {
                 let url = current_url(cx);
-                key_state.store(url, api_key, |key_state| key_state, cx)
+                key_state.store(
+                    url,
+                    api_key,
+                    |key_state| key_state,
+                    credentials_provider,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     };
 
     let base_container = v_flex().id(title).min_w_0().pt_8().gap_1p5();
+
     let header = SettingsSectionHeader::new(title)
         .icon(icon)
         .no_padding(true);
-    let button_link_label = format!("{} dashboard", title);
-    let description = h_flex()
-        .min_w_0()
-        .gap_0p5()
-        .child(
-            Label::new("Visit the")
+
+    let description = match docs {
+        ApiKeyDocs::Custom { message } => div().min_w_0().w_full().child(
+            Label::new(message)
                 .size(LabelSize::Small)
                 .color(Color::Muted),
-        )
-        .child(
-            ButtonLink::new(button_link_label, link)
-                .no_icon(true)
-                .label_size(LabelSize::Small)
-                .label_color(Color::Muted),
-        )
-        .child(
-            Label::new("to generate an API key.")
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        );
+        ),
+        ApiKeyDocs::Link { dashboard_url } => h_flex()
+            .w_full()
+            .min_w_0()
+            .flex_wrap()
+            .gap_0p5()
+            .child(
+                Label::new("Visit the")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                ButtonLink::new(format!("{title} dashboard"), dashboard_url)
+                    .no_icon(true)
+                    .label_size(LabelSize::Small)
+                    .label_color(Color::Muted),
+            )
+            .child(
+                Label::new("to generate an API key.")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            ),
+    };
+
     let configured_card_label = if is_from_env_var {
         "API Key Set in Environment Variable"
     } else {
@@ -235,7 +275,7 @@ fn render_api_key_provider(
 
     let container = if has_key {
         base_container.child(header).child(
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new(format!("{title}-reset-key"), configured_card_label)
                 .button_label("Reset Key")
                 .button_tab_index(0)
                 .disabled(is_from_env_var)
@@ -256,11 +296,14 @@ fn render_api_key_provider(
             h_flex()
                 .pt_2p5()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
+                        .min_w_0()
                         .max_w_1_2()
+                        .gap_0p5()
                         .child(Label::new("API Key"))
                         .child(description)
                         .when_some(env_var_name, |this, env_var_name| {
@@ -274,9 +317,10 @@ fn render_api_key_provider(
                         }),
                 )
                 .child(
-                    SettingsInputField::new()
+                    SettingsInputField::new(format!("{}-api-key-input", title))
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                        .aria_label(format!("{} API Key", title))
                         .on_confirm(move |api_key, _window, cx| {
                             write_key(api_key.filter(|key| !key.is_empty()), cx);
                         }),
@@ -294,39 +338,6 @@ fn render_api_key_provider(
                 .child(additional_fields),
         )
     })
-}
-
-fn sweep_settings() -> Box<[SettingsPageItem]> {
-    Box::new([SettingsPageItem::SettingItem(SettingItem {
-        title: "Privacy Mode",
-        description: "When enabled, Sweep will not store edit prediction inputs or outputs. When disabled, Sweep may collect data including buffer contents, diagnostics, file paths, and generated predictions to improve the service.",
-        field: Box::new(SettingField {
-            pick: |settings| {
-                settings
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .as_ref()?
-                    .sweep
-                    .as_ref()?
-                    .privacy_mode
-                    .as_ref()
-            },
-            write: |settings, value| {
-                settings
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .get_or_insert_default()
-                    .sweep
-                    .get_or_insert_default()
-                    .privacy_mode = value;
-            },
-            json_path: Some("edit_predictions.sweep.privacy_mode"),
-        }),
-        metadata: None,
-        files: USER,
-    })])
 }
 
 fn render_ollama_provider(
@@ -358,6 +369,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The base URL of your Ollama server.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -369,7 +381,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -391,6 +403,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The Ollama model to use for edit predictions.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -402,7 +415,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -421,9 +434,41 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.ollama.prompt_format"),
+            }),
+            files: USER,
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -435,7 +480,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -453,12 +498,148 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
     ])
 }
 
+fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The URL of your OpenAI-compatible server's completions API.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The model string to pass to the OpenAI-compatible server.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Prompt Format",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .prompt_format
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .prompt_format = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.prompt_format"),
+            }),
+            files: USER,
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                organization_override: None,
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .open_ai_compatible_api
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value, _app: &App| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .open_ai_compatible_api
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.open_ai_compatible_api.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
+}
+
 fn codestral_settings() -> Box<[SettingsPageItem]> {
     Box::new([
         SettingsPageItem::SettingItem(SettingItem {
             title: "API URL",
             description: "The API URL to use for Codestral.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -470,7 +651,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -492,6 +673,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "Max Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -503,7 +685,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .max_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -522,6 +704,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The Codestral model id to use.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -533,7 +716,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -558,12 +741,9 @@ fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<i
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
             move |cx| {
-                if let Some(app_state) = AppState::global(cx).upgrade() {
-                    copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-                        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
-                } else {
-                    false
-                }
+                let app_state = AppState::global(cx);
+                copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                    .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
             },
             copilot_ui::ConfigurationMode::EditPrediction,
             cx,

@@ -1,3 +1,8 @@
+---
+title: OCaml
+description: "Configure OCaml language support in Zed, including language servers, formatting, and debugging."
+---
+
 # OCaml
 
 OCaml support is available through the [OCaml extension](https://github.com/zed-extensions/ocaml).
@@ -7,13 +12,13 @@ OCaml support is available through the [OCaml extension](https://github.com/zed-
 
 ## Setup Instructions
 
-If you have the development environment already setup, you can skip to [Launching Zed](#launching-zed)
+If you have the development environment already set up, you can skip to [Launching Zed](#launching-zed)
 
 ### Using Opam
 
 Opam is the official package manager for OCaml and is highly recommended for getting started with OCaml. To get started using Opam, please follow the instructions provided [here](https://ocaml.org/install).
 
-Once you install opam and setup a switch with your development environment as per the instructions, you can proceed.
+Once you install opam and set up a switch with your development environment as per the instructions, you can proceed.
 
 ### Launching Zed
 
@@ -33,4 +38,4 @@ Once you have the cli, simply from a terminal, navigate to your project and run
 zed .
 ```
 
-Voilà! You should have Zed running with OCaml support, no additional setup required.
+You should now have Zed running with OCaml support, with no additional setup required.

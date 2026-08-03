@@ -1,0 +1,78 @@
+[package]
+name = "gpui_web"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+autoexamples = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["multithreaded"]
+multithreaded = ["dep:wasm_thread"]
+
+[lib]
+path = "src/gpui_web.rs"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui.workspace = true
+parking_lot = { workspace = true, features = ["nightly"] }
+gpui_wgpu.workspace = true
+http_client.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+uuid.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-time.workspace = true
+console_error_panic_hook.workspace = true
+js-sys.workspace = true
+raw-window-handle.workspace = true
+# Forked because upstream is unmaintained and its worker bootstrap still calls
+# the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
+wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = [
+    "es_modules",
+], optional = true }
+web-sys = { version = "0.3", features = [
+    "console",
+    "Clipboard",
+    "ClipboardEvent",
+    "CompositionEvent",
+    "CssStyleDeclaration",
+    "DataTransfer",
+    "Document",
+    "DomRect",
+    "DragEvent",
+    "Element",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "IdleDeadline",
+    "IdleRequestOptions",
+    "KeyboardEvent",
+    "MediaQueryList",
+    "MediaQueryListEvent",
+    "MouseEvent",
+    "Navigator",
+    "PointerEvent",
+    "ResizeObserver",
+    "ResizeObserverBoxOptions",
+    "ResizeObserverEntry",
+    "ResizeObserverSize",
+    "ResizeObserverOptions",
+    "Screen",
+    "Storage",
+    "VisualViewport",
+    "Headers",
+    "Request",
+    "RequestCredentials",
+    "RequestInit",
+    "RequestRedirect",
+    "Response",
+    "WheelEvent",
+    "Window",
+] }

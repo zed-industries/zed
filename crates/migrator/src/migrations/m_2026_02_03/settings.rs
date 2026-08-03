@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::migrations::migrate_settings;
 
 pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
-    migrate_settings(value, |obj| {
+    migrate_settings(value, &mut |obj| {
         migrate_one(obj);
         Ok(())
     })
@@ -41,7 +41,14 @@ fn migrate_provider_field(obj: &mut serde_json::Map<String, Value>, field_name: 
         return;
     };
 
-    if name == "sweep" || name == "mercury" {
-        obj.insert(field_name.to_string(), Value::String(name.to_string()));
-    }
+    let provider_name = match name {
+        "sweep" | "mercury" => name,
+        "zeta2" => "zed",
+        _ => return,
+    };
+
+    obj.insert(
+        field_name.to_string(),
+        Value::String(provider_name.to_string()),
+    );
 }

@@ -1,11 +1,23 @@
 use crate::{
-    App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
-    TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px,
-    size,
+    App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
+    ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window,
+    WrapBoundary, WrappedLineLayout, black, fill, point, px, size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
 use std::sync::Arc;
+
+/// Pre-computed glyph data for efficient painting without per-glyph cache lookups.
+///
+/// This is produced by `ShapedLine::compute_glyph_raster_data` during prepaint
+/// and consumed by `ShapedLine::paint_with_raster_data` during paint.
+#[derive(Clone, Debug)]
+pub struct GlyphRasterData {
+    /// The raster bounds for each glyph, in paint order.
+    pub bounds: Vec<Bounds<DevicePixels>>,
+    /// The render params for each glyph (needed for sprite atlas lookup).
+    pub params: Vec<RenderGlyphParams>,
+}
 
 /// Set the text decoration for a run of text.
 #[derive(Debug, Clone)]
@@ -42,6 +54,14 @@ impl ShapedLine {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.layout.len
+    }
+
+    /// The width of the shaped line in pixels.
+    ///
+    /// This is the glyph advance width computed by the text shaping system and is useful for
+    /// incrementally advancing a "pen" when painting multiple fragments on the same row.
+    pub fn width(&self) -> Pixels {
+        self.layout.width
     }
 
     /// Override the len, useful if you're rendering text a
@@ -107,6 +127,128 @@ impl ShapedLine {
         )?;
 
         Ok(())
+    }
+
+    /// Split this shaped line at a byte index, returning `(prefix, suffix)`.
+    ///
+    /// - `prefix` contains glyphs for bytes `[0, byte_index)` with original positions.
+    ///   Its width equals the x-advance up to the split point.
+    /// - `suffix` contains glyphs for bytes `[byte_index, len)` with positions
+    ///   shifted left so the first glyph starts at x=0, and byte indices rebased to 0.
+    /// - Decoration runs are partitioned at the boundary; a run that straddles it is
+    ///   split into two with adjusted lengths.
+    /// - `font_size`, `ascent`, and `descent` are copied to both halves.
+    pub fn split_at(&self, byte_index: usize) -> (ShapedLine, ShapedLine) {
+        let x_offset = self.layout.x_for_index(byte_index);
+
+        // Partition glyph runs. A single run may contribute glyphs to both halves.
+        let mut left_runs = Vec::new();
+        let mut right_runs = Vec::new();
+
+        for run in &self.layout.runs {
+            let split_pos = run.glyphs.partition_point(|g| g.index < byte_index);
+
+            if split_pos > 0 {
+                left_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: run.glyphs[..split_pos].to_vec(),
+                });
+            }
+
+            if split_pos < run.glyphs.len() {
+                let right_glyphs = run.glyphs[split_pos..]
+                    .iter()
+                    .map(|g| ShapedGlyph {
+                        id: g.id,
+                        position: point(g.position.x - x_offset, g.position.y),
+                        index: g.index - byte_index,
+                        is_emoji: g.is_emoji,
+                    })
+                    .collect();
+                right_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs: right_glyphs,
+                });
+            }
+        }
+
+        // Partition decoration runs. A run straddling the boundary is split into two.
+        let mut left_decorations = SmallVec::new();
+        let mut right_decorations = SmallVec::new();
+        let mut decoration_offset = 0u32;
+        let split_point = byte_index as u32;
+
+        for decoration in &self.decoration_runs {
+            let run_end = decoration_offset + decoration.len;
+
+            if run_end <= split_point {
+                left_decorations.push(decoration.clone());
+            } else if decoration_offset >= split_point {
+                right_decorations.push(decoration.clone());
+            } else {
+                let left_len = split_point - decoration_offset;
+                let right_len = run_end - split_point;
+                left_decorations.push(DecorationRun {
+                    len: left_len,
+                    color: decoration.color,
+                    background_color: decoration.background_color,
+                    underline: decoration.underline,
+                    strikethrough: decoration.strikethrough,
+                });
+                right_decorations.push(DecorationRun {
+                    len: right_len,
+                    color: decoration.color,
+                    background_color: decoration.background_color,
+                    underline: decoration.underline,
+                    strikethrough: decoration.strikethrough,
+                });
+            }
+
+            decoration_offset = run_end;
+        }
+
+        // Split text
+        let left_text = if byte_index == self.text.len() {
+            self.text.clone()
+        } else {
+            SharedString::new(&self.text[..byte_index])
+        };
+        let right_text = if byte_index == 0 {
+            self.text.clone()
+        } else {
+            SharedString::new(&self.text[byte_index..])
+        };
+
+        let left_width = x_offset;
+        let right_width = self.layout.width - left_width;
+
+        let left = ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: self.layout.font_size,
+                width: left_width,
+                ascent: self.layout.ascent,
+                descent: self.layout.descent,
+                runs: left_runs,
+                len: byte_index,
+            }),
+            text: left_text,
+            decoration_runs: left_decorations,
+        };
+
+        let right = ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: self.layout.font_size,
+                width: right_width,
+                ascent: self.layout.ascent,
+                descent: self.layout.descent,
+                runs: right_runs,
+                len: self.layout.len - byte_index,
+            }),
+            text: right_text,
+            decoration_runs: right_decorations,
+        };
+
+        (left, right)
     }
 }
 
@@ -251,8 +393,12 @@ fn paint_line(
                             glyph_origin.x - underline_origin.x,
                             underline_style,
                         );
-                        underline_origin.x = origin.x;
-                        underline_origin.y += line_height;
+                        if glyph.index < run_end {
+                            underline_origin.x = origin.x;
+                            underline_origin.y += line_height;
+                        } else {
+                            current_underline = None;
+                        }
                     }
                     if let Some((strikethrough_origin, strikethrough_style)) =
                         current_strikethrough.as_mut()
@@ -265,8 +411,12 @@ fn paint_line(
                             glyph_origin.x - strikethrough_origin.x,
                             strikethrough_style,
                         );
-                        strikethrough_origin.x = origin.x;
-                        strikethrough_origin.y += line_height;
+                        if glyph.index < run_end {
+                            strikethrough_origin.x = origin.x;
+                            strikethrough_origin.y += line_height;
+                        } else {
+                            current_strikethrough = None;
+                        }
                     }
 
                     glyph_origin.x = aligned_origin_x(
@@ -484,8 +634,12 @@ fn paint_line_background(
                             },
                             *background_color,
                         ));
-                        background_origin.x = origin.x;
-                        background_origin.y += line_height;
+                        if glyph.index < run_end {
+                            background_origin.x = origin.x;
+                            background_origin.y += line_height;
+                        } else {
+                            current_background = None;
+                        }
                     }
 
                     glyph_origin.x = aligned_origin_x(
@@ -592,5 +746,270 @@ fn aligned_origin_x(
         TextAlign::Left => origin.x,
         TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
         TextAlign::Right => origin.x + align_width - line_width,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FontId, GlyphId};
+
+    /// Helper: build a ShapedLine from glyph descriptors without the platform text system.
+    /// Each glyph is described as (byte_index, x_position).
+    fn make_shaped_line(
+        text: &str,
+        glyphs: &[(usize, f32)],
+        width: f32,
+        decorations: &[DecorationRun],
+    ) -> ShapedLine {
+        let shaped_glyphs: Vec<ShapedGlyph> = glyphs
+            .iter()
+            .map(|&(index, x)| ShapedGlyph {
+                id: GlyphId(0),
+                position: point(px(x), px(0.0)),
+                index,
+                is_emoji: false,
+            })
+            .collect();
+
+        ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: px(16.0),
+                width: px(width),
+                ascent: px(12.0),
+                descent: px(4.0),
+                runs: vec![ShapedRun {
+                    font_id: FontId(0),
+                    glyphs: shaped_glyphs,
+                }],
+                len: text.len(),
+            }),
+            text: SharedString::new(text),
+            decoration_runs: SmallVec::from(decorations.to_vec()),
+        }
+    }
+
+    #[test]
+    fn test_split_at_invariants() {
+        // Split "abcdef" at every possible byte index and verify structural invariants.
+        let line = make_shaped_line(
+            "abcdef",
+            &[
+                (0, 0.0),
+                (1, 10.0),
+                (2, 20.0),
+                (3, 30.0),
+                (4, 40.0),
+                (5, 50.0),
+            ],
+            60.0,
+            &[],
+        );
+
+        for i in 0..=6 {
+            let (left, right) = line.split_at(i);
+
+            assert_eq!(
+                left.width() + right.width(),
+                line.width(),
+                "widths must sum at split={i}"
+            );
+            assert_eq!(
+                left.len() + right.len(),
+                line.len(),
+                "lengths must sum at split={i}"
+            );
+            assert_eq!(
+                format!("{}{}", left.text.as_ref(), right.text.as_ref()),
+                "abcdef",
+                "text must concatenate at split={i}"
+            );
+            assert_eq!(left.font_size, line.font_size, "font_size at split={i}");
+            assert_eq!(right.ascent, line.ascent, "ascent at split={i}");
+            assert_eq!(right.descent, line.descent, "descent at split={i}");
+        }
+
+        // Edge: split at 0 produces no left runs, full content on right
+        let (left, right) = line.split_at(0);
+        assert_eq!(left.runs.len(), 0);
+        assert_eq!(right.runs[0].glyphs.len(), 6);
+
+        // Edge: split at end produces full content on left, no right runs
+        let (left, right) = line.split_at(6);
+        assert_eq!(left.runs[0].glyphs.len(), 6);
+        assert_eq!(right.runs.len(), 0);
+    }
+
+    #[test]
+    fn test_split_at_glyph_rebasing() {
+        // Two font runs (simulating a font fallback boundary at byte 3):
+        //   run A (FontId 0): glyphs at bytes 0,1,2  positions 0,10,20
+        //   run B (FontId 1): glyphs at bytes 3,4,5  positions 30,40,50
+        // Successive splits simulate the incremental splitting done during wrap.
+        let line = ShapedLine {
+            layout: Arc::new(LineLayout {
+                font_size: px(16.0),
+                width: px(60.0),
+                ascent: px(12.0),
+                descent: px(4.0),
+                runs: vec![
+                    ShapedRun {
+                        font_id: FontId(0),
+                        glyphs: vec![
+                            ShapedGlyph {
+                                id: GlyphId(0),
+                                position: point(px(0.0), px(0.0)),
+                                index: 0,
+                                is_emoji: false,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(0),
+                                position: point(px(10.0), px(0.0)),
+                                index: 1,
+                                is_emoji: false,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(0),
+                                position: point(px(20.0), px(0.0)),
+                                index: 2,
+                                is_emoji: false,
+                            },
+                        ],
+                    },
+                    ShapedRun {
+                        font_id: FontId(1),
+                        glyphs: vec![
+                            ShapedGlyph {
+                                id: GlyphId(0),
+                                position: point(px(30.0), px(0.0)),
+                                index: 3,
+                                is_emoji: false,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(0),
+                                position: point(px(40.0), px(0.0)),
+                                index: 4,
+                                is_emoji: false,
+                            },
+                            ShapedGlyph {
+                                id: GlyphId(0),
+                                position: point(px(50.0), px(0.0)),
+                                index: 5,
+                                is_emoji: false,
+                            },
+                        ],
+                    },
+                ],
+                len: 6,
+            }),
+            text: "abcdef".into(),
+            decoration_runs: SmallVec::new(),
+        };
+
+        // First split at byte 2 — mid-run in run A
+        let (first, remainder) = line.split_at(2);
+        assert_eq!(first.text.as_ref(), "ab");
+        assert_eq!(first.runs.len(), 1);
+        assert_eq!(first.runs[0].font_id, FontId(0));
+
+        // Remainder "cdef" should have two runs: tail of A (1 glyph) + all of B (3 glyphs)
+        assert_eq!(remainder.text.as_ref(), "cdef");
+        assert_eq!(remainder.runs.len(), 2);
+        assert_eq!(remainder.runs[0].font_id, FontId(0));
+        assert_eq!(remainder.runs[0].glyphs.len(), 1);
+        assert_eq!(remainder.runs[0].glyphs[0].index, 0);
+        assert_eq!(remainder.runs[0].glyphs[0].position.x, px(0.0));
+        assert_eq!(remainder.runs[1].font_id, FontId(1));
+        assert_eq!(remainder.runs[1].glyphs[0].index, 1);
+        assert_eq!(remainder.runs[1].glyphs[0].position.x, px(10.0));
+
+        // Second split at byte 2 within remainder — crosses the run boundary
+        let (second, final_part) = remainder.split_at(2);
+        assert_eq!(second.text.as_ref(), "cd");
+        assert_eq!(final_part.text.as_ref(), "ef");
+        assert_eq!(final_part.runs[0].glyphs[0].index, 0);
+        assert_eq!(final_part.runs[0].glyphs[0].position.x, px(0.0));
+
+        // Widths must sum across all three pieces
+        assert_eq!(
+            first.width() + second.width() + final_part.width(),
+            line.width()
+        );
+    }
+
+    #[test]
+    fn test_split_at_decorations() {
+        // Three decoration runs: red [0..2), green [2..5), blue [5..6).
+        // Split at byte 3 — red goes entirely left, green straddles, blue goes entirely right.
+        let red = Hsla {
+            h: 0.0,
+            s: 1.0,
+            l: 0.5,
+            a: 1.0,
+        };
+        let green = Hsla {
+            h: 0.3,
+            s: 1.0,
+            l: 0.5,
+            a: 1.0,
+        };
+        let blue = Hsla {
+            h: 0.6,
+            s: 1.0,
+            l: 0.5,
+            a: 1.0,
+        };
+
+        let line = make_shaped_line(
+            "abcdef",
+            &[
+                (0, 0.0),
+                (1, 10.0),
+                (2, 20.0),
+                (3, 30.0),
+                (4, 40.0),
+                (5, 50.0),
+            ],
+            60.0,
+            &[
+                DecorationRun {
+                    len: 2,
+                    color: red,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                },
+                DecorationRun {
+                    len: 3,
+                    color: green,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                },
+                DecorationRun {
+                    len: 1,
+                    color: blue,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                },
+            ],
+        );
+
+        let (left, right) = line.split_at(3);
+
+        // Left: red(2) + green(1) — green straddled, left portion has len 1
+        assert_eq!(left.decoration_runs.len(), 2);
+        assert_eq!(left.decoration_runs[0].len, 2);
+        assert_eq!(left.decoration_runs[0].color, red);
+        assert_eq!(left.decoration_runs[1].len, 1);
+        assert_eq!(left.decoration_runs[1].color, green);
+
+        // Right: green(2) + blue(1) — green straddled, right portion has len 2
+        assert_eq!(right.decoration_runs.len(), 2);
+        assert_eq!(right.decoration_runs[0].len, 2);
+        assert_eq!(right.decoration_runs[0].color, green);
+        assert_eq!(right.decoration_runs[1].len, 1);
+        assert_eq!(right.decoration_runs[1].color, blue);
     }
 }

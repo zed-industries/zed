@@ -378,7 +378,7 @@ impl ImmediateBoundary {
 
 impl BoundedObject for ImmediateBoundary {
     fn next_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
-        try_find_boundary(map, from, |left, right| {
+        try_find_boundary(map, from, &|left, right| {
             let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
                 self.is_outer_start(left, right, classifier)
@@ -388,7 +388,7 @@ impl BoundedObject for ImmediateBoundary {
         })
     }
     fn next_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
-        try_find_boundary(map, from, |left, right| {
+        try_find_boundary(map, from, &|left, right| {
             let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
                 self.is_outer_end(left, right, classifier)
@@ -398,7 +398,7 @@ impl BoundedObject for ImmediateBoundary {
         })
     }
     fn previous_start(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
-        try_find_preceding_boundary(map, from, |left, right| {
+        try_find_preceding_boundary(map, from, &|left, right| {
             let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
                 self.is_outer_start(left, right, classifier)
@@ -408,7 +408,7 @@ impl BoundedObject for ImmediateBoundary {
         })
     }
     fn previous_end(&self, map: &DisplaySnapshot, from: Offset, outer: bool) -> Option<Offset> {
-        try_find_preceding_boundary(map, from, |left, right| {
+        try_find_preceding_boundary(map, from, &|left, right| {
             let classifier = map.buffer_snapshot().char_classifier_at(from.0);
             if outer {
                 self.is_outer_end(left, right, classifier)
@@ -460,7 +460,9 @@ impl FuzzyBoundary {
                     return None;
                 }
                 Some(Box::new(|identifier, map| {
-                    try_find_boundary(map, identifier, |left, right| left == '\n' && right != '\n')
+                    try_find_boundary(map, identifier, &|left, right| {
+                        left == '\n' && right != '\n'
+                    })
                 }))
             }
             Self::Sentence => {
@@ -497,7 +499,7 @@ impl FuzzyBoundary {
                     return None;
                 }
                 Some(Box::new(|identifier, map| {
-                    try_find_preceding_boundary(map, identifier, |left, right| {
+                    try_find_preceding_boundary(map, identifier, &|left, right| {
                         left != '\n' && right == '\n'
                     })
                 }))
@@ -629,7 +631,7 @@ impl BoundedObject for FuzzyBoundary {
 fn try_find_boundary(
     map: &DisplaySnapshot,
     from: Offset,
-    is_boundary: impl Fn(char, char) -> bool,
+    is_boundary: &dyn Fn(char, char) -> bool,
 ) -> Option<Offset> {
     let boundary = try_find_boundary_data(map, from, |left, right, point| {
         if is_boundary(left, right) {
@@ -671,7 +673,7 @@ fn try_find_boundary_data<T>(
 fn try_find_preceding_boundary(
     map: &DisplaySnapshot,
     from: Offset,
-    is_boundary: impl Fn(char, char) -> bool,
+    is_boundary: &dyn Fn(char, char) -> bool,
 ) -> Option<Offset> {
     let boundary = try_find_preceding_boundary_data(map, from, |left, right, point| {
         if is_boundary(left, right) {

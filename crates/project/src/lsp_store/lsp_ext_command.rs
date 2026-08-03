@@ -211,10 +211,10 @@ impl LspCommand for OpenDocs {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<OpenDocsParams> {
+        let uri = lsp::Uri::from_file_path(path)
+            .map_err(|()| anyhow::anyhow!("{path:?} is not a valid URI"))?;
         Ok(OpenDocsParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Uri::from_file_path(path).unwrap(),
-            },
+            text_document: lsp::TextDocumentIdentifier { uri },
             position: point_to_lsp(self.position),
         })
     }
@@ -501,7 +501,41 @@ impl LspCommand for GoToParentModule {
 }
 
 // https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#runnables
-// Taken from https://github.com/rust-lang/rust-analyzer/blob/a73a37a757a58b43a796d3eb86a1f7dfd0036659/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+// Taken from https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+//
+// Note that in rust-analyzer, `Runnable` is defined as:
+//
+// ```
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// pub struct Runnable {
+//     pub label: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub location: Option<lsp_types::LocationLink>,
+//     pub kind: RunnableKind,
+//     pub args: RunnableArgs,
+// }
+//
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// #[serde(untagged)]
+// pub enum RunnableArgs {
+//     Cargo(CargoRunnableArgs),
+//     Shell(ShellRunnableArgs),
+// }
+// ```
+//
+// i.e., RunnableArgs uses serde(untagged) and is not associated with
+// RunnableKind. But rust-analyzer always syncs RunnableKind with RunnableArgs:
+//
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1608-L1633
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1648-L1653
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/handlers/request.rs#L1052-L1066
+//
+// And it really doesn't make any sense for it to be any other way. On top of
+// that, the Shell and Cargo variants are similar enough that serde(untagged)
+// deserialization has been observed to confuse one for the other. So we rely on
+// RunnableKind to determine which variant to deserialize.
 pub enum Runnables {}
 
 impl lsp::request::Request for Runnables {
@@ -524,23 +558,18 @@ pub struct Runnable {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<lsp::LocationLink>,
-    pub kind: RunnableKind,
+    #[serde(flatten)]
     pub args: RunnableArgs,
 }
 
+/// The `kind` field in the JSON determines which variant is deserialized; see
+/// comment on `Runnables` above for more discussion.
 #[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(untagged)]
+#[serde(tag = "kind", content = "args")]
+#[serde(rename_all = "lowercase")]
 pub enum RunnableArgs {
     Cargo(CargoRunnableArgs),
     Shell(ShellRunnableArgs),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum RunnableKind {
-    Cargo,
-    Shell,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -582,6 +611,56 @@ pub struct GetLspRunnables {
 #[derive(Debug, Default)]
 pub struct LspRunnables {
     pub runnables: Vec<(Option<LocationLink>, TaskTemplate)>,
+}
+
+pub fn runnable_to_task_template(label: String, args: RunnableArgs) -> TaskTemplate {
+    let mut task_template = TaskTemplate::default();
+    task_template.label = label;
+    match args {
+        RunnableArgs::Cargo(cargo) => {
+            match cargo.override_cargo {
+                Some(override_cargo) => {
+                    let mut override_parts = override_cargo.split(" ").map(|s| s.to_string());
+                    task_template.command = override_parts
+                        .next()
+                        .unwrap_or_else(|| override_cargo.clone());
+                    task_template.args.extend(override_parts);
+                }
+                None => task_template.command = "cargo".to_string(),
+            };
+            task_template.env = cargo.environment;
+            task_template.cwd = Some(
+                cargo
+                    .workspace_root
+                    .unwrap_or(cargo.cwd)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            task_template.args.extend(cargo.cargo_args);
+            if !cargo.executable_args.is_empty() {
+                let shell_kind = task_template.shell.shell_kind(cfg!(windows));
+                task_template.args.push("--".to_string());
+                task_template.args.extend(
+                    cargo
+                        .executable_args
+                        .into_iter()
+                        // rust-analyzer's doctest data may contain things like `X<T>::new`
+                        // which cause shell issues when run as `$SHELL -i -c "cargo test ..."`.
+                        // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
+                        .flat_map(|extra_arg| {
+                            shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
+                        }),
+                );
+            }
+        }
+        RunnableArgs::Shell(shell) => {
+            task_template.command = shell.program;
+            task_template.args = shell.args;
+            task_template.env = shell.environment;
+            task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
+        }
+    }
+    task_template
 }
 
 #[async_trait(?Send)]
@@ -632,70 +711,7 @@ impl LspCommand for GetLspRunnables {
                 ),
                 None => None,
             };
-            let mut task_template = TaskTemplate::default();
-            task_template.label = runnable.label;
-            match runnable.args {
-                RunnableArgs::Cargo(cargo) => {
-                    match cargo.override_cargo {
-                        Some(override_cargo) => {
-                            let mut override_parts =
-                                override_cargo.split(" ").map(|s| s.to_string());
-                            task_template.command = override_parts
-                                .next()
-                                .unwrap_or_else(|| override_cargo.clone());
-                            task_template.args.extend(override_parts);
-                        }
-                        None => task_template.command = "cargo".to_string(),
-                    };
-                    task_template.env = cargo.environment;
-                    task_template.cwd = Some(
-                        cargo
-                            .workspace_root
-                            .unwrap_or(cargo.cwd)
-                            .to_string_lossy()
-                            .to_string(),
-                    );
-                    task_template.args.extend(cargo.cargo_args);
-                    if !cargo.executable_args.is_empty() {
-                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
-                        task_template.args.push("--".to_string());
-                        task_template.args.extend(
-                            cargo
-                                .executable_args
-                                .into_iter()
-                                // rust-analyzer's doctest data may be smth. like
-                                // ```
-                                // command: "cargo",
-                                // args: [
-                                //     "test",
-                                //     "--doc",
-                                //     "--package",
-                                //     "cargo-output-parser",
-                                //     "--",
-                                //     "X<T>::new",
-                                //     "--show-output",
-                                // ],
-                                // ```
-                                // and `X<T>::new` will cause troubles if not escaped properly, as later
-                                // the task runs as `$SHELL -i -c "cargo test ..."`.
-                                //
-                                // We cannot escape all shell arguments unconditionally, as we use this for ssh commands, which may involve paths starting with `~`.
-                                // That bit is not auto-expanded when using single quotes.
-                                // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
-                                .flat_map(|extra_arg| {
-                                    shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
-                                }),
-                        );
-                    }
-                }
-                RunnableArgs::Shell(shell) => {
-                    task_template.command = shell.program;
-                    task_template.args = shell.args;
-                    task_template.env = shell.environment;
-                    task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
-                }
-            }
-
+            let task_template = runnable_to_task_template(runnable.label, runnable.args);
             runnables.push((location, task_template));
         }
 
@@ -803,4 +819,62 @@ pub struct RunFlycheckParams {
 impl lsp::notification::Notification for LspExtClearFlycheck {
     type Params = ();
     const METHOD: &'static str = "rust-analyzer/clearFlycheck";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_runnable_deserializes_as_shell() {
+        // rust-analyzer sends this when `runnables.test.overrideCommand` is
+        // configured (e.g. for nextest).
+        let json = serde_json::json!({
+            "label": "test my_test",
+            "kind": "shell",
+            "args": {
+                "environment": {"RUSTC_TOOLCHAIN": "/path/to/toolchain"},
+                "cwd": "/project",
+                "program": "cargo",
+                "args": ["nextest", "run", "--package", "my-crate", "--lib", "--", "my_test", "--exact", "--include-ignored"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("shell runnable should deserialize");
+        let RunnableArgs::Shell(shell) = &runnable.args else {
+            panic!("expected Shell variant, got {:?}", runnable.args);
+        };
+        assert_eq!(shell.program, "cargo");
+        assert_eq!(shell.args[0], "nextest");
+        assert_eq!(shell.args[1], "run");
+    }
+
+    #[test]
+    fn cargo_runnable_deserializes_as_cargo() {
+        // Standard cargo runnable from rust-analyzer.
+        let json = serde_json::json!({
+            "label": "cargo test -p my-crate",
+            "kind": "cargo",
+            "args": {
+                "environment": {},
+                "cwd": "/project",
+                "overrideCargo": null,
+                "workspaceRoot": "/project",
+                "cargoArgs": ["test", "--package", "my-crate", "--lib"],
+                "executableArgs": ["my_test", "--exact"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("cargo runnable should deserialize");
+        let RunnableArgs::Cargo(cargo) = &runnable.args else {
+            panic!("expected Cargo variant, got {:?}", runnable.args);
+        };
+        assert_eq!(
+            cargo.cargo_args,
+            vec!["test", "--package", "my-crate", "--lib"]
+        );
+        assert_eq!(cargo.executable_args, vec!["my_test", "--exact"]);
+    }
 }

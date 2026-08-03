@@ -698,7 +698,7 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
                 .request(rpc::proto::OpenImageByPath {
                     project_id,
                     worktree_id,
-                    path: path.to_proto(),
+                    path: path.as_unix_str().to_owned(),
                 })
                 .await?;
 
@@ -808,7 +808,10 @@ impl LocalImageStore {
             let new_file = if let Some(entry) = snapshot_entry {
                 worktree::File {
                     disk_state: match entry.mtime {
-                        Some(mtime) => DiskState::Present { mtime },
+                        Some(mtime) => DiskState::Present {
+                            mtime,
+                            size: entry.size,
+                        },
                         None => old_file.disk_state,
                     },
                     is_local: true,
@@ -899,6 +902,7 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
             image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+            image::ImageFormat::Pnm => gpui::ImageFormat::Pnm,
             format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,

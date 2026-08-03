@@ -1,3 +1,8 @@
+---
+title: Elm
+description: "Configure Elm language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Elm
 
 Elm support is available through the [Elm extension](https://github.com/zed-extensions/elm).

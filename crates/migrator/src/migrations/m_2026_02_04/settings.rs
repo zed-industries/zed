@@ -12,7 +12,7 @@ const TOOL_PERMISSIONS_KEY: &str = "tool_permissions";
 const TOOLS_KEY: &str = "tools";
 
 pub fn migrate_tool_permission_defaults(value: &mut Value) -> Result<()> {
-    migrate_settings(value, migrate_one)
+    migrate_settings(value, &mut migrate_one)
 }
 
 fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {

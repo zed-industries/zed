@@ -11,23 +11,26 @@ use gpui::{App, AppContext as _, AsyncApp, Task};
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     ffi::OsStr,
     fmt::Write as _,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Instant,
 };
+
 use util::{
+    command::Stdio,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::{Shell, ShellKind},
     shell_builder::ShellBuilder,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
     pub user: Option<String>,
@@ -46,6 +49,7 @@ impl From<settings::WslConnection> for WslConnectionOptions {
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<Arc<RelPath>>,
     platform: RemotePlatform,
+    os_version: Option<String>,
     shell: String,
     shell_kind: ShellKind,
     default_system_shell: String,
@@ -74,6 +78,7 @@ impl WslRemoteConnection {
                 os: RemoteOs::Linux,
                 arch: RemoteArch::X86_64,
             },
+            os_version: None,
             shell: String::new(),
             shell_kind: ShellKind::Posix,
             default_system_shell: String::from("/bin/sh"),
@@ -100,6 +105,8 @@ impl WslRemoteConnection {
             .await
             .context("failed detecting platform")?;
         log::info!("Remote platform discovered: {:?}", this.platform);
+        this.os_version = this.detect_os_version().await;
+        log::info!("Remote OS version discovered: {:?}", this.os_version);
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, cx)
                 .await
@@ -114,6 +121,20 @@ impl WslRemoteConnection {
         let program = self.shell_kind.prepend_command_prefix("uname");
         let output = self.run_wsl_command_with_output(&program, &["-sm"]).await?;
         parse_platform(&output)
+    }
+
+    /// Best-effort detection of the remote OS version for telemetry. Failures
+    /// result in `None` rather than failing the connection.
+    async fn detect_os_version(&self) -> Option<String> {
+        let (program, args) = super::os_version_command(self.platform.os);
+        let program = self.shell_kind.prepend_command_prefix(program);
+        match self.run_wsl_command_with_output(&program, args).await {
+            Ok(output) => super::parse_os_version(self.platform.os, &output),
+            Err(error) => {
+                log::warn!("Failed to determine remote OS version: {error:#}");
+                None
+            }
+        }
     }
 
     async fn detect_shell(&self) -> Result<String> {
@@ -131,11 +152,17 @@ impl WslRemoteConnection {
     }
 
     async fn detect_has_wsl_interop(&self) -> Result<bool> {
-        Ok(self
+        let interop = match self
             .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop"])
             .await
-            .inspect_err(|err| log::error!("Failed to detect wsl interop: {err}"))?
-            .contains("enabled"))
+        {
+            Ok(interop) => interop,
+            Err(err) => self
+                .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop-late"])
+                .await
+                .inspect_err(|err2| log::error!("Failed to detect wsl interop: {err}; {err2}"))?,
+        };
+        Ok(interop.contains("enabled"))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
@@ -176,18 +203,18 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
-            let parent = parent.display(PathStyle::Posix);
+            let parent = parent.display(PathStyle::Unix);
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
-                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
+                .map_err(|e| e.context("Failed to create directory"))?;
         }
 
         let binary_exists_on_server = self
-            .run_wsl_command(&dst_path.display(PathStyle::Posix), &["version"])
+            .run_wsl_command(&dst_path.display(PathStyle::Unix), &["version"])
             .await
             .is_ok();
 
@@ -201,7 +228,7 @@ impl WslRemoteConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                &RelPath::unix(&format!(
+                &RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -212,11 +239,11 @@ impl WslRemoteConnection {
                 .await?;
             self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = match release_channel {
@@ -230,16 +257,16 @@ impl WslRemoteConnection {
 
         let tmp_path = format!(
             "{}.{}.gz",
-            dst_path.display(PathStyle::Posix),
+            dst_path.display(PathStyle::Unix),
             std::process::id()
         );
-        let tmp_path = RelPath::unix(&tmp_path).unwrap();
+        let tmp_path = RelPath::from_unix_str(&tmp_path).unwrap();
 
         self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
         self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
             .await?;
 
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn upload_file(
@@ -252,7 +279,7 @@ impl WslRemoteConnection {
         delegate.set_status(Some("Uploading remote server"), cx);
 
         if let Some(parent) = dst_path.parent() {
-            let parent = parent.display(PathStyle::Posix);
+            let parent = parent.display(PathStyle::Unix);
             let mkdir = self.shell_kind.prepend_command_prefix("mkdir");
             self.run_wsl_command(&mkdir, &["-p", &parent])
                 .await
@@ -274,7 +301,7 @@ impl WslRemoteConnection {
         let cp = self.shell_kind.prepend_command_prefix("cp");
         self.run_wsl_command(
             &cp,
-            &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Posix)],
+            &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Unix)],
         )
         .await
         .map_err(|e| {
@@ -300,8 +327,8 @@ impl WslRemoteConnection {
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote server"), cx);
 
-        let tmp_path_str = tmp_path.display(PathStyle::Posix);
-        let dst_path_str = dst_path.display(PathStyle::Posix);
+        let tmp_path_str = tmp_path.display(PathStyle::Unix);
+        let dst_path_str = dst_path.display(PathStyle::Unix);
 
         // Build extraction script with proper error handling
         let script = if tmp_path_str.ends_with(".gz") {
@@ -319,7 +346,7 @@ impl WslRemoteConnection {
 
         self.run_wsl_command("sh", &["-c", &script])
             .await
-            .map_err(|e| anyhow!("Failed to extract server binary: {}", e))?;
+            .map_err(|e| e.context("Failed to extract server binary"))?;
         Ok(())
     }
 }
@@ -352,7 +379,7 @@ impl RemoteConnection for WslRemoteConnection {
             }
         }
 
-        proxy_args.push(remote_binary_path.display(PathStyle::Posix).into_owned());
+        proxy_args.push(remote_binary_path.display(PathStyle::Unix).into_owned());
         proxy_args.push("proxy".to_owned());
         proxy_args.push("--identifier".to_owned());
         proxy_args.push(unique_identifier);
@@ -368,7 +395,9 @@ impl RemoteConnection for WslRemoteConnection {
             {
                 Ok(process) => process,
                 Err(error) => {
-                    return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
+                    return Task::ready(Err(
+                        anyhow::Error::new(error).context("failed to spawn remote server")
+                    ));
                 }
             };
 
@@ -438,18 +467,15 @@ impl RemoteConnection for WslRemoteConnection {
 
         let shell_kind = self.shell_kind;
         let working_dir = working_dir
-            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
+            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Unix).to_string())
             .unwrap_or("~".to_string());
 
         let mut exec = String::from("exec env ");
 
-        for (k, v) in env.iter() {
-            write!(
-                exec,
-                "{}={} ",
-                k,
-                shell_kind.try_quote(v).context("shell quoting")?
-            )?;
+        for (key, value) in env.iter() {
+            let assignment = format!("{key}={value}");
+            let assignment = shell_kind.try_quote(&assignment).context("shell quoting")?;
+            write!(exec, "{assignment} ")?;
         }
 
         if let Some(program) = program {
@@ -512,7 +538,15 @@ impl RemoteConnection for WslRemoteConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        PathStyle::Posix
+        PathStyle::Unix
+    }
+
+    fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
     }
 
     fn shell(&self) -> String {
@@ -595,7 +629,9 @@ pub fn wsl_path_to_windows_path(
     }
 }
 
-fn run_wsl_command_impl(mut command: process::Command) -> impl Future<Output = Result<String>> {
+fn run_wsl_command_impl(
+    mut command: util::command::Command,
+) -> impl Future<Output = Result<String>> {
     async move {
         let output = command
             .output()
@@ -622,8 +658,8 @@ fn wsl_command_impl(
     program: &str,
     args: &[impl AsRef<OsStr>],
     exec: bool,
-) -> process::Command {
-    let mut command = util::command::new_smol_command("wsl.exe");
+) -> util::command::Command {
+    let mut command = util::command::new_command("wsl.exe");
 
     if let Some(user) = &options.user {
         command.arg("--user").arg(user);

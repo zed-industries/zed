@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::DataCollection;
@@ -145,6 +147,8 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
@@ -212,7 +216,7 @@ pub enum RequestMessage {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        reasoning_details: Option<serde_json::Value>,
+        reasoning_details: Option<std::sync::Arc<serde_json::Value>>,
     },
     User {
         content: MessageContent,
@@ -246,6 +250,7 @@ impl MessageContent {
             Self::Plain(text) => {
                 let text_part = MessagePart::Text {
                     text: std::mem::take(text),
+                    cache_control: None,
                 };
                 *self = Self::Multipart(vec![text_part, part]);
             }
@@ -257,7 +262,11 @@ impl MessageContent {
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
         if parts.len() == 1
-            && let MessagePart::Text { text } = &parts[0]
+            && let MessagePart::Text {
+                text,
+                cache_control,
+            } = &parts[0]
+            && cache_control.is_none()
         {
             return Self::Plain(text.clone());
         }
@@ -282,7 +291,7 @@ impl MessageContent {
         match self {
             Self::Plain(text) => Some(text),
             Self::Multipart(parts) if parts.len() == 1 => {
-                if let MessagePart::Text { text } = &parts[0] {
+                if let MessagePart::Text { text, .. } = &parts[0] {
                     Some(text)
                 } else {
                     None
@@ -298,16 +307,43 @@ impl MessageContent {
             Self::Multipart(parts) => parts
                 .iter()
                 .filter_map(|part| {
-                    if let MessagePart::Text { text } = part {
+                    if let MessagePart::Text { text, .. } = part {
                         Some(text.as_str())
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<_>>()
-                .join(""),
+                .concat(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheControlType {
+    Ephemeral,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+pub enum CacheTtl {
+    /// Anthropic's default ephemeral TTL (currently 5 minutes). Refreshes for
+    /// free on every cache hit.
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    /// Anthropic's extended ephemeral TTL (currently 1 hour). Costs 2x base
+    /// input tokens to write, but persists across longer idle gaps.
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub cache_type: CacheControlType,
+    /// Omitting this field uses the API's default 5-minute TTL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<CacheTtl>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -315,11 +351,11 @@ impl MessageContent {
 pub enum MessagePart {
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     #[serde(rename = "image_url")]
-    Image {
-        image_url: String,
-    },
+    Image { image_url: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -369,11 +405,21 @@ pub struct FunctionChunk {
     pub thought_signature: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -440,17 +486,17 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent, OpenRouterError>>, OpenRouterError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", "Zed Editor")
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(OpenRouterError::SerializeRequest)?,
         ))
@@ -533,17 +579,17 @@ pub async fn list_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    extra_headers: &CustomHeaders,
 ) -> Result<Vec<Model>, OpenRouterError> {
     let uri = format!("{api_url}/models/user");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", "Zed Editor")
+        .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
     let mut response = client
@@ -607,13 +653,6 @@ pub async fn list_models(
         Ok(models)
     } else {
         let code = ApiErrorCode::from_status(response.status().as_u16());
-
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(OpenRouterError::ReadResponse)?;
 
         let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
             Ok(OpenRouterErrorResponse { error }) => error,
@@ -741,6 +780,74 @@ impl ApiErrorCode {
             502 => ApiErrorCode::ApiError,
             503 => ApiErrorCode::OverloadedError,
             _ => ApiErrorCode::ApiError,
+        }
+    }
+}
+
+// -- Conversions to `language_model_core` types --
+
+impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: OpenRouterError) -> Self {
+        let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
+        match error {
+            OpenRouterError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
+            OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
+            OpenRouterError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
+            }
+            OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            OpenRouterError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            OpenRouterError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            OpenRouterError::ApiError(api_error) => api_error.into(),
+        }
+    }
+}
+
+impl From<ApiError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: ApiError) -> Self {
+        use ApiErrorCode::*;
+        let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
+        match error.code {
+            InvalidRequestError => Self::BadRequestFormat {
+                provider,
+                message: error.message,
+            },
+            AuthenticationError => Self::AuthenticationError {
+                provider,
+                message: error.message,
+            },
+            PaymentRequiredError => Self::AuthenticationError {
+                provider,
+                message: format!("Payment required: {}", error.message),
+            },
+            PermissionError => Self::PermissionError {
+                provider,
+                message: error.message,
+            },
+            RequestTimedOut => Self::HttpResponseError {
+                provider,
+                status_code: http_client::StatusCode::REQUEST_TIMEOUT,
+                message: error.message,
+            },
+            RateLimitError => Self::RateLimitExceeded {
+                provider,
+                retry_after: None,
+            },
+            ApiError => Self::ApiInternalServerError {
+                provider,
+                message: error.message,
+            },
+            OverloadedError => Self::ServerOverloaded {
+                provider,
+                retry_after: None,
+            },
         }
     }
 }

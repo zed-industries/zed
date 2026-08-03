@@ -1,46 +1,83 @@
-use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
+use gpui::{
+    Action, AnyElement, Hsla, MAX_BUTTONS_PER_SIDE, MouseButton, WindowButton, prelude::*, svg,
+};
 use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
-    close_window_action: Box<dyn Action>,
+    id: &'static str,
+    buttons: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+    close_action: Box<dyn Action>,
 }
 
 impl LinuxWindowControls {
-    pub fn new(close_window_action: Box<dyn Action>) -> Self {
+    pub fn new(
+        id: &'static str,
+        buttons: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+        close_action: Box<dyn Action>,
+    ) -> Self {
         Self {
-            close_window_action,
+            id,
+            buttons,
+            close_action,
         }
     }
 }
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_maximized = window.is_maximized();
+        let supported_controls = window.window_controls();
+        let button_elements: Vec<AnyElement> = self
+            .buttons
+            .iter()
+            .filter_map(|b| *b)
+            .filter(|button| match button {
+                WindowButton::Minimize => supported_controls.minimize,
+                WindowButton::Maximize => supported_controls.maximize,
+                WindowButton::Close => true,
+            })
+            .map(|button| {
+                create_window_button(button, button.id(), is_maximized, &*self.close_action, cx)
+            })
+            .collect();
+
         h_flex()
-            .id("generic-window-controls")
-            .px_3()
-            .gap_3()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(WindowControl::new(
-                "minimize",
-                WindowControlType::Minimize,
-                cx,
-            ))
-            .child(WindowControl::new(
-                "maximize-or-restore",
-                if window.is_maximized() {
-                    WindowControlType::Restore
-                } else {
-                    WindowControlType::Maximize
-                },
-                cx,
-            ))
-            .child(WindowControl::new_close(
-                "close",
-                WindowControlType::Close,
-                self.close_window_action,
-                cx,
-            ))
+            .id(self.id)
+            .when(!button_elements.is_empty(), |el| {
+                el.gap_3()
+                    .px_3()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .children(button_elements)
+            })
+    }
+}
+
+fn create_window_button(
+    button: WindowButton,
+    id: &'static str,
+    is_maximized: bool,
+    close_action: &dyn Action,
+    cx: &mut App,
+) -> AnyElement {
+    match button {
+        WindowButton::Minimize => {
+            WindowControl::new(id, WindowControlType::Minimize, cx).into_any_element()
+        }
+        WindowButton::Maximize => WindowControl::new(
+            id,
+            if is_maximized {
+                WindowControlType::Restore
+            } else {
+                WindowControlType::Maximize
+            },
+            cx,
+        )
+        .into_any_element(),
+        WindowButton::Close => {
+            WindowControl::new_close(id, WindowControlType::Close, close_action.boxed_clone(), cx)
+                .into_any_element()
+        }
     }
 }
 
@@ -168,29 +205,45 @@ impl WindowControl {
 }
 
 impl RenderOnce for WindowControl {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let enabled = match self.icon {
+            WindowControlType::Minimize => window.is_minimizable(),
+            WindowControlType::Restore | WindowControlType::Maximize => window.is_resizable(),
+            WindowControlType::Close => true,
+        };
         let icon = svg()
             .size_4()
             .flex_none()
             .path(self.icon.icon().path())
-            .text_color(self.style.icon)
-            .group_hover("", |this| this.text_color(self.style.icon_hover));
+            .text_color(if enabled {
+                self.style.icon
+            } else {
+                cx.theme().colors().icon_disabled
+            })
+            .when(enabled, |this| {
+                this.group_hover("", |this| this.text_color(self.style.icon_hover))
+            });
 
         h_flex()
             .id(self.id)
             .group("")
-            .cursor_pointer()
             .justify_center()
             .content_center()
             .rounded_2xl()
             .w_5()
             .h_5()
-            .hover(|this| this.bg(self.style.background_hover))
-            .active(|this| this.bg(self.style.background_hover))
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(self.style.background_hover))
+                    .active(|this| this.bg(self.style.background_hover))
+            })
             .child(icon)
             .on_mouse_move(|_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
+                if !enabled {
+                    return;
+                }
                 match self.icon {
                     WindowControlType::Minimize => window.minimize_window(),
                     WindowControlType::Restore => window.zoom_window(),

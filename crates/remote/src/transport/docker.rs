@@ -6,13 +6,14 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
+use std::collections::BTreeMap;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
 use util::ResultExt;
+use util::command::Stdio;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -24,18 +25,31 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use rpc::proto::Envelope;
 
 use crate::{
-    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs, RemotePlatform,
+    RemoteArch, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions, RemoteOs,
+    RemotePlatform,
     remote_client::{CommandTemplate, Interactive},
     transport::parse_platform,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub remote_user: String,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -44,6 +58,7 @@ pub(crate) struct DockerExecConnection {
     remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerConnectionOptions,
     remote_platform: Option<RemotePlatform>,
+    os_version: Option<String>,
     path_style: Option<PathStyle>,
     shell: String,
 }
@@ -60,6 +75,7 @@ impl DockerExecConnection {
             remote_binary_relpath: None,
             connection_options,
             remote_platform: None,
+            os_version: None,
             path_style: None,
             shell: "sh".to_owned(),
         };
@@ -74,11 +90,14 @@ impl DockerExecConnection {
 
         this.path_style = match remote_platform.os {
             RemoteOs::Windows => Some(PathStyle::Windows),
-            _ => Some(PathStyle::Posix),
+            _ => Some(PathStyle::Unix),
         };
 
         this.remote_platform = Some(remote_platform);
         log::info!("Remote platform discovered: {:?}", this.remote_platform);
+
+        this.os_version = this.discover_os_version(remote_platform.os).await;
+        log::info!("Remote OS version discovered: {:?}", this.os_version);
 
         this.shell = this.discover_shell().await;
         log::info!("Remote shell discovered: {}", this.shell);
@@ -108,12 +127,27 @@ impl DockerExecConnection {
         }
     }
 
+    /// Run a shell command inside the container and reliably extract its output
+    /// using unique delimiters, so that shell initialization noise (e.g. from
+    /// BASH_ENV or .bashrc) does not corrupt the result.
+    async fn run_docker_exec_delimited(&self, script: &str) -> Result<String> {
+        const MARKER: &str = "=====ZED_DELIM_7f3a9c=====";
+        let wrapped =
+            format!("printf '{MARKER}'; {script}; __exit=$?; printf '{MARKER}'; exit $__exit");
+        let output = self
+            .run_docker_exec("sh", None, &Default::default(), &["-c", &wrapped])
+            .await?;
+        let start = output.find(MARKER).map(|i| i + MARKER.len()).unwrap_or(0);
+        let end = output[start..]
+            .find(MARKER)
+            .map(|i| start + i)
+            .unwrap_or(output.len());
+        Ok(output[start..end].to_string())
+    }
+
     async fn discover_shell(&self) -> String {
         let default_shell = "sh";
-        match self
-            .run_docker_exec("sh", None, &Default::default(), &["-c", "echo $SHELL"])
-            .await
-        {
+        match self.run_docker_exec_delimited("echo $SHELL").await {
             Ok(shell) => match shell.trim() {
                 "" => {
                     log::info!("$SHELL is not set, checking passwd for user");
@@ -128,12 +162,7 @@ impl DockerExecConnection {
         }
 
         match self
-            .run_docker_exec(
-                "sh",
-                None,
-                &Default::default(),
-                &["-c", "getent passwd \"$(id -un)\" | cut -d: -f7"],
-            )
+            .run_docker_exec_delimited("getent passwd \"$(id -un)\" | cut -d: -f7")
             .await
         {
             Ok(shell) => match shell.trim() {
@@ -152,10 +181,23 @@ impl DockerExecConnection {
     }
 
     async fn check_remote_platform(&self) -> Result<RemotePlatform> {
-        let uname = self
-            .run_docker_exec("uname", None, &Default::default(), &["-sm"])
-            .await?;
+        let uname = self.run_docker_exec_delimited("uname -sm").await?;
         parse_platform(&uname)
+    }
+
+    /// Best-effort detection of the container's OS version for telemetry.
+    async fn discover_os_version(&self, os: RemoteOs) -> Option<String> {
+        let (program, args) = super::os_version_command(os);
+        match self
+            .run_docker_exec(program, None, &Default::default(), args)
+            .await
+        {
+            Ok(output) => super::parse_os_version(os, &output),
+            Err(error) => {
+                log::warn!("Failed to determine remote OS version: {error:#}");
+                None
+            }
+        }
     }
 
     async fn ensure_server_binary(
@@ -185,7 +227,7 @@ impl DockerExecConnection {
             version_str
         );
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::from_unix_str(&binary_name).unwrap());
 
         let binary_exists_on_server = self
             .run_docker_exec(
@@ -206,7 +248,7 @@ impl DockerExecConnection {
         .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                RelPath::unix(&format!(
+                RelPath::from_unix_str(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -223,11 +265,11 @@ impl DockerExecConnection {
             .await?;
             self.extract_server_binary(&dst_path, &tmp_path, &remote_dir_for_server, delegate, cx)
                 .await?;
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         if binary_exists_on_server {
-            return Ok(dst_path);
+            return Ok(dst_path.into());
         }
 
         let wanted_version = cx.update(|cx| match release_channel {
@@ -242,7 +284,7 @@ impl DockerExecConnection {
         })?;
 
         let tmp_path_gz = paths::remote_server_dir_relative().join(
-            RelPath::unix(&format!(
+            RelPath::from_unix_str(&format!(
                 "{}-download-{}.gz",
                 binary_name,
                 std::process::id()
@@ -268,7 +310,7 @@ impl DockerExecConnection {
                     )
                     .await
                     .context("extracting server binary")?;
-                    return Ok(dst_path);
+                    return Ok(dst_path.into());
                 }
                 Err(e) => {
                     log::error!(
@@ -300,18 +342,11 @@ impl DockerExecConnection {
         )
         .await
         .context("extracting server binary")?;
-        Ok(dst_path)
+        Ok(dst_path.into())
     }
 
     async fn docker_user_home_dir(&self) -> Result<String> {
-        let inner_program = self.shell();
-        self.run_docker_exec(
-            &inner_program,
-            None,
-            &Default::default(),
-            &["-c", "echo $HOME"],
-        )
-        .await
+        self.run_docker_exec_delimited("echo $HOME").await
     }
 
     async fn extract_server_binary(
@@ -400,7 +435,7 @@ impl DockerExecConnection {
         src_path: String,
         dst_path: String,
     ) -> Result<()> {
-        let mut command = util::command::new_smol_command(&docker_cli);
+        let mut command = util::command::new_command(&docker_cli);
         command.arg("cp");
         command.arg("-a");
         command.arg(&src_path);
@@ -419,7 +454,7 @@ impl DockerExecConnection {
             );
         }
 
-        let mut chown_command = util::command::new_smol_command(&docker_cli);
+        let mut chown_command = util::command::new_command(&docker_cli);
         chown_command.arg("exec");
         chown_command.arg(connection_options.container_id);
         chown_command.arg("chown");
@@ -469,7 +504,7 @@ impl DockerExecConnection {
         subcommand: &str,
         args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command.arg(subcommand);
         for arg in args {
             command.arg(arg.as_ref());
@@ -499,10 +534,14 @@ impl DockerExecConnection {
         args.push("-u".to_string());
         args.push(self.connection_options.remote_user.clone());
 
+        for (k, v) in self.connection_options.remote_env.iter() {
+            args.push("-e".to_string());
+            args.push(format!("{k}={v}"));
+        }
+
         for (k, v) in env.iter() {
             args.push("-e".to_string());
-            let env_declaration = format!("{}={}", k, v);
-            args.push(env_declaration);
+            args.push(format!("{k}={v}"));
         }
 
         args.push(self.connection_options.container_id.clone());
@@ -589,7 +628,7 @@ impl DockerExecConnection {
 
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_smol_command("kill")
+            if let Ok(_) = util::command::new_command("kill")
                 .arg(pid.to_string())
                 .spawn()
             {
@@ -632,10 +671,15 @@ impl RemoteConnection for DockerExecConnection {
         };
 
         let mut docker_args = vec!["exec".to_string()];
+
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
         for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
             if let Some(value) = std::env::var(env_var).ok() {
                 docker_args.push("-e".to_string());
-                docker_args.push(format!("{}='{}'", env_var, value));
+                docker_args.push(format!("{env_var}={value}"));
             }
         }
 
@@ -658,7 +702,7 @@ impl RemoteConnection for DockerExecConnection {
         if reconnect {
             docker_args.push("--reconnect".to_string());
         }
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -739,7 +783,8 @@ impl RemoteConnection for DockerExecConnection {
             const TILDE_PREFIX: &'static str = "~/";
             if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                parsed_working_dir = Some(format!("$HOME/{working_dir}"));
+                parsed_working_dir =
+                    Some(format!("{}/{}", self.remote_dir_for_server, working_dir));
             } else {
                 parsed_working_dir = Some(working_dir);
             }
@@ -768,9 +813,14 @@ impl RemoteConnection for DockerExecConnection {
             docker_args.push(parsed_working_dir);
         }
 
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
+
         for (k, v) in env.iter() {
             docker_args.push("-e".to_string());
-            docker_args.push(format!("{}={}", k, v));
+            docker_args.push(format!("{k}={v}"));
         }
 
         match interactive {
@@ -801,7 +851,20 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        self.path_style.unwrap_or(PathStyle::Posix)
+        self.path_style.unwrap_or(PathStyle::Unix)
+    }
+
+    fn remote_platform(&self) -> RemotePlatform {
+        // Docker containers are always Linux; the platform is populated during
+        // setup, so this fallback is only for the brief pre-detection window.
+        self.remote_platform.unwrap_or(RemotePlatform {
+            os: RemoteOs::Linux,
+            arch: RemoteArch::X86_64,
+        })
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
     }
 
     fn shell(&self) -> String {

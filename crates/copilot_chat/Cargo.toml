@@ -15,16 +15,15 @@ doctest = false
 [features]
 default = []
 test-support = [
-    "collections/test-support",
     "gpui/test-support",
     "settings/test-support",
 ]
 
 [dependencies]
+anthropic.workspace = true
 anyhow.workspace = true
-collections.workspace = true
+credentials_provider.workspace = true
 dirs.workspace = true
-fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -33,6 +32,7 @@ paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+zed_credentials_provider.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
