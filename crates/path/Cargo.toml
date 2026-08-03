@@ -3,7 +3,7 @@ name = "path"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lib]
 path = "src/path.rs"

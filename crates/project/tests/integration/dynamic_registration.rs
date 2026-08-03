@@ -1,6 +1,8 @@
 //! Tests for dynamic (un)registration of language server capabilities, handled in
 //! `project::lsp_store::dynamic_registration`.
 
+use std::collections::BTreeMap;
+
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -942,12 +944,225 @@ async fn test_multi_registration_diagnostics(cx: &mut gpui::TestAppContext) {
     );
 }
 
+/// One large scenario for all per-server-refreshable LSP data kinds (document colors,
+/// links, folding ranges, symbols, code lens, semantic tokens, inlay hints), asserting
+/// at the data level that per-server refreshes never disturb other servers:
+/// neither the second server on the same buffer, nor a server of an unrelated language.
+#[gpui::test]
+async fn test_per_server_refreshes_keep_other_servers_data(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({ "a.rs": "fn main() {\n}\n", "b.md": "# title\ntext\n" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    language_registry.add(markdown_lang());
+
+    let mut static_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "static-server",
+            capabilities: all_lsp_data_server_capabilities(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut dynamic_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "dynamic-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut markdown_servers = language_registry.register_fake_lsp(
+        "Markdown",
+        FakeLspAdapter {
+            name: "markdown-server",
+            capabilities: all_lsp_data_server_capabilities(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    let (rust_buffer, _rust_lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (markdown_buffer, _markdown_lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/b.md"), cx)
+        })
+        .await
+        .unwrap();
+    let static_server = static_servers.next().await.unwrap();
+    let dynamic_server = dynamic_servers.next().await.unwrap();
+    let markdown_server = markdown_servers.next().await.unwrap();
+    let static_server_id = static_server.server.server_id();
+    let dynamic_server_id = dynamic_server.server.server_id();
+    let markdown_server_id = markdown_server.server.server_id();
+    let static_counts = serve_lsp_data(&static_server, 1);
+    let dynamic_counts = serve_lsp_data(&dynamic_server, 2);
+    let markdown_counts = serve_lsp_data(&markdown_server, 3);
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+    cx.executor().run_until_parked();
+
+    let only_static = lsp_data_labels(&[(static_server_id, 1)]);
+    let both_rust_servers = lsp_data_labels(&[(static_server_id, 1), (dynamic_server_id, 2)]);
+    let only_markdown = lsp_data_labels(&[(markdown_server_id, 3)]);
+    let dynamic_refresh = InvalidationStrategy::RefreshRequested {
+        server_id: dynamic_server_id,
+    };
+    let all_dynamic_refresh_events = vec![
+        format!("code_lens({dynamic_server_id})"),
+        format!("document_colors({dynamic_server_id})"),
+        format!("document_links({dynamic_server_id})"),
+        format!("document_symbols({dynamic_server_id})"),
+        format!("folding_ranges({dynamic_server_id})"),
+        format!("inlay_hints({dynamic_server_id})"),
+        format!("semantic_tokens({dynamic_server_id})"),
+    ];
+
+    assert_eq!(
+        fetch_all_lsp_data(&project, &rust_buffer, InvalidationStrategy::None, cx).await,
+        only_static,
+        "expected only the statically capable server's data after the initial fetch",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &markdown_buffer, InvalidationStrategy::None, cx).await,
+        only_markdown,
+        "expected the markdown server's data after the initial fetch",
+    );
+    assert_eq!(refresh_events.lock().as_slice(), &[] as &[String]);
+
+    register_all_lsp_data_capabilities(&dynamic_server).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        sorted(refresh_events.lock().drain(..)),
+        all_dynamic_refresh_events,
+        "expected every dynamic registration to trigger the corresponding per-server refresh",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &rust_buffer, dynamic_refresh, cx).await,
+        both_rust_servers,
+        "expected both servers' data after the dynamic registrations",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &markdown_buffer, InvalidationStrategy::None, cx).await,
+        only_markdown,
+        "expected the registrations of another language's server to not disturb markdown data",
+    );
+
+    dynamic_server
+        .request::<lsp::request::CodeLensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
+        .unwrap();
+    dynamic_server
+        .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
+        .unwrap();
+    dynamic_server
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(
+        sorted(refresh_events.lock().drain(..)),
+        vec![
+            format!("code_lens({dynamic_server_id})"),
+            format!("inlay_hints({dynamic_server_id})"),
+            format!("semantic_tokens({dynamic_server_id})"),
+        ],
+        "expected the server-sent refresh requests to trigger per-server refreshes",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &rust_buffer, dynamic_refresh, cx).await,
+        both_rust_servers,
+        "expected the per-server refresh requests to keep the other server's data",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &markdown_buffer, InvalidationStrategy::None, cx).await,
+        only_markdown,
+        "expected another language server's refresh requests to not disturb markdown data",
+    );
+
+    unregister_all_lsp_data_capabilities(&dynamic_server).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        sorted(refresh_events.lock().drain(..)),
+        all_dynamic_refresh_events,
+        "expected every unregistration to trigger the corresponding per-server refresh",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &rust_buffer, dynamic_refresh, cx).await,
+        only_static,
+        "expected the unregistrations to drop only the dynamic server's data",
+    );
+    assert_eq!(
+        fetch_all_lsp_data(&project, &markdown_buffer, InvalidationStrategy::None, cx).await,
+        only_markdown,
+        "expected the unregistrations of another language's server to not disturb markdown data",
+    );
+
+    assert_eq!(
+        *static_counts.lock(),
+        BTreeMap::from_iter([
+            ("code_lens", 1),
+            ("colors", 1),
+            ("document_symbols", 1),
+            ("folding_ranges", 1),
+            ("inlay_hints", 1),
+            ("links", 1),
+            ("semantic_tokens", 1),
+        ]),
+        "expected the static server to never be re-queried by the other server's changes",
+    );
+    assert_eq!(
+        *dynamic_counts.lock(),
+        BTreeMap::from_iter([
+            ("code_lens", 2),
+            ("colors", 1),
+            ("document_symbols", 1),
+            ("folding_ranges", 1),
+            ("inlay_hints", 2),
+            ("links", 1),
+            ("semantic_tokens", 2),
+        ]),
+        "expected the dynamic server to be re-queried only after registering and for the kinds it requested refreshes for",
+    );
+    assert_eq!(
+        *markdown_counts.lock(),
+        BTreeMap::from_iter([
+            ("code_lens", 1),
+            ("colors", 1),
+            ("document_symbols", 1),
+            ("folding_ranges", 1),
+            ("inlay_hints", 1),
+            ("links", 1),
+            ("semantic_tokens", 1),
+        ]),
+        "expected the markdown server to never be re-queried by the rust servers' changes",
+    );
+}
+
+/// Unlike [`test_per_server_refreshes_keep_other_servers_data`], focuses on the
+/// dynamic capability changes as the refresh trigger: how they combine data from
+/// static and dynamic capabilities (e.g. completion trigger characters), and which
+/// servers get [re-]queried after the capability changes.
 #[gpui::test]
 async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "fn main() {}" }))
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "fn main() {\n}\n" }))
         .await;
     let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -958,30 +1173,11 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
         FakeLspAdapter {
             name: "static-server",
             capabilities: lsp::ServerCapabilities {
-                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
-                document_link_provider: Some(lsp::DocumentLinkOptions {
-                    resolve_provider: None,
-                    work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
-                }),
-                folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
-                document_symbol_provider: Some(lsp::OneOf::Left(true)),
-                code_lens_provider: Some(lsp::CodeLensOptions {
-                    resolve_provider: None,
-                }),
-                semantic_tokens_provider: Some(
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                        lsp::SemanticTokensOptions {
-                            full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
-                            ..lsp::SemanticTokensOptions::default()
-                        },
-                    ),
-                ),
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
                     ..lsp::CompletionOptions::default()
                 }),
-                ..lsp::ServerCapabilities::default()
+                ..all_lsp_data_server_capabilities()
             },
             ..FakeLspAdapter::default()
         },
@@ -1004,96 +1200,48 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
     let static_server = static_servers.next().await.unwrap();
     let dynamic_server = dynamic_servers.next().await.unwrap();
     let dynamic_server_id = dynamic_server.server.server_id();
-    cx.executor().run_until_parked();
-
-    let static_counters = count_lsp_requests(&static_server);
-    let dynamic_counters = count_lsp_requests(&dynamic_server);
+    let static_counts = serve_lsp_data(&static_server, 1);
+    let dynamic_counts = serve_lsp_data(&dynamic_server, 2);
     let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
     let buffer_triggers = |cx: &mut gpui::TestAppContext| {
         buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
     };
+    cx.executor().run_until_parked();
 
-    fetch_lsp_data(&project, &buffer, cx).await;
+    let all_kinds_queried_once = BTreeMap::from_iter([
+        ("code_lens", 1),
+        ("colors", 1),
+        ("document_symbols", 1),
+        ("folding_ranges", 1),
+        ("inlay_hints", 1),
+        ("links", 1),
+        ("semantic_tokens", 1),
+    ]);
+    let all_dynamic_refresh_events = vec![
+        format!("code_lens({dynamic_server_id})"),
+        format!("document_colors({dynamic_server_id})"),
+        format!("document_links({dynamic_server_id})"),
+        format!("document_symbols({dynamic_server_id})"),
+        format!("folding_ranges({dynamic_server_id})"),
+        format!("inlay_hints({dynamic_server_id})"),
+        format!("semantic_tokens({dynamic_server_id})"),
+    ];
+
+    fetch_all_lsp_data(&project, &buffer, InvalidationStrategy::None, cx).await;
     assert_eq!(
-        static_counters.snapshot(),
-        LspRequestCounts {
-            colors: 1,
-            links: 1,
-            folding_ranges: 1,
-            document_symbols: 1,
-            code_lens: 1,
-            semantic_tokens: 1,
-        },
+        *static_counts.lock(),
+        all_kinds_queried_once,
         "expected the initial fetch to query the statically capable server",
     );
     assert_eq!(
-        dynamic_counters.snapshot(),
-        LspRequestCounts::default(),
+        *dynamic_counts.lock(),
+        BTreeMap::new(),
         "expected the initial fetch to skip the server without capabilities",
     );
     assert_eq!(buffer_triggers(cx), BTreeSet::from([".".to_string()]));
     assert_eq!(refresh_events.lock().as_slice(), &[] as &[String]);
 
-    register_capability(
-        &dynamic_server,
-        "textDocument/documentColor",
-        "colors",
-        None,
-    )
-    .await;
-    register_capability(
-        &dynamic_server,
-        "textDocument/documentLink",
-        "links",
-        serde_json::to_value(lsp::DocumentLinkOptions {
-            resolve_provider: None,
-            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
-        })
-        .ok(),
-    )
-    .await;
-    register_capability(
-        &dynamic_server,
-        "textDocument/foldingRange",
-        "folding",
-        None,
-    )
-    .await;
-    register_capability(
-        &dynamic_server,
-        "textDocument/documentSymbol",
-        "symbols",
-        None,
-    )
-    .await;
-    register_capability(
-        &dynamic_server,
-        "textDocument/codeLens",
-        "code-lens",
-        serde_json::to_value(lsp::CodeLensOptions {
-            resolve_provider: None,
-        })
-        .ok(),
-    )
-    .await;
-    register_capability(
-        &dynamic_server,
-        "textDocument/semanticTokens",
-        "tokens",
-        serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
-            text_document_registration_options: lsp::TextDocumentRegistrationOptions {
-                document_selector: None,
-            },
-            semantic_tokens_options: lsp::SemanticTokensOptions {
-                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
-                ..lsp::SemanticTokensOptions::default()
-            },
-            static_registration_options: lsp::StaticRegistrationOptions::default(),
-        })
-        .ok(),
-    )
-    .await;
-    register_capability(&dynamic_server, "textDocument/inlayHint", "hints", None).await;
+    register_all_lsp_data_capabilities(&dynamic_server).await;
     register_capability(
         &dynamic_server,
         "textDocument/completion",
@@ -1109,15 +1257,7 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
 
     assert_eq!(
         sorted(refresh_events.lock().drain(..)),
-        vec![
-            format!("code_lens({dynamic_server_id})"),
-            format!("document_colors({dynamic_server_id})"),
-            format!("document_links({dynamic_server_id})"),
-            format!("document_symbols({dynamic_server_id})"),
-            format!("folding_ranges({dynamic_server_id})"),
-            format!("inlay_hints({dynamic_server_id})"),
-            format!("semantic_tokens({dynamic_server_id})"),
-        ],
+        all_dynamic_refresh_events,
         "expected every dynamic registration to trigger the corresponding per-server refresh",
     );
     assert_eq!(
@@ -1126,53 +1266,33 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
         "expected trigger characters from both servers to be combined",
     );
 
-    fetch_lsp_data(&project, &buffer, cx).await;
-    assert_eq!(
-        dynamic_counters.snapshot(),
-        LspRequestCounts {
-            colors: 1,
-            links: 1,
-            folding_ranges: 1,
-            document_symbols: 1,
-            code_lens: 1,
-            semantic_tokens: 1,
+    fetch_all_lsp_data(
+        &project,
+        &buffer,
+        InvalidationStrategy::RefreshRequested {
+            server_id: dynamic_server_id,
         },
+        cx,
+    )
+    .await;
+    assert_eq!(
+        *dynamic_counts.lock(),
+        all_kinds_queried_once,
         "expected the newly registered server to be queried after the refreshes",
     );
     assert_eq!(
-        static_counters.snapshot(),
-        LspRequestCounts {
-            colors: 1,
-            links: 1,
-            folding_ranges: 1,
-            document_symbols: 1,
-            code_lens: 1,
-            semantic_tokens: 1,
-        },
+        *static_counts.lock(),
+        all_kinds_queried_once,
         "expected per-server refreshes to leave the static server's cached data untouched",
     );
 
-    unregister_capabilities(&dynamic_server, "textDocument/documentColor", &["colors"]).await;
-    unregister_capabilities(&dynamic_server, "textDocument/documentLink", &["links"]).await;
-    unregister_capabilities(&dynamic_server, "textDocument/foldingRange", &["folding"]).await;
-    unregister_capabilities(&dynamic_server, "textDocument/documentSymbol", &["symbols"]).await;
-    unregister_capabilities(&dynamic_server, "textDocument/codeLens", &["code-lens"]).await;
-    unregister_capabilities(&dynamic_server, "textDocument/semanticTokens", &["tokens"]).await;
-    unregister_capabilities(&dynamic_server, "textDocument/inlayHint", &["hints"]).await;
+    unregister_all_lsp_data_capabilities(&dynamic_server).await;
     unregister_capabilities(&dynamic_server, "textDocument/completion", &["completions"]).await;
     cx.executor().run_until_parked();
 
     assert_eq!(
         sorted(refresh_events.lock().drain(..)),
-        vec![
-            format!("code_lens({dynamic_server_id})"),
-            format!("document_colors({dynamic_server_id})"),
-            format!("document_links({dynamic_server_id})"),
-            format!("document_symbols({dynamic_server_id})"),
-            format!("folding_ranges({dynamic_server_id})"),
-            format!("inlay_hints({dynamic_server_id})"),
-            format!("semantic_tokens({dynamic_server_id})"),
-        ],
+        all_dynamic_refresh_events,
         "expected every unregistration to trigger the corresponding per-server refresh",
     );
     assert_eq!(
@@ -1181,29 +1301,23 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
         "expected only the static server's trigger characters to remain",
     );
 
-    fetch_lsp_data(&project, &buffer, cx).await;
-    assert_eq!(
-        dynamic_counters.snapshot(),
-        LspRequestCounts {
-            colors: 1,
-            links: 1,
-            folding_ranges: 1,
-            document_symbols: 1,
-            code_lens: 1,
-            semantic_tokens: 1,
+    fetch_all_lsp_data(
+        &project,
+        &buffer,
+        InvalidationStrategy::RefreshRequested {
+            server_id: dynamic_server_id,
         },
+        cx,
+    )
+    .await;
+    assert_eq!(
+        *dynamic_counts.lock(),
+        all_kinds_queried_once,
         "expected the unregistered server to not be queried anymore",
     );
     assert_eq!(
-        static_counters.snapshot(),
-        LspRequestCounts {
-            colors: 1,
-            links: 1,
-            folding_ranges: 1,
-            document_symbols: 1,
-            code_lens: 1,
-            semantic_tokens: 1,
-        },
+        *static_counts.lock(),
+        all_kinds_queried_once,
         "expected the static server to never be re-queried by another server's capability changes",
     );
 }
@@ -1717,90 +1831,6 @@ fn server_capabilities(
     })
 }
 
-#[derive(Default)]
-struct LspRequestCounters {
-    colors: Arc<atomic::AtomicUsize>,
-    links: Arc<atomic::AtomicUsize>,
-    folding_ranges: Arc<atomic::AtomicUsize>,
-    document_symbols: Arc<atomic::AtomicUsize>,
-    code_lens: Arc<atomic::AtomicUsize>,
-    semantic_tokens: Arc<atomic::AtomicUsize>,
-}
-
-#[derive(Debug, Default, PartialEq)]
-struct LspRequestCounts {
-    colors: usize,
-    links: usize,
-    folding_ranges: usize,
-    document_symbols: usize,
-    code_lens: usize,
-    semantic_tokens: usize,
-}
-
-impl LspRequestCounters {
-    fn snapshot(&self) -> LspRequestCounts {
-        LspRequestCounts {
-            colors: self.colors.load(atomic::Ordering::Acquire),
-            links: self.links.load(atomic::Ordering::Acquire),
-            folding_ranges: self.folding_ranges.load(atomic::Ordering::Acquire),
-            document_symbols: self.document_symbols.load(atomic::Ordering::Acquire),
-            code_lens: self.code_lens.load(atomic::Ordering::Acquire),
-            semantic_tokens: self.semantic_tokens.load(atomic::Ordering::Acquire),
-        }
-    }
-}
-
-fn count_lsp_requests(fake_server: &lsp::FakeLanguageServer) -> LspRequestCounters {
-    let counters = LspRequestCounters::default();
-    fake_server.set_request_handler::<lsp::request::DocumentColor, _, _>({
-        let count = counters.colors.clone();
-        move |_, _| {
-            count.fetch_add(1, atomic::Ordering::Release);
-            async move { Ok(Vec::new()) }
-        }
-    });
-    fake_server.set_request_handler::<lsp::request::DocumentLinkRequest, _, _>({
-        let count = counters.links.clone();
-        move |_, _| {
-            count.fetch_add(1, atomic::Ordering::Release);
-            async move { Ok(None) }
-        }
-    });
-    fake_server.set_request_handler::<lsp::request::FoldingRangeRequest, _, _>({
-        let count = counters.folding_ranges.clone();
-        move |_, _| {
-            count.fetch_add(1, atomic::Ordering::Release);
-            async move { Ok(None) }
-        }
-    });
-    fake_server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
-        let count = counters.document_symbols.clone();
-        move |_, _| {
-            count.fetch_add(1, atomic::Ordering::Release);
-            async move { Ok(None) }
-        }
-    });
-    fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
-        let count = counters.code_lens.clone();
-        move |_, _| {
-            count.fetch_add(1, atomic::Ordering::Release);
-            async move { Ok(None) }
-        }
-    });
-    fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
-        let count = counters.semantic_tokens.clone();
-        move |_, _| {
-            count.fetch_add(1, atomic::Ordering::Release);
-            async move {
-                Ok(Some(lsp::SemanticTokensResult::Tokens(
-                    lsp::SemanticTokens::default(),
-                )))
-            }
-        }
-    });
-    counters
-}
-
 fn observe_refresh_events(
     project: &Entity<Project>,
     cx: &mut gpui::TestAppContext,
@@ -1841,12 +1871,284 @@ fn observe_refresh_events(
     (events, subscription)
 }
 
-async fn fetch_lsp_data(
+fn sorted(events: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut events = events.into_iter().collect::<Vec<_>>();
+    events.sort();
+    events
+}
+
+fn all_lsp_data_server_capabilities() -> lsp::ServerCapabilities {
+    lsp::ServerCapabilities {
+        color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+        document_link_provider: Some(lsp::DocumentLinkOptions {
+            resolve_provider: None,
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+        }),
+        folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+        document_symbol_provider: Some(lsp::OneOf::Left(true)),
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: None,
+        }),
+        semantic_tokens_provider: Some(
+            lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp::SemanticTokensOptions {
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: vec!["keyword".into()],
+                        token_modifiers: Vec::new(),
+                    },
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                    ..lsp::SemanticTokensOptions::default()
+                },
+            ),
+        ),
+        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    }
+}
+
+async fn register_all_lsp_data_capabilities(fake_server: &lsp::FakeLanguageServer) {
+    register_capability(fake_server, "textDocument/documentColor", "colors", None).await;
+    register_capability(
+        fake_server,
+        "textDocument/documentLink",
+        "links",
+        serde_json::to_value(lsp::DocumentLinkOptions {
+            resolve_provider: None,
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+        })
+        .ok(),
+    )
+    .await;
+    register_capability(fake_server, "textDocument/foldingRange", "folding", None).await;
+    register_capability(fake_server, "textDocument/documentSymbol", "symbols", None).await;
+    register_capability(
+        fake_server,
+        "textDocument/codeLens",
+        "code-lens",
+        serde_json::to_value(lsp::CodeLensOptions {
+            resolve_provider: None,
+        })
+        .ok(),
+    )
+    .await;
+    register_capability(
+        fake_server,
+        "textDocument/semanticTokens",
+        "tokens",
+        serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+            text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                document_selector: None,
+            },
+            semantic_tokens_options: lsp::SemanticTokensOptions {
+                legend: lsp::SemanticTokensLegend {
+                    token_types: vec!["keyword".into()],
+                    token_modifiers: Vec::new(),
+                },
+                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                ..lsp::SemanticTokensOptions::default()
+            },
+            static_registration_options: lsp::StaticRegistrationOptions::default(),
+        })
+        .ok(),
+    )
+    .await;
+    register_capability(fake_server, "textDocument/inlayHint", "hints", None).await;
+}
+
+async fn unregister_all_lsp_data_capabilities(fake_server: &lsp::FakeLanguageServer) {
+    unregister_capabilities(fake_server, "textDocument/documentColor", &["colors"]).await;
+    unregister_capabilities(fake_server, "textDocument/documentLink", &["links"]).await;
+    unregister_capabilities(fake_server, "textDocument/foldingRange", &["folding"]).await;
+    unregister_capabilities(fake_server, "textDocument/documentSymbol", &["symbols"]).await;
+    unregister_capabilities(fake_server, "textDocument/codeLens", &["code-lens"]).await;
+    unregister_capabilities(fake_server, "textDocument/semanticTokens", &["tokens"]).await;
+    unregister_capabilities(fake_server, "textDocument/inlayHint", &["hints"]).await;
+}
+
+type LspRequestCounts = Arc<Mutex<BTreeMap<&'static str, usize>>>;
+
+/// Serves distinct data, derived from `index`, for every LSP data kind, and counts the
+/// requests served per kind. [`lsp_data_labels`] builds the expected fetch results for
+/// the same `index`.
+fn serve_lsp_data(fake_server: &lsp::FakeLanguageServer, index: u8) -> LspRequestCounts {
+    let counts = LspRequestCounts::default();
+    fake_server.set_request_handler::<lsp::request::DocumentColor, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("colors").or_default() += 1;
+            async move {
+                Ok(vec![lsp::ColorInformation {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                    color: lsp::Color {
+                        red: 0.0,
+                        green: 0.0,
+                        blue: 0.0,
+                        alpha: f32::from(index),
+                    },
+                }])
+            }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::DocumentLinkRequest, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("links").or_default() += 1;
+            async move {
+                Ok(Some(vec![lsp::DocumentLink {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                    target: Some(format!("https://server-{index}.example/").parse().unwrap()),
+                    tooltip: None,
+                    data: None,
+                }]))
+            }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::FoldingRangeRequest, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("folding_ranges").or_default() += 1;
+            async move {
+                Ok(Some(vec![lsp::FoldingRange {
+                    start_line: 0,
+                    start_character: None,
+                    end_line: 1,
+                    end_character: None,
+                    kind: None,
+                    collapsed_text: Some(format!("fold-{index}")),
+                }]))
+            }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("document_symbols").or_default() += 1;
+            async move {
+                #[allow(deprecated)]
+                Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                    lsp::DocumentSymbol {
+                        name: format!("symbol-{index}"),
+                        detail: None,
+                        kind: lsp::SymbolKind::FUNCTION,
+                        tags: None,
+                        deprecated: None,
+                        range: lsp::Range::default(),
+                        selection_range: lsp::Range::default(),
+                        children: None,
+                    },
+                ])))
+            }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("code_lens").or_default() += 1;
+            async move {
+                Ok(Some(vec![lsp::CodeLens {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                    command: Some(lsp::Command {
+                        title: format!("lens-{index}"),
+                        command: "test.command".to_string(),
+                        arguments: None,
+                    }),
+                    data: None,
+                }]))
+            }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("semantic_tokens").or_default() += 1;
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        result_id: None,
+                        data: semantic_token_test_data(index),
+                    },
+                )))
+            }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>({
+        let counts = counts.clone();
+        move |_, _| {
+            *counts.lock().entry("inlay_hints").or_default() += 1;
+            async move {
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(0, 0),
+                    label: lsp::InlayHintLabel::String(format!("hint-{index}")),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                }]))
+            }
+        }
+    });
+    counts
+}
+
+fn semantic_token_test_data(index: u8) -> Vec<u32> {
+    vec![0, u32::from(index - 1) * 4, 1, 0, 0]
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct LspDataLabels {
+    colors: Vec<String>,
+    links: Vec<String>,
+    folding_ranges: Vec<String>,
+    document_symbols: Vec<String>,
+    code_lens: Vec<String>,
+    semantic_tokens: Vec<(LanguageServerId, Vec<u32>)>,
+    inlay_hints: Vec<(LanguageServerId, Vec<String>)>,
+}
+
+impl LspDataLabels {
+    fn sort(&mut self) {
+        self.colors.sort();
+        self.links.sort();
+        self.folding_ranges.sort();
+        self.document_symbols.sort();
+        self.code_lens.sort();
+        self.semantic_tokens.sort();
+        self.inlay_hints.sort();
+    }
+}
+
+/// The expected [`fetch_all_lsp_data`] results for servers set up with [`serve_lsp_data`].
+fn lsp_data_labels(servers: &[(LanguageServerId, u8)]) -> LspDataLabels {
+    let mut labels = LspDataLabels::default();
+    for &(server_id, index) in servers {
+        labels.colors.push(format!("color-{index}"));
+        labels
+            .links
+            .push(format!("https://server-{index}.example/"));
+        labels.folding_ranges.push(format!("fold-{index}"));
+        labels.document_symbols.push(format!("symbol-{index}"));
+        labels.code_lens.push(format!("lens-{index}"));
+        labels
+            .semantic_tokens
+            .push((server_id, semantic_token_test_data(index)));
+        labels
+            .inlay_hints
+            .push((server_id, vec![format!("hint-{index}")]));
+    }
+    labels.sort();
+    labels
+}
+
+async fn fetch_all_lsp_data(
     project: &Entity<Project>,
     buffer: &Entity<Buffer>,
+    inlay_hints_invalidate: InvalidationStrategy,
     cx: &mut gpui::TestAppContext,
-) {
+) -> LspDataLabels {
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     let colors = lsp_store.update(cx, |lsp_store, cx| {
         lsp_store.document_colors(buffer.clone(), cx)
     });
@@ -1863,18 +2165,73 @@ async fn fetch_lsp_data(
     let semantic_tokens = lsp_store.update(cx, |lsp_store, cx| {
         lsp_store.semantic_tokens(buffer.clone(), cx)
     });
-    if let Some(colors) = colors {
-        colors.await.unwrap();
-    }
-    links.await;
-    folding_ranges.await;
-    document_symbols.await;
-    code_lens.await.unwrap();
-    semantic_tokens.await.unwrap();
-}
+    let inlay_hint_tasks = lsp_store.update(cx, |lsp_store, cx| {
+        let query_range =
+            buffer.read(cx).anchor_before(0)..buffer.read(cx).anchor_after(buffer.read(cx).len());
+        lsp_store.inlay_hints(
+            inlay_hints_invalidate,
+            buffer.clone(),
+            vec![query_range],
+            None,
+            cx,
+        )
+    });
 
-fn sorted(events: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut events = events.into_iter().collect::<Vec<_>>();
-    events.sort();
-    events
+    let mut labels = LspDataLabels::default();
+    if let Some(colors) = colors {
+        labels.colors.extend(
+            colors
+                .await
+                .unwrap()
+                .colors
+                .into_iter()
+                .map(|color| format!("color-{}", color.color.alpha as u8)),
+        );
+    }
+    labels.links.extend(
+        links
+            .await
+            .unwrap_or_default()
+            .values()
+            .flat_map(|server_links| server_links.values())
+            .filter_map(|link| link.target.clone())
+            .map(|target| target.to_string()),
+    );
+    labels.folding_ranges.extend(
+        folding_ranges
+            .await
+            .into_iter()
+            .filter_map(|folding_range| folding_range.collapsed_text)
+            .map(|collapsed_text| collapsed_text.to_string()),
+    );
+    labels.document_symbols.extend(
+        document_symbols
+            .await
+            .into_iter()
+            .map(|symbol| symbol.text.to_string()),
+    );
+    labels.code_lens.extend(
+        code_lens
+            .await
+            .unwrap()
+            .unwrap_or_default()
+            .values()
+            .map(|action| action.lsp_action.title().to_string()),
+    );
+    semantic_tokens.await.unwrap();
+    labels.semantic_tokens =
+        lsp_store.read_with(cx, |lsp_store, _| lsp_store.semantic_token_data(buffer_id));
+    for (_, hints_task) in inlay_hint_tasks {
+        for (server_id, server_hints) in hints_task.await.unwrap() {
+            let hint_labels = server_hints
+                .into_iter()
+                .map(|(_, hint)| hint.text().to_string())
+                .collect::<Vec<_>>();
+            if !hint_labels.is_empty() {
+                labels.inlay_hints.push((server_id, hint_labels));
+            }
+        }
+    }
+    labels.sort();
+    labels
 }
