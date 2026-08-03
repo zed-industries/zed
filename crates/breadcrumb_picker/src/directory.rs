@@ -171,6 +171,7 @@ impl BreadcrumbDirectoryDelegate {
             };
             let mut picker = Picker::uniform_list(delegate, window, cx)
                 .popover()
+                .show_scrollbar(true)
                 // Narrower than the picker default, which is sized for modals: this lists file
                 // names beside their own segment.
                 .initial_width(rems(15.));
@@ -524,7 +525,6 @@ pub(crate) fn render_breadcrumb_directory_segment(
         .style(ButtonStyle::Transparent)
         .size(ButtonSize::None)
         .height(rems_from_px(22.).into())
-        .tooltip(ui::Tooltip::text("Double-Click to Reveal in Project Panel"))
         .child(label);
 
     // Only the active segment's popover carries the shared handle `Editor::navigate_breadcrumb_to`
@@ -544,7 +544,10 @@ pub(crate) fn render_breadcrumb_directory_segment(
 
     let menu = PopoverMenu::new(("breadcrumb-directory-menu", index))
         .with_handle(popover_handle)
-        .trigger(trigger)
+        .trigger_with_tooltip(
+            trigger,
+            ui::Tooltip::text("Double-Click to Reveal in Project Panel"),
+        )
         .menu(move |window, cx| {
             let workspace_entity = workspace.upgrade()?;
             workspace_entity

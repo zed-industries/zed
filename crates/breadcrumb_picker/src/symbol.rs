@@ -52,6 +52,7 @@ impl BreadcrumbSymbolDelegate {
             };
             Picker::uniform_list(delegate, window, cx)
                 .popover()
+                .show_scrollbar(true)
                 .initial_width(rems(18.))
         })
     }
@@ -238,34 +239,35 @@ pub(crate) fn render_breadcrumb_symbol_segment(
         .style(ButtonStyle::Transparent)
         .size(ui::ButtonSize::None)
         .height(rems_from_px(22.).into())
-        .when(target.is_none(), |this| {
-            this.tooltip(ui::Tooltip::text("Right-Click to Copy Path"))
-        })
         .child(label);
 
-    PopoverMenu::new(("breadcrumb-symbol-menu", index))
-        .trigger(trigger)
-        .menu(move |window, cx| {
-            let editor_entity = editor.upgrade()?;
-            let menu_items =
-                editor_entity
-                    .read(cx)
-                    .breadcrumb_symbol_menu_items(buffer_id, target.as_ref(), cx);
-            // Nothing to drill into, so fall through to the outline picker rather than flashing an
-            // empty popover.
-            if menu_items.is_empty() {
-                if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
-                    callback(editor_entity.to_any_view(), window, cx);
-                }
-                return None;
+    let menu = PopoverMenu::new(("breadcrumb-symbol-menu", index));
+    let menu = if target.is_none() {
+        menu.trigger_with_tooltip(trigger, ui::Tooltip::text("Right-Click to Copy Path"))
+    } else {
+        menu.trigger(trigger)
+    };
+    menu.menu(move |window, cx| {
+        let editor_entity = editor.upgrade()?;
+        let menu_items =
+            editor_entity
+                .read(cx)
+                .breadcrumb_symbol_menu_items(buffer_id, target.as_ref(), cx);
+        // Nothing to drill into, so fall through to the outline picker rather than flashing an
+        // empty popover.
+        if menu_items.is_empty() {
+            if let Some(callback) = zed_actions::outline::TOGGLE_OUTLINE.get() {
+                callback(editor_entity.to_any_view(), window, cx);
             }
-            Some(BreadcrumbSymbolDelegate::picker(
-                editor.clone(),
-                menu_items,
-                target.as_ref().map(|item| item.range.clone()),
-                window,
-                cx,
-            ))
-        })
-        .into_any_element()
+            return None;
+        }
+        Some(BreadcrumbSymbolDelegate::picker(
+            editor.clone(),
+            menu_items,
+            target.as_ref().map(|item| item.range.clone()),
+            window,
+            cx,
+        ))
+    })
+    .into_any_element()
 }

@@ -91,7 +91,14 @@ impl settings::Settings for BreadcrumbDirectoryListingSettings {
             hide_hidden: project_panel.hide_hidden.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
             folder_icons: project_panel.folder_icons.unwrap(),
-            git_status: project_panel.git_status.unwrap(),
+            git_status: project_panel.git_status.unwrap()
+                && content
+                    .git
+                    .as_ref()
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
         }
     }
