@@ -1,0 +1,51 @@
+name: acetics_release
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: '1'
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bundle_windows_x86_64:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Shim Visual Studio Community path expected by bundle-windows.ps1
+        shell: pwsh
+        run: |
+          $community = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
+          $enterprise = 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise'
+          if (-not (Test-Path $community) -and (Test-Path $enterprise)) {
+            New-Item -ItemType Junction -Path $community -Target $enterprise
+          }
+      - name: Shim Windows SDK 10.0.26100.0 expected by bundle-windows.ps1
+        shell: pwsh
+        run: |
+          $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
+          $expected = Join-Path $sdkRoot '10.0.26100.0'
+          if (-not (Test-Path $expected)) {
+            $latest = Get-ChildItem $sdkRoot -Directory |
+              Where-Object { $_.Name -match '^10\.' -and (Test-Path (Join-Path $_.FullName 'x64\makeappx.exe')) } |
+              Sort-Object Name -Descending | Select-Object -First 1
+            if (-not $latest) { throw 'No Windows SDK with makeappx.exe found' }
+            New-Item -ItemType Junction -Path $expected -Target $latest.FullName
+          }
+      - name: Bundle Windows x86_64
+        shell: pwsh
+        run: script/bundle-windows.ps1 -Architecture x86_64
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zed-x86_64.exe
+          path: target/Zed-x86_64.exe
+          if-no-files-found: error
+      - name: Upload remote server
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-remote-server-windows-x86_64.zip
+          path: target/zed-remote-server-windows-x86_64.zip
+          if-no-files-found: error
