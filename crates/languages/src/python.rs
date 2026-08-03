@@ -2792,36 +2792,10 @@ impl LspAdapter for PyreflyLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        symbol: &language::Symbol,
+        symbol: &Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -2863,7 +2837,7 @@ impl LspInstaller for PyreflyLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2893,7 +2867,7 @@ impl LspInstaller for PyreflyLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -2912,90 +2886,98 @@ impl LspInstaller for PyreflyLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = latest_version;
-        let destination_path = container_dir.join(format!("pyrefly-{name}"));
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        async_fs::create_dir_all(&destination_path).await?;
-
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.join("pyrefly"),
-            AssetKind::Zip => destination_path.join("pyrefly.exe"),
-        };
-
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: vec!["lsp".into()],
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = latest_version;
+            let destination_path = container_dir.join(format!("pyrefly-{name}"));
 
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: vec!["lsp".into()],
-        })
+            async_fs::create_dir_all(&destination_path).await?;
+
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
+                    destination_path.join("pyrefly")
+                }
+                AssetKind::Zip => destination_path.join("pyrefly.exe"),
+            };
+
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: vec!["lsp".into()],
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: vec!["lsp".into()],
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -3016,7 +2998,7 @@ impl LspInstaller for PyreflyLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => path.join("pyrefly"),
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path.join("pyrefly"),
                 AssetKind::Zip => path.join("pyrefly.exe"),
             };
 
