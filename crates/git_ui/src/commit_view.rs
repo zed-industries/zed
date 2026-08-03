@@ -324,6 +324,25 @@ impl CommitView {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
+            // Block user vertical scroll while excerpts are streaming in:
+            // the display map is only partially populated, so the scroll clamp
+            // would pin a manual scroll to the partial content boundary and
+            // the resulting buffer anchor would drift as later excerpts are
+            // inserted above it. Programmatic autoscroll (center) is unaffected
+            // because it goes through set_scroll_position_internal.
+            this.update(cx, |this, cx| {
+                this.editor.update(cx, |editor, cx| {
+                    editor
+                        .rhs_editor()
+                        .update(cx, |editor, _cx| editor.set_forbid_user_vertical_scroll(true));
+                    if let Some(lhs_editor) = editor.lhs_editor() {
+                        lhs_editor.update(cx, |editor, _cx| {
+                            editor.set_forbid_user_vertical_scroll(true)
+                        });
+                    }
+                });
+            })?;
+
             for file in commit_diff.files {
                 let file_path = file.path.clone();
                 let is_created = file.old_text.is_none();
@@ -495,7 +514,13 @@ impl CommitView {
                             file_statuses,
                             commit_view,
                         });
+                        editor.set_forbid_user_vertical_scroll(false);
                     });
+                    if let Some(lhs_editor) = editor.lhs_editor() {
+                        lhs_editor.update(cx, |editor, _cx| {
+                            editor.set_forbid_user_vertical_scroll(false)
+                        });
+                    }
                 });
                 if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {

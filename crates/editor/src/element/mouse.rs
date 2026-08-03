@@ -573,7 +573,8 @@ impl EditorElement {
                             let mut scroll_position =
                                 point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                             let forbid_vertical_scroll =
-                                editor.scroll_manager.forbid_vertical_scroll();
+                                editor.scroll_manager.forbid_vertical_scroll()
+                                    || editor.scroll_manager.forbid_user_vertical_scroll();
                             if forbid_vertical_scroll {
                                 scroll_position.y = current_scroll_position.y;
                             }
