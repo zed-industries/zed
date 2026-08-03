@@ -299,6 +299,7 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let mut scroll_to = scroll_to;
+        let scroll_requested = scroll_to.is_some();
 
         // Process the target file first so the editor appears at the correct
         // scroll position immediately, avoiding a visible jump for large commits.
@@ -459,8 +460,10 @@ impl CommitView {
                                 this.editor.update(cx, |editor, cx| {
                                     editor.rhs_editor().update(cx, |editor, cx| {
                                         editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::center())
-                                                .nav_history(false),
+                                            SelectionEffects::scroll(
+                                                Autoscroll::center_when_possible(),
+                                            )
+                                            .nav_history(false),
                                             window,
                                             cx,
                                             |s| s.select_ranges([anchor..anchor]),
@@ -492,6 +495,21 @@ impl CommitView {
                     });
                 }
             })?;
+
+            // All excerpts have been inserted and the display map is now stable.
+            // Replace any retained CenterWhenPossible request with a plain
+            // center() so that, if the total content is too short to truly
+            // center the target, the scroll still settles at the final boundary
+            // instead of staying pending forever.
+            if scroll_requested {
+                this.update(cx, |this, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        editor.rhs_editor().update(cx, |editor, cx| {
+                            editor.request_autoscroll(Autoscroll::center(), cx);
+                        });
+                    });
+                })?;
+            }
 
             anyhow::Ok(())
         })
