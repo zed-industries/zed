@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, TaskExt, prelude::FluentBuilder};
 use language::{
@@ -2949,12 +2949,45 @@ impl LspCommand for GetCodeActions {
         language_server: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::CodeActionParams> {
-        let mut relevant_diagnostics = Vec::new();
-        for entry in buffer
-            .snapshot()
+        let text_document = make_text_document_identifier(path)?;
+        let snapshot = buffer.snapshot();
+        let diagnostic_entries = snapshot
             .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
-        {
-            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
+            .collect::<Vec<_>>();
+        let primary_group_ids = diagnostic_entries
+            .iter()
+            .filter(|entry| entry.diagnostic.is_primary)
+            .map(|entry| entry.diagnostic.group_id)
+            .collect::<HashSet<_>>();
+        let mut relevant_diagnostics = Vec::new();
+        for entry in diagnostic_entries {
+            // Related information is stored as separate entries for rendering. Reassemble it on
+            // primary diagnostics without also sending those entries as top-level diagnostics.
+            if !entry.diagnostic.is_primary
+                && primary_group_ids.contains(&entry.diagnostic.group_id)
+            {
+                continue;
+            }
+
+            let mut diagnostic = entry.to_lsp_diagnostic_stub()?;
+            if entry.diagnostic.is_primary {
+                let related_information = snapshot
+                    .diagnostic_group::<language::PointUtf16>(entry.diagnostic.group_id)
+                    .filter(|entry| !entry.diagnostic.is_primary)
+                    .map(|entry| {
+                        Ok(lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location {
+                                uri: text_document.uri.clone(),
+                                range: range_to_lsp(entry.range)?,
+                            },
+                            message: entry.diagnostic.message.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                diagnostic.related_information =
+                    (!related_information.is_empty()).then_some(related_information);
+            }
+            relevant_diagnostics.push(diagnostic);
         }
 
         let only = if let Some(requested) = &self.kinds {
@@ -2979,7 +3012,7 @@ impl LspCommand for GetCodeActions {
         };
 
         Ok(lsp::CodeActionParams {
-            text_document: make_text_document_identifier(path)?,
+            text_document,
             range: range_to_lsp(self.range.to_point_utf16(buffer))?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
