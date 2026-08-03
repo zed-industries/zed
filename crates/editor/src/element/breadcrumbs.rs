@@ -102,6 +102,9 @@ struct PreparedBreadcrumbSegment {
     /// Icon before the segment's name, which is what tells the file from the directories leading
     /// to it.
     icon: Option<SharedString>,
+    /// Icon tint: reflects diagnostic severity on the file's icon, mirroring how the project
+    /// panel keeps diagnostics off the label (which git status owns) and on the icon instead.
+    icon_color: Color,
     /// Text colour: the path stays muted so the file it leads to reads as the subject.
     label_color: Color,
 }
@@ -297,7 +300,7 @@ impl BreadcrumbsRow {
                     // The same optical nudge the separator chevron gets.
                     div().relative().top(px(2.)).child(
                         Icon::from_path(icon.clone())
-                            .color(Color::Muted)
+                            .color(segment.icon_color)
                             .size(BREADCRUMB_ICON_SIZE),
                     ),
                 )
@@ -556,6 +559,7 @@ pub fn render_breadcrumb_text(
     let mut outline_buffer_id = None;
     let mut file_path_for_icon: Option<Arc<RelPath>> = None;
     let mut file_status = None;
+    let mut diagnostic_severity = None;
 
     if !multibuffer_header
         && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
@@ -572,11 +576,25 @@ pub fn render_breadcrumb_text(
             file_path_for_icon = real_project_path
                 .as_ref()
                 .map(|project_path| project_path.path.clone());
-            file_status = editor_ref
+            let listing_settings = BreadcrumbDirectoryListingSettings::get_global(cx);
+            file_status = listing_settings.git_status.then(|| ()).and_then(|_| {
+                editor_ref
+                    .project()
+                    .zip(real_project_path.as_ref())
+                    .and_then(|(project, project_path)| {
+                        project.read(cx).project_path_git_status(project_path, cx)
+                    })
+            });
+            diagnostic_severity = editor_ref
                 .project()
                 .zip(real_project_path.as_ref())
                 .and_then(|(project, project_path)| {
-                    project.read(cx).project_path_git_status(project_path, cx)
+                    path::breadcrumb_diagnostic_severity(
+                        project.read(cx),
+                        project_path,
+                        listing_settings.show_diagnostics,
+                        cx,
+                    )
                 });
             // Set once a directory row is chosen (see `Editor::navigate_breadcrumb_to`); while
             // set, the bar shows that directory's path instead of the file's.
@@ -690,6 +708,12 @@ pub fn render_breadcrumb_text(
     // can use either value.
     let file_icon = breadcrumb_file_icon(file_path_for_icon.as_deref(), cx);
     let file_status_color = crate::element::file_status_label_color(file_status);
+    // Diagnostics tint the icon rather than the label, exactly like the project panel: git status
+    // owns the label colour, diagnostics own the icon, and the two never fight over one spot.
+    let file_icon_color =
+        crate::items::entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
+            .map(|(_, color)| color)
+            .unwrap_or(Color::Muted);
 
     let apply_dirty_filename_style =
         !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
@@ -711,6 +735,11 @@ pub fn render_breadcrumb_text(
                 target,
                 dirty_filename_style: apply_dirty_filename_style && index == file_segment_index,
                 icon: is_file_segment.then(|| file_icon.clone()).flatten(),
+                icon_color: if is_file_segment {
+                    file_icon_color
+                } else {
+                    Color::Muted
+                },
                 label_color: if kind == BreadcrumbSegmentKind::File {
                     file_status_color
                 } else {

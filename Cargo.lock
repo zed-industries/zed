@@ -2453,6 +2453,7 @@ dependencies = [
  "editor",
  "file_icons",
  "fuzzy",
+ "git",
  "gpui",
  "language",
  "menu",

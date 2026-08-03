@@ -70,6 +70,30 @@ enum BreadcrumbEntryIconSource {
     None,
 }
 
+/// The project panel's own mapping, so an entry reads the same colour in both places. Empty
+/// (rather than `entry.git_summary`) when `git_status` is disabled, the same as the panel with
+/// the setting off.
+fn breadcrumb_entry_label_color(
+    entry: &BreadcrumbDirectoryEntry,
+    git_status_enabled: bool,
+    is_active_file: bool,
+) -> Color {
+    let git_summary = if git_status_enabled {
+        entry.git_summary
+    } else {
+        Default::default()
+    };
+    editor::items::entry_git_aware_label_color(git_summary, entry.is_ignored, is_active_file)
+}
+
+/// Diagnostics tint the icon rather than the label, matching the project panel: git status owns
+/// the label colour, diagnostics own the icon.
+fn breadcrumb_entry_icon_color(entry: &BreadcrumbDirectoryEntry) -> Color {
+    editor::items::entry_diagnostic_aware_icon_decoration_and_color(entry.diagnostic_severity)
+        .map(|(_, color)| color)
+        .unwrap_or(Color::Muted)
+}
+
 fn breadcrumb_entry_icon_source(
     is_dir: bool,
     show_file_icons: bool,
@@ -456,17 +480,13 @@ impl PickerDelegate for BreadcrumbDirectoryDelegate {
             BreadcrumbEntryIconSource::None => None,
         };
         let icon = icon_path.map(Icon::from_path).map(|icon| {
-            icon.color(Color::Muted)
+            icon.color(breadcrumb_entry_icon_color(entry))
                 .size(IconSize::Small)
                 .into_any_element()
         });
 
-        // The project panel's own mapping, so an entry reads the same colour in both places.
-        let label_color = editor::items::entry_git_aware_label_color(
-            entry.git_summary,
-            entry.is_ignored,
-            is_active_file,
-        );
+        let label_color =
+            breadcrumb_entry_label_color(entry, listing_settings.git_status, is_active_file);
 
         Some(
             ListItem::new(SharedString::from(format!(
@@ -656,6 +676,50 @@ mod tests {
             editor::init(cx);
             crate::init(cx);
         });
+    }
+
+    /// Mirrors the entry the picker would build for a `BreadcrumbDirectoryEntry`, since the
+    /// struct's fields are all `pub` but constructing it from scratch each time would bury the
+    /// field that actually varies per test under boilerplate.
+    fn test_entry(git_summary: git::status::GitSummary) -> BreadcrumbDirectoryEntry {
+        BreadcrumbDirectoryEntry {
+            name: "file.txt".into(),
+            path: util::rel_path::rel_path("file.txt").into_arc(),
+            is_dir: false,
+            is_ignored: false,
+            git_summary,
+            diagnostic_severity: None,
+        }
+    }
+
+    #[test]
+    fn test_breadcrumb_entry_label_color_honors_git_status_setting() {
+        let entry = test_entry(git::status::GitSummary::UNTRACKED);
+
+        // On: an untracked file reads as "created", same as the project panel.
+        assert_eq!(
+            breadcrumb_entry_label_color(&entry, true, false),
+            Color::Created
+        );
+
+        // Off: falls back to the status-less color, ignoring the entry's own git summary — same
+        // as an unselected, untracked project panel entry with `git_status` off.
+        assert_eq!(
+            breadcrumb_entry_label_color(&entry, false, false),
+            Color::Muted
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_entry_icon_color_follows_diagnostic_severity() {
+        let mut entry = test_entry(git::status::GitSummary::UNCHANGED);
+        assert_eq!(breadcrumb_entry_icon_color(&entry), Color::Muted);
+
+        entry.diagnostic_severity = Some(language::DiagnosticSeverity::WARNING);
+        assert_eq!(breadcrumb_entry_icon_color(&entry), Color::Warning);
+
+        entry.diagnostic_severity = Some(language::DiagnosticSeverity::ERROR);
+        assert_eq!(breadcrumb_entry_icon_color(&entry), Color::Error);
     }
 
     #[test]

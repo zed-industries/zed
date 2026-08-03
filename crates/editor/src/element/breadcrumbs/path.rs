@@ -1,6 +1,8 @@
 use super::*;
 
-use project::Project;
+use language::DiagnosticSeverity;
+use project::{Project, ProjectPath};
+use settings::ShowDiagnostics;
 
 /// Splits `path` into ancestor prefixes, root first: `a/b/c.rs` becomes `[a, a/b, a/b/c.rs]`.
 fn breadcrumb_path_prefixes(path: &RelPath) -> Vec<&RelPath> {
@@ -75,6 +77,8 @@ pub struct BreadcrumbDirectoryListingSettings {
     pub hide_hidden: bool,
     pub file_icons: bool,
     pub folder_icons: bool,
+    pub git_status: bool,
+    pub show_diagnostics: ShowDiagnostics,
 }
 
 impl settings::Settings for BreadcrumbDirectoryListingSettings {
@@ -87,7 +91,33 @@ impl settings::Settings for BreadcrumbDirectoryListingSettings {
             hide_hidden: project_panel.hide_hidden.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
             folder_icons: project_panel.folder_icons.unwrap(),
+            git_status: project_panel.git_status.unwrap(),
+            show_diagnostics: project_panel.show_diagnostics.unwrap(),
         }
+    }
+}
+
+/// Mirrors `ProjectPanel::update_diagnostics`'s own filtering (see
+/// `crates/project_panel/src/project_panel.rs`): errors always count, warnings only count when
+/// the setting is `all`, and the setting can turn diagnostics off entirely. Reads the aggregated
+/// per-path summary rather than walking every diagnostic, since this runs on every breadcrumb
+/// render.
+pub fn breadcrumb_diagnostic_severity(
+    project: &Project,
+    project_path: &ProjectPath,
+    show_diagnostics: ShowDiagnostics,
+    cx: &App,
+) -> Option<DiagnosticSeverity> {
+    if show_diagnostics == ShowDiagnostics::Off {
+        return None;
+    }
+    let summary = project.diagnostic_summary_for_path(project_path, cx);
+    if summary.error_count > 0 {
+        Some(DiagnosticSeverity::ERROR)
+    } else if show_diagnostics == ShowDiagnostics::All && summary.warning_count > 0 {
+        Some(DiagnosticSeverity::WARNING)
+    } else {
+        None
     }
 }
 
@@ -99,6 +129,10 @@ pub struct BreadcrumbDirectoryEntry {
     pub is_dir: bool,
     pub is_ignored: bool,
     pub git_summary: GitSummary,
+    /// Only ever set for files: mirroring the panel's ancestor-propagated severity for
+    /// directories would mean scanning every diagnostic summary per row, which this listing's
+    /// render path can't afford.
+    pub diagnostic_severity: Option<DiagnosticSeverity>,
 }
 
 /// Lists `path`'s direct children, filtered the way the project panel filters gitignored and
@@ -111,11 +145,9 @@ pub fn breadcrumb_directory_entries(
 ) -> Vec<BreadcrumbDirectoryEntry> {
     let settings = BreadcrumbDirectoryListingSettings::get_global(cx);
     let worktree_snapshot = worktree.read(cx).snapshot();
-    let repo_snapshots = project
-        .read(cx)
-        .git_store()
-        .read(cx)
-        .display_repo_snapshots(cx);
+    let worktree_id = worktree_snapshot.id();
+    let project_ref = project.read(cx);
+    let repo_snapshots = project_ref.git_store().read(cx).display_repo_snapshots(cx);
     let mut entries = project::git_store::git_traversal::ChildEntriesGitIter::new(
         &repo_snapshots,
         &worktree_snapshot,
@@ -138,12 +170,26 @@ pub fn breadcrumb_directory_entries(
         .into_iter()
         .filter_map(|entry| {
             let name = entry.path.file_name()?.to_string();
+            let diagnostic_severity = (!entry.is_dir())
+                .then(|| {
+                    breadcrumb_diagnostic_severity(
+                        project_ref,
+                        &ProjectPath {
+                            worktree_id,
+                            path: entry.path.clone(),
+                        },
+                        settings.show_diagnostics,
+                        cx,
+                    )
+                })
+                .flatten();
             Some(BreadcrumbDirectoryEntry {
                 name: name.into(),
                 path: entry.path.clone(),
                 is_dir: entry.is_dir(),
                 is_ignored: entry.is_ignored,
                 git_summary: entry.git_summary,
+                diagnostic_severity,
             })
         })
         .collect()
@@ -539,6 +585,140 @@ mod tests {
                 .iter()
                 .any(|entry| entry.name.as_ref() == "kept.txt"),
             "non-hidden entries stay listed"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_entries_honors_show_diagnostics_setting(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use language::{Diagnostic, DiagnosticEntry, DiagnosticSourceKind};
+        use lsp::{DiagnosticSeverity as LspDiagnosticSeverity, LanguageServerId};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use std::path::Path;
+        use text::{PointUtf16, Unclipped};
+        use util::path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "error.txt": "",
+                "warning.txt": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        cx.run_until_parked();
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        lsp_store.update(cx, |lsp_store, cx| {
+            let diagnostic = |severity, message: &str| DiagnosticEntry {
+                range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 1)),
+                diagnostic: Diagnostic {
+                    severity,
+                    is_primary: true,
+                    message: message.to_string(),
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
+                },
+            };
+            lsp_store
+                .update_diagnostic_entries(
+                    LanguageServerId(0),
+                    Path::new(path!("/root/error.txt")).to_owned(),
+                    None,
+                    None,
+                    vec![diagnostic(LspDiagnosticSeverity::ERROR, "error")],
+                    cx,
+                )
+                .unwrap();
+            lsp_store
+                .update_diagnostic_entries(
+                    LanguageServerId(0),
+                    Path::new(path!("/root/warning.txt")).to_owned(),
+                    None,
+                    None,
+                    vec![diagnostic(LspDiagnosticSeverity::WARNING, "warning")],
+                    cx,
+                )
+                .unwrap();
+        });
+        cx.run_until_parked();
+
+        // Default (`all`, matching the project panel's own default): both severities surface.
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.name.as_ref() == "error.txt")
+                .and_then(|entry| entry.diagnostic_severity),
+            Some(DiagnosticSeverity::ERROR),
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.name.as_ref() == "warning.txt")
+                .and_then(|entry| entry.diagnostic_severity),
+            Some(DiagnosticSeverity::WARNING),
+        );
+
+        // `errors`: warnings drop out, errors still surface — same filtering the panel applies
+        // in `ProjectPanel::update_diagnostics`.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project_panel
+                        .get_or_insert_default()
+                        .show_diagnostics = Some(settings::ShowDiagnostics::Errors);
+                });
+            });
+        });
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.name.as_ref() == "error.txt")
+                .and_then(|entry| entry.diagnostic_severity),
+            Some(DiagnosticSeverity::ERROR),
+            "errors still surface under `errors`",
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.name.as_ref() == "warning.txt")
+                .and_then(|entry| entry.diagnostic_severity),
+            None,
+            "warnings are filtered out under `errors`",
+        );
+
+        // `off`: the setting suppresses diagnostics entirely, not just warnings.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project_panel
+                        .get_or_insert_default()
+                        .show_diagnostics = Some(settings::ShowDiagnostics::Off);
+                });
+            });
+        });
+        let entries =
+            cx.update(|cx| breadcrumb_directory_entries(&project, &worktree, RelPath::empty(), cx));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.diagnostic_severity.is_none()),
+            "`off` suppresses diagnostics entirely",
         );
     }
 }
