@@ -1792,8 +1792,12 @@ impl SearchableItem for MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {
-        let source = self.markdown.read(cx).source().to_string();
-        cx.background_spawn(async move { query.search_str(&source) })
+        let markdown = self.markdown.read(cx);
+        let source = markdown.source().to_string();
+        let non_rendered_link_ranges = markdown.non_rendered_link_source_ranges();
+        cx.background_spawn(async move {
+            filter_non_rendered_link_matches(query.search_str(&source), &non_rendered_link_ranges)
+        })
     }
 
     fn active_match_index(
@@ -1827,6 +1831,29 @@ impl SearchableItem for MarkdownPreviewView {
                 .or(Some(matches.len().saturating_sub(1))),
         }
     }
+}
+
+fn filter_non_rendered_link_matches(
+    matches: Vec<Range<usize>>,
+    non_rendered_ranges: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    let mut non_rendered_range_index = 0;
+
+    matches
+        .into_iter()
+        .filter(|match_range| {
+            while non_rendered_ranges
+                .get(non_rendered_range_index)
+                .is_some_and(|range| range.end <= match_range.start)
+            {
+                non_rendered_range_index += 1;
+            }
+
+            !non_rendered_ranges
+                .get(non_rendered_range_index)
+                .is_some_and(|range| range.start < match_range.end && match_range.start < range.end)
+        })
+        .collect()
 }
 
 impl SerializableItem for MarkdownPreviewView {
@@ -2000,7 +2027,18 @@ mod tests {
         AppState, ItemId, MultiWorkspace, SaveIntent, Workspace, WorkspaceId, open_paths,
     };
 
-    use super::{MarkdownPreviewView, open_preview_url};
+    use super::{MarkdownPreviewView, filter_non_rendered_link_matches, open_preview_url};
+
+    #[test]
+    fn filters_matches_in_non_rendered_link_source() {
+        let matches = vec![1..9, 30..37, 58..65];
+        let non_rendered_link_ranges = vec![0..1, 9..38];
+
+        assert_eq!(
+            filter_non_rendered_link_matches(matches, &non_rendered_link_ranges),
+            vec![1..9, 58..65]
+        );
+    }
 
     #[test]
     fn resolves_workspace_absolute_preview_image_path_and_rejects_missing() {

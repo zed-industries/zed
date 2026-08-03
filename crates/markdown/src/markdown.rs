@@ -731,6 +731,14 @@ impl Markdown {
         &self.source
     }
 
+    pub fn non_rendered_link_source_ranges(&self) -> Vec<Range<usize>> {
+        if self.source != self.parsed_markdown.source {
+            return Vec::new();
+        }
+
+        self.parsed_markdown.non_rendered_link_source_ranges()
+    }
+
     pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
         self.parsed_markdown.events.iter().find_map(|(_, event)| {
             let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
@@ -1253,6 +1261,43 @@ impl ParsedMarkdown {
 
     pub fn root_block_starts(&self) -> &Arc<[usize]> {
         &self.root_block_starts
+    }
+
+    fn non_rendered_link_source_ranges(&self) -> Vec<Range<usize>> {
+        let mut ranges = Vec::new();
+        let mut active_link = None;
+
+        for (event_range, event) in self.events.iter() {
+            match event {
+                MarkdownEvent::Start(MarkdownTag::Link { .. }) => {
+                    active_link = Some((event_range.clone(), event_range.start));
+                }
+                MarkdownEvent::Text
+                | MarkdownEvent::SubstitutedText(_)
+                | MarkdownEvent::Code
+                | MarkdownEvent::SubstitutedCode(_) => {
+                    let Some((link_range, cursor)) = active_link.as_mut() else {
+                        continue;
+                    };
+                    let visible_start = event_range.start.max(link_range.start);
+                    let visible_end = event_range.end.min(link_range.end);
+                    if visible_start > *cursor {
+                        ranges.push(*cursor..visible_start);
+                    }
+                    *cursor = (*cursor).max(visible_end);
+                }
+                MarkdownEvent::End(MarkdownTagEnd::Link) => {
+                    if let Some((link_range, cursor)) = active_link.take()
+                        && cursor < link_range.end
+                    {
+                        ranges.push(cursor..link_range.end);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        ranges
     }
 
     pub fn root_block_for_source_index(&self, source_index: usize) -> Option<usize> {
@@ -4466,6 +4511,18 @@ mod tests {
             markdown.set_active_search_highlight(Some(3), cx);
             assert_eq!(markdown.active_search_highlight(), None);
         });
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_link_source_ranges(cx: &mut TestAppContext) {
+        let source = "[@octocat](https://github.com/octocat) https://github.com/octocat";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read(cx).non_rendered_link_source_ranges(),
+            vec![0..1, 9..38]
+        );
     }
 
     #[gpui::test]
