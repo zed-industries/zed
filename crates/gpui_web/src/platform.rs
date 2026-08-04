@@ -69,7 +69,12 @@ pub enum WebWindowError {
     AlreadyOpen,
     ReopeningUnsupported,
     UnsupportedWindowKind(&'static str),
-    GraphicsNotInitialized,
+    /// Graphics initialization has not completed yet; retrying after it
+    /// finishes (e.g. from the `Platform::run` callback) can succeed.
+    GraphicsInitializationPending,
+    /// Graphics initialization or an earlier window creation failed;
+    /// retrying cannot succeed.
+    GraphicsUnavailable,
 }
 
 impl std::fmt::Display for WebWindowError {
@@ -85,8 +90,11 @@ impl std::fmt::Display for WebWindowError {
                 formatter,
                 "GPUI web does not support {kind} as a separate top-level window; render it inside the normal window instead"
             ),
-            Self::GraphicsNotInitialized => formatter.write_str(
-                "browser graphics resources are unavailable; Platform::run must finish before opening a window",
+            Self::GraphicsInitializationPending => formatter.write_str(
+                "browser graphics initialization has not completed yet; open windows from the callback passed to Platform::run",
+            ),
+            Self::GraphicsUnavailable => formatter.write_str(
+                "browser graphics are unavailable because graphics initialization or an earlier window creation failed",
             ),
         }
     }
@@ -223,6 +231,7 @@ async fn initialize_graphics(
                             canvas.remove();
                             Err(anyhow::anyhow!(
                                 "No browser graphics backend could be initialized. \
+                                 Tried WebGPU, then WebGL2. \
                                  WebGPU failure: {webgpu_error:#}. \
                                  WebGL2 failure: {webgl_error:#}"
                             ))
@@ -232,13 +241,22 @@ async fn initialize_graphics(
             }
         }
         WebBackendPreference::WebGpu | WebBackendPreference::WebGl => {
+            let backend_name = if preference == WebBackendPreference::WebGpu {
+                "WebGPU"
+            } else {
+                "WebGL2"
+            };
             let canvas = WebWindow::prepare_canvas(browser_window)?;
             match WgpuContext::new_web(&canvas, preference).await {
                 Ok(PreparedWebGraphics { context, surface }) => Ok((canvas, context, surface)),
                 Err(error) => {
                     let canvas: &web_sys::Element = canvas.as_ref();
                     canvas.remove();
-                    Err(error)
+                    Err(anyhow::anyhow!(
+                        "No browser graphics backend could be initialized. \
+                         Only {backend_name} was tried because the application requested \
+                         it explicitly. {backend_name} failure: {error:#}"
+                    ))
                 }
             }
         }
@@ -335,7 +353,7 @@ impl Platform for WebPlatform {
                 return Err(WebWindowError::ReopeningUnsupported.into());
             }
             WebWindowLifecycle::Unavailable => {
-                return Err(WebWindowError::GraphicsNotInitialized.into());
+                return Err(WebWindowError::GraphicsUnavailable.into());
             }
             WebWindowLifecycle::Available => {}
         }
@@ -343,12 +361,12 @@ impl Platform for WebPlatform {
         let context_ref = self.wgpu_context.borrow();
         let context = context_ref
             .as_ref()
-            .ok_or(WebWindowError::GraphicsNotInitialized)?;
+            .ok_or(WebWindowError::GraphicsInitializationPending)?;
         let prepared_window = self
             .prepared_window
             .borrow_mut()
             .take()
-            .ok_or(WebWindowError::GraphicsNotInitialized)?;
+            .ok_or(WebWindowError::GraphicsInitializationPending)?;
         let canvas = prepared_window.canvas;
         let canvas_for_cleanup = canvas.clone();
 
@@ -623,7 +641,7 @@ fn show_graphics_unavailable_message(browser_window: &web_sys::Window, error: &a
         return;
     };
     message.set_text_content(Some(&format!(
-        "Failed to initialize browser graphics. WebGPU or WebGL2 is required. {error}"
+        "Failed to initialize browser graphics: {error}"
     )));
     body.append_child(&message).ok();
 }

@@ -1,183 +1,221 @@
 @group(1) @binding(0) var t_instances: texture_2d<u32>;
 
-fn load_instance_word(word_index: u32) -> u32 {
-    let dimensions = textureDimensions(t_instances);
-    let texel_index = word_index / 4u;
+// Each texel of `t_instances` packs four 32-bit words of instance data. Records
+// are read strictly front to back, so all readers share a cursor that keeps the
+// most recently fetched texel and only touches the texture again when the next
+// word crosses a texel boundary. This fetches each texel exactly once per
+// record load instead of once per word. The `read_*` functions must therefore
+// consume their words in struct declaration order; skipping or re-reading words
+// would still return correct data (the cursor re-fetches whenever the texel
+// index changes) but would forfeit the single-fetch-per-texel guarantee.
+struct InstanceCursor {
+    word_index: u32,
+    texel_index: u32,
+    texel: vec4<u32>,
+    width: u32,
+}
+
+fn fetch_instance_texel(texel_index: u32, width: u32) -> vec4<u32> {
     let coordinate = vec2<i32>(
-        i32(texel_index % dimensions.x),
-        i32(texel_index / dimensions.x),
+        i32(texel_index % width),
+        i32(texel_index / width),
     );
-    return textureLoad(t_instances, coordinate, 0)[word_index % 4u];
+    return textureLoad(t_instances, coordinate, 0);
 }
 
-fn load_f32(word_index: u32) -> f32 {
-    return bitcast<f32>(load_instance_word(word_index));
+fn instance_cursor(word_index: u32) -> InstanceCursor {
+    let width = textureDimensions(t_instances).x;
+    let texel_index = word_index / 4u;
+    return InstanceCursor(
+        word_index,
+        texel_index,
+        fetch_instance_texel(texel_index, width),
+        width,
+    );
 }
 
-fn load_vec2_f32(word_index: u32) -> vec2<f32> {
-    return vec2<f32>(load_f32(word_index), load_f32(word_index + 1u));
+fn read_word(cursor: ptr<function, InstanceCursor>) -> u32 {
+    let word_index = (*cursor).word_index;
+    let texel_index = word_index / 4u;
+    if texel_index != (*cursor).texel_index {
+        (*cursor).texel = fetch_instance_texel(texel_index, (*cursor).width);
+        (*cursor).texel_index = texel_index;
+    }
+    (*cursor).word_index = word_index + 1u;
+    return (*cursor).texel[word_index % 4u];
 }
 
-fn load_hsla(word_index: u32) -> Hsla {
+fn read_f32(cursor: ptr<function, InstanceCursor>) -> f32 {
+    return bitcast<f32>(read_word(cursor));
+}
+
+fn read_i32(cursor: ptr<function, InstanceCursor>) -> i32 {
+    return bitcast<i32>(read_word(cursor));
+}
+
+fn read_vec2_f32(cursor: ptr<function, InstanceCursor>) -> vec2<f32> {
+    return vec2<f32>(read_f32(cursor), read_f32(cursor));
+}
+
+fn read_vec2_i32(cursor: ptr<function, InstanceCursor>) -> vec2<i32> {
+    return vec2<i32>(read_i32(cursor), read_i32(cursor));
+}
+
+fn read_hsla(cursor: ptr<function, InstanceCursor>) -> Hsla {
     return Hsla(
-        load_f32(word_index),
-        load_f32(word_index + 1u),
-        load_f32(word_index + 2u),
-        load_f32(word_index + 3u),
+        read_f32(cursor),
+        read_f32(cursor),
+        read_f32(cursor),
+        read_f32(cursor),
     );
 }
 
-fn load_bounds(word_index: u32) -> Bounds {
-    return Bounds(load_vec2_f32(word_index), load_vec2_f32(word_index + 2u));
+fn read_bounds(cursor: ptr<function, InstanceCursor>) -> Bounds {
+    return Bounds(read_vec2_f32(cursor), read_vec2_f32(cursor));
 }
 
-fn load_corners(word_index: u32) -> Corners {
+fn read_corners(cursor: ptr<function, InstanceCursor>) -> Corners {
     return Corners(
-        load_f32(word_index),
-        load_f32(word_index + 1u),
-        load_f32(word_index + 2u),
-        load_f32(word_index + 3u),
+        read_f32(cursor),
+        read_f32(cursor),
+        read_f32(cursor),
+        read_f32(cursor),
     );
 }
 
-fn load_edges(word_index: u32) -> Edges {
+fn read_edges(cursor: ptr<function, InstanceCursor>) -> Edges {
     return Edges(
-        load_f32(word_index),
-        load_f32(word_index + 1u),
-        load_f32(word_index + 2u),
-        load_f32(word_index + 3u),
+        read_f32(cursor),
+        read_f32(cursor),
+        read_f32(cursor),
+        read_f32(cursor),
     );
 }
 
-fn load_color_stop(word_index: u32) -> LinearColorStop {
-    return LinearColorStop(load_hsla(word_index), load_f32(word_index + 4u));
+fn read_color_stop(cursor: ptr<function, InstanceCursor>) -> LinearColorStop {
+    return LinearColorStop(read_hsla(cursor), read_f32(cursor));
 }
 
-fn load_background(word_index: u32) -> Background {
+fn read_background(cursor: ptr<function, InstanceCursor>) -> Background {
     return Background(
-        load_instance_word(word_index),
-        load_instance_word(word_index + 1u),
-        load_hsla(word_index + 2u),
-        load_f32(word_index + 6u),
+        read_word(cursor),
+        read_word(cursor),
+        read_hsla(cursor),
+        read_f32(cursor),
         array<LinearColorStop, 2>(
-            load_color_stop(word_index + 7u),
-            load_color_stop(word_index + 12u),
+            read_color_stop(cursor),
+            read_color_stop(cursor),
         ),
-        load_instance_word(word_index + 17u),
+        read_word(cursor),
     );
 }
 
-fn load_atlas_tile(word_index: u32) -> AtlasTile {
+fn read_atlas_tile(cursor: ptr<function, InstanceCursor>) -> AtlasTile {
     return AtlasTile(
         AtlasTextureId(
-            load_instance_word(word_index),
-            load_instance_word(word_index + 1u),
+            read_word(cursor),
+            read_word(cursor),
         ),
-        load_instance_word(word_index + 2u),
-        load_instance_word(word_index + 3u),
+        read_word(cursor),
+        read_word(cursor),
         AtlasBounds(
-            vec2<i32>(
-                bitcast<i32>(load_instance_word(word_index + 4u)),
-                bitcast<i32>(load_instance_word(word_index + 5u)),
-            ),
-            vec2<i32>(
-                bitcast<i32>(load_instance_word(word_index + 6u)),
-                bitcast<i32>(load_instance_word(word_index + 7u)),
-            ),
+            read_vec2_i32(cursor),
+            read_vec2_i32(cursor),
         ),
     );
 }
 
-fn load_transformation(word_index: u32) -> TransformationMatrix {
+fn read_transformation(cursor: ptr<function, InstanceCursor>) -> TransformationMatrix {
     return TransformationMatrix(
         mat2x2<f32>(
-            load_vec2_f32(word_index),
-            load_vec2_f32(word_index + 2u),
+            read_vec2_f32(cursor),
+            read_vec2_f32(cursor),
         ),
-        load_vec2_f32(word_index + 4u),
+        read_vec2_f32(cursor),
     );
 }
 
 fn load_quad(instance_id: u32) -> Quad {
-    let word_index = instance_id * 40u;
+    var cursor = instance_cursor(instance_id * 40u);
     return Quad(
-        load_instance_word(word_index),
-        load_instance_word(word_index + 1u),
-        load_bounds(word_index + 2u),
-        load_bounds(word_index + 6u),
-        load_background(word_index + 10u),
-        load_hsla(word_index + 28u),
-        load_corners(word_index + 32u),
-        load_edges(word_index + 36u),
+        read_word(&cursor),
+        read_word(&cursor),
+        read_bounds(&cursor),
+        read_bounds(&cursor),
+        read_background(&cursor),
+        read_hsla(&cursor),
+        read_corners(&cursor),
+        read_edges(&cursor),
     );
 }
 
 fn load_shadow(instance_id: u32) -> Shadow {
-    let word_index = instance_id * 28u;
+    var cursor = instance_cursor(instance_id * 28u);
     return Shadow(
-        load_instance_word(word_index),
-        load_f32(word_index + 1u),
-        load_bounds(word_index + 2u),
-        load_corners(word_index + 6u),
-        load_bounds(word_index + 10u),
-        load_hsla(word_index + 14u),
-        load_bounds(word_index + 18u),
-        load_corners(word_index + 22u),
-        load_instance_word(word_index + 26u),
-        load_instance_word(word_index + 27u),
+        read_word(&cursor),
+        read_f32(&cursor),
+        read_bounds(&cursor),
+        read_corners(&cursor),
+        read_bounds(&cursor),
+        read_hsla(&cursor),
+        read_bounds(&cursor),
+        read_corners(&cursor),
+        read_word(&cursor),
+        read_word(&cursor),
     );
 }
 
 fn load_path_vertex(vertex_id: u32) -> PathRasterizationVertex {
-    let word_index = vertex_id * 26u;
+    var cursor = instance_cursor(vertex_id * 26u);
     return PathRasterizationVertex(
-        load_vec2_f32(word_index),
-        load_vec2_f32(word_index + 2u),
-        load_background(word_index + 4u),
-        load_bounds(word_index + 22u),
+        read_vec2_f32(&cursor),
+        read_vec2_f32(&cursor),
+        read_background(&cursor),
+        read_bounds(&cursor),
     );
 }
 
 fn load_path_sprite(instance_id: u32) -> PathSprite {
-    return PathSprite(load_bounds(instance_id * 4u));
+    var cursor = instance_cursor(instance_id * 4u);
+    return PathSprite(read_bounds(&cursor));
 }
 
 fn load_underline(instance_id: u32) -> Underline {
-    let word_index = instance_id * 16u;
+    var cursor = instance_cursor(instance_id * 16u);
     return Underline(
-        load_instance_word(word_index),
-        load_instance_word(word_index + 1u),
-        load_bounds(word_index + 2u),
-        load_bounds(word_index + 6u),
-        load_hsla(word_index + 10u),
-        load_f32(word_index + 14u),
-        load_instance_word(word_index + 15u),
+        read_word(&cursor),
+        read_word(&cursor),
+        read_bounds(&cursor),
+        read_bounds(&cursor),
+        read_hsla(&cursor),
+        read_f32(&cursor),
+        read_word(&cursor),
     );
 }
 
 fn load_mono_sprite(instance_id: u32) -> MonochromeSprite {
-    let word_index = instance_id * 28u;
+    var cursor = instance_cursor(instance_id * 28u);
     return MonochromeSprite(
-        load_instance_word(word_index),
-        load_instance_word(word_index + 1u),
-        load_bounds(word_index + 2u),
-        load_bounds(word_index + 6u),
-        load_hsla(word_index + 10u),
-        load_atlas_tile(word_index + 14u),
-        load_transformation(word_index + 22u),
+        read_word(&cursor),
+        read_word(&cursor),
+        read_bounds(&cursor),
+        read_bounds(&cursor),
+        read_hsla(&cursor),
+        read_atlas_tile(&cursor),
+        read_transformation(&cursor),
     );
 }
 
 fn load_poly_sprite(instance_id: u32) -> PolychromeSprite {
-    let word_index = instance_id * 24u;
+    var cursor = instance_cursor(instance_id * 24u);
     return PolychromeSprite(
-        load_instance_word(word_index),
-        load_instance_word(word_index + 1u),
-        load_instance_word(word_index + 2u),
-        load_f32(word_index + 3u),
-        load_bounds(word_index + 4u),
-        load_bounds(word_index + 8u),
-        load_corners(word_index + 12u),
-        load_atlas_tile(word_index + 16u),
+        read_word(&cursor),
+        read_word(&cursor),
+        read_word(&cursor),
+        read_f32(&cursor),
+        read_bounds(&cursor),
+        read_bounds(&cursor),
+        read_corners(&cursor),
+        read_atlas_tile(&cursor),
     );
 }

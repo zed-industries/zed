@@ -1911,6 +1911,18 @@ impl WgpuRenderer {
             let x = (texel_offset % u64::from(*width)) as u32;
             let y = (texel_offset / u64::from(*width)) as u32;
             if y >= *height {
+                // The capacity check in write_to_instance_data should make this
+                // unreachable. Truncating silently would leave stale bytes in the
+                // texture and draw garbage for the remaining instances.
+                debug_assert!(
+                    false,
+                    "instance texture write out of bounds: row {y} >= height {}",
+                    *height
+                );
+                log::error!(
+                    "instance texture write out of bounds; dropping {} bytes of instance data",
+                    data.len() - byte_offset
+                );
                 return;
             }
             let available_texels = u64::from(*width - x);
