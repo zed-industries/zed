@@ -1,0 +1,138 @@
+# Builds macOS and Windows bundles after a successful fork sync (or on demand),
+# publishes a GitHub release on this fork, and lets the built binary's
+# auto-update (crates/auto_update) pick up the new version.
+name: build-binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to build
+        required: false
+        default: main
+  workflow_run:
+    workflows: [sync-fork]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-binaries
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+      - name: Compute release version
+        id: compute
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          upstream_version=$(grep '^version' crates/zed/Cargo.toml | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
+          version=$(python3 - "$upstream_version" "$latest_tag" <<'EOF'
+          import re
+          import sys
+
+          def parse(value):
+              match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value or "")
+              if not match:
+                  return None
+              return tuple(int(part) for part in match.groups())
+
+          upstream = parse(sys.argv[1])
+          latest = parse(sys.argv[2])
+          if latest is None or latest < upstream:
+              print(f"{upstream[0]}.{upstream[1]}.{upstream[2]}")
+          else:
+              print(f"{latest[0]}.{latest[1]}.{latest[2] + 1}")
+          EOF
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version (upstream $upstream_version, latest release $latest_tag)"
+
+  build-macos:
+    needs: prepare
+    runs-on: macos-14
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+      - name: Set release version
+        run: |
+          sed -i '' "s/^version = \"[^\"]*\"/version = \"${{ needs.prepare.outputs.version }}\"/" crates/zed/Cargo.toml
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
+      - name: Bundle macOS app
+        run: ./script/bundle-mac
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-assets
+          path: |
+            target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+            target/zed-remote-server-macos-aarch64.gz
+
+  build-windows:
+    needs: prepare
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      ZED_WORKSPACE: ${{ github.workspace }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      ZED_RELEASE_CHANNEL: stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+      - name: Set release version
+        shell: bash
+        run: |
+          sed -i "s/^version = \"[^\"]*\"/version = \"${{ needs.prepare.outputs.version }}\"/" crates/zed/Cargo.toml
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
+      - name: Bundle Windows installer
+        shell: pwsh
+        run: ./script/bundle-windows.ps1
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-assets
+          path: |
+            target/Zed-x86_64.exe
+            target/zed-remote-server-windows-x86_64.zip
+
+  release:
+    needs: [prepare, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release delete "$VERSION" --yes --cleanup-tag
+          fi
+          gh release create "$VERSION" \
+            --title "Zed $VERSION" \
+            --notes "Auto-built from hee10k/zed. Install and run 'zed update' to receive future builds." \
+            assets/*

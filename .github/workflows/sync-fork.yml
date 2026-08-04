@@ -1,0 +1,45 @@
+# Daily fork sync: merges upstream zed-industries/zed main into this fork's main.
+# Builds are triggered from this workflow's completion by build-binaries.yml.
+name: sync-fork
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Add upstream
+        run: git remote add upstream https://github.com/zed-industries/zed.git
+      - name: Fetch upstream
+        run: git fetch upstream main
+      - name: Merge upstream main
+        run: |
+          git checkout main
+          if git merge --ff-only upstream/main 2>/dev/null; then
+            echo "::notice::main fast-forwarded to upstream/main"
+          else
+            # Local commits on main (fork patches) are preserved via a merge commit.
+            git merge upstream/main -m "Merge upstream main"
+            echo "::notice::merged upstream/main into main"
+          fi
+      - name: Push
+        run: git push origin main

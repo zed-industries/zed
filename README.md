@@ -5,7 +5,37 @@
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
+> **Fork of `zed-industries/zed`.** This repository contains fork-specific CI and a
+> fork-specific auto-update endpoint. See [Fork builds & auto-update](#fork-builds--auto-update) below.
+
 ---
+
+### Fork builds & auto-update
+
+This fork keeps `main` in sync with upstream and publishes ready-to-install macOS
+and Windows builds:
+
+- [`sync-fork`](.github/workflows/sync-fork.yml) runs daily at 03:00 UTC and merges
+  `zed-industries/zed` `main` into this fork's `main` (local fork commits are preserved
+  via a merge commit).
+- [`build-binaries`](.github/workflows/build-binaries.yml) runs after each successful
+  sync (or manually via **Actions → build-binaries → Run workflow**). It builds the
+  macOS app bundle (`.dmg`) and the Windows installer (`.exe`), then publishes a
+  GitHub release on this fork. Each build bumps the release version, so the built
+  binary detects the new version.
+
+The auto-update check in `crates/auto_update` is patched to query **this fork's
+GitHub releases** instead of `zed.dev`:
+
+- Release assets are named `zed-{os}-{arch}.{ext}` (e.g. `zed-macos-aarch64.dmg`,
+  `zed-windows-x86_64.exe`).
+- The fork builds on the `stable` release channel (`crates/zed/RELEASE_CHANNEL`), so
+  `zed update` polls for updates and installs them in place.
+- To point the update at a different fork, set `ZED_FORK_REPO` (e.g. `owner/repo`) at
+  build time.
+
+If `sync-fork` hits a merge conflict (e.g. upstream changed `crates/auto_update`),
+resolve it locally and push, then re-run the workflow.
 
 ### Installation
 
