@@ -2350,7 +2350,7 @@ fn test_autoindent_edit_before_insertion(cx: &mut App) {
         // be auto-formatted. The rest of the text should remain the same as before the operation.
         let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
         buffer.edit_before(
-            [(Point::new(1, 0)..Point::new(1, 0), "        \n")],
+            [(Point::new(1, 0)..Point::new(1, 0), "        c();\n")],
             Some(AutoindentMode::EachLine),
             cx,
         );
@@ -2358,12 +2358,11 @@ fn test_autoindent_edit_before_insertion(cx: &mut App) {
             buffer.text(),
             "
                 fn a() {
-                    |
+                    c();
                         b();
                 }
             "
             .unindent()
-            .replace('|', "")
         );
 
         buffer

@@ -20,7 +20,7 @@ use futures_lite::future::yield_now;
 use gpui::{App, Context, Entity, EventEmitter};
 use itertools::Itertools;
 use language::{
-    AutoIndentBoundary, AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow,
+    AutoIndentExclusion, AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape,
     DiagnosticEntryRef, File, IndentGuideSettings, IndentSize, Language, LanguageAwareStyling,
     LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
@@ -1382,7 +1382,7 @@ impl MultiBuffer {
             edits,
             autoindent_mode,
             true,
-            AutoIndentBoundary::LeadingNewLine,
+            AutoIndentExclusion::PrecedingLine,
             cx,
         );
     }
@@ -1401,7 +1401,7 @@ impl MultiBuffer {
             edits,
             autoindent_mode,
             true,
-            AutoIndentBoundary::TrailingNewLine,
+            AutoIndentExclusion::FollowingLine,
             cx,
         );
     }
@@ -1420,7 +1420,7 @@ impl MultiBuffer {
             edits,
             autoindent_mode,
             false,
-            AutoIndentBoundary::LeadingNewLine,
+            AutoIndentExclusion::PrecedingLine,
             cx,
         );
     }
@@ -1430,7 +1430,7 @@ impl MultiBuffer {
         edits: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
-        autoindent_boundary: AutoIndentBoundary,
+        autoindent_exclusion: AutoIndentExclusion,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -1458,7 +1458,7 @@ impl MultiBuffer {
             edits,
             autoindent_mode,
             coalesce_adjacent,
-            autoindent_boundary,
+            autoindent_exclusion,
             cx,
         );
 
@@ -1468,7 +1468,7 @@ impl MultiBuffer {
             edits: Vec<(Range<MultiBufferOffset>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
             coalesce_adjacent: bool,
-            autoindent_boundary: AutoIndentBoundary,
+            autoindent_exclusion: AutoIndentExclusion,
             cx: &mut Context<MultiBuffer>,
         ) {
             let original_indent_columns = match &mut autoindent_mode {
@@ -1556,12 +1556,15 @@ impl MultiBuffer {
                         };
 
                     if coalesce_adjacent {
-                        if autoindent_boundary == AutoIndentBoundary::LeadingNewLine {
-                            buffer.edit(deletions, deletion_autoindent_mode, cx);
-                            buffer.edit(insertions, insertion_autoindent_mode, cx);
-                        } else {
-                            buffer.edit_before(deletions, deletion_autoindent_mode, cx);
-                            buffer.edit_before(insertions, insertion_autoindent_mode, cx);
+                        match autoindent_exclusion {
+                            AutoIndentExclusion::PrecedingLine => {
+                                buffer.edit(deletions, deletion_autoindent_mode, cx);
+                                buffer.edit(insertions, insertion_autoindent_mode, cx);
+                            }
+                            AutoIndentExclusion::FollowingLine => {
+                                buffer.edit_before(deletions, deletion_autoindent_mode, cx);
+                                buffer.edit_before(insertions, insertion_autoindent_mode, cx);
+                            }
                         }
                     } else {
                         buffer.edit_non_coalesce(deletions, deletion_autoindent_mode, cx);
