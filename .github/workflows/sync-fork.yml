@@ -35,7 +35,8 @@ jobs:
         run: |
           git checkout main
           if git merge --ff-only upstream/main 2>/dev/null; then
-            echo "::notice::main fast-forwarded to upstream/main"
+            # Also reached when main is already up to date with upstream.
+            echo "::notice::main synced with upstream/main"
           else
             # Local commits on main (fork patches) are preserved via a merge commit.
             git merge upstream/main -m "Merge upstream main"
