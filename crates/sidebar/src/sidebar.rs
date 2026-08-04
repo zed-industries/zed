@@ -392,6 +392,7 @@ impl ThreadEntry {
 enum ListEntry {
     ProjectHeader {
         key: ProjectGroupKey,
+        workspaces: Arc<[Entity<Workspace>]>,
         label: SharedString,
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
@@ -439,10 +440,10 @@ impl ListEntry {
         }
     }
 
-    fn reachable_workspaces<'a>(
-        &'a self,
-        multi_workspace: &'a workspace::MultiWorkspace,
-        cx: &'a App,
+    fn reachable_workspaces(
+        &self,
+        _multi_workspace: &workspace::MultiWorkspace,
+        _cx: &App,
     ) -> Vec<Entity<Workspace>> {
         match self {
             ListEntry::Thread(thread) => match &thread.workspace {
@@ -453,9 +454,7 @@ impl ListEntry {
                 ThreadEntryWorkspace::Open(workspace) => vec![workspace.clone()],
                 ThreadEntryWorkspace::Closed { .. } => Vec::new(),
             },
-            ListEntry::ProjectHeader { key, .. } => {
-                multi_workspace.workspaces_for_project_group(key, cx)
-            }
+            ListEntry::ProjectHeader { workspaces, .. } => workspaces.to_vec(),
         }
     }
 }
@@ -1884,6 +1883,7 @@ impl Sidebar {
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
+                    workspaces: Arc::from(group_workspaces.as_slice()),
                     label,
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
@@ -1930,6 +1930,7 @@ impl Sidebar {
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
+                    workspaces: Arc::from(group_workspaces.as_slice()),
                     label,
                     highlight_positions: Vec::new(),
                     has_running_threads,
@@ -2185,6 +2186,7 @@ impl Sidebar {
         let rendered = match entry {
             ListEntry::ProjectHeader {
                 key,
+                workspaces,
                 label,
                 highlight_positions,
                 has_running_threads,
@@ -2202,6 +2204,7 @@ impl Sidebar {
                     ix,
                     false,
                     key,
+                    workspaces.clone(),
                     label,
                     highlight_positions,
                     *has_running_threads,
@@ -2261,6 +2264,7 @@ impl Sidebar {
         ix: usize,
         is_sticky: bool,
         key: &ProjectGroupKey,
+        workspaces: Arc<[Entity<Workspace>]>,
         label: &SharedString,
         highlight_positions: &[usize],
         has_running_threads: bool,
@@ -2416,7 +2420,14 @@ impl Sidebar {
                     .gap_px()
                     .pr_1p5()
                     .children(opaque_window.then(|| gradient_overlay()))
-                    .child(self.render_new_thread_button(ix, id_prefix, key, &group_name, cx))
+                    .child(self.render_new_thread_button(
+                        ix,
+                        id_prefix,
+                        key,
+                        workspaces,
+                        &group_name,
+                        cx,
+                    ))
                     .child(self.render_project_header_ellipsis_menu(
                         ix,
                         id_prefix,
@@ -2482,6 +2493,7 @@ impl Sidebar {
         ix: usize,
         id_prefix: &str,
         key: &ProjectGroupKey,
+        open_workspaces: Arc<[Entity<Workspace>]>,
         group_name: &SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -2501,12 +2513,6 @@ impl Sidebar {
         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
         .icon_size(IconSize::Small)
         .when(!is_menu_open, |this| this.visible_on_hover(group_name));
-
-        let open_workspaces = self
-            .multi_workspace
-            .upgrade()
-            .map(|mw| mw.read(cx).workspaces_for_project_group(key, cx))
-            .unwrap_or_default();
 
         if open_workspaces.is_empty() {
             let key = key.clone();
@@ -3160,6 +3166,7 @@ impl Sidebar {
 
         let ListEntry::ProjectHeader {
             key,
+            workspaces,
             label,
             highlight_positions,
             has_running_threads,
@@ -3179,6 +3186,7 @@ impl Sidebar {
             header_idx,
             true,
             key,
+            workspaces.clone(),
             &label,
             &highlight_positions,
             *has_running_threads,
