@@ -305,6 +305,7 @@ impl Editor {
                             Selection {
                                 start: cursor,
                                 end: cursor,
+                                goal: SelectionGoal::None,
                                 ..selection.clone()
                             }
                         })

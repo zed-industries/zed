@@ -24346,8 +24346,8 @@ async fn test_on_type_formatting_preserves_cursor_position(cx: &mut TestAppConte
                 lsp::Position::new(0, 10)
             );
             Ok(Some(vec![lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 10)),
-                new_text: "c".to_string(),
+                range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 11)),
+                new_text: "c;".to_string(),
             }]))
         });
 
