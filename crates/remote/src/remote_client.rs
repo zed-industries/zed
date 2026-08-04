@@ -1354,7 +1354,7 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
             RemoteConnectionOptions::Docker(opts) => {
-                if opts.use_podman {
+                if opts.is_podman() {
                     "podman"
                 } else {
                     "docker"
@@ -1422,6 +1422,37 @@ mod tests {
             })
             .connection_type(),
             "podman"
+        );
+        // container_binary overrides use_podman for type detection.
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                container_binary: Some("podman-remote".to_string()),
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman",
+            "podman-remote with use_podman=false must still report 'podman'"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                container_binary: Some("/usr/bin/podman-remote".to_string()),
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman",
+            "full-path podman-remote must report 'podman'"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                container_binary: Some("custom-docker".to_string()),
+                ..Default::default()
+            })
+            .connection_type(),
+            "docker",
+            "non-podman container_binary must report 'docker' regardless of use_podman"
         );
     }
 
