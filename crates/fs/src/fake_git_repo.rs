@@ -13,9 +13,10 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateTagOptions, CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets,
-        GRAPH_CHUNK_SIZE, GitOperationAction, GitOperationKind, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
-        LogSource, MergeMode, PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs,
-        Worktree, commit_hash_search_query,
+        GRAPH_CHUNK_SIZE, GitOperationAction, GitOperationKind, GitRepository,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, MergeMode,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -208,6 +209,15 @@ impl GitRepository for FakeGitRepository {
     fn load_commit(
         &self,
         _commit: String,
+        _cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
+        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
+    }
+
+    fn load_commit_range(
+        &self,
+        _base: String,
+        _target: String,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
         async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
@@ -559,10 +569,9 @@ impl GitRepository for FakeGitRepository {
                 anyhow::bail!("cannot continue with unresolved conflicts");
             }
 
-            state.graph_mutations.push(FakeGitMutation::RunOperationAction {
-                operation,
-                action,
-            });
+            state
+                .graph_mutations
+                .push(FakeGitMutation::RunOperationAction { operation, action });
             state.active_operation = None;
             Ok(())
         })

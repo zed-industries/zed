@@ -3,6 +3,9 @@ use crate::{
     commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
     commit_tooltip::CommitAvatar,
     commit_view::CommitView,
+    git_graph_actions::{
+        GraphMutation, GraphMutationController, GraphMutationError, GraphSelection,
+    },
     git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
@@ -792,10 +795,10 @@ impl LaneState {
     }
 }
 
-struct CommitEntry {
-    data: Arc<InitialGraphCommitData>,
-    lane: usize,
-    color_idx: usize,
+pub(crate) struct GraphCommit {
+    pub(crate) data: Arc<InitialGraphCommitData>,
+    pub(crate) lane: usize,
+    pub(crate) color_idx: usize,
 }
 
 type ActiveLaneIdx = usize;
@@ -880,7 +883,7 @@ struct GraphData {
     parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>>,
     next_color: BranchColor,
     accent_colors_count: usize,
-    commits: Vec<Rc<CommitEntry>>,
+    commits: Vec<Rc<GraphCommit>>,
     max_commit_count: AllCommitCount,
     max_lanes: usize,
     lines: Vec<Rc<CommitLine>>,
@@ -1039,7 +1042,7 @@ impl GraphData {
 
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
-            self.commits.push(Rc::new(CommitEntry {
+            self.commits.push(Rc::new(GraphCommit {
                 data: commit.clone(),
                 lane: commit_lane,
                 color_idx: commit_color.0 as usize,
@@ -1304,6 +1307,13 @@ struct DetailPanelCommitMessage {
     scroll_handle: ScrollHandle,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionMode {
+    Single,
+    Range,
+    Toggle,
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
@@ -1316,7 +1326,7 @@ pub struct GitGraph {
     /// Per-column visibility mask owned by the view (not the resize state) so columns can be
     /// hidden regardless of whether the table is resizable. `true` means the column is hidden.
     column_visibility: TableRow<bool>,
-    selected_entry_idx: Option<usize>,
+    selection: GraphSelection,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     log_source: LogSource,
@@ -1337,6 +1347,7 @@ pub struct GitGraph {
 impl GitGraph {
     fn invalidate_state(&mut self, cx: &mut Context<Self>) {
         self.graph_data.clear();
+        self.selection.clear();
         self.search_state.matches.clear();
         self.search_state.selected_index = None;
         self.search_state.state.next_state();
@@ -1380,7 +1391,11 @@ impl GitGraph {
 
     pub fn active_operation(&self, cx: &App) -> Option<GitOperationKind> {
         let workspace = self.workspace.upgrade()?;
-        let repo = workspace.read(cx).project().read(cx).active_repository(cx)?;
+        let repo = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .active_repository(cx)?;
         repo.read(cx).active_operation
     }
 
@@ -1569,7 +1584,7 @@ impl GitGraph {
             table_interaction_state,
             column_widths,
             column_visibility,
-            selected_entry_idx: None,
+            selection: GraphSelection::default(),
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
             selected_commit_diff: None,
@@ -1848,7 +1863,7 @@ impl GitGraph {
                     .copied()
                     .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
 
-                let is_selected = self.selected_entry_idx == Some(idx);
+                let is_selected = self.selection.is_selected(idx);
                 let is_matched = self.search_state.matches.contains(&commit.data.sha);
                 let column_label = |label: SharedString| {
                     Label::new(label)
@@ -1930,7 +1945,7 @@ impl GitGraph {
     }
 
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_entry_idx = None;
+        self.selection.clear();
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
         self.changed_files_expanded_dirs.clear();
@@ -1943,7 +1958,7 @@ impl GitGraph {
     }
 
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+        if let Some(selected_entry_idx) = &self.selection.primary {
             self.select_entry(
                 selected_entry_idx.saturating_sub(1),
                 ScrollStrategy::Nearest,
@@ -1955,7 +1970,7 @@ impl GitGraph {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+        if let Some(selected_entry_idx) = &self.selection.primary {
             self.select_entry(
                 selected_entry_idx
                     .saturating_add(1)
@@ -1978,7 +1993,7 @@ impl GitGraph {
 
     fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
         let step = (self.visible_row_count(window, cx) / 2).max(1);
-        let target_idx = self.selected_entry_idx.unwrap_or(0).saturating_sub(step);
+        let target_idx = self.selection.primary.unwrap_or(0).saturating_sub(step);
 
         self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
     }
@@ -1990,7 +2005,8 @@ impl GitGraph {
 
         let step = (self.visible_row_count(window, cx) / 2).max(1);
         let target_idx = self
-            .selected_entry_idx
+            .selection
+            .primary
             .unwrap_or(0)
             .saturating_add(step)
             .min(last_entry_idx);
@@ -2125,7 +2141,17 @@ impl GitGraph {
         scroll_strategy: ScrollStrategy,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_entry_idx == Some(idx) || idx >= self.graph_data.commits.len() {
+        self.select_entry_with_mode(idx, scroll_strategy, SelectionMode::Single, cx);
+    }
+
+    fn select_entry_with_mode(
+        &mut self,
+        idx: usize,
+        scroll_strategy: ScrollStrategy,
+        mode: SelectionMode,
+        cx: &mut Context<Self>,
+    ) {
+        if idx >= self.graph_data.commits.len() {
             debug_assert!(
                 idx < self.graph_data.commits.len(),
                 "attempted to select out of bounds index: {idx}, commits.len: {}",
@@ -2134,7 +2160,19 @@ impl GitGraph {
             return;
         }
 
-        self.selected_entry_idx = Some(idx);
+        if mode == SelectionMode::Single
+            && self.selection.primary == Some(idx)
+            && self.selection.selected.len() == 1
+        {
+            return;
+        }
+
+        match mode {
+            SelectionMode::Single => self.selection.select_single(idx),
+            SelectionMode::Range => self.selection.select_range_to(idx),
+            SelectionMode::Toggle => self.selection.toggle(idx),
+        }
+
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
         self.changed_files_expanded_dirs.clear();
@@ -2145,7 +2183,13 @@ impl GitGraph {
             cx.notify();
         });
 
-        let Some(commit) = self.graph_data.commits.get(idx) else {
+        let Some(selected_idx) = self.selection.primary else {
+            self._commit_diff_task = None;
+            cx.emit(ItemEvent::Edit);
+            cx.notify();
+            return;
+        };
+        let Some(commit) = self.graph_data.commits.get(selected_idx) else {
             return;
         };
 
@@ -2297,6 +2341,29 @@ impl GitGraph {
         }
     }
 
+    pub(crate) fn set_pending_select_sha(&mut self, sha: Oid) {
+        self.pending_select_sha = Some(sha);
+    }
+
+    pub(crate) fn schedule_mutation(
+        &mut self,
+        mutation: GraphMutation,
+        primary_selection: Option<Oid>,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<anyhow::Result<()>>, GraphMutationError> {
+        let repository = self
+            .get_repository(cx)
+            .ok_or(GraphMutationError::MissingHead)?;
+        let plan = GraphMutationController::plan(&repository.read(cx).snapshot(), mutation)?;
+        Ok(GraphMutationController::schedule(
+            self,
+            repository,
+            plan,
+            primary_selection,
+            cx,
+        ))
+    }
+
     pub fn select_commit_by_sha(&mut self, sha: impl TryInto<Oid>, cx: &mut Context<Self>) {
         fn inner(this: &mut GitGraph, oid: Oid, cx: &mut Context<GitGraph>) {
             let Some(selected_repository) = this.get_repository(cx) else {
@@ -2323,7 +2390,7 @@ impl GitGraph {
     }
 
     fn open_selected_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected_entry_index) = self.selected_entry_idx else {
+        let Some(selected_entry_index) = self.selection.primary else {
             return;
         };
 
@@ -2355,6 +2422,73 @@ impl GitGraph {
         );
     }
 
+    pub(crate) fn compare_with_head(
+        &mut self,
+        target: Oid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_commit_range("HEAD".to_owned(), target, window, cx);
+    }
+
+    pub(crate) fn compare_with_working_tree(
+        &mut self,
+        target: Oid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        CommitView::open_working_tree(
+            target,
+            repository.downgrade(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn select_for_compare(&mut self, base: Oid, cx: &mut Context<Self>) {
+        self.selection.set_compare_base(base);
+        cx.notify();
+    }
+
+    pub(crate) fn compare_with_selected_base(
+        &mut self,
+        target: Oid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(base) = self.selection.compare_base.take() else {
+            return;
+        };
+        if base != target {
+            self.open_commit_range(base.to_string(), target, window, cx);
+        }
+        cx.notify();
+    }
+
+    fn open_commit_range(
+        &mut self,
+        base: String,
+        target: Oid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        CommitView::open_range(
+            base,
+            target.to_string(),
+            repository.downgrade(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
     fn copy_commit_sha(&mut self, entry_index: usize, cx: &mut Context<Self>) {
         let Some(commit) = self.graph_data.commits.get(entry_index) else {
             return;
@@ -2368,7 +2502,7 @@ impl GitGraph {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_entry_index) = self.selected_entry_idx else {
+        let Some(selected_entry_index) = self.selection.primary else {
             return;
         };
         self.copy_commit_sha(selected_entry_index, cx);
@@ -2407,7 +2541,7 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(selected_entry_index) = self.selected_entry_idx else {
+        let Some(selected_entry_index) = self.selection.primary else {
             return;
         };
         self.copy_commit_tag(selected_entry_index, window, cx);
@@ -2427,6 +2561,12 @@ impl GitGraph {
         let repository = self
             .get_repository(cx)
             .map(|repository| repository.downgrade());
+        let selected_commits = if self.selection.is_selected(index) {
+            self.selection
+                .ordered_oids(self.graph_data.commits.iter().map(|commit| commit.as_ref()))
+        } else {
+            vec![commit.data.sha]
+        };
         let context_menu = commit_context_menu(
             CommitContextMenuData {
                 sha: commit.data.sha,
@@ -2437,10 +2577,12 @@ impl GitGraph {
                     .map(|tag_name| SharedString::from(tag_name.to_string()))
                     .collect(),
             },
+            selected_commits,
             CommitContextMenuSource::GitGraph,
             ref_name,
             self.focus_handle.clone(),
             repository,
+            Some(cx.entity().downgrade()),
             self.workspace.clone(),
             window,
             cx,
@@ -2697,7 +2839,7 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(selected_idx) = self.selected_entry_idx else {
+        let Some(selected_idx) = self.selection.primary else {
             return Empty.into_any_element();
         };
 
@@ -2848,7 +2990,7 @@ impl GitGraph {
                             IconButton::new("close-detail", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.selected_entry_idx = None;
+                                    this.selection.clear();
                                     this.selected_commit_diff = None;
                                     this.selected_commit_diff_stats = None;
                                     this.selected_commit_message = None;
@@ -3220,7 +3362,7 @@ impl GitGraph {
         let mut lines: BTreeMap<usize, Vec<_>> = BTreeMap::new();
 
         let hovered_entry_idx = self.hovered_entry_idx;
-        let selected_entry_idx = self.selected_entry_idx;
+        let selected_indices = self.selection.selected.clone();
         let context_menu_target_index = self
             .context_menu
             .as_ref()
@@ -3246,7 +3388,7 @@ impl GitGraph {
                     for visible_row_idx in 0..rows.len() {
                         let absolute_row_idx = first_visible_row + visible_row_idx;
                         let is_hovered = hovered_entry_idx == Some(absolute_row_idx);
-                        let is_selected = selected_entry_idx == Some(absolute_row_idx);
+                        let is_selected = selected_indices.contains(&absolute_row_idx);
                         let is_context_menu_target =
                             context_menu_target_index == Some(absolute_row_idx);
 
@@ -3512,9 +3654,22 @@ impl GitGraph {
             focus_handle.focus(window, cx);
         }
 
-        self.select_entry(entry_idx, scroll_strategy, cx);
+        let modifiers = event.modifiers();
+        let mode = if modifiers.shift {
+            SelectionMode::Range
+        } else if modifiers.secondary() {
+            SelectionMode::Toggle
+        } else {
+            SelectionMode::Single
+        };
+        let compare_mode = mode == SelectionMode::Single && self.selection.compare_base.is_some();
+        self.select_entry_with_mode(entry_idx, scroll_strategy, mode, cx);
 
-        if event.click_count() >= 2 {
+        if compare_mode {
+            if let Some(target) = self.graph_data.commits.get(entry_idx).map(|c| c.data.sha) {
+                self.compare_with_selected_base(target, window, cx);
+            }
+        } else if mode == SelectionMode::Single && event.click_count() >= 2 {
             self.open_commit_view(entry_idx, window, cx);
         }
     }
@@ -3857,7 +4012,7 @@ impl Render for GitGraph {
                         )
                         .child({
                             let row_height = Self::row_height(window, cx);
-                            let selected_entry_idx = self.selected_entry_idx;
+                            let selected_indices = self.selection.selected.clone();
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let context_menu_target_index = self
                                 .context_menu
@@ -3899,7 +4054,7 @@ impl Render for GitGraph {
                                 .width_config(table_width_config)
                                 .column_filter(table_filter)
                                 .map_row(move |(index, row), window, cx| {
-                                    let is_selected = selected_entry_idx == Some(index);
+                                    let is_selected = selected_indices.contains(&index);
                                     let is_hovered = hovered_entry_idx == Some(index);
                                     let is_context_menu_target =
                                         context_menu_target_index == Some(index);
@@ -4042,7 +4197,7 @@ impl Render for GitGraph {
                         state.commit_ratio();
                     });
                 }))
-                .when(self.selected_entry_idx.is_some(), |this| {
+                .when(self.selection.primary.is_some(), |this| {
                     this.child(self.render_commit_view_resize_handle(window, cx))
                         .child(self.render_commit_detail_panel(window, cx))
                 })
@@ -4323,7 +4478,8 @@ impl workspace::SerializableItem for GitGraph {
             .to_string();
 
         let selected_sha = self
-            .selected_entry_idx
+            .selection
+            .primary
             .and_then(|idx| self.graph_data.commits.get(idx))
             .map(|commit| commit.data.sha.to_string());
 
@@ -6006,12 +6162,13 @@ mod tests {
 
         let target_sha = commits[5].sha;
         git_graph.update(cx, |graph, _| {
-            graph.selected_entry_idx = Some(5);
+            graph.selection.select_single(5);
         });
 
         let selected_sha = git_graph.read_with(&*cx, |graph, _| {
             graph
-                .selected_entry_idx
+                .selection
+                .primary
                 .and_then(|idx| graph.graph_data.commits.get(idx))
                 .map(|c| c.data.sha.to_string())
         });
@@ -6079,7 +6236,8 @@ mod tests {
             );
 
             let restored_selected_sha = graph
-                .selected_entry_idx
+                .selection
+                .primary
                 .and_then(|idx| graph.graph_data.commits.get(idx))
                 .map(|c| c.data.sha.to_string());
             assert_eq!(
@@ -6218,7 +6376,8 @@ mod tests {
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.search_matches_for_test(), vec![target_sha]);
             let selected_sha = graph
-                .selected_entry_idx
+                .selection
+                .primary
                 .and_then(|idx| graph.graph_data.commits.get(idx))
                 .map(|commit| commit.data.sha);
             assert_eq!(selected_sha, Some(target_sha));
@@ -6593,7 +6752,7 @@ mod tests {
 
         git_graph.update_in(cx, |graph, window, cx| {
             assert_eq!(graph.graph_data.commits.len(), 1);
-            graph.selected_entry_idx = Some(0);
+            graph.selection.select_single(0);
             graph.copy_selected_commit_tag(&CopyCommitTag, window, cx);
         });
 
@@ -6661,7 +6820,7 @@ mod tests {
 
         git_graph.update_in(cx, |graph, window, cx| {
             assert_eq!(graph.graph_data.commits.len(), 1);
-            graph.selected_entry_idx = Some(0);
+            graph.selection.select_single(0);
             graph.copy_selected_commit_tag(&CopyCommitTag, window, cx);
         });
 
@@ -6790,7 +6949,7 @@ mod tests {
         cx.run_until_parked();
 
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(1));
+            assert_eq!(graph.selection.primary, Some(1));
         });
     }
 
@@ -6866,7 +7025,7 @@ mod tests {
             assert_eq!(graph.graph_data.commits.len(), 10);
         });
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, None);
+            assert_eq!(graph.selection.primary, None);
         });
 
         git_graph.update_in(cx, |graph, window, cx| {
@@ -6874,7 +7033,7 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(0));
+            assert_eq!(graph.selection.primary, Some(0));
         });
 
         let scroll_step = git_graph.update_in(cx, |graph, window, cx| {
@@ -6884,13 +7043,13 @@ mod tests {
         cx.dispatch_action(ScrollDown);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(scroll_step));
+            assert_eq!(graph.selection.primary, Some(scroll_step));
         });
 
         cx.dispatch_action(ScrollUp);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(0));
+            assert_eq!(graph.selection.primary, Some(0));
         });
 
         git_graph.update_in(cx, |graph, window, cx| {
@@ -6898,7 +7057,7 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(1));
+            assert_eq!(graph.selection.primary, Some(1));
         });
 
         git_graph.update_in(cx, |graph, window, cx| {
@@ -6906,7 +7065,7 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(0));
+            assert_eq!(graph.selection.primary, Some(0));
         });
 
         git_graph.update_in(cx, |graph, window, cx| {
@@ -6914,13 +7073,13 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(9));
+            assert_eq!(graph.selection.primary, Some(9));
         });
 
         cx.dispatch_action(ScrollDown);
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(9));
+            assert_eq!(graph.selection.primary, Some(9));
         });
 
         git_graph.update_in(cx, |graph, window, cx| {
@@ -6928,7 +7087,7 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(9));
+            assert_eq!(graph.selection.primary, Some(9));
         });
 
         git_graph.update_in(cx, |graph, window, cx| {
@@ -6936,11 +7095,11 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(8));
+            assert_eq!(graph.selection.primary, Some(8));
         });
 
         git_graph.update(cx, |graph, cx| {
-            graph.selected_entry_idx = None;
+            graph.selection.clear();
             cx.notify();
         });
         cx.run_until_parked();
@@ -6949,11 +7108,11 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(0));
+            assert_eq!(graph.selection.primary, Some(0));
         });
 
         git_graph.update(cx, |graph, cx| {
-            graph.selected_entry_idx = None;
+            graph.selection.clear();
             cx.notify();
         });
         cx.run_until_parked();
@@ -6962,7 +7121,7 @@ mod tests {
         });
         cx.run_until_parked();
         git_graph.read_with(&*cx, |graph, _| {
-            assert_eq!(graph.selected_entry_idx, Some(0));
+            assert_eq!(graph.selection.primary, Some(0));
         });
     }
 
@@ -7568,5 +7727,4 @@ mod tests {
             assert_eq!(message_entity_id, new_entity_id);
         });
     }
-
 }

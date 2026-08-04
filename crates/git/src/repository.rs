@@ -626,6 +626,98 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
     }
 }
 
+async fn load_commit_diff_from_command(
+    git: GitBinary,
+    mut diff_command: util::command::Command,
+) -> Result<CommitDiff> {
+    let diff_output = diff_command
+        .output()
+        .await
+        .context("starting git diff process")?;
+    anyhow::ensure!(
+        diff_output.status.success(),
+        "git diff failed: {}",
+        String::from_utf8_lossy(&diff_output.stderr)
+    );
+
+    let diff_stdout = String::from_utf8_lossy(&diff_output.stdout);
+    let changes = parse_git_diff_raw(&diff_stdout);
+
+    let mut cat_file_process = git
+        .build_command(&["cat-file", "--batch=%(objectsize)"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("starting git cat-file process")?;
+
+    let mut files = Vec::<CommitFile>::new();
+    let stdin = cat_file_process
+        .stdin
+        .take()
+        .context("git cat-file process has no stdin")?;
+    let stdout = cat_file_process
+        .stdout
+        .take()
+        .context("git cat-file process has no stdout")?;
+    let mut stdin = BufWriter::with_capacity(512, stdin);
+    let mut stdout = BufReader::new(stdout);
+    let mut info_line = String::new();
+    let mut newline = [b'\0'];
+    for change in changes {
+        let change = change?;
+        let path = change.path;
+        // Git outputs `/`-delimited paths even on Windows.
+        let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
+            continue;
+        };
+
+        let objects = [change.new_object, change.old_object];
+        let mut has_blobs = false;
+        for object in objects.iter().flatten() {
+            if object.kind == CommitDiffObjectKind::Blob {
+                stdin.write_all(object.oid.as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+                has_blobs = true;
+            }
+        }
+        if has_blobs {
+            stdin.flush().await?;
+        }
+
+        let [new_object, old_object] = objects;
+        let new_object =
+            load_commit_object(new_object, &mut stdout, &mut info_line, &mut newline).await?;
+        let old_object =
+            load_commit_object(old_object, &mut stdout, &mut info_line, &mut newline).await?;
+        let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
+            || old_object.as_ref().is_some_and(|object| object.is_binary);
+        let new_text = new_object.map(|object| {
+            if is_binary {
+                String::new()
+            } else {
+                object.text
+            }
+        });
+        let old_text = old_object.map(|object| {
+            if is_binary {
+                String::new()
+            } else {
+                object.text
+            }
+        });
+
+        files.push(CommitFile {
+            path: RepoPath(Arc::from(rel_path)),
+            old_text,
+            new_text,
+            is_binary,
+        });
+    }
+
+    Ok(CommitDiff { files })
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
@@ -958,6 +1050,13 @@ pub trait GitRepository: Send + Sync {
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
+
+    fn load_commit_range(
+        &self,
+        base: String,
+        target: String,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(
         &self,
         path: RepoPath,
@@ -1479,110 +1578,41 @@ impl GitRepository for RealGitRepository {
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
         let git = self.git_binary();
-        cx.background_spawn(async move {
-            let show_output = git
-                .build_command(&[
-                    "show",
-                    "--format=",
-                    "-z",
-                    "--no-renames",
-                    "--raw",
-                    "--no-abbrev",
-                    "--first-parent",
-                ])
-                .arg(&commit)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .await
-                .context("starting git show process")?;
-            anyhow::ensure!(
-                show_output.status.success(),
-                "git show failed: {}",
-                String::from_utf8_lossy(&show_output.stderr)
-            );
+        let mut command = git.build_command(&[
+            "show",
+            "--format=",
+            "-z",
+            "--no-renames",
+            "--raw",
+            "--no-abbrev",
+            "--first-parent",
+        ]);
+        command
+            .arg(commit)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cx.background_spawn(load_commit_diff_from_command(git, command))
+            .boxed()
+    }
 
-            let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let changes = parse_git_diff_raw(&show_stdout);
-
-            let mut cat_file_process = git
-                .build_command(&["cat-file", "--batch=%(objectsize)"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .context("starting git cat-file process")?;
-
-            let mut files = Vec::<CommitFile>::new();
-            let stdin = cat_file_process
-                .stdin
-                .take()
-                .context("git cat-file process has no stdin")?;
-            let stdout = cat_file_process
-                .stdout
-                .take()
-                .context("git cat-file process has no stdout")?;
-            let mut stdin = BufWriter::with_capacity(512, stdin);
-            let mut stdout = BufReader::new(stdout);
-            let mut info_line = String::new();
-            let mut newline = [b'\0'];
-            for change in changes {
-                let change = change?;
-                let path = change.path;
-                // git-show outputs `/`-delimited paths even on Windows.
-                let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
-                    continue;
-                };
-
-                let objects = [change.new_object, change.old_object];
-                let mut has_blobs = false;
-                for object in objects.iter().flatten() {
-                    if object.kind == CommitDiffObjectKind::Blob {
-                        stdin.write_all(object.oid.as_bytes()).await?;
-                        stdin.write_all(b"\n").await?;
-                        has_blobs = true;
-                    }
-                }
-                if has_blobs {
-                    stdin.flush().await?;
-                }
-
-                let [new_object, old_object] = objects;
-                let new_object =
-                    load_commit_object(new_object, &mut stdout, &mut info_line, &mut newline)
-                        .await?;
-                let old_object =
-                    load_commit_object(old_object, &mut stdout, &mut info_line, &mut newline)
-                        .await?;
-                let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
-                    || old_object.as_ref().is_some_and(|object| object.is_binary);
-                let new_text = new_object.map(|object| {
-                    if is_binary {
-                        String::new()
-                    } else {
-                        object.text
-                    }
-                });
-                let old_text = old_object.map(|object| {
-                    if is_binary {
-                        String::new()
-                    } else {
-                        object.text
-                    }
-                });
-
-                files.push(CommitFile {
-                    path: RepoPath(Arc::from(rel_path)),
-                    old_text,
-                    new_text,
-                    is_binary,
-                })
-            }
-
-            Ok(CommitDiff { files })
-        })
-        .boxed()
+    fn load_commit_range(
+        &self,
+        base: String,
+        target: String,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>> {
+        let git = self.git_binary();
+        let mut command =
+            git.build_command(&["diff", "-z", "--no-renames", "--raw", "--no-abbrev"]);
+        command
+            .arg(base)
+            .arg(target)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cx.background_spawn(load_commit_diff_from_command(git, command))
+            .boxed()
     }
 
     fn reset(

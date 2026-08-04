@@ -1,11 +1,20 @@
-use crate::commit_view::CommitView;
+use crate::{
+    commit_view::CommitView,
+    git_graph::GitGraph,
+    git_graph_actions::GraphMutation,
+    git_ref_modal::{GitRefModal, GitRefModalKind, GitRefModalResult},
+};
+use anyhow::anyhow;
 use git::Oid;
-use gpui::{Action, ClipboardItem, Entity, FocusHandle, SharedString, WeakEntity, Window, actions};
+use git::repository::{CreateTagOptions, MergeMode, ResetMode};
+use gpui::{
+    Action, App, ClipboardItem, Entity, FocusHandle, SharedString, Task, WeakEntity, Window,
+    actions,
+};
 use project::{GIT_COMMAND_TASK_TAG, git_store::Repository};
-
 use task::{TaskContext, TaskVariables, VariableName};
 use ui::{Color, ContextMenu, ContextMenuEntry, IconName, IconPosition, prelude::*};
-use workspace::Workspace;
+use workspace::{Workspace, notifications::DetachAndPromptErr};
 
 actions!(
     git_graph,
@@ -35,15 +44,22 @@ pub(crate) enum CommitContextMenuSource {
 
 pub(crate) fn commit_context_menu(
     commit: CommitContextMenuData,
+    selected_commits: Vec<Oid>,
     source: CommitContextMenuSource,
     ref_name: Option<SharedString>,
     focus_handle: FocusHandle,
     repository: Option<WeakEntity<Repository>>,
+    graph: Option<WeakEntity<GitGraph>>,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
     let sha = commit.sha;
+    let cherry_pick_commits = if selected_commits.is_empty() {
+        vec![sha]
+    } else {
+        selected_commits
+    };
     let sha_short = sha.display_short();
     let git_tasks = git_context_menu_tasks(
         git_task_context(&repository, sha, ref_name.as_deref(), cx),
@@ -129,6 +145,181 @@ pub(crate) fn commit_context_menu(
                     }
                 })
             })
+            .when_some(graph.clone(), |menu, graph| {
+                let repository = repository.clone();
+                let workspace = workspace.clone();
+                let reset_graph = graph.clone();
+                menu.separator()
+                    .header("Git Actions")
+                    .entry("Checkout Commit", None, {
+                        let graph = graph.clone();
+                        move |window, cx| {
+                            schedule_graph_mutation(
+                                graph.clone(),
+                                GraphMutation::Checkout { commit: sha },
+                                Some(sha),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .entry("Create Branch…", None, {
+                        let graph = graph.clone();
+                        let repository = repository.clone();
+                        let workspace = workspace.clone();
+                        move |window, cx| {
+                            open_ref_action(
+                                GitRefModalKind::Branch,
+                                graph.clone(),
+                                repository.clone(),
+                                workspace.clone(),
+                                sha,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .entry("Create Tag…", None, {
+                        let graph = graph.clone();
+                        move |window, cx| {
+                            open_ref_action(
+                                GitRefModalKind::Tag,
+                                graph.clone(),
+                                repository.clone(),
+                                workspace.clone(),
+                                sha,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .entry("Cherry-pick", None, {
+                        let graph = graph.clone();
+                        let cherry_pick_commits = cherry_pick_commits.clone();
+                        move |window, cx| {
+                            schedule_graph_mutation(
+                                graph.clone(),
+                                GraphMutation::CherryPick {
+                                    commits: cherry_pick_commits.clone(),
+                                    no_commit: false,
+                                },
+                                Some(sha),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .entry("Revert", None, {
+                        let graph = graph.clone();
+                        move |window, cx| {
+                            schedule_graph_mutation(
+                                graph.clone(),
+                                GraphMutation::Revert {
+                                    commit: sha,
+                                    no_commit: false,
+                                },
+                                Some(sha),
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .submenu("Reset", move |menu, _window, _cx| {
+                        let graph = reset_graph.clone();
+                        menu.entry("Soft", None, {
+                            let graph = graph.clone();
+                            move |window, cx| {
+                                schedule_graph_mutation(
+                                    graph.clone(),
+                                    GraphMutation::Reset {
+                                        commit: sha,
+                                        mode: ResetMode::Soft,
+                                    },
+                                    Some(sha),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .entry("Mixed", None, {
+                            let graph = graph.clone();
+                            move |window, cx| {
+                                schedule_graph_mutation(
+                                    graph.clone(),
+                                    GraphMutation::Reset {
+                                        commit: sha,
+                                        mode: ResetMode::Mixed,
+                                    },
+                                    Some(sha),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .entry("Hard", None, move |window, cx| {
+                            schedule_graph_mutation(
+                                graph.clone(),
+                                GraphMutation::Reset {
+                                    commit: sha,
+                                    mode: ResetMode::Hard,
+                                },
+                                Some(sha),
+                                window,
+                                cx,
+                            );
+                        })
+                    })
+                    .entry("Compare with HEAD", None, {
+                        let graph = graph.clone();
+                        move |window, cx| {
+                            if let Some(graph) = graph.upgrade() {
+                                graph.update(cx, |graph, cx| {
+                                    graph.compare_with_head(sha, window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .entry("Compare with Working Tree", None, {
+                        let graph = graph.clone();
+                        move |window, cx| {
+                            if let Some(graph) = graph.upgrade() {
+                                graph.update(cx, |graph, cx| {
+                                    graph.compare_with_working_tree(sha, window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .entry("Select for Compare", None, {
+                        let graph = graph.clone();
+                        move |_window, cx| {
+                            if let Some(graph) = graph.upgrade() {
+                                graph.update(cx, |graph, cx| graph.select_for_compare(sha, cx));
+                            }
+                        }
+                    })
+                    .entry("Compare with Selected Base", None, {
+                        let graph = graph.clone();
+                        move |window, cx| {
+                            if let Some(graph) = graph.upgrade() {
+                                graph.update(cx, |graph, cx| {
+                                    graph.compare_with_selected_base(sha, window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .entry("Merge", None, move |window, cx| {
+                        schedule_graph_mutation(
+                            graph.clone(),
+                            GraphMutation::Merge {
+                                commit: sha,
+                                mode: MergeMode::Default,
+                            },
+                            Some(sha),
+                            window,
+                            cx,
+                        );
+                    })
+            })
             .when(source == CommitContextMenuSource::GitPanel, |menu| {
                 menu.entry("Show in Git Graph", None, move |window, cx| {
                     window.dispatch_action(
@@ -177,6 +368,78 @@ pub(crate) fn commit_context_menu(
                 menu
             })
     })
+}
+
+fn schedule_graph_mutation(
+    graph: WeakEntity<GitGraph>,
+    mutation: GraphMutation,
+    primary_selection: Option<Oid>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let task = match graph.upgrade() {
+        Some(graph) => match graph.update(cx, |graph, cx| {
+            graph.schedule_mutation(mutation, primary_selection, cx)
+        }) {
+            Ok(task) => task,
+            Err(error) => Task::ready(Err(anyhow!(error))),
+        },
+        None => Task::ready(Err(anyhow!("Git graph is no longer available"))),
+    };
+    task.detach_and_prompt_err("Git graph action failed", window, cx, |error, _, _| {
+        Some(error.to_string())
+    });
+}
+
+fn open_ref_action(
+    kind: GitRefModalKind,
+    graph: WeakEntity<GitGraph>,
+    repository: Option<WeakEntity<Repository>>,
+    workspace: WeakEntity<Workspace>,
+    sha: Oid,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let modal = GitRefModal::open(kind, workspace, window, cx);
+    window
+        .spawn(cx, async move |cx| {
+            let Some(result) = modal.await else {
+                return Ok(());
+            };
+
+            match result {
+                GitRefModalResult::Branch { name } => {
+                    let repository = repository
+                        .and_then(|repository| repository.upgrade())
+                        .ok_or_else(|| anyhow!("Repository is no longer available"))?;
+                    let receiver = repository.update(cx, |repository, _| {
+                        repository.create_branch(name, Some(sha.to_string()))
+                    });
+                    receiver.await??;
+                }
+                GitRefModalResult::Tag { name, message } => {
+                    let graph = graph
+                        .upgrade()
+                        .ok_or_else(|| anyhow!("Git graph is no longer available"))?;
+                    let task = graph.update(cx, |graph, cx| {
+                        graph.schedule_mutation(
+                            GraphMutation::CreateTag(CreateTagOptions {
+                                name,
+                                target: sha.to_string(),
+                                message,
+                            }),
+                            Some(sha),
+                            cx,
+                        )
+                    })?;
+                    task.await?;
+                }
+            }
+            Ok(())
+        })
+        .detach_and_prompt_err("Git graph action failed", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
 }
 
 fn git_task_context(
