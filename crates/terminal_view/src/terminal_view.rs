@@ -3127,6 +3127,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_inline_terminal_displays_all_of_its_lines(cx: &mut TestAppContext) {
+        let (project, workspace) = init_test(cx).await;
+        let terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let (terminal_view, cx) = cx.add_window_view(|window, cx| {
+            let mut terminal_view = TerminalView::new(
+                terminal.clone(),
+                workspace.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            );
+            terminal_view.set_embedded_mode(None, cx);
+            terminal_view
+        });
+
+        for _ in 1..=20 {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(b"line\n", cx);
+            });
+            cx.draw(
+                gpui::Point::default(),
+                gpui::size(px(400.), px(100.)),
+                |_, _| terminal_view.clone().into_any_element(),
+            );
+            terminal.read_with(cx, |terminal, _| {
+                assert_eq!(terminal.viewport_lines(), terminal.total_lines());
+            })
+        }
+    }
+
+    #[gpui::test]
     async fn test_tab_content_shows_terminal_title_when_custom_title_directly_set_empty(
         cx: &mut TestAppContext,
     ) {
