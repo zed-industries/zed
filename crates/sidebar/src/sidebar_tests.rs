@@ -12572,7 +12572,8 @@ mod property_test {
                     let key = &keys[project_group_index];
                     let ws = mw
                         .workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| mw.workspace().clone());
                     let project = ws.read(cx).project().clone();
                     (ws, project)
@@ -12725,7 +12726,8 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[index];
                     mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
                 multi_workspace.update_in(cx, |mw, window, cx| {
@@ -12794,7 +12796,8 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
                     mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap()
                 });
                 let main_project = main_workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -12813,8 +12816,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                    mw.workspaces_for_project_group(key, cx).first().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -12841,8 +12843,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                    mw.workspaces_for_project_group(key, cx).first().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -15091,9 +15092,9 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
                 Some(opts),
                 Some(key),
                 move |_, _, _| Task::ready(Ok(Some(remote_client))),
-                &[],
                 None,
                 workspace::OpenMode::Activate,
+                None,
                 window,
                 cx,
             )

@@ -453,9 +453,9 @@ impl ListEntry {
                 ThreadEntryWorkspace::Open(workspace) => vec![workspace.clone()],
                 ThreadEntryWorkspace::Closed { .. } => Vec::new(),
             },
-            ListEntry::ProjectHeader { key, .. } => multi_workspace
-                .workspaces_for_project_group(key, cx)
-                .unwrap_or_default(),
+            ListEntry::ProjectHeader { key, .. } => {
+                multi_workspace.workspaces_for_project_group(key, cx)
+            }
         }
     }
 }
@@ -1266,9 +1266,9 @@ impl Sidebar {
                 host,
                 provisional_key,
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -1305,9 +1305,9 @@ impl Sidebar {
                 host,
                 provisional_key,
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -2505,7 +2505,7 @@ impl Sidebar {
         let open_workspaces = self
             .multi_workspace
             .upgrade()
-            .and_then(|mw| mw.read(cx).workspaces_for_project_group(key, cx))
+            .map(|mw| mw.read(cx).workspaces_for_project_group(key, cx))
             .unwrap_or_default();
 
         if open_workspaces.is_empty() {
@@ -2727,7 +2727,8 @@ impl Sidebar {
             let Some(base) = multi_workspace
                 .read(cx)
                 .workspaces_for_project_group(&key, cx)
-                .and_then(|workspaces| workspaces.first().cloned())
+                .first()
+                .cloned()
             else {
                 continue;
             };
@@ -2822,9 +2823,7 @@ impl Sidebar {
 
                 let open_workspaces = multi_workspace
                     .read_with(cx, |multi_workspace, cx| {
-                        multi_workspace
-                            .workspaces_for_project_group(&project_group_key, cx)
-                            .unwrap_or_default()
+                        multi_workspace.workspaces_for_project_group(&project_group_key, cx)
                     })
                     .unwrap_or_default();
 
@@ -3023,8 +3022,9 @@ impl Sidebar {
                                                         close_multi_workspace
                                                             .update(cx, |multi_workspace, cx| {
                                                                 multi_workspace
-                                                                    .close_workspace(
-                                                                        &close_workspace,
+                                                                    .remove(
+                                                                        [close_workspace.clone()],
+                                                                        RemovalIntent::CloseProject,
                                                                         window,
                                                                         cx,
                                                                     )
@@ -3977,9 +3977,9 @@ impl Sidebar {
                 host,
                 provisional_key,
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -4610,9 +4610,9 @@ impl Sidebar {
                 host,
                 provisional_key,
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                &[],
                 None,
                 OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
@@ -4925,9 +4925,9 @@ impl Sidebar {
                 host,
                 Some(project_group_key),
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                &[],
                 None,
                 OpenMode::Add,
+                None,
                 window,
                 cx,
             )
