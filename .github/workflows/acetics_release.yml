@@ -54,3 +54,57 @@ jobs:
           name: zed-remote-server-windows-x86_64.zip
           path: target/zed-remote-server-windows-x86_64.zip
           if-no-files-found: error
+  bundle_linux_remote_server_x86_64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake musl-tools
+      - name: Add musl target
+        run: rustup target add x86_64-unknown-linux-musl
+      - name: Build remote server
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          ZED_COMMIT_SHA: ${{ github.sha }}
+        run: cargo build --release --package remote_server --target x86_64-unknown-linux-musl
+      - name: Compress remote server
+        run: gzip -f --stdout --best target/x86_64-unknown-linux-musl/release/remote_server > target/zed-remote-server-linux-x86_64.gz
+      - name: Upload remote server
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-remote-server-linux-x86_64.gz
+          path: target/zed-remote-server-linux-x86_64.gz
+          if-no-files-found: error
+  publish_release:
+    needs:
+      - bundle_windows_x86_64
+      - bundle_linux_remote_server_x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=acetics-latest
+          gh release delete "$tag" --cleanup-tag --yes || true
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "Acetics dev build (${GITHUB_SHA::7})" \
+            --notes "Automated dev build from commit $GITHUB_SHA." \
+            artifacts/*
