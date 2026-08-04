@@ -1038,7 +1038,8 @@ struct PathTileFragmentInput {
 
 PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id: SV_InstanceID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
-    PathTile tile = path_tiles[tile_id];
+    uint tile_index = batch_start_index + tile_id;
+    PathTile tile = path_tiles[tile_index];
     PathPaint paint = path_paints[tile.paint];
     float2 position = tile.quad.origin + unit_vertex * tile.quad.size;
 
@@ -1048,7 +1049,7 @@ PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id:
 
     PathTileVertexOutput output;
     output.position = to_device_position_impl(position);
-    output.tile_id = tile_id;
+    output.tile_id = tile_index;
     output.background_solid = gradient.solid;
     output.background_color0 = gradient.color0;
     output.background_color1 = gradient.color1;

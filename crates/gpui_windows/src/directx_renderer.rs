@@ -93,6 +93,7 @@ struct DirectXRenderPipelines {
 
 struct DirectXGlobalElements {
     global_params_buffer: Option<ID3D11Buffer>,
+    batch_params_buffer: Option<ID3D11Buffer>,
     sampler: Option<ID3D11SamplerState>,
 }
 
@@ -227,6 +228,12 @@ impl DirectXRenderer {
             device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
             device_context.RSSetViewports(Some(slice::from_ref(&resources.viewport)));
+            device_context
+                .VSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
+            device_context
+                .VSSetConstantBuffers(1, Some(slice::from_ref(&self.globals.batch_params_buffer)));
+            device_context
+                .PSSetConstantBuffers(0, Some(slice::from_ref(&self.globals.global_params_buffer)));
         }
         Ok(())
     }
@@ -630,17 +637,11 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         self.pipelines.shadow_pipeline.draw_range(
-            &devices.device,
             &devices.device_context,
-            slice::from_ref(
-                &self
-                    .resources
-                    .as_ref()
-                    .context("resources missing")?
-                    .viewport,
-            ),
-            slice::from_ref(&self.globals.global_params_buffer),
-            4,
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             start as u32,
             len as u32,
         )
@@ -652,17 +653,11 @@ impl DirectXRenderer {
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         self.pipelines.quad_pipeline.draw_range(
-            &devices.device,
             &devices.device_context,
-            slice::from_ref(
-                &self
-                    .resources
-                    .as_ref()
-                    .context("resources missing")?
-                    .viewport,
-            ),
-            slice::from_ref(&self.globals.global_params_buffer),
-            4,
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             start as u32,
             len as u32,
         )
@@ -686,19 +681,18 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let curve_buffers = [
             self.pipelines.path_tile_curves.view.clone(),
             self.pipelines.path_curves.view.clone(),
             self.pipelines.path_paints.view.clone(),
         ];
         self.pipelines.path_tile_pipeline.draw_range_with_buffers(
-            &devices.device,
             &devices.device_context,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
             &curve_buffers,
-            4,
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             first_instance as u32,
             instance_count as u32,
         )
@@ -709,13 +703,12 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         self.pipelines.underline_pipeline.draw_range(
-            &devices.device,
             &devices.device_context,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
-            4,
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             start as u32,
             len as u32,
         )
@@ -731,14 +724,14 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.mono_sprites.draw_range_with_texture(
-            &devices.device,
             &devices.device_context,
             &texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -755,14 +748,14 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.subpixel_sprites.draw_range_with_texture(
-            &devices.device,
             &devices.device_context,
             &texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -779,14 +772,14 @@ impl DirectXRenderer {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.poly_sprites.draw_range_with_texture(
-            &devices.device,
             &devices.device_context,
             &texture_view,
-            slice::from_ref(&resources.viewport),
-            slice::from_ref(&self.globals.global_params_buffer),
+            self.globals
+                .batch_params_buffer
+                .as_ref()
+                .context("batch params buffer missing")?,
             slice::from_ref(&self.globals.sampler),
             start as u32,
             len as u32,
@@ -992,18 +985,8 @@ impl DirectComposition {
 
 impl DirectXGlobalElements {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let global_params_buffer = unsafe {
-            let desc = D3D11_BUFFER_DESC {
-                ByteWidth: std::mem::size_of::<GlobalParams>() as u32,
-                Usage: D3D11_USAGE_DYNAMIC,
-                BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                ..Default::default()
-            };
-            let mut buffer = None;
-            device.CreateBuffer(&desc, None, Some(&mut buffer))?;
-            buffer
-        };
+        let global_params_buffer = create_constant_buffer::<GlobalParams>(device)?;
+        let batch_params_buffer = create_constant_buffer::<BatchParams>(device)?;
 
         let sampler = unsafe {
             let desc = D3D11_SAMPLER_DESC {
@@ -1025,9 +1008,17 @@ impl DirectXGlobalElements {
 
         Ok(Self {
             global_params_buffer,
+            batch_params_buffer,
             sampler,
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C, align(16))]
+struct BatchParams {
+    start_index: u32,
+    _padding: [u32; 3],
 }
 
 #[derive(Debug, Default)]
@@ -1073,24 +1064,48 @@ impl<T> StructuredBuffer<T> {
         update_buffer(device_context, &self.buffer, data)
     }
 
+    fn write_with<I>(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        capacity: usize,
+        data: I,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = T>,
+        T: Copy,
+    {
+        let label = self.label;
+        let mut mapped = self.map(device, device_context, capacity)?;
+        for item in data {
+            mapped.push(item)?;
+        }
+        anyhow::ensure!(
+            mapped.written == capacity,
+            "{} buffer wrote {} items but expected {capacity}",
+            label,
+            mapped.written
+        );
+        Ok(())
+    }
+
     /// Map the buffer for writing exactly `capacity` items straight into
     /// GPU memory, growing it first if needed. Unmapped when the returned
     /// writer is dropped.
     fn map<'a>(
         &'a mut self,
-        devices: &'a DirectXRendererDevices,
+        device: &ID3D11Device,
+        device_context: &'a ID3D11DeviceContext,
         capacity: usize,
     ) -> Result<MappedBuffer<'a, T>> {
-        self.ensure_capacity(&devices.device, capacity)?;
+        self.ensure_capacity(device, capacity)?;
         let pointer = unsafe {
             let mut dest = std::mem::zeroed();
-            devices
-                .device_context
-                .Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
+            device_context.Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
             dest.pData as *mut T
         };
         Ok(MappedBuffer {
-            device_context: &devices.device_context,
+            device_context,
             buffer: &self.buffer,
             pointer,
             written: 0,
@@ -1129,30 +1144,11 @@ struct MappedBuffer<'a, T> {
 }
 
 impl<T: Copy> MappedBuffer<'_, T> {
-    /// The index the next pushed item will occupy.
-    fn next_index(&self) -> u32 {
-        self.written as u32
-    }
-
-    fn push(&mut self, item: T) {
-        assert!(self.written < self.capacity, "mapped buffer overrun");
+    fn push(&mut self, item: T) -> Result<()> {
+        anyhow::ensure!(self.written < self.capacity, "mapped buffer overrun");
         unsafe { std::ptr::write(self.pointer.add(self.written), item) };
         self.written += 1;
-    }
-
-    fn extend(&mut self, items: &[T]) {
-        assert!(
-            self.written + items.len() <= self.capacity,
-            "mapped buffer overrun"
-        );
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                items.as_ptr(),
-                self.pointer.add(self.written),
-                items.len(),
-            );
-        }
-        self.written += items.len();
+        Ok(())
     }
 }
 
@@ -1203,102 +1199,88 @@ impl<T> PipelineState<T> {
         self.instances.write(device, device_context, data)
     }
 
-    fn draw_range(
-        &self,
+    fn update_buffer_with<I>(
+        &mut self,
         device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
-        vertex_count: u32,
+        capacity: usize,
+        data: I,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = T>,
+        T: Copy,
+    {
+        self.instances
+            .write_with(device, device_context, capacity, data)
+    }
+
+    fn draw_range(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        batch_params_buffer: &ID3D11Buffer,
         first_instance: u32,
         instance_count: u32,
     ) -> Result<()> {
-        let view = create_buffer_view_range(
-            device,
-            &self.instances.buffer,
-            first_instance,
-            instance_count,
-        )?;
+        update_batch_start(device_context, batch_params_buffer, first_instance)?;
         set_pipeline_state(
             device_context,
-            slice::from_ref(&view),
+            slice::from_ref(&self.instances.view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
-            device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
+            device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())
     }
 
     /// Draw as [`PipelineState::draw_range`], additionally binding `buffers`
     /// to consecutive shader resource slots starting at `t2`. Pipelines whose
-    /// instances index side tables (path bins into their piece lists) need
-    /// more than the one instance buffer `t1` holds.
+    /// instances index side tables need more than the one instance buffer `t1`
+    /// holds.
     fn draw_range_with_buffers(
         &self,
-        device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
         buffers: &[Option<ID3D11ShaderResourceView>],
-        vertex_count: u32,
+        batch_params_buffer: &ID3D11Buffer,
         first_instance: u32,
         instance_count: u32,
     ) -> Result<()> {
-        let view = create_buffer_view_range(
-            device,
-            &self.instances.buffer,
-            first_instance,
-            instance_count,
-        )?;
+        update_batch_start(device_context, batch_params_buffer, first_instance)?;
         set_pipeline_state(
             device_context,
-            slice::from_ref(&view),
+            slice::from_ref(&self.instances.view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
             device_context.VSSetShaderResources(2, Some(buffers));
             device_context.PSSetShaderResources(2, Some(buffers));
-            device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
+            device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())
     }
 
     fn draw_range_with_texture(
         &self,
-        device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
         texture: &[Option<ID3D11ShaderResourceView>],
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
+        batch_params_buffer: &ID3D11Buffer,
         sampler: &[Option<ID3D11SamplerState>],
         first_instance: u32,
         instance_count: u32,
     ) -> Result<()> {
-        let view = create_buffer_view_range(
-            device,
-            &self.instances.buffer,
-            first_instance,
-            instance_count,
-        )?;
+        update_batch_start(device_context, batch_params_buffer, first_instance)?;
         set_pipeline_state(
             device_context,
-            slice::from_ref(&view),
+            slice::from_ref(&self.instances.view),
             D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            viewport,
             &self.vertex,
             &self.fragment,
-            global_params,
             &self.blend_state,
         );
         unsafe {
@@ -1506,6 +1488,22 @@ fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11P
 }
 
 #[inline]
+fn create_constant_buffer<T>(device: &ID3D11Device) -> Result<Option<ID3D11Buffer>> {
+    const { assert!(std::mem::size_of::<T>() != 0 && std::mem::size_of::<T>().is_multiple_of(16)) };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: std::mem::size_of::<T>() as u32,
+        Usage: D3D11_USAGE_DYNAMIC,
+        BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
+    let mut buffer = None;
+    unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
+    Ok(buffer)
+}
+
+#[inline]
 fn create_buffer(
     device: &ID3D11Device,
     element_size: usize,
@@ -1535,32 +1533,6 @@ fn create_buffer_view(
 }
 
 #[inline]
-fn create_buffer_view_range(
-    device: &ID3D11Device,
-    buffer: &ID3D11Buffer,
-    first_element: u32,
-    num_elements: u32,
-) -> Result<Option<ID3D11ShaderResourceView>> {
-    let desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
-        Format: DXGI_FORMAT_UNKNOWN,
-        ViewDimension: D3D11_SRV_DIMENSION_BUFFER,
-        Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
-            Buffer: D3D11_BUFFER_SRV {
-                Anonymous1: D3D11_BUFFER_SRV_0 {
-                    FirstElement: first_element,
-                },
-                Anonymous2: D3D11_BUFFER_SRV_1 {
-                    NumElements: num_elements,
-                },
-            },
-        },
-    };
-    let mut view = None;
-    unsafe { device.CreateShaderResourceView(buffer, Some(&desc), Some(&mut view)) }?;
-    Ok(view)
-}
-
-#[inline]
 fn update_buffer<T>(
     device_context: &ID3D11DeviceContext,
     buffer: &ID3D11Buffer,
@@ -1576,25 +1548,36 @@ fn update_buffer<T>(
 }
 
 #[inline]
+fn update_batch_start(
+    device_context: &ID3D11DeviceContext,
+    buffer: &ID3D11Buffer,
+    first_instance: u32,
+) -> Result<()> {
+    update_buffer(
+        device_context,
+        buffer,
+        &[BatchParams {
+            start_index: first_instance,
+            _padding: [0; 3],
+        }],
+    )
+}
+
+#[inline]
 fn set_pipeline_state(
     device_context: &ID3D11DeviceContext,
     buffer_view: &[Option<ID3D11ShaderResourceView>],
     topology: D3D_PRIMITIVE_TOPOLOGY,
-    viewport: &[D3D11_VIEWPORT],
     vertex_shader: &ID3D11VertexShader,
     fragment_shader: &ID3D11PixelShader,
-    global_params: &[Option<ID3D11Buffer>],
     blend_state: &ID3D11BlendState,
 ) {
     unsafe {
         device_context.VSSetShaderResources(1, Some(buffer_view));
         device_context.PSSetShaderResources(1, Some(buffer_view));
         device_context.IASetPrimitiveTopology(topology);
-        device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(vertex_shader, None);
         device_context.PSSetShader(fragment_shader, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
         device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
     }
 }
