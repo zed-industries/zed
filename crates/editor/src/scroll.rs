@@ -316,27 +316,6 @@ impl ScrollManager {
         pos
     }
 
-    /// Shift the shared scroll anchor's y offset so that the vertical scroll
-    /// position remains at `target_y`. Unlike `set_scroll_position`, this does
-    /// not re-anchor or consume a pending autoscroll request — only the offset
-    /// is adjusted. Used to compensate for content inserted above the viewport
-    /// without disrupting the user's reading position.
-    pub fn preserve_scroll_top(
-        &mut self,
-        target_y: ScrollOffset,
-        snapshot: &DisplaySnapshot,
-        cx: &mut Context<Editor>,
-    ) {
-        let current_y = self.scroll_position(snapshot, cx).y;
-        let delta = current_y - target_y;
-        if delta.abs() > 0.01 {
-            self.anchor.update(cx, |shared, _| {
-                shared.scroll_anchor.offset.y -= delta;
-            });
-            cx.notify();
-        }
-    }
-
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<ScrollOffset>,
@@ -793,16 +772,6 @@ impl Editor {
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<ScrollOffset> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.scroll_manager.scroll_position(&display_map, cx)
-    }
-
-    /// Compensate the scroll offset so the vertical scroll position remains at
-    /// `target_y` after content above the scroll anchor is inserted or removed.
-    /// Does not re-anchor or consume a pending autoscroll — only the shared
-    /// scroll anchor's y offset is adjusted.
-    pub fn preserve_scroll_top(&mut self, target_y: ScrollOffset, cx: &mut Context<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.scroll_manager
-            .preserve_scroll_top(target_y, &display_map, cx);
     }
 
     pub fn set_scroll_anchor(

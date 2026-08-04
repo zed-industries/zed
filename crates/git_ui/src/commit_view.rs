@@ -474,13 +474,6 @@ impl CommitView {
                     let ranges = excerpt_ranges[..batch_end].to_vec();
                     this.update_in(cx, |this, window, cx| {
                         this.editor.update(cx, |editor, cx| {
-                            // Read the current scroll y before inserting
-                            // excerpts. Excerpts inserted above the viewport
-                            // would otherwise shift the scroll anchor's display
-                            // row and cause the viewport to drift.
-                            let target_scroll_y = editor.rhs_editor().update(cx, |rhs, cx| {
-                                rhs.scroll_position(cx).y
-                            });
                             editor.update_excerpts_for_path(
                                 path.clone(),
                                 buffer.clone(),
@@ -492,13 +485,6 @@ impl CommitView {
                             if is_first_batch && editor.diff_view_style() == DiffViewStyle::Split {
                                 editor.split(window, cx);
                             }
-                            // Compensate for any shift caused by excerpts
-                            // inserted above the scroll anchor. If a pending
-                            // autoscroll exists, the next layout will override
-                            // this compensation.
-                            editor.rhs_editor().update(cx, |rhs, cx| {
-                                rhs.preserve_scroll_top(target_scroll_y, cx);
-                            });
                         });
                     })?;
                     if batch_end < total {
