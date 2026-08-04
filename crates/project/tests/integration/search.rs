@@ -1,3 +1,5 @@
+use std::io::BufReader;
+
 use language::Buffer;
 use project::search::SearchQuery;
 use text::Rope;
@@ -177,4 +179,72 @@ async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
 
     let results = search_query.search(&snapshot, None).await;
     assert_eq!(results, vec![0..6, 12..18]);
+}
+
+#[gpui::test]
+async fn regex_with_eol_detects_lines() {
+    let re = SearchQuery::regex(
+        " Bool$",
+        false,
+        false,
+        false,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let input = " Bool\nsomething else";
+    let result = re
+        .detect(BufReader::new(Box::new(input.as_bytes())))
+        .await
+        .unwrap();
+    assert!(result.is_some());
+}
+
+#[gpui::test]
+async fn multi_line_regex_detects_matches() {
+    let re = SearchQuery::regex(
+        " Bool$bool",
+        false,
+        false,
+        false,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let input = " Bool\nbool";
+    let result = re
+        .detect(BufReader::new(Box::new(input.as_bytes())))
+        .await
+        .unwrap();
+    assert!(result.is_some());
+}
+
+#[gpui::test]
+async fn respects_one_match_per_line(cx: &mut gpui::TestAppContext) {
+    let search_query = SearchQuery::regex(
+        "bar",
+        false,
+        false,
+        false,
+        true,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let text = Rope::from("foo bar foo bar\nbaz bar bar");
+    let snapshot = cx
+        .update(|app| Buffer::build_snapshot(text, None, None, None, app))
+        .await;
+
+    let results = search_query.search(&snapshot, None).await;
+    assert_eq!(results, vec![4..7, 20..23]);
 }
