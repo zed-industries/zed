@@ -359,7 +359,6 @@ impl DirectXRenderer {
             .as_ref()
             .and_then(|devices| devices.annotation.clone())
             .filter(|annotation| unsafe { annotation.GetStatus().as_bool() });
-        let mut path_tiles_drawn = 0;
         for batch in scene.batches() {
             let _annotation = annotation
                 .as_ref()
@@ -367,9 +366,7 @@ impl DirectXRenderer {
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
-                PrimitiveBatch::Paths(range) => {
-                    self.draw_paths(&scene.paths, range, &mut path_tiles_drawn)
-                }
+                PrimitiveBatch::Paths { range: _, tile_range } => self.draw_paths(tile_range),
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => {
                     self.draw_monochrome_sprites(texture_id, range.start, range.len())
@@ -541,58 +538,26 @@ impl DirectXRenderer {
             )?;
         }
 
-        // Each path buffer is one flat pass over `scene.paths`, written
-        // straight into the mapped GPU memory. Curves and tile-curve
-        // entries are path-local and copy verbatim; scene position exists
-        // only here, so it is stamped where it lives — each tile's paint
-        // row index, and each paint row's slice bases.
-        let tile_count: usize = scene.paths.iter().map(|path| path.tiles.len()).sum();
-        if tile_count > 0 {
-            let curve_count = scene.paths.iter().map(|path| path.curves.len()).sum();
-            let entry_count = scene.paths.iter().map(|path| path.tile_curves.len()).sum();
-            self.pipelines.path_tile_pipeline.update_buffer_with(
+        if !scene.path_tiles.is_empty() {
+            self.pipelines.path_tile_pipeline.update_buffer(
                 &devices.device,
                 &devices.device_context,
-                tile_count,
-                scene.paths.iter().enumerate().flat_map(|(paint, path)| {
-                    path.tiles.iter().map(move |tile| PathTile {
-                        paint: paint as u32,
-                        ..*tile
-                    })
-                }),
+                &scene.path_tiles,
             )?;
-            self.pipelines.path_curves.write_with(
+            self.pipelines.path_curves.write(
                 &devices.device,
                 &devices.device_context,
-                curve_count,
-                scene
-                    .paths
-                    .iter()
-                    .flat_map(|path| path.curves.iter().copied()),
+                &scene.path_curves,
             )?;
-            self.pipelines.path_tile_curves.write_with(
+            self.pipelines.path_tile_curves.write(
                 &devices.device,
                 &devices.device_context,
-                entry_count,
-                scene
-                    .paths
-                    .iter()
-                    .flat_map(|path| path.tile_curves.iter().copied()),
+                &scene.path_tile_curves,
             )?;
-            self.pipelines.path_paints.write_with(
+            self.pipelines.path_paints.write(
                 &devices.device,
                 &devices.device_context,
-                scene.paths.len(),
-                scene.paths.iter().scan((0u32, 0u32), |bases, path| {
-                    let (curve_base, tile_curve_base) = *bases;
-                    bases.0 += path.curves.len() as u32;
-                    bases.1 += path.tile_curves.len() as u32;
-                    Some(PathPaint {
-                        curve_base,
-                        tile_curve_base,
-                        ..path.paint
-                    })
-                }),
+                &scene.path_paints,
             )?;
         }
 
@@ -663,21 +628,8 @@ impl DirectXRenderer {
         )
     }
 
-    /// Draw one batch of paths. Path batches arrive in draw order and
-    /// cover `scene.paths` in order without gaps, so a running tile count
-    /// maps each batch's path range onto its instance range in the tile
-    /// buffer.
-    fn draw_paths(
-        &mut self,
-        paths: &[PaintedPath],
-        range: Range<usize>,
-        tiles_drawn: &mut usize,
-    ) -> Result<()> {
-        let batch = paths.get(range).context("path batch out of range")?;
-        let instance_count: usize = batch.iter().map(|path| path.tiles.len()).sum();
-        let first_instance = *tiles_drawn;
-        *tiles_drawn += instance_count;
-        if instance_count == 0 {
+    fn draw_paths(&mut self, tile_range: Range<usize>) -> Result<()> {
+        if tile_range.is_empty() {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
@@ -693,8 +645,8 @@ impl DirectXRenderer {
                 .batch_params_buffer
                 .as_ref()
                 .context("batch params buffer missing")?,
-            first_instance as u32,
-            instance_count as u32,
+            tile_range.start as u32,
+            tile_range.len() as u32,
         )
     }
 
@@ -1064,55 +1016,6 @@ impl<T> StructuredBuffer<T> {
         update_buffer(device_context, &self.buffer, data)
     }
 
-    fn write_with<I>(
-        &mut self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-        capacity: usize,
-        data: I,
-    ) -> Result<()>
-    where
-        I: IntoIterator<Item = T>,
-        T: Copy,
-    {
-        let label = self.label;
-        let mut mapped = self.map(device, device_context, capacity)?;
-        for item in data {
-            mapped.push(item)?;
-        }
-        anyhow::ensure!(
-            mapped.written == capacity,
-            "{} buffer wrote {} items but expected {capacity}",
-            label,
-            mapped.written
-        );
-        Ok(())
-    }
-
-    /// Map the buffer for writing exactly `capacity` items straight into
-    /// GPU memory, growing it first if needed. Unmapped when the returned
-    /// writer is dropped.
-    fn map<'a>(
-        &'a mut self,
-        device: &ID3D11Device,
-        device_context: &'a ID3D11DeviceContext,
-        capacity: usize,
-    ) -> Result<MappedBuffer<'a, T>> {
-        self.ensure_capacity(device, capacity)?;
-        let pointer = unsafe {
-            let mut dest = std::mem::zeroed();
-            device_context.Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
-            dest.pData as *mut T
-        };
-        Ok(MappedBuffer {
-            device_context,
-            buffer: &self.buffer,
-            pointer,
-            written: 0,
-            capacity,
-        })
-    }
-
     fn ensure_capacity(&mut self, device: &ID3D11Device, len: usize) -> Result<()> {
         if self.capacity < len {
             let new_capacity = len.next_power_of_two();
@@ -1129,32 +1032,6 @@ impl<T> StructuredBuffer<T> {
             self.capacity = new_capacity;
         }
         Ok(())
-    }
-}
-
-/// A [`StructuredBuffer`] mapped for writing: `push`/`extend` append
-/// straight to GPU memory, and the write cursor doubles as the index the
-/// next item will occupy. Unmaps on drop.
-struct MappedBuffer<'a, T> {
-    device_context: &'a ID3D11DeviceContext,
-    buffer: &'a ID3D11Buffer,
-    pointer: *mut T,
-    written: usize,
-    capacity: usize,
-}
-
-impl<T: Copy> MappedBuffer<'_, T> {
-    fn push(&mut self, item: T) -> Result<()> {
-        anyhow::ensure!(self.written < self.capacity, "mapped buffer overrun");
-        unsafe { std::ptr::write(self.pointer.add(self.written), item) };
-        self.written += 1;
-        Ok(())
-    }
-}
-
-impl<T> Drop for MappedBuffer<'_, T> {
-    fn drop(&mut self) {
-        unsafe { self.device_context.Unmap(self.buffer, 0) };
     }
 }
 
@@ -1197,21 +1074,6 @@ impl<T> PipelineState<T> {
         data: &[T],
     ) -> Result<()> {
         self.instances.write(device, device_context, data)
-    }
-
-    fn update_buffer_with<I>(
-        &mut self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-        capacity: usize,
-        data: I,
-    ) -> Result<()>
-    where
-        I: IntoIterator<Item = T>,
-        T: Copy,
-    {
-        self.instances
-            .write_with(device, device_context, capacity, data)
     }
 
     fn draw_range(

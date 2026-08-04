@@ -675,7 +675,7 @@ impl MetalRenderer {
                 PrimitiveBatch::Quads(range) => {
                     self.draw_quads(range, instance_bindings, viewport_size, command_encoder)
                 }
-                PrimitiveBatch::Paths(range) => {
+                PrimitiveBatch::Paths { range, .. } => {
                     let paths = &scene.paths[range];
                     command_encoder.end_encoding();
 

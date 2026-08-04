@@ -5,8 +5,8 @@
 //! the fill rule. The CPU never compares two curves against each other. As a
 //! path is built, every segment is split into xy-monotone quadratic curves
 //! ([`MonotoneCurve`]) the moment it is appended — decomposition is
-//! per-segment independent, so the monotone form grows in lockstep with the
-//! segments and can never go stale. [`Path::painted`] then bins those curves
+//! per-segment independent, so the monotone form can never go stale.
+//! [`Path::painted`] then bins those curves
 //! into a fixed grid of device-pixel tiles and counts axis-aligned crossings
 //! ([`PaintedPath::bin`]), producing a [`PaintedPath`]: a self-contained
 //! primitive that renderers upload directly.
@@ -21,14 +21,16 @@
 //! axis-aligned legs keep every crossing a single closed-form root solve.
 
 use crate::{
-    Background, Bounds, ContentMask, PaddedBool32, PaintedPath, Point, ScaledPixels, point, size,
+    Background, Bounds, ContentMask, PaddedBool32, PaintedPath, Point, ScaledPixels, point,
 };
 use lyon::geom::QuadraticBezierSegment;
 use std::cell::RefCell;
 
 /// Side length of a tile, in device pixels. Larger tiles mean fewer
 /// instances and longer per-pixel loops; smaller tiles mean the reverse.
-/// Purely a performance knob — coverage is exact at any value.
+/// Purely a performance knob — coverage is exact at any value. Mirrored in
+/// `shaders.hlsl`, where the vertex shader derives each tile's rectangle
+/// from its corner and run length.
 const TILE_SIZE: f32 = 16.0;
 
 /// Upper bound on the tiles one path may cover, guarding against
@@ -124,8 +126,8 @@ pub struct PathCurve {
 // hidden padding for these field types, and neither may Rust).
 const _: () = assert!(std::mem::size_of::<PathCurve>() == 40);
 const _: () = assert!(std::mem::size_of::<TileCurve>() == 8);
-const _: () = assert!(std::mem::size_of::<PathTile>() == 40);
-const _: () = assert!(std::mem::size_of::<PathPaint>() == 116);
+const _: () = assert!(std::mem::size_of::<PathTile>() == 28);
+const _: () = assert!(std::mem::size_of::<PathPaint>() == 108);
 
 /// Split one quadratic segment into xy-monotone curves and append them.
 /// Called as segments are pushed onto a building [`Path`]; non-finite input
@@ -171,9 +173,9 @@ pub(crate) fn decompose_quadratic(
     }
 }
 
-/// Per-path paint data shared by every tile of one path, uploaded once per
-/// path ([`Path::paint`]) and referenced through [`PathTile::paint`].
-/// `repr(C)` and layout-matched to its HLSL counterpart.
+/// Per-path paint data shared by every tile of one path, referenced
+/// through [`PathTile::paint`]. `repr(C)` and layout-matched to its HLSL
+/// counterpart.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct PathPaint {
@@ -187,34 +189,27 @@ pub struct PathPaint {
     /// Whether to map winding to coverage under the even-odd rule rather
     /// than the nonzero rule.
     pub even_odd: PaddedBool32,
-    /// First index of this path's curves within the renderer's
-    /// concatenated curve buffer. Upload-owned: a path knows nothing of
-    /// scene position, so this is zero until the renderer stamps it while
-    /// concatenating. Tile and entry indices themselves stay path-local
-    /// all the way to the GPU; the shader adds the bases.
-    pub curve_base: u32,
-    /// First index of this path's tile-curve entries within the
-    /// renderer's concatenated entry buffer. Upload-owned, like
-    /// `curve_base`.
-    pub tile_curve_base: u32,
 }
 
 /// GPU instance for one tile of a filled path: a screen-aligned quad whose
 /// every pixel resolves its own winding number from `backdrop` plus the
 /// curves in `[curve_start, curve_start + curve_count)`.
 ///
-/// Indices are path-local all the way to the GPU — renderers upload the
-/// tile verbatim, and the shader offsets into its concatenated buffers by
-/// the bases carried in the path's [`PathPaint`] row. `repr(C)` and
-/// layout-matched to its HLSL counterpart.
+/// Indices are path-local as binned; [`Scene::finish`](crate::Scene)
+/// globalizes them while concatenating every path's tiles into the
+/// scene-wide buffers renderers upload verbatim. The tile's rectangle is
+/// not stored: the vertex shader derives it from `corner` and `run`, and
+/// the clip distances it already emits for the content mask cull whatever
+/// the mask would have trimmed. `repr(C)` and layout-matched to its HLSL
+/// counterpart.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct PathTile {
-    /// Index of the path's [`PathPaint`] row. Upload-owned: which path a
-    /// tile belongs to is scene knowledge, so this is zero until the
-    /// renderer stamps it while concatenating.
+    /// Index of the path's [`PathPaint`] row within the scene's paint
+    /// buffer; zero until `Scene::finish` stamps it.
     pub paint: u32,
-    /// First index into the path's tile-curve list (path-local).
+    /// First index into the tile-curve list; path-local until
+    /// `Scene::finish` globalizes it.
     pub curve_start: u32,
     /// Number of curves passing through this tile. The bound is per
     /// instance, so every pixel of the tile runs the same number of loop
@@ -224,13 +219,12 @@ pub struct PathTile {
     pub backdrop: i32,
     /// The tile's backdrop sample point in device pixels: the top-left
     /// corner nudged half a geometry-lattice step inward, so that no
-    /// snapped boundary can pass through it exactly. The origin of the
-    /// route the fragment shader walks; unlike `quad` it is never clipped,
-    /// since moving it would change what the backdrop counts.
+    /// snapped boundary can pass through it exactly. Doubles as the
+    /// tile's position: the rectangle's origin is `corner.floor()`.
     pub corner: Point<f32>,
-    /// The rasterized rectangle, the tile clipped to the path's masked
-    /// bounds and expanded to whole pixels.
-    pub quad: Bounds<ScaledPixels>,
+    /// Width of the tile in grid cells: 1 for boundary tiles, the run
+    /// length for merged interior runs.
+    pub run: u32,
 }
 
 /// One element of a tile's curve list: which curve, whether its crossing of
@@ -439,12 +433,12 @@ impl PaintedPath {
 
         for row in 0..grid.rows {
             let tile_top = grid.top + row as f32 * TILE_SIZE;
-            // Tile edges are integral and the clamped edges are rounded
-            // outward, so quads tile the masked area without overlapping:
-            // every pixel is blended by exactly one tile.
-            let quad_top = tile_top.max(mask_top).floor();
-            let quad_bottom = (tile_top + TILE_SIZE).min(mask_bottom).ceil();
-            if quad_bottom <= quad_top {
+            // Tiles wholly outside the mask are skipped here; partially
+            // masked tiles are emitted whole, and the clip distances the
+            // vertex shader already emits for the content mask trim them.
+            // Tile rectangles come from the grid partition, so every pixel
+            // is blended by exactly one tile.
+            if tile_top >= mask_bottom || tile_top + TILE_SIZE <= mask_top {
                 continue;
             }
             let mut column = 0;
@@ -488,9 +482,7 @@ impl PaintedPath {
                     }
                     let run_left = grid.left + run_start as f32 * TILE_SIZE;
                     let run_right = grid.left + column as f32 * TILE_SIZE;
-                    let quad_left = run_left.max(mask_left).floor();
-                    let quad_right = run_right.min(mask_right).ceil();
-                    if quad_right <= quad_left {
+                    if run_left >= mask_right || run_right <= mask_left {
                         continue;
                     }
                     self.tiles.push(PathTile {
@@ -498,25 +490,18 @@ impl PaintedPath {
                         curve_start: 0,
                         curve_count: 0,
                         backdrop,
-                        // Never read with an empty curve list; the run's
-                        // first sample point keeps it meaningful anyway.
+                        // The backdrop is never corrected with an empty
+                        // curve list; the run's first sample point keeps
+                        // the corner meaningful anyway.
                         corner: point(run_left + SAMPLE_OFFSET, tile_top + SAMPLE_OFFSET),
-                        quad: Bounds {
-                            origin: point(ScaledPixels(quad_left), ScaledPixels(quad_top)),
-                            size: size(
-                                ScaledPixels(quad_right - quad_left),
-                                ScaledPixels(quad_bottom - quad_top),
-                            ),
-                        },
+                        run: (column - run_start) as u32,
                     });
                     continue;
                 }
 
                 let tile_left = grid.left + column as f32 * TILE_SIZE;
                 column += 1;
-                let quad_left = tile_left.max(mask_left).floor();
-                let quad_right = (tile_left + TILE_SIZE).min(mask_right).ceil();
-                if quad_right <= quad_left {
+                if tile_left >= mask_right || tile_left + TILE_SIZE <= mask_left {
                     continue;
                 }
 
@@ -526,19 +511,30 @@ impl PaintedPath {
                     self.tile_curves.push(node.entry);
                     entry = node.next;
                 }
+                // Sort the tile's list so curves whose x-extent starts
+                // rightmost come last: the fragment loop stops at the
+                // first curve entirely right of its pixel's column, since
+                // every later one must be too (Slug's sorted-band
+                // early-out, mirrored for our left-integrated winding). A
+                // curve right of the column contributes nothing: the
+                // rightward-leg gate rejects it, and it cannot carry a
+                // downward-leg booking, which requires straddling the
+                // tile's left edge.
+                let curves = &self.curves;
+                self.tile_curves[curve_start as usize..].sort_unstable_by(|a, b| {
+                    let min_x = |entry: &TileCurve| {
+                        let curve = &curves[(entry.curve & !CURVE_DOWNWARD_LEG_FLAG) as usize];
+                        curve.p0.x.min(curve.p1.x)
+                    };
+                    min_x(a).total_cmp(&min_x(b))
+                });
                 self.tiles.push(PathTile {
                     paint: 0,
                     curve_start,
                     curve_count: self.tile_curves.len() as u32 - curve_start,
                     backdrop,
                     corner: point(tile_left + SAMPLE_OFFSET, tile_top + SAMPLE_OFFSET),
-                    quad: Bounds {
-                        origin: point(ScaledPixels(quad_left), ScaledPixels(quad_top)),
-                        size: size(
-                            ScaledPixels(quad_right - quad_left),
-                            ScaledPixels(quad_bottom - quad_top),
-                        ),
-                    },
+                    run: 1,
                 });
             }
         }
@@ -825,7 +821,7 @@ fn monotone_quadratic_root(a: f32, b: f32, c: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PathBuilder, Pixels, px};
+    use crate::{PathBuilder, Pixels, px, size};
     use lyon::path::FillRule;
 
     /// Rasterize every shape from the `painting` example at scale 1.0 (the
@@ -876,13 +872,14 @@ mod tests {
         );
         for pair in device.tiles.windows(2) {
             let (left, right) = (&pair[0], &pair[1]);
-            let adjacent = left.quad.origin.y == right.quad.origin.y
-                && left.quad.origin.x.0 + left.quad.size.width.0 == right.quad.origin.x.0;
+            let (left_rect, right_rect) = (tile_rect(left), tile_rect(right));
+            let adjacent = left_rect.origin.y == right_rect.origin.y
+                && left_rect.origin.x.0 + left_rect.size.width.0 == right_rect.origin.x.0;
             assert!(
                 !(adjacent && left.curve_count == 0 && right.curve_count == 0),
                 "unmerged curveless neighbors at ({}, {})",
-                left.quad.origin.x.0,
-                left.quad.origin.y.0,
+                left_rect.origin.x.0,
+                left_rect.origin.y.0,
             );
         }
     }
@@ -930,17 +927,20 @@ mod tests {
         };
         let device = bin_path(&path, FillRule::NonZero, mask, 1.0);
         assert!(!device.tiles.is_empty(), "visible portion must emit tiles");
+        // Tiles wholly outside the mask are never emitted; partially
+        // masked ones are, and the content-mask clip distances trim them.
         for tile in &device.tiles {
+            let rect = tile_rect(tile);
             assert!(
-                tile.quad.origin.x.0 >= 300.0
-                    && tile.quad.origin.y.0 >= 200.0
-                    && tile.quad.origin.x.0 + tile.quad.size.width.0 <= 420.0
-                    && tile.quad.origin.y.0 + tile.quad.size.height.0 <= 290.0,
-                "quad escapes the mask: {:?}",
-                tile.quad,
+                rect.origin.x.0 < 420.0
+                    && rect.origin.y.0 < 290.0
+                    && rect.origin.x.0 + rect.size.width.0 > 300.0
+                    && rect.origin.y.0 + rect.size.height.0 > 200.0,
+                "tile invisible under the mask: {rect:?}",
             );
         }
-        // Every masked pixel is deep inside the rectangle.
+        // Every masked pixel is deep inside the rectangle; pixels just
+        // outside the mask are clipped even where a tile overhangs it.
         for pixel_y in [200, 245, 289] {
             for pixel_x in [300, 360, 419] {
                 let coverage = emulated_coverage(&device, pixel_x, pixel_y);
@@ -949,6 +949,13 @@ mod tests {
                     "pixel ({pixel_x}, {pixel_y}) coverage {coverage}",
                 );
             }
+        }
+        for (pixel_x, pixel_y) in [(299, 245), (360, 199), (420, 245), (360, 290)] {
+            let coverage = emulated_coverage(&device, pixel_x, pixel_y);
+            assert!(
+                coverage == 0.0,
+                "pixel ({pixel_x}, {pixel_y}) outside the mask has coverage {coverage}",
+            );
         }
     }
 
@@ -1033,19 +1040,48 @@ mod tests {
         failures
     }
 
+    /// The rectangle a tile rasterizes, derived exactly as the vertex
+    /// shader derives it: `run` grid cells rightward from the corner's
+    /// containing cell, one cell tall.
+    fn tile_rect(tile: &PathTile) -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: point(
+                ScaledPixels(tile.corner.x.floor()),
+                ScaledPixels(tile.corner.y.floor()),
+            ),
+            size: size(
+                ScaledPixels(TILE_SIZE * tile.run as f32),
+                ScaledPixels(TILE_SIZE),
+            ),
+        }
+    }
+
+    /// Whether a fragment at the pixel's center survives rasterization of
+    /// the tile: inside the derived rectangle and not culled by the
+    /// content-mask clip distances.
+    fn tile_rasterizes(path: &PaintedPath, tile: &PathTile, center_x: f32, center_y: f32) -> bool {
+        let rect = tile_rect(tile);
+        let mask = path.paint.content_mask.bounds;
+        center_x >= rect.origin.x.0
+            && center_x < rect.origin.x.0 + rect.size.width.0
+            && center_y >= rect.origin.y.0
+            && center_y < rect.origin.y.0 + rect.size.height.0
+            && center_x >= mask.origin.x.0
+            && center_x < mask.right().0
+            && center_y >= mask.origin.y.0
+            && center_y < mask.bottom().0
+    }
+
     /// Every term of the emulated fragment computation for one pixel, for
     /// failure diagnostics.
     fn describe_pixel(path: &PaintedPath, pixel_x: i32, pixel_y: i32) -> String {
         let center_x = pixel_x as f32 + 0.5;
         let center_y = pixel_y as f32 + 0.5;
-        let Some(tile) = path.tiles.iter().find(|tile| {
-            let origin = tile.quad.origin;
-            let tile_size = tile.quad.size;
-            center_x >= origin.x.0
-                && center_x < origin.x.0 + tile_size.width.0
-                && center_y >= origin.y.0
-                && center_y < origin.y.0 + tile_size.height.0
-        }) else {
+        let Some(tile) = path
+            .tiles
+            .iter()
+            .find(|tile| tile_rasterizes(path, tile, center_x, center_y))
+        else {
             return "  no tile".to_string();
         };
         let pixel = point(pixel_x as f32, pixel_y as f32);
@@ -1126,14 +1162,11 @@ mod tests {
     fn emulated_coverage(path: &PaintedPath, pixel_x: i32, pixel_y: i32) -> f32 {
         let center_x = pixel_x as f32 + 0.5;
         let center_y = pixel_y as f32 + 0.5;
-        let Some(tile) = path.tiles.iter().find(|tile| {
-            let origin = tile.quad.origin;
-            let tile_size = tile.quad.size;
-            center_x >= origin.x.0
-                && center_x < origin.x.0 + tile_size.width.0
-                && center_y >= origin.y.0
-                && center_y < origin.y.0 + tile_size.height.0
-        }) else {
+        let Some(tile) = path
+            .tiles
+            .iter()
+            .find(|tile| tile_rasterizes(path, tile, center_x, center_y))
+        else {
             return 0.0;
         };
         let pixel = point(pixel_x as f32, pixel_y as f32);
@@ -1141,6 +1174,10 @@ mod tests {
         for i in tile.curve_start..tile.curve_start + tile.curve_count {
             let entry = path.tile_curves[i as usize];
             let curve = &path.curves[(entry.curve & !CURVE_DOWNWARD_LEG_FLAG) as usize];
+            // The shader's sorted early-out, mirrored.
+            if curve.p0.x.min(curve.p1.x) >= pixel.x + 1.0 {
+                break;
+            }
             let crosses_downward_leg = entry.curve & CURVE_DOWNWARD_LEG_FLAG != 0;
             winding += emulated_curve_winding(
                 curve,

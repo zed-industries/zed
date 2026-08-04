@@ -47,6 +47,15 @@ pub struct Scene {
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
     pub paths: Vec<PaintedPath>,
+    /// The GPU image of `paths`, rebuilt by `finish`: every path's paint
+    /// row, curves, tiles, and tile-curve entries concatenated in draw
+    /// order with all indices globalized. Renderers upload these buffers
+    /// verbatim; batches address `path_tiles` through
+    /// [`PrimitiveBatch::Paths`]' `tile_range`.
+    pub path_paints: Vec<PathPaint>,
+    pub path_curves: Vec<PathCurve>,
+    pub path_tiles: Vec<PathTile>,
+    pub path_tile_curves: Vec<TileCurve>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
@@ -61,6 +70,10 @@ impl Scene {
         self.primitive_bounds.clear();
         self.layer_stack.clear();
         self.paths.clear();
+        self.path_paints.clear();
+        self.path_curves.clear();
+        self.path_tiles.clear();
+        self.path_tile_curves.clear();
         self.shadows.clear();
         self.quads.clear();
         self.underlines.clear();
@@ -153,6 +166,7 @@ impl Scene {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
         self.paths.sort_by_key(|path| path.order);
+        self.flatten_paths();
         self.underlines.sort_by_key(|underline| underline.order);
         self.monochrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
@@ -161,6 +175,41 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+    }
+
+    /// Concatenate every path's tiles, curves, entries, and paint row into
+    /// the flat buffers renderers upload verbatim, globalizing the
+    /// path-local indices as they are copied. This is the one place the
+    /// path-local and scene-global index domains meet; it runs after
+    /// `paths` is sorted, so `path_tiles` is in draw order like `quads`.
+    fn flatten_paths(&mut self) {
+        self.path_paints.clear();
+        self.path_curves.clear();
+        self.path_tiles.clear();
+        self.path_tile_curves.clear();
+        for path in &self.paths {
+            if path.tiles.is_empty() {
+                continue;
+            }
+            let paint = self.path_paints.len() as u32;
+            let curve_base = self.path_curves.len() as u32;
+            let entry_base = self.path_tile_curves.len() as u32;
+            self.path_paints.push(path.paint);
+            self.path_curves.extend_from_slice(&path.curves);
+            // Adding the base leaves each entry's high flag bit intact:
+            // binning guarantees curve indices stay below it.
+            self.path_tile_curves
+                .extend(path.tile_curves.iter().map(|entry| TileCurve {
+                    curve: entry.curve + curve_base,
+                    ..*entry
+                }));
+            self.path_tiles
+                .extend(path.tiles.iter().map(|tile| PathTile {
+                    paint,
+                    curve_start: tile.curve_start + entry_base,
+                    ..*tile
+                }));
+        }
     }
 
     #[cfg_attr(
@@ -177,6 +226,7 @@ impl Scene {
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
             paths_start: 0,
+            path_tiles_start: 0,
             paths_iter: self.paths.iter().peekable(),
             underlines_start: 0,
             underlines_iter: self.underlines.iter().peekable(),
@@ -273,6 +323,7 @@ struct BatchIterator<'a> {
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
     paths_start: usize,
+    path_tiles_start: usize,
     paths_iter: Peekable<slice::Iter<'a, PaintedPath>>,
     underlines_start: usize,
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
@@ -359,17 +410,23 @@ impl<'a> Iterator for BatchIterator<'a> {
             }
             PrimitiveKind::Path => {
                 let paths_start = self.paths_start;
+                let tiles_start = self.path_tiles_start;
                 let mut paths_end = paths_start + 1;
-                self.paths_iter.next();
-                while self
-                    .paths_iter
-                    .next_if(|path| (path.order, batch_kind) < max_order_and_kind)
-                    .is_some()
-                {
-                    paths_end += 1;
+                let mut path = self.paths_iter.next();
+                while let Some(consumed) = path {
+                    self.path_tiles_start += consumed.tiles.len();
+                    path = self
+                        .paths_iter
+                        .next_if(|path| (path.order, batch_kind) < max_order_and_kind);
+                    if path.is_some() {
+                        paths_end += 1;
+                    }
                 }
                 self.paths_start = paths_end;
-                Some(PrimitiveBatch::Paths(paths_start..paths_end))
+                Some(PrimitiveBatch::Paths {
+                    range: paths_start..paths_end,
+                    tile_range: tiles_start..self.path_tiles_start,
+                })
             }
             PrimitiveKind::Underline => {
                 let underlines_start = self.underlines_start;
@@ -478,7 +535,12 @@ impl<'a> Iterator for BatchIterator<'a> {
 pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
-    Paths(Range<usize>),
+    Paths {
+        /// This batch's range in [`Scene::paths`].
+        range: Range<usize>,
+        /// The corresponding instance range in [`Scene::path_tiles`].
+        tile_range: Range<usize>,
+    },
     Underlines(Range<usize>),
     MonochromeSprites {
         texture_id: AtlasTextureId,
@@ -502,7 +564,9 @@ impl PrimitiveBatch {
         match self {
             Self::Shadows(range) => format!("shadows ({})", range.len()),
             Self::Quads(range) => format!("quads ({})", range.len()),
-            Self::Paths(range) => format!("paths ({})", range.len()),
+            Self::Paths { range, tile_range } => {
+                format!("paths ({}) tiles ({})", range.len(), tile_range.len())
+            }
             Self::Underlines(range) => format!("underlines ({})", range.len()),
             Self::MonochromeSprites { texture_id, range } => {
                 format!(
@@ -780,18 +844,6 @@ impl From<PaintSurface> for Primitive {
     }
 }
 
-/// One quadratic Bézier segment of a path contour. Straight lines are
-/// stored as degenerate quadratics with the control point at the midpoint,
-/// so a contour is a single homogeneous sequence.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(C)]
-#[expect(missing_docs)]
-pub struct PathQuadratic<P: Clone + Debug + Default + PartialEq> {
-    pub p0: Point<P>,
-    pub ctrl: Point<P>,
-    pub p1: Point<P>,
-}
-
 /// Maximum deviation (in pixels, before display scaling) allowed of the
 /// cubic-to-quadratic conversion in `PathBuilder`, the only approximation
 /// baked into a built fill path. See `docs/trapezoid_path_rendering.md` for
@@ -816,10 +868,8 @@ pub struct Path {
     /// The rule mapping winding numbers to coverage when the path is
     /// filled.
     pub fill_rule: FillRule,
-    /// The contours as built, one homogeneous sequence of quadratics.
-    pub segments: Vec<PathQuadratic<Pixels>>,
-    /// The segments' xy-monotone decomposition, grown in lockstep with
-    /// `segments` as the path is built; consumed by [`Path::painted`].
+    /// The geometry, as each segment's xy-monotone decomposition, grown as
+    /// the path is built; consumed by [`Path::painted`].
     monotone_curves: Vec<MonotoneCurve>,
     start: Point<Pixels>,
     current: Point<Pixels>,
@@ -850,7 +900,6 @@ impl Path {
     /// Create a new path with the given starting point.
     pub fn new(start: Point<Pixels>) -> Self {
         Self {
-            segments: Vec::new(),
             start,
             current: start,
             bounds: Bounds {
@@ -863,8 +912,8 @@ impl Path {
     }
 
     /// Paint this path: scale the geometry into device pixels, clip it to
-    /// `content_mask`, and bin it into tiles, once. The logical segments
-    /// stay behind on the built path — rendering reads only the tiles.
+    /// `content_mask`, and bin it into tiles, once. The built path is left
+    /// untouched and can be painted again (at any scale).
     pub fn painted(
         &self,
         scale_factor: f32,
@@ -878,8 +927,6 @@ impl Path {
                 content_mask: content_mask.scale(scale_factor),
                 color,
                 even_odd: matches!(self.fill_rule, FillRule::EvenOdd).into(),
-                curve_base: 0,
-                tile_curve_base: 0,
             },
             tiles: Vec::new(),
             curves: Vec::new(),
@@ -887,8 +934,10 @@ impl Path {
         };
         // Fill semantics treat every contour as closed; an open final
         // contour is closed virtually so painting need not mutate the
-        // built path.
-        let closing_curve = (!self.segments.is_empty() && self.current != self.start)
+        // built path. Only segment-pushing calls move `current` away from
+        // `start`, so the inequality also proves the open contour is
+        // non-empty.
+        let closing_curve = (self.current != self.start)
             .then(|| {
                 MonotoneCurve::from_line(
                     point(self.current.x.0, self.current.y.0),
@@ -933,7 +982,9 @@ impl Path {
 
     /// Close the current contour with a straight line back to its start.
     pub fn close(&mut self) {
-        if !self.segments.is_empty() && self.current != self.start {
+        // Only segment-pushing calls move `current` away from `start`, so
+        // the inequality also proves the open contour is non-empty.
+        if self.current != self.start {
             let start = self.start;
             self.line_to(start);
         }
@@ -949,10 +1000,8 @@ impl Path {
                 size: Default::default(),
             });
         }
-        self.segments.push(PathQuadratic { p0, ctrl, p1 });
-        // Decomposition is per-segment independent, so the monotone form is
-        // maintained inline: it grows in lockstep with `segments` and can
-        // never go stale.
+        // Decomposition is per-segment independent, so it happens the
+        // moment a segment arrives and can never go stale.
         decompose_quadratic(
             &mut self.monotone_curves,
             point(p0.x.0, p0.y.0),

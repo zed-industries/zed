@@ -50,27 +50,46 @@ non-generic path types — the generic `Path<Pixels>`/`Path<ScaledPixels>`
 is gone — and renamed bin → **tile**, piece → **curve** ("bin" survives
 as the verb):
 
-- `Path` is pure logical-space geometry: `segments`, their xy-monotone
+- `Path` is pure logical-space geometry: each segment's xy-monotone
   decomposition (grown *inline* as each segment is pushed — no `Option`,
   no `Arc`, no `ensure_decomposition`, no staleness; `PathDecomposition`
-  no longer exists), `bounds`, and `fill_rule`. Paint-time facts are not
-  fields; they arrive as arguments.
+  no longer exists — and no retained `segments` vec either: the
+  decomposition *is* the geometry, and the two `is_empty` guards its
+  deletion orphaned reduce to `current != start`), `bounds`, and
+  `fill_rule`. Paint-time facts are not fields; they arrive as arguments.
 - `Path::painted(scale_factor, content_mask, color)` bins once, in
   device space, and returns a `PaintedPath`: `order`, an inline
-  `paint: PathPaint` row (bounds, mask, color, `even_odd`), and the
-  tile payload (`tiles`/`curves`/`tile_curves`, crate-private with
-  read-only accessors). `painted` is the only constructor, so a
-  `PaintedPath` is always fully binned. Scene replay clones it
-  tiles-and-all; cached elements skip re-binning entirely.
+  `paint: PathPaint` row (bounds, mask, color, `even_odd`), and the tile
+  payload (`tiles`/`curves`/`tile_curves`, all public fields). `painted`
+  is the only constructor, so a `PaintedPath` is always fully binned.
+  Scene replay clones it tiles-and-all; cached elements skip re-binning
+  entirely.
+- A `PathTile` is 28 bytes: `paint`, `curve_start`, `curve_count`,
+  `backdrop`, `corner`, `run`. Its rectangle is **derived in the vertex
+  shader** — `run` grid cells rightward from `floor(corner)`, one cell
+  tall — and the content-mask clip distances the vertex shader already
+  emits trim whatever the mask cuts off; binning only skips tiles wholly
+  outside the mask. Each tile's curve list is **sorted by leftmost x**
+  at emission so the fragment loop can stop at the first curve entirely
+  right of its pixel's column (Slug's sorted-band early-out, mirrored
+  for left-integrated winding; safe because such curves fail the
+  rightward-leg gate and can't carry a downward-leg booking).
 - `Scene.paths` is a plain `Vec<PaintedPath>`, handled exactly like
   `quads`: push on insert, sort by order in `finish`, batch by order. No
-  tile-specific logic exists outside `path_winding.rs` and the renderer.
-- Tile indices are **path-local**. The renderer concatenates every
-  path's vecs into its four structured buffers at upload
-  (`upload_scene_buffers` in `directx_renderer.rs`), rebasing via
-  `PathTile::for_upload` / `TileCurve::for_upload`, uploading each
-  path's `paint` row once, and recording per-path instance offsets so a
-  `PrimitiveBatch::Paths` path range maps to an instance range.
+  tile-specific logic exists outside `path_winding.rs`, `Scene::finish`,
+  and the renderer's four verbatim buffer uploads.
+- Tile indices are path-local **only inside `PaintedPath`**.
+  `Scene::finish` runs `flatten_paths`, the one place the two index
+  domains meet: it concatenates every path's paint row, curves, tiles,
+  and entries into flat scene-owned vecs (`path_paints`, `path_curves`,
+  `path_tiles`, `path_tile_curves`), globalizing indices as it copies
+  (paths with no tiles contribute nothing). Renderers upload those vecs
+  verbatim — the `monochrome_sprites` four-line pattern, no per-path
+  loops, no stamping, no `curve_base`/`tile_curve_base` fields, no
+  shader-side rebasing. `PrimitiveBatch::Paths { range, tile_range }`
+  carries the instance range directly; the batch iterator accumulates
+  it from `tiles.len()` as it consumes paths, so `draw_paths` is a plain
+  `draw_range` like quads.
 - Binning scratch (backdrop grid, tile heads, entry arena) is a
   thread-local inside `path_winding.rs`, reused across paths and frames.
 
@@ -86,7 +105,9 @@ Public-API migration (for the merge changelog): `Path<Pixels>` → `Path`
 color)`; the built path's `color`/`content_mask`/`order` fields are gone
 (they were overwritten by `Window::paint_path` anyway — pass color to
 `paint_path`, which is unchanged for callers); `Primitive::Path` and
-`Scene.paths` now carry `PaintedPath`.
+`Scene.paths` now carry `PaintedPath`; `PathQuadratic` and
+`Path.segments` are gone (the built path exposes no geometry — build it,
+paint it).
 
 ## Phase 0 — demolition
 
@@ -420,12 +441,39 @@ Done:
 - Path-owned tiles (see "Current data model"): tiles/curves live on the
   `PaintedPath` itself, produced once in `Path::painted`, so
   `Scene::replay` of cached elements clones instead of re-binning, and
-  the scene/batching layers carry no tile-specific logic. Costs one staging copy per tile at
-  upload (the renderer rebases path-local indices while concatenating);
-  buys eliminating per-replay binning and the `PathBins` special case.
-  The eager-inline decomposition also removed the `Arc`/`Option` cache —
-  a path painted fresh every frame re-decomposes every frame, which is
-  strictly dominated by the binning it already pays for.
+  the scene/batching layers carry no tile-specific logic. The eager-inline
+  decomposition also removed the `Arc`/`Option` cache — a path painted
+  fresh every frame re-decomposes every frame, which is strictly
+  dominated by the binning it already pays for.
+- Scene-flattened GPU buffers (`Scene::flatten_paths`, run by `finish`):
+  the per-path concatenate-and-rebase loop moved out of the renderer into
+  one named scene phase producing flat `path_paints`/`path_curves`/
+  `path_tiles`/`path_tile_curves` vecs with globalized indices. The
+  renderer's path uploads are now verbatim `update_buffer`/`write` calls
+  (the `monochrome_sprites` pattern), `PathPaint` lost its
+  `curve_base`/`tile_curve_base` fields, the shader lost its base adds,
+  and the `MappedBuffer`/`write_with` upload machinery was deleted. The
+  copy is the same copy the renderer already made every frame, relocated
+  where all three backends can share it; `PrimitiveBatch::Paths` carries
+  the tile instance range, accumulated by the batch iterator.
+- Derived tile rectangles: `PathTile` no longer stores its clipped quad —
+  the vertex shader derives the rectangle from `corner` and a `run` cell
+  count (`PATH_TILE_SIZE` mirrored in HLSL), and the content-mask clip
+  distances trim partially masked tiles that binning used to pre-clip.
+  40 → 28 bytes per tile; binning still skips wholly-invisible tiles.
+- Sorted-tile early-out (Slug's sorted bands, mirrored): each tile's
+  curve list is sorted by leftmost x at emission, and the fragment loop
+  breaks at the first curve entirely right of its pixel's column — safe
+  because such curves fail the rightward-leg gate and cannot carry a
+  downward-leg booking (that requires straddling the tile's left edge,
+  which is left of every pixel's right edge). Costs one comparison per
+  iteration and a tiny CPU sort per boundary tile; trades the old
+  uniform-trip-count lockstep claim for skipped root solves in
+  curve-dense tiles.
+- Deleted `Path.segments`/`PathQuadratic`: the retained as-built segment
+  vec had no readers — the inline monotone decomposition is the geometry
+  — and its two `is_empty` guards reduce to `current != start` (only
+  segment-pushing calls separate them).
 
 Deferred pending measurement (the solid-color `paths_bench` A/B, then a
 GPU capture, decide priority — in that order):
@@ -437,6 +485,21 @@ GPU capture, decide priority — in that order):
   Benefits quads as much as paths; do not fold it into path work.
 - Vertical merging of equal pieceless runs (currently one instance per
   bin row): instance count has not been the measured bottleneck anywhere.
+- Sign-bit crossing convention (Slug's `CalcRootCode` principle,
+  degenerate monotone form: a crossing exists iff
+  `signbit(y0 - sample) != signbit(y1 - sample)`): would replace the
+  half-open comparison conventions and possibly the leg bookings with a
+  decision CPU and GPU cannot disagree on, and IEEE `x - x = +0.0` makes
+  exact ties deterministic for free. Deferred, not declined — two real
+  obstacles. First, the lattice's *other* job survives it: snapping also
+  collapses sub-f32-spacing slivers (lyon has emitted `y = 255.00002`
+  for a requested `255`) into the exactly-degenerate cases the
+  conventions handle, which sign bits do nothing about, so the lattice
+  cannot simply be deleted. Second, our discrete decisions consume
+  crossing *positions* (backdrop scatter buckets, `leg_y`), not just
+  crossing counts — Slug's ramps are continuous in the position, ours
+  are not. Needs its own session with the tie tests as the referee;
+  the current lattice + shared-booking design passes them today.
 
 Declined (re-open only with a capture proving the premise):
 

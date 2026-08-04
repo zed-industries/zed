@@ -978,31 +978,34 @@ struct PathCurve {
     float sx;
 };
 
+// Side length of a path tile in device pixels; mirrors `TILE_SIZE` in
+// path_winding.rs.
+static const float PATH_TILE_SIZE = 16.0;
+
 // One tile of a filled path: a screen-aligned quad whose every pixel
 // resolves its own winding number from `backdrop` (the winding at `corner`,
 // the tile's backdrop sample point: its top-left nudged half a
 // geometry-lattice step inward, so no snapped boundary passes through it)
-// plus the curves listed for the tile.
+// plus the curves listed for the tile. The tile's rectangle is derived,
+// not stored: it spans `run` grid cells rightward from floor(corner), one
+// cell tall, and the content-mask clip distances trim whatever the mask
+// cuts off. Indices are scene-global, rebased by Scene::finish.
 struct PathTile {
     uint paint;
     uint curve_start;
     uint curve_count;
     int backdrop;
     float2 corner;
-    Bounds quad;
+    uint run;
 };
 
 // Per-path paint data shared by every tile of one path, indexed by
-// PathTile.paint. Tile and entry indices are path-local; `curve_base` and
-// `tile_curve_base` are where this path's slices start within the
-// concatenated scene-wide buffers, stamped at upload.
+// PathTile.paint.
 struct PathPaint {
     Bounds bounds;
     Bounds content_mask;
     Background color;
     uint even_odd;
-    uint curve_base;
-    uint tile_curve_base;
 };
 
 // One element of a tile's curve list: which curve (low bits), whether its
@@ -1041,7 +1044,9 @@ PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id:
     uint tile_index = batch_start_index + tile_id;
     PathTile tile = path_tiles[tile_index];
     PathPaint paint = path_paints[tile.paint];
-    float2 position = tile.quad.origin + unit_vertex * tile.quad.size;
+    float2 origin = floor(tile.corner);
+    float2 size = float2(PATH_TILE_SIZE * float(tile.run), PATH_TILE_SIZE);
+    float2 position = origin + unit_vertex * size;
 
     GradientColor gradient = prepare_gradient_color(
         paint.color.tag, paint.color.color_space,
@@ -1210,14 +1215,21 @@ float4 path_tile_fragment(PathTileFragmentInput input): SV_Target {
     PathPaint paint = path_paints[tile.paint];
     float2 pixel = floor(input.position.xy);
 
-    // The loop bound is per instance, so every pixel of the tile runs the
-    // same iterations in lockstep; branches inside curve_winding still
-    // diverge per pixel, but reconverge within each iteration.
+    // The tile's curve list is sorted by each curve's leftmost x, so the
+    // first curve entirely right of this pixel's column ends the loop:
+    // every later one is too, and such curves contribute nothing — the
+    // rightward-leg gate rejects them, and a downward-leg booking
+    // requires straddling the tile's left edge, which lies left of every
+    // pixel's right edge. The break costs divergence only where neighbors
+    // within a wave straddle a curve's leftmost x.
     float winding = float(tile.backdrop);
     [loop]
     for (uint i = 0u; i < tile.curve_count; i++) {
-        TileCurve entry = tile_curves[paint.tile_curve_base + tile.curve_start + i];
-        PathCurve curve = path_curves[paint.curve_base + (entry.curve & 0x7fffffffu)];
+        TileCurve entry = tile_curves[tile.curve_start + i];
+        PathCurve curve = path_curves[entry.curve & 0x7fffffffu];
+        if (min(curve.p0.x, curve.p1.x) >= pixel.x + 1.0) {
+            break;
+        }
         winding += curve_winding(curve, tile.corner, pixel,
             (entry.curve & 0x80000000u) != 0u, entry.leg_y);
     }
