@@ -24308,6 +24308,20 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_on_type_formatting_not_scheduled_without_server_support(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state("let a = bˇ;\n");
+
+    let task = cx.update_editor(|editor, window, cx| {
+        editor.trigger_on_type_formatting(".".to_owned(), window, cx)
+    });
+
+    assert!(task.is_none());
+}
+
+#[gpui::test]
 async fn test_on_type_formatting_preserves_cursor_position(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -24342,6 +24356,50 @@ async fn test_on_type_formatting_preserves_cursor_position(cx: &mut TestAppConte
 
     cx.assert_editor_state("let a = b.ˇc;\n");
     assert!(request.next().await.is_some());
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_does_not_rewind_over_intervening_edits(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("let a = bˇ;\n");
+
+    let (request_started_tx, request_started_rx) = oneshot::channel();
+    let (respond_tx, respond_rx) = oneshot::channel();
+    let mut request_started_tx = Some(request_started_tx);
+    let mut respond_rx = Some(respond_rx);
+    let _request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, _, _| {
+            request_started_tx.take().unwrap().send(()).unwrap();
+            let respond_rx = respond_rx.take().unwrap();
+            async move {
+                respond_rx.await.unwrap();
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 10)),
+                    new_text: "c".to_string(),
+                }]))
+            }
+        });
+
+    cx.simulate_keystroke(".");
+    request_started_rx.await.unwrap();
+    cx.update_buffer(|buffer, cx| buffer.edit([(10..10, "x")], None, cx));
+    respond_tx.send(()).unwrap();
+    cx.run_until_parked();
+
+    cx.assert_editor_state("let a = b.cxˇ;\n");
 }
 
 #[gpui::test]
