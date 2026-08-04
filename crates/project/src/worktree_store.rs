@@ -50,7 +50,7 @@ pub struct WorktreePaths {
 
 impl PartialEq for WorktreePaths {
     fn eq(&self, other: &Self) -> bool {
-        self.paths == other.paths && self.main_paths == other.main_paths
+        self.ordered_pairs().eq(other.ordered_pairs())
     }
 }
 
@@ -147,6 +147,28 @@ impl WorktreePaths {
             .unzip();
         self.main_paths = PathList::new(&mains);
         self.paths = PathList::new(&folders);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_worktree_paths_equality_compares_pairings() {
+        let main_paths = PathList::new(&[PathBuf::from("/main-a"), PathBuf::from("/main-b")]);
+        let first = WorktreePaths::from_path_lists(
+            main_paths.clone(),
+            PathList::new(&[PathBuf::from("/wt-x"), PathBuf::from("/wt-y")]),
+        )
+        .unwrap();
+        let second = WorktreePaths::from_path_lists(
+            main_paths,
+            PathList::new(&[PathBuf::from("/wt-y"), PathBuf::from("/wt-x")]),
+        )
+        .unwrap();
+
+        assert_ne!(first, second);
     }
 }
 
