@@ -116,10 +116,10 @@ pub fn response_create_envelope(mut turn_payload: Map<String, Value>) -> Result<
 
 /// Runs one completion turn over a WebSocket session.
 ///
-/// Reuses a cached connection whose server-side state covers a prefix of the
-/// request's input, sending only the remaining items plus
-/// `previous_response_id`; otherwise awaits `connect` and sends the full
-/// input. `envelope_turn` frames the turn payload (the serialized request
+/// Reuses a cached connection whose complete server-side state covers a
+/// strict prefix of the request's input, sending only the remaining items
+/// plus `previous_response_id`; otherwise awaits `connect` and sends the
+/// full input. `envelope_turn` frames the turn payload (the serialized request
 /// with the input slice, minus `stream`) into a wire message. `spawn` is
 /// called with the background future that drains response events into the
 /// returned stream; the caller must run it to completion (typically
@@ -140,26 +140,22 @@ pub async fn stream_websocket_response(
         chains
             .chains
             .retain(|chain| now.duration_since(chain.last_used_at) < WEBSOCKET_CHAIN_IDLE_TIMEOUT);
-        longest_matching_chain(&chains.chains, &prepared)
-            .map(|(index, input_count)| (chains.chains.swap_remove(index), input_count))
+        best_continuation_chain(&chains.chains, &prepared).map(|(index, covered_input_count)| {
+            (chains.chains.swap_remove(index), covered_input_count)
+        })
     };
 
     let mut confirmed_continuation = None;
-    if let Some((chain, matched_input_count)) = continuation {
-        let input_count = reused_item_count(
-            &prepared.input,
-            matched_input_count,
-            &chain.response_output_fingerprints,
-        );
+    if let Some((chain, covered_input_count)) = continuation {
         log::debug!(
             "OpenAI Responses transport: WebSocket continuation; reused_items={}, new_items={}",
-            input_count,
-            prepared.input.len().saturating_sub(input_count)
+            covered_input_count,
+            prepared.input.len().saturating_sub(covered_input_count)
         );
         let message = envelope_turn(turn_payload(
             &prepared,
             Some(&chain.previous_response_id),
-            input_count,
+            covered_input_count,
         ))?;
         match send_and_confirm_reused_connection(
             chain.connection,
@@ -425,38 +421,44 @@ fn prepare_websocket_request(
     })
 }
 
-/// Extends a matched input prefix over the previous response's own output.
+/// Verifies that the new request continues a chain's complete server-side
+/// state: the chain's request input (already matched by hash) followed by a
+/// replay of every output item of its previous response, followed by at
+/// least one new item.
 ///
 /// A continuation with `previous_response_id` must send only items the
-/// server's connection-local state does not already contain, but the next
-/// request replays the previous response's output (function calls,
-/// reasoning, assistant text) as input items right after the previous
-/// request's input. Skipping is verified per item against the completed
-/// response's output fingerprints, in any order because the replay reorders
-/// items; the scan stops at the first unrecognized item, so anything not
-/// provably in the server state is still sent.
-fn reused_item_count(
+/// server's connection-local state does not already contain, and that state
+/// includes the previous response's own output. The next request replays
+/// that output (function calls, reasoning, assistant text) as input items
+/// right after the previous request's input; replayed items are matched
+/// against the completed response's output fingerprints, in any order
+/// because the replay reorders items. Returns the number of input items the
+/// server already has. Returns `None` when the request does not extend the
+/// complete state: an unconsumed fingerprint means the request truncates or
+/// branches off the previous response, and an empty remaining suffix means
+/// it regenerates the response; both must be resent in full on a fresh
+/// connection.
+fn validate_continuation(
     input: &[Value],
     matched_input_count: usize,
     response_output_fingerprints: &[ResponseItemFingerprint],
-) -> usize {
+) -> Option<usize> {
     let mut unmatched_fingerprints = response_output_fingerprints.to_vec();
-    let mut reused_input_count = matched_input_count;
-    let Some(new_input) = input.get(matched_input_count..) else {
-        return 0;
-    };
-    for item in new_input {
-        let Some(position) = input_item_fingerprint(item).and_then(|fingerprint| {
+    let mut covered_input_count = matched_input_count;
+    for item in input.get(matched_input_count..)? {
+        if unmatched_fingerprints.is_empty() {
+            break;
+        }
+        let position = input_item_fingerprint(item).and_then(|fingerprint| {
             unmatched_fingerprints
                 .iter()
                 .position(|candidate| *candidate == fingerprint)
-        }) else {
-            break;
-        };
+        })?;
         unmatched_fingerprints.swap_remove(position);
-        reused_input_count += 1;
+        covered_input_count += 1;
     }
-    reused_input_count
+    (unmatched_fingerprints.is_empty() && covered_input_count < input.len())
+        .then_some(covered_input_count)
 }
 
 fn output_item_fingerprint(item: &ResponseOutputItem) -> Option<ResponseItemFingerprint> {
@@ -544,23 +546,36 @@ fn string_field(item: &Value, field: &str) -> Option<String> {
     Some(item.get(field)?.as_str()?.to_string())
 }
 
-/// Finds the chain covering the longest prefix of the request's input,
-/// returning the chain's index and the number of input items it covers.
-fn longest_matching_chain(
+/// Finds the chain whose complete server-side state covers the longest
+/// prefix of the request's input, returning the chain's index and the
+/// number of input items that state covers (the chain's request input plus
+/// its replayed response output).
+///
+/// Prefix lookup and complete-state validation are one operation: a chain
+/// matching the longest request-input prefix can still be unusable (see
+/// [`validate_continuation`]) while a chain matching a shorter prefix is a
+/// valid continuation, so every chain is validated before candidates are
+/// compared.
+fn best_continuation_chain(
     chains: &[WebSocketChain],
     request: &PreparedWebSocketRequest,
 ) -> Option<(usize, usize)> {
-    request
-        .input_prefix_hashes
+    chains
         .iter()
         .enumerate()
-        .rev()
-        .find_map(|(input_count, prefix_hash)| {
-            chains
+        .filter_map(|(index, chain)| {
+            let matched_input_count = request
+                .input_prefix_hashes
                 .iter()
-                .position(|chain| chain.input_hash == *prefix_hash)
-                .map(|index| (index, input_count))
+                .position(|prefix_hash| chain.input_hash == *prefix_hash)?;
+            let covered_input_count = validate_continuation(
+                &request.input,
+                matched_input_count,
+                &chain.response_output_fingerprints,
+            )?;
+            Some((index, covered_input_count))
         })
+        .max_by_key(|&(_, covered_input_count)| covered_input_count)
 }
 
 fn hash_json(value: &Value) -> Result<[u8; 32]> {
@@ -596,7 +611,7 @@ mod tests {
         let longer = cached_chain(&prepared_request_with_input("gpt-test", &["one", "two"]));
 
         assert_eq!(
-            longest_matching_chain(&[shorter, longer], &request),
+            best_continuation_chain(&[shorter, longer], &request),
             Some((1, 2))
         );
     }
@@ -606,7 +621,7 @@ mod tests {
         let request = prepared_request_with_input("gpt-test", &["one", "two"]);
         let previous = cached_chain(&prepared_request_with_input("different-model", &["one"]));
 
-        assert_eq!(longest_matching_chain(&[previous], &request), None);
+        assert_eq!(best_continuation_chain(&[previous], &request), None);
     }
 
     #[test]
@@ -616,21 +631,81 @@ mod tests {
             cached_chain(&prepare_websocket_request(&request, b"first-credential").unwrap());
         let request = prepare_websocket_request(&request, b"second-credential").unwrap();
 
-        assert_eq!(longest_matching_chain(&[previous], &request), None);
+        assert_eq!(best_continuation_chain(&[previous], &request), None);
     }
 
     #[test]
-    fn continuation_skips_the_previous_response_output_items() {
+    fn websocket_chain_lookup_falls_back_to_a_shorter_valid_chain() {
+        // The longer chain matches the request's full input, but the request
+        // does not replay its response output: it is a regeneration of that
+        // response and must not continue the chain. The shorter chain's
+        // complete state is a strict prefix of the request, so it remains a
+        // valid continuation.
+        let request = prepared_request_with_input("gpt-test", &["one", "two", "three"]);
+        let invalid_longer = WebSocketChain {
+            response_output_fingerprints: vec![ResponseItemFingerprint::AssistantMessage {
+                text: "not replayed in the request".to_string(),
+            }],
+            ..cached_chain(&prepared_request_with_input(
+                "gpt-test",
+                &["one", "two", "three"],
+            ))
+        };
+        let valid_shorter = cached_chain(&prepared_request_with_input("gpt-test", &["one"]));
+
+        assert_eq!(
+            best_continuation_chain(&[invalid_longer, valid_shorter], &request),
+            Some((1, 1))
+        );
+    }
+
+    #[test]
+    fn complete_continuation_reuses_the_chain_and_sends_only_the_new_suffix() {
+        let user_message = json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "question"}],
+        });
+        let assistant_reply = json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "reply", "annotations": []}],
+        });
+        let tool_output = json!({
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "data",
+        });
+        let chain = WebSocketChain {
+            response_output_fingerprints: vec![ResponseItemFingerprint::AssistantMessage {
+                text: "reply".to_string(),
+            }],
+            ..cached_chain(&prepared_request_with_raw_input(
+                "gpt-test",
+                vec![user_message.clone()],
+            ))
+        };
+        let request = prepared_request_with_raw_input(
+            "gpt-test",
+            vec![user_message, assistant_reply, tool_output],
+        );
+
+        assert_eq!(best_continuation_chain(&[chain], &request), Some((0, 2)));
+
+        let payload = turn_payload(&request, Some("resp_test"), 2);
+        assert_eq!(payload["previous_response_id"], "resp_test");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn continuation_covers_the_previous_response_output_items() {
         // Fingerprints of the previous response's output, as recorded when
-        // its `response.completed` event arrived.
+        // its `response.completed` event arrived. The message comes before
+        // the reasoning item here, unlike in the replayed input below, to
+        // exercise the order-independent matching.
         let fingerprints = [
-            ResponseOutputItem::Reasoning(ResponseReasoningItem {
-                id: Some("rs_1".to_string()),
-                summary: Vec::new(),
-                content: Vec::new(),
-                encrypted_content: Some("encrypted".to_string()),
-                status: None,
-            }),
             ResponseOutputItem::Message(ResponseOutputMessage {
                 id: Some("msg_1".to_string()),
                 content: vec![json!({
@@ -641,6 +716,13 @@ mod tests {
                 role: Some("assistant".to_string()),
                 status: None,
                 phase: None,
+            }),
+            ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                id: Some("rs_1".to_string()),
+                summary: Vec::new(),
+                content: Vec::new(),
+                encrypted_content: Some("encrypted".to_string()),
+                status: None,
             }),
             ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
                 id: Some("fc_1".to_string()),
@@ -690,13 +772,84 @@ mod tests {
             }),
         ];
 
-        let reused = reused_item_count(&input, 1, &fingerprints);
-        assert_eq!(reused, input.len() - 1);
-        assert_eq!(input[reused]["type"], "function_call_output");
+        let covered = validate_continuation(&input, 1, &fingerprints);
+        assert_eq!(covered, Some(input.len() - 1));
+        assert_eq!(input[covered.unwrap()]["type"], "function_call_output");
     }
 
     #[test]
-    fn continuation_stops_reuse_at_the_first_unrecognized_item() {
+    fn exact_resend_is_not_a_continuation() {
+        let input = vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hi"}],
+        })];
+        let fingerprints = vec![ResponseItemFingerprint::AssistantMessage {
+            text: "previous reply".to_string(),
+        }];
+
+        // The request equals the input that produced the chain's response:
+        // this regenerates the response instead of continuing it.
+        assert_eq!(validate_continuation(&input, 1, &fingerprints), None);
+        // Even when the response produced no fingerprintable output, a
+        // request with no new items is still a regeneration.
+        assert_eq!(validate_continuation(&input, 1, &[]), None);
+    }
+
+    #[test]
+    fn partial_response_replay_is_not_a_continuation() {
+        let fingerprints = [
+            ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                id: Some("rs_1".to_string()),
+                summary: Vec::new(),
+                content: Vec::new(),
+                encrypted_content: Some("encrypted".to_string()),
+                status: None,
+            }),
+            ResponseOutputItem::Message(ResponseOutputMessage {
+                id: Some("msg_1".to_string()),
+                content: vec![json!({
+                    "type": "output_text",
+                    "text": "Let me look.",
+                    "annotations": [],
+                })],
+                role: Some("assistant".to_string()),
+                status: None,
+                phase: None,
+            }),
+        ]
+        .iter()
+        .filter_map(output_item_fingerprint)
+        .collect::<Vec<_>>();
+        assert_eq!(fingerprints.len(), 2);
+
+        // The request replays only the reasoning item and truncates the
+        // assistant message; continuing from the response would resurrect
+        // the truncated text on the server.
+        let input = vec![
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}],
+            }),
+            json!({
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [],
+                "encrypted_content": "encrypted",
+            }),
+            json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "try again"}],
+            }),
+        ];
+
+        assert_eq!(validate_continuation(&input, 1, &fingerprints), None);
+    }
+
+    #[test]
+    fn branched_response_replay_is_not_a_continuation() {
         let fingerprints = [ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
             id: None,
             arguments: "{}".to_string(),
@@ -708,6 +861,8 @@ mod tests {
         .filter_map(output_item_fingerprint)
         .collect::<Vec<_>>();
 
+        // The item after the matched prefix is not part of the previous
+        // response's output: the request branches off the chain's state.
         let input = vec![
             json!({
                 "type": "message",
@@ -722,7 +877,7 @@ mod tests {
             }),
         ];
 
-        assert_eq!(reused_item_count(&input, 1, &fingerprints), 1);
+        assert_eq!(validate_continuation(&input, 1, &fingerprints), None);
     }
 
     #[test]
@@ -741,6 +896,79 @@ mod tests {
         let payload = turn_payload(&prepared, None, 0);
         assert!(payload.get("previous_response_id").is_none());
         assert_eq!(payload["input"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn exact_resend_sends_the_full_input_on_a_new_connection() {
+        // A chain produced from this exact input: resending it regenerates
+        // the chain's response, which the chain's connection cannot do.
+        let request = test_request_with_input("gpt-test", &["one", "two"]);
+        let prepared = prepare_websocket_request(&request, b"test-scope").unwrap();
+        let chains = WebSocketChains::new_shared();
+        let cached_sent_messages = Arc::new(Mutex::new(Vec::new()));
+        chains.lock().chains.push(WebSocketChain {
+            response_output_fingerprints: vec![ResponseItemFingerprint::AssistantMessage {
+                text: "previous reply".to_string(),
+            }],
+            connection: Box::new(ScriptedWebSocketConnection::with_sent_messages(
+                cached_sent_messages.clone(),
+                Vec::new(),
+            )),
+            ..cached_chain(&prepared)
+        });
+
+        let fresh_sent_messages = Arc::new(Mutex::new(Vec::new()));
+        let fresh_connection = Box::new(ScriptedWebSocketConnection::with_sent_messages(
+            fresh_sent_messages.clone(),
+            vec![Ok(WebSocketMessage::Text(
+                serde_json::to_string(&json!({
+                    "type": "response.completed",
+                    "response": {"id": "resp_regenerated", "output": []},
+                }))
+                .unwrap(),
+            ))],
+        ));
+
+        let mut background = None;
+        let stream = block_on(stream_websocket_response(
+            &request,
+            b"test-scope",
+            chains.clone(),
+            future::ready(Ok(fresh_connection as Box<dyn WebSocketConnection>)),
+            Arc::new(|_| future::pending::<()>().boxed()),
+            response_create_envelope,
+            |future| background = Some(future),
+        ))
+        .unwrap();
+        block_on(background.unwrap());
+
+        // The cached connection must not receive anything: continuing it
+        // would generate a response after the one being regenerated.
+        assert!(cached_sent_messages.lock().is_empty());
+        let sent = fresh_sent_messages.lock();
+        assert_eq!(sent.len(), 1);
+        let WebSocketMessage::Text(sent_text) = &sent[0] else {
+            panic!("expected a text message, got {:?}", sent[0]);
+        };
+        let payload: Value = serde_json::from_str(sent_text).unwrap();
+        assert!(payload.get("previous_response_id").is_none());
+        assert_eq!(payload["input"].as_array().unwrap().len(), 2);
+
+        let events = block_on(stream.collect::<Vec<_>>());
+        assert!(matches!(
+            events.last(),
+            Some(Ok(StreamEvent::Completed { response })) if response.id.as_deref() == Some("resp_regenerated")
+        ));
+        // The unused chain stays cached alongside the regeneration's new
+        // chain; it can still serve a later continuation of its own state.
+        let chains = chains.lock();
+        let mut cached_response_ids = chains
+            .chains
+            .iter()
+            .map(|chain| chain.previous_response_id.as_str())
+            .collect::<Vec<_>>();
+        cached_response_ids.sort_unstable();
+        assert_eq!(cached_response_ids, ["resp_regenerated", "resp_test"]);
     }
 
     #[test]
@@ -963,6 +1191,14 @@ mod tests {
 
     fn prepared_request_with_input(model: &str, input: &[&str]) -> PreparedWebSocketRequest {
         prepare_websocket_request(&test_request_with_input(model, input), b"test-scope").unwrap()
+    }
+
+    /// Like [`prepared_request_with_input`], but with raw input items, for
+    /// requests that replay a previous response's output.
+    fn prepared_request_with_raw_input(model: &str, input: Vec<Value>) -> PreparedWebSocketRequest {
+        let mut request = test_request_with_input(model, &[]);
+        request.input = crate::responses::ResponseInput::new(input, Vec::new());
+        prepare_websocket_request(&request, b"test-scope").unwrap()
     }
 
     fn test_request_with_input(model: &str, input: &[&str]) -> Request {
