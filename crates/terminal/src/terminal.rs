@@ -2874,6 +2874,8 @@ impl Terminal {
     }
 
     fn cwd_at_line(&self, line: i32, history_size: usize) -> Option<PathBuf> {
+        // Once the scrollback cap is reached, evictions move retained lines without changing
+        // `history_size`, so stored row offsets no longer identify their original lines.
         if self.is_remote_terminal
             || self.cwd_history.is_empty()
             || history_size >= self.term_config.scrolling_history
