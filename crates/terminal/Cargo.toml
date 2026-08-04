@@ -21,7 +21,6 @@ doctest = false
 
 [dependencies]
 async-channel.workspace = true
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
@@ -32,6 +31,7 @@ libc.workspace = true
 log.workspace = true
 regex.workspace = true
 release_channel.workspace = true
+rio-vt.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true

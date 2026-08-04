@@ -1,11 +1,9 @@
 mod mappings;
 
-mod alacritty;
 mod pty_info;
+mod rio;
 pub mod terminal_settings;
 
-#[cfg(not(windows))]
-use anyhow::Context as _;
 use anyhow::{Result, bail};
 use futures_lite::future::yield_now;
 use log::trace;
@@ -59,14 +57,12 @@ use gpui::{
     Point as GpuiPoint, Rgba, ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
-#[cfg(not(windows))]
-use crate::alacritty::current_child_signal_mask;
-use crate::alacritty::{
-    AlacrittyCell, AlacrittyGridIterator, AlacrittyHyperlink, AlacrittySearch, AlacrittyTerm,
-    AlacrittyTermConfig, AlacrittyTermLock, HyperlinkMatch, PtySender, RegexSearches,
-    append_text_to_term, apply_config, clear_saved_screen, content_text, display_offset,
-    display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
-    make_content, new_term, open_pty, pty_options, pty_term_config, resize, screen_lines,
+use crate::rio::{
+    HyperlinkMatch, PtySender, RegexSearches, RioCell, RioGrid, RioGridIterator, RioProcessor,
+    RioSearch, RioTerm, RioTermConfig, RioTermLock, append_text_to_term, apply_config, clear_saved_screen,
+    color_at_index, content_text, cursor_blinking, display_offset, display_only_term_config,
+    find_from_terminal_point, full_content_range, last_non_empty_lines, make_content, new_term,
+    open_pty, pty_options, pty_term_config, renderable_cells, resize, screen_lines,
     scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
     set_selection as set_term_selection, shrink_to_used, spawn_event_loop,
     toggle_vi_mode as toggle_term_vi_mode, total_lines, update_selection as update_term_selection,
@@ -150,7 +146,7 @@ enum ViMotion {
 
 #[derive(Clone, Debug)]
 pub struct Search {
-    search: AlacrittySearch,
+    search: RioSearch,
 }
 
 #[derive(Clone, Debug)]
@@ -344,22 +340,18 @@ impl Handler for PlainAnsiTextHandler {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Hyperlink {
-    data: HyperlinkData,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum HyperlinkData {
-    Alacritty(AlacrittyHyperlink),
-    Owned { id: Option<Arc<str>>, uri: Arc<str> },
+    id: Option<Arc<str>>,
+    uri: Arc<str>,
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct Cell {
-    cell: AlacrittyCell,
+    cell: RioCell,
 }
 
 pub struct RenderableCells<'a> {
-    cells: AlacrittyGridIterator<'a>,
+    cells: RioGridIterator<'a>,
+    grid: &'a RioGrid,
 }
 
 #[derive(Debug, Clone)]
@@ -606,15 +598,18 @@ mod domain_tests {
     }
 
     #[test]
-    fn terminal_cell_clone_shares_extra_storage() {
+    fn terminal_cell_clone_shares_zerowidth_storage() {
         let mut cell = Cell::default();
         cell.push_zerowidth('a');
 
         let clone = cell.clone();
 
-        match (&cell.cell.extra, &clone.cell.extra) {
-            (Some(extra), Some(clone_extra)) => assert!(Arc::ptr_eq(extra, clone_extra)),
-            _ => panic!("expected extra storage on both cells"),
+        match (cell.zerowidth(), clone.zerowidth()) {
+            (Some(zerowidth), Some(clone_zerowidth)) => {
+                assert_eq!(zerowidth, clone_zerowidth);
+                assert_eq!(zerowidth, &['a']);
+            }
+            _ => panic!("expected zerowidth storage on both cells"),
         }
     }
 }
@@ -727,7 +722,6 @@ enum InternalEvent {
     MoveViCursorToPoint(Point),
 }
 
-type ClipboardFormatter = Arc<dyn Fn(&str) -> String + Sync + Send + 'static>;
 type ColorFormatter = Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>;
 type TextAreaSizeFormatter = Arc<dyn Fn(TerminalBounds) -> String + Sync + Send + 'static>;
 
@@ -737,7 +731,6 @@ pub(crate) enum TerminalBackendEvent {
     Title(String),
     ResetTitle,
     ClipboardStore(String),
-    ClipboardLoad(ClipboardFormatter),
     ColorRequest(usize, ColorFormatter),
     PtyWrite(String),
     TextAreaSizeRequest(TextAreaSizeFormatter),
@@ -755,7 +748,6 @@ impl fmt::Debug for TerminalBackendEvent {
             Self::Title(title) => write!(f, "Title({title})"),
             Self::ResetTitle => f.write_str("ResetTitle"),
             Self::ClipboardStore(data) => write!(f, "ClipboardStore({data})"),
-            Self::ClipboardLoad(_) => f.write_str("ClipboardLoad"),
             Self::ColorRequest(index, _) => write!(f, "ColorRequest({index})"),
             Self::PtyWrite(output) => write!(f, "PtyWrite({output})"),
             Self::TextAreaSizeRequest(_) => f.write_str("TextAreaSizeRequest"),
@@ -990,7 +982,7 @@ impl TerminalBuilder {
             completion_tx: None,
             term,
             term_config: config,
-            output_processor: Processor::<StdSyncHandler>::new(),
+            output_processor: RioProcessor::default(),
             title_override: None,
             events: VecDeque::with_capacity(10),
             last_content: Content {
@@ -1067,13 +1059,6 @@ impl TerminalBuilder {
         // allocation / acquiring a controlling terminal fails with `ENOTTY`.
         // When set, run the command as a plain subprocess instead.
         let no_pty = HeadlessTerminal::is_enabled(cx);
-        #[cfg(not(windows))]
-        let child_signal_mask = match current_child_signal_mask()
-            .context("failed to capture terminal child signal mask")
-        {
-            Ok(signal_mask) => Some(signal_mask),
-            Err(error) => return Task::ready(Err(error)),
-        };
         let fut = async move {
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
@@ -1206,22 +1191,16 @@ impl TerminalBuilder {
                 };
                 (TerminalType::DisplayOnly, Some(subprocess))
             } else {
-                let alacritty_shell = shell_params.as_ref().map(|params| {
+                let pty_shell = shell_params.as_ref().map(|params| {
                     (
                         params.program.clone(),
                         params.args.clone().unwrap_or_default(),
                     )
                 });
                 let pty_options = pty_options(
-                    alacritty_shell,
+                    pty_shell,
                     working_directory.clone(),
                     env.clone(),
-                    // We pass in the foreground thread's signal mask to the child process via pty_options,
-                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
-                    // otherwise the terminal would inherit the background executor's signal mask which blocks
-                    // some terminal signals
-                    #[cfg(not(windows))]
-                    child_signal_mask,
                     #[cfg(windows)]
                     shell_kind.tty_escape_args(),
                 );
@@ -1243,8 +1222,7 @@ impl TerminalBuilder {
                 let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
 
                 //And connect them together
-                let pty_tx =
-                    spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
+                let pty_tx = spawn_event_loop(term.clone(), events_tx, pty)?;
 
                 (
                     TerminalType::Pty {
@@ -1263,7 +1241,7 @@ impl TerminalBuilder {
                 completion_tx,
                 term,
                 term_config: config,
-                output_processor: Processor::<StdSyncHandler>::new(),
+                output_processor: RioProcessor::default(),
                 title_override: terminal_title_override,
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
@@ -1464,9 +1442,9 @@ pub struct Terminal {
     /// subprocess and the task pumping its output into the grid.
     subprocess: Option<SubprocessHandle>,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
-    term: Arc<AlacrittyTermLock>,
-    term_config: AlacrittyTermConfig,
-    output_processor: Processor<StdSyncHandler>,
+    term: Arc<RioTermLock>,
+    term_config: RioTermConfig,
+    output_processor: RioProcessor,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, SelectionSide)>,
@@ -1590,23 +1568,13 @@ impl Terminal {
             TerminalBackendEvent::ClipboardStore(data) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(data))
             }
-            TerminalBackendEvent::ClipboardLoad(format) => {
-                self.write_to_pty(
-                    match &cx.read_from_clipboard().and_then(|item| item.text()) {
-                        // The terminal only supports pasting strings, not images.
-                        Some(text) => format(text),
-                        _ => format(""),
-                    }
-                    .into_bytes(),
-                )
-            }
             TerminalBackendEvent::PtyWrite(out) => self.write_to_pty(out.into_bytes()),
             TerminalBackendEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.terminal_bounds).into_bytes())
             }
             TerminalBackendEvent::CursorBlinkingChange => {
                 let terminal = self.term.lock();
-                let blinking = terminal.cursor_style().blinking;
+                let blinking = cursor_blinking(&terminal);
                 cx.emit(Event::BlinkChanged(blinking));
             }
             TerminalBackendEvent::Bell => {
@@ -1617,6 +1585,7 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             TerminalBackendEvent::Wakeup => {
+                crate::rio::rearm_damage_events(&mut self.term.lock());
                 self.detect_init_command_startup_marker();
                 cx.emit(Event::Wakeup);
 
@@ -1634,7 +1603,7 @@ impl Terminal {
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
 
-                let color = self.term.lock().colors()[index]
+                let color = color_at_index(&self.term.lock(), index)
                     .unwrap_or_else(|| to_vte_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color).into_bytes());
             }
@@ -1651,7 +1620,7 @@ impl Terminal {
     fn process_terminal_event(
         &mut self,
         event: &InternalEvent,
-        term: &mut AlacrittyTerm,
+        term: &mut RioTerm,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2141,7 +2110,7 @@ impl Terminal {
     fn clear_for_init_command(&mut self, cx: &mut Context<Self>) {
         let mut term = self.term.lock_unfair();
         clear_saved_screen(&mut term);
-        self.last_content = make_content(&term, &self.last_content);
+        self.last_content = make_content(&term, &self.last_content, &self.term_config);
         cx.emit(Event::Wakeup);
     }
 
@@ -2321,13 +2290,12 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
 
-        self.last_content = make_content(&terminal, &self.last_content);
+        self.last_content = make_content(&terminal, &self.last_content, &self.term_config);
     }
 
     pub fn with_renderable_cells<R>(&self, f: impl for<'a> FnOnce(RenderableCells<'a>) -> R) -> R {
         let term = self.term.lock_unfair();
-        let content = term.renderable_content();
-        f(RenderableCells::new(content.display_iter))
+        f(renderable_cells(&term))
     }
 
     pub fn get_content(&self) -> String {
@@ -2950,11 +2918,10 @@ impl Terminal {
         let hide = task.spawned_task.hide;
 
         if !lines_to_show.is_empty() {
-            // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
-            // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
-            // when Zed task finishes and no more output is made.
-            // After the task summary is output once, no more text is appended to the terminal.
-            unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
+            // The invocation happens on non `TaskStatus::Running` tasks, once, after either the
+            // `Exit` or `ChildExit` events that are spawned when the Zed task finishes and no
+            // more output is made, so the appended summary cannot interleave with PTY output.
+            append_text_to_term(&mut self.term.lock(), &lines_to_show);
         }
 
         match hide {
@@ -3078,7 +3045,7 @@ fn spawn_task_subprocess(
     args: Vec<String>,
     env: HashMap<String, String>,
     working_directory: Option<PathBuf>,
-    term: Arc<AlacrittyTermLock>,
+    term: Arc<RioTermLock>,
     events_tx: futures::channel::mpsc::UnboundedSender<PtyEvent>,
     executor: &BackgroundExecutor,
 ) -> Result<SubprocessHandle> {
@@ -3110,7 +3077,7 @@ fn spawn_task_subprocess(
                 let events_tx = events_tx.clone();
                 async move {
                     let Some(mut reader) = reader else { return };
-                    let mut processor = Processor::<StdSyncHandler>::new();
+                    let mut processor = RioProcessor::default();
                     let mut buffer = [0u8; 8192];
                     let mut previous_byte_was_cr = false;
                     loop {
@@ -3668,7 +3635,8 @@ mod tests {
 
         terminal.update(cx, |terminal, _cx| {
             let term_lock = terminal.term.lock();
-            terminal.last_content = make_content(&term_lock, &terminal.last_content);
+            terminal.last_content =
+                make_content(&term_lock, &terminal.last_content, &terminal.term_config);
             drop(term_lock);
 
             let terminal_bounds = TerminalBounds::new(
@@ -4467,7 +4435,7 @@ mod tests {
         // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
-            make_content(&term, &terminal.last_content)
+            make_content(&term, &terminal.last_content, &terminal.term_config)
         });
 
         // If LF is properly converted to CRLF, each line should start at column 0
@@ -4514,7 +4482,7 @@ mod tests {
         // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
-            make_content(&term, &terminal.last_content)
+            make_content(&term, &terminal.last_content, &terminal.term_config)
         });
 
         let cells = &content.cells;
@@ -4555,7 +4523,7 @@ mod tests {
         // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
-            make_content(&term, &terminal.last_content)
+            make_content(&term, &terminal.last_content, &terminal.term_config)
         });
 
         let cells = &content.cells;

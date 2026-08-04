@@ -1,17 +1,17 @@
-use alacritty_terminal::{
-    Term,
-    event::EventListener,
-    grid::Dimensions,
-    index::{Boundary, Column, Direction as AlacDirection, Point as AlacPoint},
-    term::{
-        cell::Flags,
-        search::{Match, RegexIter, RegexSearch},
-    },
-};
 use log::{info, warn};
 use regex::Regex;
+use rio_vt::{
+    crosswords::{
+        Crosswords,
+        grid::Dimensions as _,
+        pos::{Boundary, Column, Direction as RioDirection, Pos},
+        search::{Match, RegexIter, RegexSearch},
+        square::{Hyperlink as RioHyperlink, Square},
+    },
+    event::EventListener,
+};
 use std::{
-    ops::{Index, Range as StdRange},
+    ops::Range as StdRange,
     time::{Duration, Instant},
 };
 use url::Url;
@@ -20,9 +20,20 @@ use util::paths::{PathStyle, UrlExt};
 use crate::Range;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://|zed://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-const WIDE_CHAR_SPACERS: Flags =
-    Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
-        .unwrap();
+
+fn is_wide_char_spacer(square: &Square) -> bool {
+    square.is_spacer() || square.is_leading_spacer()
+}
+
+fn hyperlink_at<T: EventListener>(term: &Crosswords<T>, pos: Pos) -> Option<RioHyperlink> {
+    let square = &term.grid[pos];
+    let extras_id = square.extras_id()?;
+    term.grid
+        .extras_table
+        .get(extras_id)?
+        .hyperlink
+        .clone()
+}
 
 pub(crate) struct RegexSearches {
     url_regex: Option<RegexSearch>,
@@ -42,7 +53,7 @@ impl From<(String, bool, Match)> for HyperlinkMatch {
         Self {
             text,
             is_url,
-            range: Range::from_alacritty(range),
+            range: Range::from_rio(range),
         }
     }
 }
@@ -88,18 +99,18 @@ impl RegexSearches {
 }
 
 pub(crate) fn find_from_grid_point<T: EventListener>(
-    term: &Term<T>,
-    point: AlacPoint,
+    term: &Crosswords<T>,
+    point: Pos,
     regex_searches: &mut RegexSearches,
     path_style: PathStyle,
 ) -> Option<HyperlinkMatch> {
-    let grid = term.grid();
-    let link = grid.index(point).hyperlink();
+    let link = hyperlink_at(term, point);
     let found_word = if let Some(ref url) = link {
         let mut min_index = point;
         loop {
             let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
-            if new_min_index == min_index || grid.index(new_min_index).hyperlink() != link {
+            if new_min_index == min_index || hyperlink_at(term, new_min_index).as_ref() != Some(url)
+            {
                 break;
             } else {
                 min_index = new_min_index
@@ -109,7 +120,8 @@ pub(crate) fn find_from_grid_point<T: EventListener>(
         let mut max_index = point;
         loop {
             let new_max_index = max_index.add(term, Boundary::Cursor, 1);
-            if new_max_index == max_index || grid.index(new_max_index).hyperlink() != link {
+            if new_max_index == max_index || hyperlink_at(term, new_max_index).as_ref() != Some(url)
+            {
                 break;
             } else {
                 max_index = new_max_index
@@ -123,7 +135,7 @@ pub(crate) fn find_from_grid_point<T: EventListener>(
     } else {
         let (line_start, line_end) = (term.line_search_left(point), term.line_search_right(point));
         let url_match = regex_searches.url_regex.as_mut().and_then(|url_regex| {
-            RegexIter::new(line_start, line_end, AlacDirection::Right, term, url_regex)
+            RegexIter::new(line_start, line_end, RioDirection::Right, term, url_regex)
                 .find(|rm| rm.contains(&point))
                 .map(|url_match| {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
@@ -157,7 +169,7 @@ fn normalize_found_word(
     normalize_hyperlink_match(
         maybe_url_or_path,
         is_url,
-        Range::from_alacritty(word_match),
+        Range::from_rio(word_match),
         path_style,
     )
 }
@@ -236,7 +248,7 @@ fn try_osc8_url_to_path(url: url::Url) -> Option<String> {
 fn sanitize_url_punctuation<T: EventListener>(
     url: String,
     url_match: Match,
-    term: &Term<T>,
+    term: &Crosswords<T>,
 ) -> (String, Match) {
     let mut sanitized_url = url;
     let mut chars_trimmed = 0;
@@ -311,11 +323,11 @@ fn first_unbalanced_open_paren(s: &str) -> Option<usize> {
     first_unmatched.filter(|_| balance > 0)
 }
 
-fn path_match<T>(
-    term: &Term<T>,
-    line_start: AlacPoint,
-    line_end: AlacPoint,
-    hovered: AlacPoint,
+fn path_match<T: EventListener>(
+    term: &Crosswords<T>,
+    line_start: Pos,
+    line_end: Pos,
+    hovered: Pos,
     path_hyperlink_regexes: &mut Vec<Regex>,
     path_hyperlink_timeout: Duration,
 ) -> Option<(String, Match)> {
@@ -337,31 +349,35 @@ fn path_match<T>(
     // string representation of the line. The below algorithm does this, but seems a bit odd.
     // Maybe there is a clean api for doing this, but I couldn't find it.
     let mut line = String::with_capacity(
-        (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
+        (line_end.row.0 - line_start.row.0 + 1) as usize * term.grid.columns(),
     );
-    let first_cell = &term.grid()[line_start];
+    // Never-written cells hold '\0' in rio's grid; treat them as blanks like
+    // rio's own text extraction does.
+    let square_char = |square: &Square| match square.c() {
+        '\0' | ' ' | '\t' => ' ',
+        c => c,
+    };
+
+    let first_square = &term.grid[line_start];
     let mut prev_len = 0;
-    line.push(first_cell.c);
+    line.push(square_char(first_square));
     let mut hovered_point_byte_offset = None;
 
     if line_start == hovered {
         hovered_point_byte_offset = Some(0);
     }
 
-    for cell in term.grid().iter_from(line_start) {
-        if cell.point > line_end {
+    for indexed in term.grid.iter_from(line_start) {
+        if indexed.pos > line_end {
             break;
         }
 
-        if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
+        if !is_wide_char_spacer(indexed.square) {
             prev_len = line.len();
-            match cell.c {
-                ' ' | '\t' => line.push(' '),
-                c => line.push(c),
-            }
+            line.push(square_char(indexed.square));
         }
 
-        if cell.point == hovered {
+        if indexed.pos == hovered {
             debug_assert!(hovered_point_byte_offset.is_none());
             hovered_point_byte_offset = Some(prev_len);
         }
@@ -374,20 +390,20 @@ fn path_match<T>(
     let found_from_range = |path_range: StdRange<usize>,
                             link_range: StdRange<usize>,
                             position: Option<(u32, Option<u32>)>| {
-        let advance_point_by_str = |mut point: AlacPoint, s: &str| {
+        let advance_point_by_str = |mut point: Pos, s: &str| {
             for _ in s.chars() {
                 point = term
-                    .expand_wide(point, AlacDirection::Right)
+                    .expand_wide(point, RioDirection::Right)
                     .add(term, Boundary::Grid, 1);
             }
 
-            // There does not appear to be an alacritty api that is
+            // There does not appear to be an api that is
             // "move to start of current wide char", so we have to do it ourselves.
-            let flags = term.grid().index(point).flags;
-            if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
-                AlacPoint::new(point.line + 1, Column(0))
-            } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
-                AlacPoint::new(point.line, point.column - 1)
+            let square = &term.grid[point];
+            if square.is_leading_spacer() {
+                Pos::new(point.row + 1, Column(0))
+            } else if square.is_spacer() {
+                Pos::new(point.row, point.col - 1)
             } else {
                 point
             }
@@ -397,7 +413,7 @@ fn path_match<T>(
         let link_end = advance_point_by_str(link_start, &line[link_range]);
         let link_match = link_start
             ..=term
-                .expand_wide(link_end, AlacDirection::Left)
+                .expand_wide(link_end, RioDirection::Left)
                 .sub(term, Boundary::Grid, 1);
 
         (
@@ -485,18 +501,28 @@ mod tests {
     use crate::terminal_settings::TerminalSettings;
 
     use super::*;
-    use alacritty_terminal::{
-        event::VoidListener,
-        grid::Dimensions,
-        index::{Boundary, Column, Line, Point as AlacPoint},
-        term::{Config, cell::Flags, test::TermSize},
-        vte::ansi::Handler,
+    use rio_vt::{
+        ansi::CursorShape as RioCursorShape,
+        crosswords::{CrosswordsSize, pos::Line},
+        event::{VoidListener, WindowId},
+        performer::handler::Handler as _,
     };
     use regex::Regex;
     use settings::{self, Settings, SettingsContent};
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf, rc::Rc};
     use url::Url;
     use util::paths::PathWithPosition;
+
+    fn new_test_term(columns: usize, screen_lines: usize) -> Crosswords<VoidListener> {
+        Crosswords::new(
+            CrosswordsSize::new(columns, screen_lines),
+            RioCursorShape::Block,
+            VoidListener,
+            WindowId::from(0),
+            0,
+            10_000,
+        )
+    }
 
     fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
         let results: Vec<_> = Regex::new(re)
@@ -552,11 +578,11 @@ mod tests {
 
         for (input, expected) in test_cases {
             // Create a minimal terminal for testing
-            let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+            let term = new_test_term(80, 24);
 
             // Create a dummy match that spans the entire input
-            let start_point = AlacPoint::new(Line(0), Column(0));
-            let end_point = AlacPoint::new(Line(0), Column(input.len()));
+            let start_point = Pos::new(Line(0), Column(0));
+            let end_point = Pos::new(Line(0), Column(input.len()));
             let dummy_match = Match::new(start_point, end_point);
 
             let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
@@ -622,11 +648,11 @@ mod tests {
 
         for (input, expected) in test_cases {
             // Create a minimal terminal for testing
-            let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+            let term = new_test_term(80, 24);
 
             // Create a dummy match that spans the entire input
-            let start_point = AlacPoint::new(Line(0), Column(0));
-            let end_point = AlacPoint::new(Line(0), Column(input.len()));
+            let start_point = Pos::new(Line(0), Column(0));
+            let end_point = Pos::new(Line(0), Column(input.len()));
             let dummy_match = Match::new(start_point, end_point);
 
             let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
@@ -636,7 +662,7 @@ mod tests {
 
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
-            use crate::alacritty::hyperlinks::tests::line_cells_count;
+            use crate::rio::hyperlinks::tests::line_cells_count;
             use std::cmp;
 
             let test_lines = vec![$($lines),+];
@@ -662,7 +688,7 @@ mod tests {
         } };
 
         ($columns:expr; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
-            use crate::alacritty::hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
+            use crate::rio::hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
 
             let source_location = format!("{}:{}", std::file!(), std::line!());
             for columns in $columns {
@@ -1139,31 +1165,46 @@ mod tests {
 
         mod perf {
             use super::super::*;
+            use crate::rio::hyperlinks::tests::new_test_term;
             use crate::TerminalSettings;
-            use alacritty_terminal::{
+            use rio_vt::{
+                crosswords::{CrosswordsSize, grid::Scroll, pos::Line},
                 event::VoidListener,
-                grid::Scroll,
-                index::{Column, Point as AlacPoint},
-                term::{Term, test::mock_term},
+                performer::handler::Processor,
             };
             use settings::{self, Settings, SettingsContent};
             use std::{cell::RefCell, rc::Rc};
             use util_macros::perf;
 
+            /// Builds a terminal sized to `content` and feeds it through the
+            /// VT parser, mirroring alacritty's `mock_term` test helper.
+            fn mock_term(content: &str) -> Crosswords<VoidListener> {
+                let lines: Vec<&str> = content.split('\n').collect();
+                let num_cols = lines
+                    .iter()
+                    .map(|line| line.chars().filter(|c| *c != '\r').count())
+                    .max()
+                    .unwrap_or(0)
+                    .max(3);
+                let mut term = new_test_term(num_cols, lines.len().max(1));
+                let mut processor = Processor::default();
+                processor.advance(&mut term, content.as_bytes());
+                term
+            }
+
             fn build_test_term(
                 line: &str,
                 repeat: usize,
                 hover_offset_column: usize,
-            ) -> (Term<VoidListener>, AlacPoint) {
+            ) -> (Crosswords<VoidListener>, Pos) {
                 let content = line.repeat(repeat);
                 let mut term = mock_term(&content);
-                term.resize(TermSize {
-                    columns: 1024,
-                    screen_lines: 10,
-                });
+                term.resize(CrosswordsSize::new(1024, 10));
                 term.scroll_display(Scroll::Top);
-                let point =
-                    AlacPoint::new(Line(term.topmost_line().0 + 3), Column(hover_offset_column));
+                let point = Pos::new(
+                    Line(term.grid.topmost_line().0 + 3),
+                    Column(hover_offset_column),
+                );
                 (term, point)
             }
 
@@ -1171,7 +1212,7 @@ mod tests {
             pub fn cargo_hyperlink_benchmark() {
                 const LINE: &str = "    Compiling terminal v0.1.0 (/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal)\r\n";
                 thread_local! {
-                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                    static TEST_TERM_AND_POINT: (Crosswords<VoidListener>, Pos) =
                         build_test_term(LINE, 500, 50);
                 }
                 TEST_TERM_AND_POINT.with(|(term, point)| {
@@ -1189,7 +1230,7 @@ mod tests {
             pub fn rust_hyperlink_benchmark() {
                 const LINE: &str = "    --> /Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal/terminal.rs:1000:42\r\n";
                 thread_local! {
-                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                    static TEST_TERM_AND_POINT: (Crosswords<VoidListener>, Pos) =
                         build_test_term(LINE, 500, 50);
                 }
                 TEST_TERM_AND_POINT.with(|(term, point)| {
@@ -1207,7 +1248,7 @@ mod tests {
             pub fn ls_hyperlink_benchmark() {
                 const LINE: &str = "Cargo.toml        experiments        notebooks        rust-toolchain.toml    tooling\r\n";
                 thread_local! {
-                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                    static TEST_TERM_AND_POINT: (Crosswords<VoidListener>, Pos) =
                         build_test_term(LINE, 500, 60);
                 }
                 TEST_TERM_AND_POINT.with(|(term, point)| {
@@ -1270,7 +1311,7 @@ mod tests {
 987, 552, -835, -912, -861, 254, 560, 124, 145, 798, 178, 476, 138, -311, 151, -907, -886, -592, 728, -43, -489, 873, -422, -439, -489, 375, -703, -459, 338, 418, -25, 332, -454, 730, -604, -800, 37, -172, -197, -568, -563, -332, 228, -182, 994, -123, 444, -567, 98, 78, 0, -504, -150, 88, -936, 199, -651, -776, 192, 46, 526, -727, -991, 534, -659, -738, 256, -894, 965, -76, 816, 435, -418, 800, 838, 67, -733, 570, 112, -514, -416\r\
 ";
                 thread_local! {
-                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                    static TEST_TERM_AND_POINT: (Crosswords<VoidListener>, Pos) =
                         build_test_term(&LINE, 5, 50);
                 }
                 TEST_TERM_AND_POINT.with(|(term, point)| {
@@ -1304,7 +1345,7 @@ mod tests {
 ...............................................E.\r\
 ";
                 thread_local! {
-                    static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
+                    static TEST_TERM_AND_POINT: (Crosswords<VoidListener>, Pos) =
                         build_test_term(&LINE, 5, 50);
                 }
                 TEST_TERM_AND_POINT.with(|(term, point)| {
@@ -1319,8 +1360,8 @@ mod tests {
             }
 
             pub fn find_from_grid_point_bench(
-                term: &Term<VoidListener>,
-                point: AlacPoint,
+                term: &Crosswords<VoidListener>,
+                point: Pos,
             ) -> Option<HyperlinkMatch> {
                 const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
@@ -1504,22 +1545,23 @@ mod tests {
     }
 
     struct ExpectedHyperlink {
-        hovered_grid_point: AlacPoint,
+        hovered_grid_point: Pos,
         hovered_char: char,
         hyperlink_kind: HyperlinkKind,
         iri_or_path: String,
         row: Option<u32>,
         column: Option<u32>,
-        hyperlink_match: RangeInclusive<AlacPoint>,
+        hyperlink_match: RangeInclusive<Pos>,
     }
 
     /// Converts to Windows style paths on Windows, like path!(), but at runtime for improved test
     /// readability.
     fn build_term_from_test_lines<'a>(
         hyperlink_kind: HyperlinkKind,
-        term_size: TermSize,
+        columns: usize,
+        screen_lines: usize,
         test_lines: impl Iterator<Item = &'a str>,
-    ) -> (Term<VoidListener>, ExpectedHyperlink) {
+    ) -> (Crosswords<VoidListener>, ExpectedHyperlink) {
         #[derive(Default, Eq, PartialEq)]
         enum HoveredState {
             #[default]
@@ -1533,7 +1575,7 @@ mod tests {
             #[default]
             MatchScan,
             MatchNextChar,
-            Match(AlacPoint),
+            Match(Pos),
             Done,
         }
 
@@ -1542,7 +1584,7 @@ mod tests {
             #[default]
             PathScan,
             PathNextChar,
-            Path(AlacPoint),
+            Path(Pos),
             RowScan,
             Row(String),
             ColumnScan,
@@ -1550,55 +1592,49 @@ mod tests {
             Done,
         }
 
-        fn prev_input_point_from_term(term: &Term<VoidListener>) -> AlacPoint {
-            let grid = term.grid();
-            let cursor = &grid.cursor;
-            let mut point = cursor.point;
+        fn prev_input_point_from_term(term: &Crosswords<VoidListener>) -> Pos {
+            let cursor = &term.grid.cursor;
+            let mut point = cursor.pos;
 
-            if !cursor.input_needs_wrap {
+            if !cursor.should_wrap {
                 point = point.sub(term, Boundary::Grid, 1);
             }
 
-            if grid.index(point).flags.contains(Flags::WIDE_CHAR_SPACER) {
-                point.column -= 1;
+            if term.grid[point].is_spacer() {
+                point.col -= 1;
             }
 
             point
         }
 
         fn end_point_from_prev_input_point(
-            term: &Term<VoidListener>,
-            prev_input_point: AlacPoint,
-        ) -> AlacPoint {
-            if term
-                .grid()
-                .index(prev_input_point)
-                .flags
-                .contains(Flags::WIDE_CHAR)
-            {
+            term: &Crosswords<VoidListener>,
+            prev_input_point: Pos,
+        ) -> Pos {
+            if term.grid[prev_input_point].is_wide() {
                 prev_input_point.add(term, Boundary::Grid, 1)
             } else {
                 prev_input_point
             }
         }
 
-        fn process_input(term: &mut Term<VoidListener>, c: char) {
+        fn process_input(term: &mut Crosswords<VoidListener>, c: char) {
             match c {
                 '\t' => term.put_tab(1),
                 c @ _ => term.input(c),
             }
         }
 
-        let mut hovered_grid_point: Option<AlacPoint> = None;
-        let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
+        let mut hovered_grid_point: Option<Pos> = None;
+        let mut hyperlink_match = Pos::default()..=Pos::default();
         let mut iri_or_path = String::default();
         let mut row = None;
         let mut column = None;
-        let mut prev_input_point = AlacPoint::default();
+        let mut prev_input_point = Pos::default();
         let mut hovered_state = HoveredState::default();
         let mut match_state = MatchState::default();
         let mut captures_state = CapturesState::default();
-        let mut term = Term::new(Config::default(), &term_size, VoidListener);
+        let mut term = new_test_term(columns, screen_lines);
 
         for text in test_lines {
             let chars: Box<dyn Iterator<Item = char>> =
@@ -1713,7 +1749,7 @@ mod tests {
         }
 
         let hovered_grid_point = hovered_grid_point.expect("Missing hovered point (👉 or 👈)");
-        let hovered_char = term.grid().index(hovered_grid_point).c;
+        let hovered_char = term.grid[hovered_grid_point].c();
         (
             term,
             ExpectedHyperlink {
@@ -1746,14 +1782,14 @@ mod tests {
     }
 
     struct CheckHyperlinkMatch<'a> {
-        term: &'a Term<VoidListener>,
+        term: &'a Crosswords<VoidListener>,
         expected_hyperlink: &'a ExpectedHyperlink,
         source_location: &'a str,
     }
 
     impl<'a> CheckHyperlinkMatch<'a> {
         fn new(
-            term: &'a Term<VoidListener>,
+            term: &'a Crosswords<VoidListener>,
             expected_hyperlink: &'a ExpectedHyperlink,
             source_location: &'a str,
         ) -> Self {
@@ -1842,10 +1878,10 @@ mod tests {
         fn format_hyperlink_match(hyperlink_match: &Match) -> String {
             format!(
                 "({}, {})..=({}, {})",
-                hyperlink_match.start().line.0,
-                hyperlink_match.start().column.0,
-                hyperlink_match.end().line.0,
-                hyperlink_match.end().column.0
+                hyperlink_match.start().row.0,
+                hyperlink_match.start().col.0,
+                hyperlink_match.end().row.0,
+                hyperlink_match.end().col.0
             )
         }
 
@@ -1861,7 +1897,7 @@ mod tests {
                     first_header_row.push_str(&format!("{:>10}", (index / 10)));
                 }
                 second_header_row += &remainder.to_string();
-                if index == self.expected_hyperlink.hovered_grid_point.column.0 {
+                if index == self.expected_hyperlink.hovered_grid_point.col.0 {
                     marker_header_row.push('↓');
                 } else {
                     marker_header_row.push(' ');
@@ -1879,21 +1915,21 @@ mod tests {
 
             for cell in self
                 .term
-                .renderable_content()
-                .display_iter
-                .filter(|cell| !cell.flags.intersects(WIDE_CHAR_SPACERS))
+                .grid
+                .display_iter()
+                .filter(|cell| !is_wide_char_spacer(cell.square))
             {
-                if cell.point.column.0 == 0 {
+                if cell.pos.col.0 == 0 {
                     let prefix =
-                        if cell.point.line == self.expected_hyperlink.hovered_grid_point.line {
+                        if cell.pos.row == self.expected_hyperlink.hovered_grid_point.row {
                             '→'
                         } else {
                             ' '
                         };
-                    result += &format!("\n{prefix}[{:>3}] ", cell.point.line.to_string());
+                    result += &format!("\n{prefix}[{:>3}] ", cell.pos.row.0.to_string());
                 }
 
-                match cell.c {
+                match cell.square.c() {
                     '\t' => result.push(' '),
                     c @ _ => result.push(c),
                 }
@@ -1940,9 +1976,15 @@ mod tests {
                 });
         }
 
-        let term_size = TermSize::new(columns, total_cells / columns + 2);
-        let (term, expected_hyperlink) =
-            build_term_from_test_lines(hyperlink_kind, term_size, test_lines);
+        let (term, expected_hyperlink) = build_term_from_test_lines(
+            hyperlink_kind,
+            columns,
+            // One more row of headroom than the alacritty-based harness used:
+            // rio's emoji/VS16 width handling can wrap a couple more cells,
+            // and the recorded positions go stale if the grid ever scrolls.
+            total_cells / columns + 3,
+            test_lines,
+        );
         let hyperlink_found = TEST_REGEX_SEARCHES.with(|regex_searches| {
             find_from_grid_point(
                 &term,
@@ -1955,14 +1997,14 @@ mod tests {
             CheckHyperlinkMatch::new(&term, &expected_hyperlink, source_location);
         match hyperlink_found {
             Some(hyperlink) if !hyperlink.is_url => {
-                let hyperlink_match = hyperlink.range.to_alacritty();
+                let hyperlink_match = hyperlink.range.to_rio();
                 check_hyperlink_match.check_path_with_position_and_match(
                     PathWithPosition::parse_str(&hyperlink.text),
                     &hyperlink_match,
                 );
             }
             Some(hyperlink) => {
-                let hyperlink_match = hyperlink.range.to_alacritty();
+                let hyperlink_match = hyperlink.range.to_rio();
                 check_hyperlink_match.check_iri_and_match(hyperlink.text, &hyperlink_match);
             }
             None => {
