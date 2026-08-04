@@ -257,6 +257,31 @@ impl ThreadedDispatcher {
         }
     }
 
+    /// Drives main-thread work until `ready` returns a value.
+    ///
+    /// Unlike [`Self::run_until_idle`], this waits across temporary quiescence.
+    /// This is required when completion can arrive from an external worker that
+    /// is not represented in the dispatcher's in-flight count.
+    #[cfg(any(test, feature = "bench"))]
+    pub(crate) fn run_until<R>(&self, mut ready: impl FnMut() -> Option<R>) -> R {
+        assert!(
+            self.is_main_thread(),
+            "run_until must be called on the threaded dispatcher's main thread"
+        );
+        loop {
+            self.drain_main_queue();
+            if let Some(result) = ready() {
+                return result;
+            }
+
+            let mut inflight = self.idle.inflight.lock();
+            if self.main_queue_has_work() {
+                continue;
+            }
+            self.idle.condvar.wait(&mut inflight);
+        }
+    }
+
     /// Runs all main-thread tasks that are queued right now, without waiting for
     /// background work or timers to finish.
     pub fn run_ready_main_tasks(&self) -> bool {
@@ -446,6 +471,36 @@ mod tests {
             .detach();
 
         dispatcher.run_until_idle();
+        assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_until_waits_for_untracked_external_wakes() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let sender_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            sender
+                .send(())
+                .expect("foreground receiver should remain alive");
+        });
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    receiver
+                        .await
+                        .expect("external sender should deliver its wake");
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        dispatcher.run_until(|| completed.load(Ordering::SeqCst).then_some(()));
+        sender_thread.join().expect("sender thread should finish");
         assert!(completed.load(Ordering::SeqCst));
     }
 
