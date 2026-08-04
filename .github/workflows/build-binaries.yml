@@ -73,6 +73,8 @@ jobs:
       - name: Set release version
         run: |
           sed -i '' "s/^version = \"[^\"]*\"/version = \"${{ needs.prepare.outputs.version }}\"/" crates/zed/Cargo.toml
+      - name: Select Xcode 15.3
+        run: sudo xcode-select -s /Applications/Xcode_15.3.app
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
       - name: Bundle macOS app
