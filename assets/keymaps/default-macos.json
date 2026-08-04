@@ -210,6 +210,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-c": "markdown::Copy",
+      "cmd-a": "markdown::SelectAll",
     },
   },
   {
