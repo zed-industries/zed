@@ -1034,6 +1034,7 @@ impl TerminalBuilder {
             background_executor: background_executor.clone(),
             path_style,
             cwd_history: Vec::new(),
+            pending_cwd_boundary: None,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -1307,15 +1308,20 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
-                cwd_history: working_directory
-                    .as_ref()
-                    .map(|working_directory| {
-                        vec![CwdHistoryEntry {
-                            scrollback_position: i32::MIN,
-                            working_directory: working_directory.clone(),
-                        }]
-                    })
-                    .unwrap_or_default(),
+                cwd_history: if is_remote_terminal {
+                    Vec::new()
+                } else {
+                    working_directory
+                        .as_ref()
+                        .map(|working_directory| {
+                            vec![CwdHistoryEntry {
+                                scrollback_position: i32::MIN,
+                                working_directory: working_directory.clone(),
+                            }]
+                        })
+                        .unwrap_or_default()
+                },
+                pending_cwd_boundary: None,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
                 #[cfg(any(test, feature = "test-support"))]
@@ -1512,6 +1518,7 @@ pub struct Terminal {
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
     cwd_history: Vec<CwdHistoryEntry>,
+    pending_cwd_boundary: Option<i32>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
     #[cfg(any(test, feature = "test-support"))]
@@ -1679,6 +1686,8 @@ impl Terminal {
                 let new_bounds = normalize_terminal_bounds(new_bounds);
                 trace!("Resizing: new_bounds={new_bounds:?}");
 
+                let columns_changed =
+                    self.last_content.terminal_bounds.num_columns() != new_bounds.num_columns();
                 self.last_content.terminal_bounds = new_bounds;
 
                 if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
@@ -1686,6 +1695,9 @@ impl Terminal {
                 }
 
                 resize(term, new_bounds);
+                if columns_changed {
+                    self.reset_cwd_history();
+                }
                 // If there are matches we need to emit a wake up event to
                 // invalidate the matches and recalculate their locations
                 // in the new terminal layout
@@ -1696,6 +1708,7 @@ impl Terminal {
             InternalEvent::Clear => {
                 trace!("Clearing");
                 clear_saved_screen(term);
+                self.reset_cwd_history();
                 cx.emit(Event::Wakeup);
             }
             InternalEvent::Scroll(scroll) => {
@@ -2173,14 +2186,23 @@ impl Terminal {
         let mut term = self.term.lock_unfair();
         clear_saved_screen(&mut term);
         self.last_content = make_content(&term, &self.last_content);
+        drop(term);
+        self.reset_cwd_history();
         cx.emit(Event::Wakeup);
     }
 
     fn write_input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
+        let input = input.into();
+        if !self.is_remote_terminal && input.contains(&b'\r') {
+            let term = self.term.lock_unfair();
+            self.pending_cwd_boundary = Some(Self::scrollback_position(
+                term.grid().cursor.point.line.0,
+                term.history_size(),
+            ));
+        }
+
         self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
-
-        let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
 
@@ -2824,18 +2846,38 @@ impl Terminal {
     }
 
     pub(crate) fn record_cwd_change(&mut self, new_working_directory: PathBuf) {
-        let term = self.term.lock_unfair();
-        let scrollback_position =
-            Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size());
-        drop(term);
+        if self.is_remote_terminal {
+            return;
+        }
+
+        let scrollback_position = self.pending_cwd_boundary.take().unwrap_or_else(|| {
+            let term = self.term.lock_unfair();
+            Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size())
+        });
         self.cwd_history.push(CwdHistoryEntry {
             scrollback_position,
             working_directory: new_working_directory,
         });
     }
 
+    fn reset_cwd_history(&mut self) {
+        self.pending_cwd_boundary = None;
+        self.cwd_history = self
+            .working_directory()
+            .map(|working_directory| {
+                vec![CwdHistoryEntry {
+                    scrollback_position: i32::MIN,
+                    working_directory,
+                }]
+            })
+            .unwrap_or_default();
+    }
+
     fn cwd_at_line(&self, line: i32, history_size: usize) -> Option<PathBuf> {
-        if self.cwd_history.is_empty() {
+        if self.is_remote_terminal
+            || self.cwd_history.is_empty()
+            || history_size >= self.term_config.scrolling_history
+        {
             return self.working_directory();
         }
         let scrollback_position = Self::scrollback_position(line, history_size);
@@ -2848,16 +2890,6 @@ impl Terminal {
     }
 
     fn scrollback_position(line: i32, history_size: usize) -> i32 {
-        // `history_size` is capped when old scrollback is trimmed, so this is a
-        // coordinate in the retained terminal buffer rather than a global line number.
-        //
-        // Known limitation: once the scrollback cap is reached, positions recorded in
-        // `cwd_history` drift relative to the lines they were tagged with, because
-        // `line.0` keeps decreasing as retained lines move upward while `history_size`
-        // stays capped. In very long sessions this means `cwd_at_line` can return a
-        // stale cwd for older lines that are still in scrollback. Correcting this would
-        // require tracking a monotonic lines-ever-written counter (or pruning/shifting
-        // `cwd_history` on trim); we intentionally keep the simpler scoped version.
         let history_size = i32::try_from(history_size).unwrap_or(i32::MAX);
         history_size.saturating_add(line)
     }
@@ -4432,10 +4464,17 @@ mod tests {
         });
 
         let wrote = terminal.update(cx, |terminal, cx| {
+            terminal.cwd_history.push(CwdHistoryEntry {
+                scrollback_position: 42,
+                working_directory: PathBuf::from("/stale/cwd"),
+            });
             terminal.write_init_command_after_startup(b"agent\r".to_vec(), cx)
         });
         assert!(wrote);
-        let content = terminal.update(cx, |terminal, _| terminal.get_content());
+        let (content, cwd_history) = terminal.update(cx, |terminal, _| {
+            (terminal.get_content(), terminal.cwd_history.clone())
+        });
+        assert!(cwd_history.is_empty());
         assert!(
             !content.contains("startup output"),
             "startup output should be cleared internally before writing the init command"
@@ -5318,6 +5357,18 @@ mod tests {
     }
 
     #[test]
+    fn test_cwd_at_line_ignores_history_at_scrollback_cap() {
+        let mut terminal = make_display_only_terminal();
+        terminal.term_config.scrolling_history = 10;
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 0,
+            working_directory: PathBuf::from("/stale/cwd"),
+        });
+
+        assert_eq!(terminal.cwd_at_line(-5, 10), None);
+    }
+
+    #[test]
     fn test_cwd_at_line_returns_none_when_line_is_before_any_recorded_cwd() {
         let mut terminal = make_display_only_terminal();
         terminal.cwd_history.push(CwdHistoryEntry {
@@ -5360,12 +5411,57 @@ mod tests {
     fn test_record_cwd_change_stores_entry_at_current_cursor_position() {
         let mut terminal = make_display_only_terminal();
         let working_directory = PathBuf::from("/tmp/test");
-        // Fresh display-only terminal: history_size=0, cursor at line 0, scrollback_position=0
         terminal.record_cwd_change(working_directory.clone());
 
         assert_eq!(terminal.cwd_history.len(), 1);
         let entry = &terminal.cwd_history[0];
         assert_eq!(entry.scrollback_position, 0);
         assert_eq!(entry.working_directory, working_directory);
+    }
+
+    #[test]
+    fn test_record_cwd_change_uses_command_boundary() {
+        let mut terminal = make_display_only_terminal();
+        terminal.write_input(b"\r".to_vec());
+        assert_eq!(terminal.pending_cwd_boundary, Some(0));
+
+        let working_directory = PathBuf::from("/tmp/test");
+        terminal.record_cwd_change(working_directory.clone());
+
+        assert_eq!(terminal.pending_cwd_boundary, None);
+        assert_eq!(
+            terminal.cwd_history,
+            vec![CwdHistoryEntry {
+                scrollback_position: 0,
+                working_directory,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_remote_terminal_does_not_record_local_cwd() {
+        let mut terminal = make_display_only_terminal();
+        terminal.is_remote_terminal = true;
+        terminal.write_input(b"\r".to_vec());
+        terminal.record_cwd_change(PathBuf::from("/local/ssh/cwd"));
+
+        assert_eq!(terminal.pending_cwd_boundary, None);
+        assert!(terminal.cwd_history.is_empty());
+        assert_eq!(terminal.cwd_at_line(0, 0), None);
+    }
+
+    #[test]
+    fn test_reset_cwd_history_discards_stale_coordinates() {
+        let mut terminal = make_display_only_terminal();
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 42,
+            working_directory: PathBuf::from("/tmp/test"),
+        });
+        terminal.pending_cwd_boundary = Some(43);
+
+        terminal.reset_cwd_history();
+
+        assert!(terminal.cwd_history.is_empty());
+        assert_eq!(terminal.pending_cwd_boundary, None);
     }
 }
