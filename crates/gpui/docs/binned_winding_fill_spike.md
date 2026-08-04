@@ -474,6 +474,30 @@ Done:
   vec had no readers — the inline monotone decomposition is the geometry
   — and its two `is_empty` guards reduce to `current != start` (only
   segment-pushing calls separate them).
+- The `corner + 0⁺` tie convention (Slug's sign-classification
+  principle, adapted): `SAMPLE_OFFSET` and the sample-interleaving
+  invariant are gone; backdrop samples sit exactly on tile corners and
+  boundaries may pass through them. Every discrete gate on both sides
+  evaluates the same one-sided limit — "sample at corner + 0⁺": the
+  half-open span and straddle tests, the CPU's ceil-minus-one column
+  bucketing (a crossing exactly on a column boundary is strictly left of
+  the perturbed sample), and the shader's at-or-left-is-dead gates,
+  which did not change. Correctness is now local to each gate pair
+  instead of a global no-ties-exist geometric invariant;
+  `tile_aligned_edges_land_on_samples` hammers the ubiquitous tie case
+  (integer rectangles on tile boundaries). Two things the sign work was
+  hoped to delete survive, for structural reasons — do not re-propose:
+  the **lattice snap** stays because its second job is conditioning
+  sub-f32-spacing slivers into exactly-degenerate cases, which no
+  counting convention touches; and the **leg bookings**
+  (`CURVE_DOWNWARD_LEG_FLAG`, `leg_y`) stay because the leg decision
+  compares a *computed root* against `corner.x` — not a shared stored
+  value — and must complement the backdrop scatter that consumed the
+  same root, so it is decided once on the CPU and shipped; re-deriving
+  it GPU-side reopens the rounding lottery no convention can close
+  (Slug avoids this only by having no backdrop at all). `leg_y` is
+  additionally consumed only continuously, but re-deriving it would be
+  per-pixel work for a per-(tile, curve) constant.
 
 Deferred pending measurement (the solid-color `paths_bench` A/B, then a
 GPU capture, decide priority — in that order):
@@ -485,21 +509,8 @@ GPU capture, decide priority — in that order):
   Benefits quads as much as paths; do not fold it into path work.
 - Vertical merging of equal pieceless runs (currently one instance per
   bin row): instance count has not been the measured bottleneck anywhere.
-- Sign-bit crossing convention (Slug's `CalcRootCode` principle,
-  degenerate monotone form: a crossing exists iff
-  `signbit(y0 - sample) != signbit(y1 - sample)`): would replace the
-  half-open comparison conventions and possibly the leg bookings with a
-  decision CPU and GPU cannot disagree on, and IEEE `x - x = +0.0` makes
-  exact ties deterministic for free. Deferred, not declined — two real
-  obstacles. First, the lattice's *other* job survives it: snapping also
-  collapses sub-f32-spacing slivers (lyon has emitted `y = 255.00002`
-  for a requested `255`) into the exactly-degenerate cases the
-  conventions handle, which sign bits do nothing about, so the lattice
-  cannot simply be deleted. Second, our discrete decisions consume
-  crossing *positions* (backdrop scatter buckets, `leg_y`), not just
-  crossing counts — Slug's ramps are continuous in the position, ours
-  are not. Needs its own session with the tie tests as the referee;
-  the current lattice + shared-booking design passes them today.
+- (Done — see below.) Sign-bit crossing convention: shipped as the
+  `corner + 0⁺` convention; moved to the Done list.
 
 Declined (re-open only with a capture proving the premise):
 

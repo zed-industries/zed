@@ -60,14 +60,6 @@ fn snap(value: f32) -> f32 {
     (value * 256.0).round() * (1.0 / 256.0)
 }
 
-/// Offset of each tile's backdrop sample point from the tile's top-left
-/// corner, in device pixels: half a geometry-lattice step, interleaving the
-/// samples with the lattice. No snapped boundary can pass through a sample
-/// exactly, so every discrete left-or-right decision in the backdrop scatter
-/// and the shader's gates compares values with a guaranteed gap — there are
-/// no ties, and therefore no tie-break conventions.
-const SAMPLE_OFFSET: f32 = 1.0 / 512.0;
-
 /// An xy-monotone quadratic curve of a path's boundary in logical pixels,
 /// stored downward (`p0.y <= p1.y`), grown alongside the path's segments as
 /// the path is built. [`Self::scaled`] turns it into the device-space
@@ -215,12 +207,13 @@ pub struct PathTile {
     /// instance, so every pixel of the tile runs the same number of loop
     /// iterations.
     pub curve_count: u32,
-    /// Winding number at the tile's sample point (`corner`).
+    /// Winding number at the tile's sample point (`corner`), counting
+    /// crossings strictly left of it, half-open in y.
     pub backdrop: i32,
-    /// The tile's backdrop sample point in device pixels: the top-left
-    /// corner nudged half a geometry-lattice step inward, so that no
-    /// snapped boundary can pass through it exactly. Doubles as the
-    /// tile's position: the rectangle's origin is `corner.floor()`.
+    /// The tile's top-left corner in device pixels — both the backdrop
+    /// sample point and the rasterized rectangle's origin. Boundaries may
+    /// pass exactly through it; every discrete gate on both sides is
+    /// half-open, so a tie lands on exactly one side.
     pub corner: Point<f32>,
     /// Width of the tile in grid cells: 1 for boundary tiles, the run
     /// length for merged interior runs.
@@ -493,7 +486,7 @@ impl PaintedPath {
                         // The backdrop is never corrected with an empty
                         // curve list; the run's first sample point keeps
                         // the corner meaningful anyway.
-                        corner: point(run_left + SAMPLE_OFFSET, tile_top + SAMPLE_OFFSET),
+                        corner: point(run_left, tile_top),
                         run: (column - run_start) as u32,
                     });
                     continue;
@@ -533,7 +526,7 @@ impl PaintedPath {
                     curve_start,
                     curve_count: self.tile_curves.len() as u32 - curve_start,
                     backdrop,
-                    corner: point(tile_left + SAMPLE_OFFSET, tile_top + SAMPLE_OFFSET),
+                    corner: point(tile_left, tile_top),
                     run: 1,
                 });
             }
@@ -553,11 +546,18 @@ fn add_curve(scratch: &mut BinScratch, grid: &Grid, index: u32, curve: &PathCurv
     let last_row = grid.row_of(curve.p1.y);
     for row in first_row..=last_row {
         let row_top = grid.top + row as f32 * TILE_SIZE;
-        let sample_y = row_top + SAMPLE_OFFSET;
+        // Samples sit exactly on the tile corners; boundaries pass through
+        // them freely. Every discrete decision — here and in the shader —
+        // evaluates the same one-sided limit, "sample at corner + 0⁺", so
+        // a tie lands on the same side everywhere: half-open span and
+        // straddle tests, ceil-minus-one column bucketing (a crossing
+        // exactly on a column boundary is strictly left of that column's
+        // perturbed sample), and the shader's at-or-left-is-dead gates.
+        let sample_y = row_top;
 
         // Where the curve sits at this row's sample height, clamped to its
-        // span and bucketed against the sample points' x offsets. This one
-        // value is the booking that both consumers below act on — the
+        // span and bucketed against the sample points' x positions. This
+        // one value is the booking that both consumers below act on — the
         // backdrop deltas and the downward-leg flags — so they cannot
         // disagree about who owns a crossing, no matter how the solve
         // rounds. Horizontal curves never span a sample height and their
@@ -569,12 +569,14 @@ fn add_curve(scratch: &mut BinScratch, grid: &Grid, index: u32, curve: &PathCurv
         } else {
             curve.x_at_y(sample_y)
         };
-        let booked = ((booked - SAMPLE_OFFSET - grid.left) / TILE_SIZE).floor() as isize;
+        let booked = ((booked - grid.left) / TILE_SIZE).ceil() as isize - 1;
 
         // Count the crossing for every tile whose backdrop ray passes it:
-        // counted iff booked left of that tile's sample. The span test
-        // compares stored endpoint fields against the sample height,
-        // half-open.
+        // counted iff booked strictly left of that tile's column. The span
+        // test compares stored endpoint fields against the sample height,
+        // half-open: a curve starting exactly at the sample height counts,
+        // one ending there does not, so a shared contour endpoint on the
+        // line counts exactly once.
         if !horizontal && curve.p0.y <= sample_y && sample_y < curve.p1.y {
             let column = booked.clamp(0, grid.columns as isize - 1) as usize;
             scratch.backdrops[grid.cell(row, column)] += delta;
@@ -583,12 +585,16 @@ fn add_curve(scratch: &mut BinScratch, grid: &Grid, index: u32, curve: &PathCurv
         // Monotonicity makes the curve's x-range over a y-slab exactly the
         // interval between the two boundary evaluations, so the trail is a
         // staircase of O(rows + columns) tiles rather than the bounding
-        // box's rows * columns. No inclusion slack is needed: a curve can
-        // only affect a tile's discrete winding if it reaches past the
-        // tile's sample point, which sits half a lattice step inside the
-        // corner — far beyond the ulps by which this interval evaluation
-        // can be off. A curve wrongly excluded from a tile it merely grazes
-        // loses only an ulp-sized continuous sliver of area.
+        // box's rows * columns. No inclusion slack is needed: the trail
+        // and the booking bucket the same row-top evaluation, so a tile
+        // whose backdrop excludes a crossing always lists the curve that
+        // owns it. (A crossing exactly on a column boundary books one
+        // cell further left — outside the trail — which only means that
+        // cell's run breaks on the backdrop-equality check in
+        // `emit_tiles`; the crossing itself is backdrop-owned there and
+        // curve-owned in the trail, on opposite sides of the boundary.) A
+        // curve wrongly excluded from a tile it merely grazes loses only
+        // an ulp-sized continuous sliver of area.
         let (xa, xb) = if horizontal {
             (curve.p0.x, curve.p1.x)
         } else {
@@ -600,15 +606,20 @@ fn add_curve(scratch: &mut BinScratch, grid: &Grid, index: u32, curve: &PathCurv
         let high = grid.column_of(xa.max(xb));
         for column in low..=high {
             // The downward-leg booking for this (tile, curve) pair: the
-            // curve crosses the tile's left-edge leg below the sample iff
+            // the curve crosses the tile's left-edge leg below the sample iff
             // it straddles that edge, extends below the sample height, and
             // at the sample height sits on the opposite side of the edge
             // from where it is heading. `booked < column` is exactly `x at
-            // sample height < corner.x`, since `floor(v) < c` iff `v < c`
-            // for integer `c`. When the curve straddles the edge at all,
-            // the crossing height is solved here, once, whether or not the
-            // leg counts it: the shader's window split needs it either way.
-            let corner_x = grid.left + column as f32 * TILE_SIZE + SAMPLE_OFFSET;
+            // sample height <= corner.x` under the ceil-minus-one
+            // bucketing — the `corner + 0⁺` limit again: a crossing
+            // exactly on the edge is left of the perturbed leg. The
+            // straddle test is half-open the same way: a curve whose
+            // leftmost point only touches the edge is crossed by the
+            // perturbed leg, one whose rightmost point touches it is not.
+            // When the curve straddles the edge at all, the crossing
+            // height is solved here, once, whether or not the leg counts
+            // it: the shader's window split needs it either way.
+            let corner_x = grid.left + column as f32 * TILE_SIZE;
             let straddles = corner_x >= min_x && corner_x < max_x;
             let leg_y = if straddles {
                 curve.y_at_x(corner_x)
@@ -698,30 +709,24 @@ impl MonotoneCurve {
     /// Scale into device pixels, snap onto the winding lattice, and
     /// precompute the polynomial coefficients.
     ///
-    /// This is the one place geometry is snapped: device space is where
-    /// every discrete decision — backdrop scatter, leg booking, the
-    /// shader's gates — is made, so it is the only space where the lattice
-    /// invariant (geometry on the 1/256 grid, samples half a step off it)
-    /// means anything. Snapping logical coordinates instead would not
-    /// survive scaling: a non-power-of-two scale factor (Windows' 125%,
-    /// Wayland's n/120) carries lattice values onto arbitrary reals, some
-    /// of which land exactly on a tile sample point (logical `410/256` at
-    /// scale 1.25 is device `2 + 1/512`), where the CPU's half-open
-    /// backdrop and the shader's leg gates each assume the other owns the
-    /// crossing and a whole tile loses a winding step.
-    ///
-    /// Snapping is what makes those discrete decisions decidable at all.
-    /// Path construction can emit slivers thinner than f32's spacing at
-    /// screen magnitudes (lyon has returned an arc endpoint at
-    /// `y = 255.00002` for a requested `255`, making a 96-pixel-wide edge
-    /// with a 2e-5 y-extent); counting crossings inside such a sliver needs
-    /// more precision than the numbers themselves carry, so no convention
-    /// can get it right. On the lattice every coordinate is exactly
-    /// representable and at least 1/256 apart — comfortably above f32's
-    /// 1.5e-5 spacing near 255 — so near-degenerate slivers collapse to the
-    /// exactly-horizontal or exactly-vertical cases the conventions already
-    /// handle, and boundary comparisons are equalities on exact values, not
-    /// ulp lotteries. The 1/512 px displacement is far below visibility.
+    /// This is the one place geometry is snapped, and it is snapped in
+    /// device space, where every discrete decision — backdrop scatter,
+    /// leg booking, the shader's gates — is made. Boundaries may land
+    /// exactly on tile corners and sample lines (integer-coordinate
+    /// rectangles do constantly); that is fine, because every discrete
+    /// gate on both sides is half-open in a consistent direction, so a
+    /// tie lands on exactly one side. The lattice is not there to avoid
+    /// ties — it conditions the geometry: path construction can emit
+    /// slivers thinner than f32's spacing at screen magnitudes (lyon has
+    /// returned an arc endpoint at `y = 255.00002` for a requested `255`,
+    /// making a 96-pixel-wide edge with a 2e-5 y-extent), and counting
+    /// crossings inside such a sliver needs more precision than the
+    /// numbers themselves carry, so no convention can get it right. On
+    /// the lattice every coordinate is exactly representable and at least
+    /// 1/256 apart — comfortably above f32's 1.5e-5 spacing near 255 — so
+    /// near-degenerate slivers collapse to the exactly-horizontal or
+    /// exactly-vertical cases the conventions handle, and boundary
+    /// comparisons are equalities on exact values, not ulp lotteries.
     fn scaled(&self, scale: f32) -> PathCurve {
         let p0 = point(snap(self.p0.x * scale), snap(self.p0.y * scale));
         let p1 = point(snap(self.p1.x * scale), snap(self.p1.y * scale));
@@ -908,6 +913,38 @@ mod tests {
         );
     }
 
+    /// A rectangle whose every edge lies exactly on tile boundaries, so
+    /// crossings sit exactly on backdrop sample points and rows of samples
+    /// — the ubiquitous tie case (any integer-coordinate rectangle at
+    /// integer scale). The half-open conventions must give every tie to
+    /// exactly one side; a gap or double-count loses or doubles a whole
+    /// winding step across a tile.
+    #[test]
+    fn tile_aligned_edges_land_on_samples() {
+        for (left, top, right, bottom) in [
+            (0.0, 0.0, 32.0, 32.0),
+            (16.0, 16.0, 64.0, 48.0),
+            (-32.0, -16.0, 16.0, 16.0),
+        ] {
+            let mut builder = PathBuilder::fill();
+            builder.move_to(point(px(left), px(top)));
+            builder.line_to(point(px(right), px(top)));
+            builder.line_to(point(px(right), px(bottom)));
+            builder.line_to(point(px(left), px(bottom)));
+            builder.close();
+            let failures = check_path(
+                &format!("aligned rectangle ({left}, {top})"),
+                builder.build().unwrap(),
+            );
+            assert!(
+                failures.is_empty(),
+                "{} wrong pixels:\n{}",
+                failures.len(),
+                failures[..failures.len().min(60)].join("\n"),
+            );
+        }
+    }
+
     /// A path whose full extent would need more than `MAX_TILES` tiles must
     /// still render the portion inside a small mask: the grid is sized by
     /// the mask intersection, with out-of-view crossings folded into the
@@ -1041,14 +1078,11 @@ mod tests {
     }
 
     /// The rectangle a tile rasterizes, derived exactly as the vertex
-    /// shader derives it: `run` grid cells rightward from the corner's
-    /// containing cell, one cell tall.
+    /// shader derives it: `run` grid cells rightward from the corner, one
+    /// cell tall.
     fn tile_rect(tile: &PathTile) -> Bounds<ScaledPixels> {
         Bounds {
-            origin: point(
-                ScaledPixels(tile.corner.x.floor()),
-                ScaledPixels(tile.corner.y.floor()),
-            ),
+            origin: point(ScaledPixels(tile.corner.x), ScaledPixels(tile.corner.y)),
             size: size(
                 ScaledPixels(TILE_SIZE * tile.run as f32),
                 ScaledPixels(TILE_SIZE),

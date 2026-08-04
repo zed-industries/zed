@@ -984,12 +984,14 @@ static const float PATH_TILE_SIZE = 16.0;
 
 // One tile of a filled path: a screen-aligned quad whose every pixel
 // resolves its own winding number from `backdrop` (the winding at `corner`,
-// the tile's backdrop sample point: its top-left nudged half a
-// geometry-lattice step inward, so no snapped boundary passes through it)
-// plus the curves listed for the tile. The tile's rectangle is derived,
-// not stored: it spans `run` grid cells rightward from floor(corner), one
-// cell tall, and the content-mask clip distances trim whatever the mask
-// cuts off. Indices are scene-global, rebased by Scene::finish.
+// the tile's top-left, counting crossings strictly left of it) plus the
+// curves listed for the tile. Boundaries may pass exactly through the
+// corner; every discrete gate here and in the CPU binning is half-open in
+// a consistent direction, so a tie lands on exactly one side. The tile's
+// rectangle is derived, not stored: it spans `run` grid cells rightward
+// from the corner, one cell tall, and the content-mask clip distances trim
+// whatever the mask cuts off. Indices are scene-global, rebased by
+// Scene::finish.
 struct PathTile {
     uint paint;
     uint curve_start;
@@ -1044,7 +1046,7 @@ PathTileVertexOutput path_tile_vertex(uint vertex_id: SV_VertexID, uint tile_id:
     uint tile_index = batch_start_index + tile_id;
     PathTile tile = path_tiles[tile_index];
     PathPaint paint = path_paints[tile.paint];
-    float2 origin = floor(tile.corner);
+    float2 origin = tile.corner;
     float2 size = float2(PATH_TILE_SIZE * float(tile.run), PATH_TILE_SIZE);
     float2 position = origin + unit_vertex * size;
 
@@ -1161,15 +1163,19 @@ float curve_winding(PathCurve curve, float2 corner, float2 pixel,
             // must contribute zero for that y -- not a full pixel width.
             // x-monotonicity means x_c(y) meets corner.x at most once, at
             // the uploaded height, so the window splits into a live part
-            // and a dead one with no solve. Dead means never *strictly*
-            // right of the corner: a vertical curve lying exactly on the
-            // tile's left edge is left of every sample in the tile, and the
-            // backdrop owns it. Only the crossing-count height is clipped;
-            // the area integral keeps the full window, because over the
-            // dead part the curve is left of corner.x where this pixel's
-            // column integrand is zero anyway (short of 1/512 on the tile's
-            // leftmost column, far below visibility), which is what lets
-            // the clipped end keep its already-solved parameter bounds.
+            // and a dead one with no solve. Every discrete gate on both
+            // sides evaluates the same one-sided limit, "sample at
+            // corner + 0+": dead means at-or-left of the corner, matching
+            // the CPU's ceil-minus-one booking, under which a crossing
+            // exactly on the edge is strictly left of the perturbed sample
+            // and backdrop-owned -- a vertical curve lying exactly on the
+            // tile's left edge is dead for every pixel of the tile. Only
+            // the crossing-count height is clipped; the area integral
+            // keeps the full window, because over the dead part the curve
+            // is at-or-left of corner.x where this pixel's column
+            // integrand is zero anyway (exactly zero off the leftmost
+            // column), which is what lets the clipped end keep its
+            // already-solved parameter bounds.
             bool live = true;
             if (max(xa, xb) <= corner.x) {
                 live = false;
