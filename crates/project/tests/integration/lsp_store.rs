@@ -1,11 +1,19 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use fs::FakeFs;
 use futures::StreamExt;
 use gpui::TestAppContext;
 use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
 use lsp::Uri;
-use project::{Project, lsp_store::*};
+use parking_lot::Mutex;
+use project::{
+    Project,
+    lsp_store::{log_store::TestRpcRequestTracker, *},
+};
 use serde_json::json;
 use util::path;
 
@@ -91,6 +99,133 @@ async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut
 }
 
 #[test]
+fn test_rpc_request_tracker_distinguishes_request_directions() {
+    let mut tracker = TestRpcRequestTracker::new();
+    let started_at = Instant::now();
+
+    assert_eq!(
+        tracker.observe(
+            false,
+            r#"{"jsonrpc":"2.0","id":1,"method":"textDocument/hover"}"#,
+            started_at,
+        ),
+        None
+    );
+    assert_eq!(
+        tracker.observe(
+            true,
+            r#"{"jsonrpc":"2.0","id":1,"method":"workspace/configuration"}"#,
+            started_at + Duration::from_millis(10),
+        ),
+        None
+    );
+    assert_eq!(
+        tracker.observe(
+            false,
+            r#"{"jsonrpc":"2.0","id":1,"result":[]}"#,
+            started_at + Duration::from_millis(30),
+        ),
+        Some(Duration::from_millis(20))
+    );
+    assert_eq!(
+        tracker.observe(
+            true,
+            r#"{"jsonrpc":"2.0","id":1,"result":null}"#,
+            started_at + Duration::from_millis(50),
+        ),
+        Some(Duration::from_millis(50))
+    );
+}
+
+#[test]
+fn test_rpc_request_tracker_decodes_ids_and_times_cancelled_requests() {
+    let mut tracker = TestRpcRequestTracker::new();
+    let started_at = Instant::now();
+
+    tracker.observe(
+        true,
+        r#"{"jsonrpc":"2.0","id":"foo\u002fbar","method":"workspace/configuration"}"#,
+        started_at,
+    );
+    assert_eq!(
+        tracker.observe(
+            false,
+            r#"{"jsonrpc":"2.0","id":"foo/bar","result":[]}"#,
+            started_at + Duration::from_millis(25),
+        ),
+        Some(Duration::from_millis(25))
+    );
+
+    tracker.observe(
+        false,
+        r#"{"jsonrpc":"2.0","id":7,"method":"textDocument/hover"}"#,
+        started_at,
+    );
+    tracker.observe(
+        false,
+        r#"{"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":7}}"#,
+        started_at + Duration::from_millis(1),
+    );
+    assert_eq!(tracker.pending_request_count(), 1);
+    assert_eq!(
+        tracker.observe(
+            true,
+            r#"{"jsonrpc":"2.0","id":7,"error":{"code":-32800,"message":"Request was cancelled"}}"#,
+            started_at + Duration::from_millis(10),
+        ),
+        Some(Duration::from_millis(10))
+    );
+    assert_eq!(tracker.pending_request_count(), 0);
+}
+
+#[test]
+fn test_rpc_request_tracker_bounds_unanswered_requests() {
+    let mut tracker = TestRpcRequestTracker::new();
+    let started_at = Instant::now();
+    let max_pending_requests = TestRpcRequestTracker::max_pending_requests();
+
+    for id in 0..=max_pending_requests {
+        tracker.observe(
+            false,
+            &format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"textDocument/hover"}}"#),
+            started_at + Duration::from_nanos(id as u64),
+        );
+    }
+
+    assert_eq!(tracker.pending_request_count(), max_pending_requests);
+    assert_eq!(
+        tracker.observe(
+            true,
+            r#"{"jsonrpc":"2.0","id":0,"result":null}"#,
+            started_at + Duration::from_secs(1),
+        ),
+        None
+    );
+    assert!(
+        tracker
+            .observe(
+                true,
+                r#"{"jsonrpc":"2.0","id":1,"result":null}"#,
+                started_at + Duration::from_secs(1),
+            )
+            .is_some()
+    );
+}
+
+#[test]
+fn test_rpc_log_duration_proto_roundtrip() {
+    let log_type = LanguageServerLogType::Rpc {
+        received: true,
+        elapsed: Some(Duration::from_micros(1234)),
+    };
+
+    assert_eq!(
+        LanguageServerLogType::from_proto(log_type.to_proto()),
+        log_type
+    );
+}
+
+#[test]
 fn test_glob_literal_prefix() {
     assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
     assert_eq!(
@@ -157,4 +292,99 @@ fn test_trailing_newline_in_completion_documentation() {
         completion_doc,
         CompletionDocumentation::SingleLine(s) if s == "some value"
     ));
+}
+
+#[gpui::test]
+async fn test_user_initialization_options_override_adapter_arrays(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let user_settings = serde_json::json!({
+        "lsp": {
+            "the-fake-language-server": {
+                "initialization_options": {
+                    "preview": {
+                        "background": {
+                            "enabled": true,
+                            "args": ["--data-plane-host=127.0.0.1:23635", "--invert-colors=never"],
+                        },
+                    },
+                    "plugins": ["user-plugin"],
+                    "userOnly": ["user"],
+                },
+            },
+        },
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            ".zed": {
+                "settings.json": user_settings.to_string(),
+            },
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let sent_initialization_options = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-fake-language-server",
+            initialization_options: Some(json!({
+                "preview": {
+                    "background": {
+                        "args": ["--data-plane-host=127.0.0.1:23635", "--invert-colors=never"],
+                        "partialRendering": true,
+                    },
+                },
+                "plugins": ["default-plugin", "user-plugin"],
+                "adapterOnly": [1, 2],
+            })),
+            initializer: Some(Box::new({
+                let sent_initialization_options = sent_initialization_options.clone();
+                move |fake_server| {
+                    let sent_initialization_options = sent_initialization_options.clone();
+                    fake_server.set_request_handler::<lsp::request::Initialize, _, _>(
+                        move |params, _| {
+                            *sent_initialization_options.lock() = params.initialization_options;
+                            async move { Ok(lsp::InitializeResult::default()) }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        sent_initialization_options.lock().take(),
+        Some(json!({
+            "preview": {
+                "background": {
+                    "enabled": true,
+                    "args": ["--data-plane-host=127.0.0.1:23635", "--invert-colors=never"],
+                    "partialRendering": true,
+                },
+            },
+            "plugins": ["user-plugin"],
+            "adapterOnly": [1, 2],
+            "userOnly": ["user"],
+        })),
+    );
 }

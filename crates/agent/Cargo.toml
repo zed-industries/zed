@@ -79,6 +79,11 @@ web_search.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
 
+# Used only on Windows to resolve the running release channel/version so the WSL
+# sandbox helper can fetch a matching Linux `zed`.
+[target.'cfg(target_os = "windows")'.dependencies]
+release_channel.workspace = true
+
 [dev-dependencies]
 assets.workspace = true
 async-io.workspace = true
