@@ -6481,9 +6481,9 @@ impl ThreadView {
 
         let primary = if is_indented {
             let line_top = if is_first_indented {
-                rems_from_px(-12.0)
+                rems_from_px(-12.0_f32)
             } else {
-                rems_from_px(0.0)
+                rems_from_px(0.0_f32)
             };
 
             div()
@@ -6494,7 +6494,7 @@ impl ThreadView {
                 .child(
                     div()
                         .absolute()
-                        .left(rems_from_px(18.0))
+                        .left(rems_from_px(18.0_f32))
                         .top(line_top)
                         .bottom_0()
                         .w_px()
