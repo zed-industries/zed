@@ -223,6 +223,8 @@ fn spawn_task_or_modal(
     }
 }
 
+/// Spawns the nearest applicable task with the given `name`, opening the task
+/// picker if no matching task is available.
 pub fn spawn_task_by_name(
     name: String,
     reveal_target: Option<RevealTarget>,
@@ -254,6 +256,15 @@ pub fn spawn_task_by_name(
     })
 }
 
+/// Selects the nearest applicable task with the given name.
+///
+/// Worktree tasks must belong to the active worktree and have a configuration
+/// scope containing the active file. When multiple worktree tasks apply, the
+/// task from the deepest scope is selected. Without an active file, only a
+/// root-scoped worktree task applies.
+///
+/// If no worktree task applies, the first matching non-worktree candidate is
+/// returned, preserving the order provided by `Inventory::list_tasks`.
 fn select_task_by_name(
     name: &str,
     worktree_id: Option<WorktreeId>,
@@ -388,6 +399,8 @@ pub fn toggle_modal(
     }
 }
 
+/// Spawns every applicable task matching the `predicate`, opening the task
+/// picker if no tasks match.
 pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
     reveal_target: Option<RevealTarget>,
@@ -515,8 +528,7 @@ pub fn task_contexts(
     })
 }
 
-/// Schedules the provided tasks, returning `true` in case any task was
-/// scheduled, false otherwise.
+/// Schedules the provided tasks and returns whether any task was scheduled.
 fn schedule_tasks(
     workspace: &WeakEntity<Workspace>,
     tasks: Vec<(TaskSourceKind, TaskTemplate)>,
