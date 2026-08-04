@@ -124,6 +124,11 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      - name: Rename assets to update-schema names
+        run: |
+          mv assets/Zed-aarch64.dmg assets/zed-macos-aarch64.dmg
+          mv assets/Zed-x86_64.exe assets/zed-windows-x86_64.exe
+          ls -la assets/
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
