@@ -1530,7 +1530,7 @@ fn render_settings_item_link(
 
     div()
         .absolute()
-        .top(rems_from_px(18.))
+        .top(rems_from_px(18_f32))
         .map(|this| {
             if sub_field {
                 this.visible_on_hover("setting-sub-item")

@@ -237,7 +237,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                             div()
                                 .size_full()
                                 .min_w_0()
-                                .pt(rems_from_px(3.))
+                                .pt(rems_from_px(3_f32))
                                 .pl_0p5()
                                 .flex_1()
                                 .border_t_1()
