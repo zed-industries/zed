@@ -113,9 +113,7 @@ pub use git::{
     set_blame_renderer,
 };
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
-use git::{
-    DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, update_uncommitted_diff_for_buffer,
-};
+use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
@@ -165,7 +163,7 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
-    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla,
+    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, IsZero,
     KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
     Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
@@ -220,14 +218,14 @@ use project::{
     git_store::GitStoreEvent,
     lsp_store::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
-        LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
+        LspFormatTarget, OpenLspBufferHandle,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
+use scroll::{Autoscroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -282,7 +280,7 @@ use crate::{
         InlineValueCache,
         inlay_hints::{LspInlayHintData, inlay_hint_settings},
     },
-    runnables::{ResolvedTasks, RunnableData, RunnableTasks},
+    runnables::{ResolvedTasks, RunnableData, RunnableTaskStatus, RunnableTasks},
     scroll::{ScrollOffset, ScrollPixelOffset},
     selections_collection::resolve_selections_wrapping_blocks,
     semantic_tokens::SemanticTokenState,
@@ -999,6 +997,7 @@ pub struct Editor {
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
     gutter_highlights: TypeIdHashMap<GutterHighlight>,
+    allow_git_diff_scrollbar_markers: bool,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -1221,7 +1220,6 @@ pub struct EditorSnapshot {
     pub placeholder_display_snapshot: Option<DisplaySnapshot>,
     is_focused: bool,
     scroll_anchor: SharedScrollAnchor,
-    ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
@@ -2002,33 +2000,31 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
-                    project::Event::RefreshCodeLens => {
+                    project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
-                    project::Event::RefreshInlayHints {
-                        server_id,
-                        request_id,
-                    } => {
+                    project::Event::RefreshDocumentColors { .. } => {
+                        editor.refresh_document_colors(None, window, cx);
+                    }
+                    project::Event::RefreshDocumentLinks { .. } => {
+                        editor.refresh_document_links(None, cx);
+                    }
+                    project::Event::RefreshFoldingRanges { .. } => {
+                        editor.refresh_folding_ranges(None, window, cx);
+                    }
+                    project::Event::RefreshDocumentSymbols { .. } => {
+                        editor.refresh_document_symbols(None, cx);
+                    }
+                    project::Event::RefreshInlayHints { server_id } => {
                         editor.refresh_inlay_hints(
                             InlayHintRefreshReason::RefreshRequested {
                                 server_id: *server_id,
-                                request_id: *request_id,
                             },
                             cx,
                         );
                     }
-                    project::Event::RefreshSemanticTokens {
-                        server_id,
-                        request_id,
-                    } => {
-                        editor.refresh_semantic_tokens(
-                            None,
-                            Some(RefreshForServer {
-                                server_id: *server_id,
-                                request_id: *request_id,
-                            }),
-                            cx,
-                        );
+                    project::Event::RefreshSemanticTokens { .. } => {
+                        editor.refresh_semantic_tokens(None, true, cx);
                     }
                     project::Event::LanguageServerRemoved(_) => {
                         editor.registered_buffers.clear();
@@ -2065,8 +2061,12 @@ impl Editor {
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
+                            editor.invalidate_semantic_tokens(Some(buffer_id));
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::LanguageServerRegistered,
+                                cx,
+                            );
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions_for_selection(window, cx);
                             editor.refresh_document_highlights(cx);
@@ -2168,20 +2168,41 @@ impl Editor {
             ));
             let git_store = project.read(cx).git_store().clone();
             let project = project.clone();
-            project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                if let GitStoreEvent::RepositoryAdded = event {
-                    this.load_diff_task = Some(
-                        update_uncommitted_diff_for_buffer(
-                            cx.entity(),
-                            &project,
-                            this.buffer.read(cx).all_buffers(),
-                            this.buffer.clone(),
-                            cx,
-                        )
-                        .shared(),
-                    );
-                }
-            }));
+            project_subscriptions.push(cx.subscribe(
+                &git_store,
+                move |this, git_store, event, cx| {
+                    let buffers = match event {
+                        GitStoreEvent::RepositoryAdded | GitStoreEvent::DiffBaseChanged(None) => {
+                            this.buffer.read(cx).all_buffers()
+                        }
+                        GitStoreEvent::DiffBaseChanged(Some(repo_id)) => this
+                            .buffer
+                            .read(cx)
+                            .all_buffers()
+                            .into_iter()
+                            .filter(|buffer| {
+                                git_store
+                                    .read(cx)
+                                    .repository_and_path_for_buffer_id(
+                                        buffer.read(cx).remote_id(),
+                                        cx,
+                                    )
+                                    .is_some_and(|(repo, _)| repo.read(cx).id == *repo_id)
+                            })
+                            .collect(),
+                        _ => return,
+                    };
+                    if buffers.is_empty() {
+                        return;
+                    }
+                    let task = this.update_uncommitted_diff_for_buffer(&project, buffers, cx);
+                    if matches!(event, GitStoreEvent::DiffBaseChanged(Some(_))) {
+                        task.detach();
+                    } else {
+                        this.load_diff_task = Some(task.shared());
+                    }
+                },
+            ));
         }
 
         let buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -2220,18 +2241,7 @@ impl Editor {
         };
 
         let mut code_action_providers = Vec::new();
-        let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
-            load_uncommitted_diff = Some(
-                update_uncommitted_diff_for_buffer(
-                    cx.entity(),
-                    &project,
-                    multi_buffer.read(cx).all_buffers(),
-                    multi_buffer.clone(),
-                    cx,
-                )
-                .shared(),
-            );
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
 
@@ -2302,6 +2312,7 @@ impl Editor {
             background_highlights: HashMap::default(),
             navigation_overlays: HashMap::default(),
             gutter_highlights: Default::default(),
+            allow_git_diff_scrollbar_markers: false,
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -2444,7 +2455,7 @@ impl Editor {
             serialize_selections: Task::ready(()),
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
-            load_diff_task: load_uncommitted_diff,
+            load_diff_task: None,
             diff_hunk_delegate: None,
             minimap: None,
             change_list: ChangeList::new(),
@@ -2470,6 +2481,18 @@ impl Editor {
             sticky_headers: None,
             colorize_brackets_task: Task::ready(()),
         };
+
+        if let Some(project) = editor.project.clone() {
+            editor.load_diff_task = Some(
+                editor
+                    .update_uncommitted_diff_for_buffer(
+                        &project,
+                        multi_buffer.read(cx).all_buffers(),
+                        cx,
+                    )
+                    .shared(),
+            );
+        }
 
         if is_minimap {
             return editor;
@@ -2735,6 +2758,9 @@ impl Editor {
         }
 
         let disjoint = self.selections.disjoint_anchors();
+        if disjoint.len() > 1 {
+            key_context.add("multiple_selections");
+        }
         if matches!(
             &self.mode,
             EditorMode::SingleLine | EditorMode::AutoHeight { .. }
@@ -2999,7 +3025,6 @@ impl Editor {
                 .placeholder_display_map
                 .as_ref()
                 .map(|display_map| display_map.update(cx, |map, cx| map.snapshot(cx))),
-            ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             is_focused: self.focus_handle.is_focused(window),
             current_line_highlight: self
                 .current_line_highlight
@@ -4149,6 +4174,7 @@ impl Editor {
     fn gutter_context_menu(
         &self,
         anchor: Anchor,
+        display_row: DisplayRow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
@@ -4211,6 +4237,15 @@ impl Editor {
         };
         let has_bookmark = bookmark.as_ref().is_some();
 
+        let clear_runnable_task_status = self
+            .runnable_task_key_for_display_row(display_row, window, cx)
+            .filter(|(buffer_id, buffer_row)| {
+                matches!(
+                    self.runnable_task_status(*buffer_id, *buffer_row),
+                    Some(RunnableTaskStatus::Passed | RunnableTaskStatus::Failed)
+                )
+            });
+
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
@@ -4229,6 +4264,22 @@ impl Editor {
         ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when_some(
+                    clear_runnable_task_status,
+                    |this, (buffer_id, buffer_row)| {
+                        this.entry("Clear Run Status", None, {
+                            let weak_editor = weak_editor.clone();
+                            move |_window, cx| {
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.clear_runnable_task_status(buffer_id, buffer_row, cx);
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .separator()
+                    },
+                )
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
                     this.entry(
@@ -5552,24 +5603,36 @@ impl Editor {
                                 .documentation_comment()
                                 .map(|c| c.prefix.as_ref())
                                 .filter(|p| !p.is_empty());
-                            let all_prefixes = language_scope
+                            let comment_prefixes = language_scope
                                 .line_comment_prefixes()
                                 .iter()
                                 .map(|p| p.as_ref())
                                 .chain(block_prefix)
                                 .chain(doc_prefix)
-                                .chain(language_scope.unordered_list().iter().map(|p| p.as_ref()));
+                                .map(|prefix| (prefix, false));
+                            let all_prefixes = comment_prefixes.chain(
+                                language_scope
+                                    .unordered_list()
+                                    .iter()
+                                    .map(|prefix| (prefix.as_ref(), true)),
+                            );
 
                             let mut longest_prefix_len = None;
-                            for prefix in all_prefixes {
+                            for (prefix, is_unordered_list) in all_prefixes {
                                 let trimmed = prefix.trim_end();
-                                if line_text_after_indent.starts_with(trimmed) {
-                                    let candidate_len =
-                                        if line_text_after_indent.starts_with(prefix) {
-                                            prefix.len()
-                                        } else {
-                                            trimmed.len()
-                                        };
+                                let matches_full_prefix =
+                                    line_text_after_indent.starts_with(prefix);
+                                let nextline_is_bare_prefix = line_text_after_indent == trimmed;
+                                if matches_full_prefix
+                                    || (!is_unordered_list
+                                        && line_text_after_indent.starts_with(trimmed))
+                                    || nextline_is_bare_prefix
+                                {
+                                    let candidate_len = if matches_full_prefix {
+                                        prefix.len()
+                                    } else {
+                                        trimmed.len()
+                                    };
                                     if longest_prefix_len.map_or(true, |len| candidate_len > len) {
                                         longest_prefix_len = Some(candidate_len);
                                     }
@@ -5817,13 +5880,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let source = self
-            .buffer
-            .read(cx)
-            .snapshot(cx)
-            .anchor_before(Point::new(display_row.0, 0u32));
+        let display_snapshot = self.display_snapshot(cx);
+        let display_point = display_row.as_display_point();
+        let source = display_snapshot.display_point_to_anchor(display_point, Bias::Left);
+        let anchor = position.unwrap_or(source);
 
-        let context_menu = self.gutter_context_menu(position.unwrap_or(source), window, cx);
+        // Every entry in this menu either requires a worktree-file-backed buffer
+        // (breakpoints, bookmarks, run to cursor) or is meaningless without one
+        // (git blame), so don't open it for e.g. untitled buffers.
+        if !display_snapshot
+            .buffer_snapshot()
+            .anchor_to_buffer_anchor(anchor)
+            .is_some_and(|(_, buffer_snapshot)| {
+                project::File::from_dyn(buffer_snapshot.file()).is_some()
+            })
+        {
+            return;
+        }
+
+        let context_menu = self.gutter_context_menu(anchor, display_row, window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -9576,16 +9651,10 @@ impl Editor {
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
-                    && let Some(project) = &self.project
+                    && let Some(project) = self.project.clone()
                 {
-                    update_uncommitted_diff_for_buffer(
-                        cx.entity(),
-                        project,
-                        [buffer.clone()],
-                        self.buffer.clone(),
-                        cx,
-                    )
-                    .detach();
+                    self.update_uncommitted_diff_for_buffer(&project, [buffer.clone()], cx)
+                        .detach();
                 }
                 self.register_visible_buffers(cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
@@ -9714,7 +9783,8 @@ impl Editor {
                     .into_iter()
                     .flatten(),
             )
-            .flat_map(|accent| accent.0.clone().map(SharedString::from))
+            .flat_map(|accent| accent.0.as_ref().map(|c| c.to_string()))
+            .map(SharedString::from)
             .collect();
 
         Some(AccentData {
@@ -9839,6 +9909,7 @@ impl Editor {
             if language_settings_changed {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
                 self.refresh_document_symbols(None, cx);
+                self.refresh_outline_symbols_at_cursor(cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -9886,7 +9957,7 @@ impl Editor {
                 .update_rules(new_semantic_token_rules);
             if language_settings_changed || semantic_token_rules_changed {
                 self.invalidate_semantic_tokens(None);
-                self.refresh_semantic_tokens(None, None, cx);
+                self.refresh_semantic_tokens(None, false, cx);
             }
         }
 
@@ -9905,7 +9976,7 @@ impl Editor {
         }
 
         self.invalidate_semantic_tokens(None);
-        self.refresh_semantic_tokens(None, None, cx);
+        self.refresh_semantic_tokens(None, false, cx);
         self.refresh_outline_symbols_at_cursor(cx);
     }
 
@@ -10552,10 +10623,14 @@ impl Editor {
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style(cx).text.line_height_in_pixels(window.rem_size());
         let text_layout_details = self.text_layout_details(window, cx);
-        let scroll_top = text_layout_details
+        let mut scroll_top = text_layout_details
             .scroll_anchor
             .scroll_position(editor_snapshot)
             .y;
+        if !line_height.is_zero() {
+            scroll_top =
+                window.pixel_snap_f64(scroll_top * f64::from(line_height)) / f64::from(line_height);
+        }
 
         if source.row().as_f64() < scroll_top.floor() {
             return None;
@@ -10779,7 +10854,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    fn lsp_data_enabled(&self) -> bool {
+    pub(crate) fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
@@ -10796,7 +10871,7 @@ impl Editor {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
         }
-        self.refresh_semantic_tokens(for_buffer, None, cx);
+        self.refresh_semantic_tokens(for_buffer, false, cx);
         self.refresh_document_colors(for_buffer, window, cx);
         self.refresh_document_links(for_buffer, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
@@ -10891,16 +10966,12 @@ impl Editor {
     }
 
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<HighlightedText>> {
-        let multibuffer = self.buffer().read(cx);
-        let is_singleton = multibuffer.is_singleton();
-        let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
-        let buffer = multibuffer.buffer(*buffer_id)?;
-
-        let buffer = buffer.read(cx);
+        let multi_buffer = self.buffer().read(cx);
         // In a multi-buffer layout, we don't want to include the filename in the breadcrumbs
-        let mut breadcrumbs = if is_singleton {
+        let mut breadcrumbs = if let Some(buffer) = multi_buffer.as_singleton() {
             let text = self.breadcrumb_header.clone().unwrap_or_else(|| {
                 buffer
+                    .read(cx)
                     .snapshot()
                     .resolve_file_path(
                         self.project
@@ -10909,27 +10980,30 @@ impl Editor {
                             .unwrap_or_default(),
                         cx,
                     )
-                    .unwrap_or_else(|| {
-                        if multibuffer.is_singleton() {
-                            multibuffer.title(cx).to_string()
-                        } else {
-                            MultiBuffer::DEFAULT_TITLE.to_string()
-                        }
-                    })
+                    .unwrap_or_else(|| multi_buffer.title(cx).to_string())
             });
             vec![HighlightedText {
                 text: text.into(),
                 highlights: vec![],
             }]
         } else {
-            vec![]
+            Vec::new()
         };
 
-        breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
-            text: symbol.text.clone(),
-            highlights: symbol.highlight_ranges.clone(),
-        }));
-        Some(breadcrumbs)
+        if let Some((buffer_id, symbols)) = self.outline_symbols_at_cursor.as_ref()
+            && multi_buffer.buffer(*buffer_id).is_some()
+        {
+            breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
+                text: symbol.text.clone(),
+                highlights: symbol.highlight_ranges.clone(),
+            }));
+        }
+
+        if breadcrumbs.is_empty() {
+            None
+        } else {
+            Some(breadcrumbs)
+        }
     }
 
     fn disable_lsp_data(&mut self) {
@@ -11212,7 +11286,6 @@ pub trait SemanticsProvider {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>>;
 
@@ -11372,13 +11445,11 @@ impl SemanticsProvider for WeakEntity<Project> {
     fn semantic_tokens(
         &self,
         buffer: Entity<Buffer>,
-        refresh: Option<RefreshForServer>,
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>> {
         self.update(cx, |this, cx| {
-            this.lsp_store().update(cx, |lsp_store, cx| {
-                lsp_store.semantic_tokens(buffer, refresh, cx)
-            })
+            this.lsp_store()
+                .update(cx, |lsp_store, cx| lsp_store.semantic_tokens(buffer, cx))
         })
         .ok()
     }
@@ -11586,15 +11657,12 @@ impl EditorSnapshot {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                         const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
-                        /// The number of characters to dedicate to gaps and margins.
-                        const SPACING_WIDTH: usize = 4;
-
                         let max_char_count = max_author_length.min(renderer.max_author_length())
                             + ::git::SHORT_SHA_LENGTH
-                            + MAX_RELATIVE_TIMESTAMP.len()
-                            + SPACING_WIDTH;
+                            + MAX_RELATIVE_TIMESTAMP.len();
 
                         ch_advance * max_char_count
+                            + renderer.blame_entry_non_text_width(window, cx)
                     });
 
             let is_singleton = self.buffer_snapshot().is_singleton();
