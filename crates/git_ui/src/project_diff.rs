@@ -1680,6 +1680,69 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_project_diff_file_tree_lists_uncommitted_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "A2\n",
+                "b.txt": "B2\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", "A\n".into()), ("b.txt", "B\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        // The tree starts hidden in the uncommitted-changes view: every file is
+        // excerpted, but the tree is already populated behind the scenes.
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.excerpt_file_paths(cx), vec!["a.txt", "b.txt"]);
+        });
+        let inner_diff = diff.read_with(cx, |diff, _| diff.diff.clone());
+        let file_tree = inner_diff.read_with(cx, |diff, _| diff.file_tree().clone());
+        let open_file = file_tree.read_with(cx, |file_tree, _| file_tree.open_file().cloned());
+        assert_eq!(
+            open_file.map(|(path, _)| path.as_unix_str().to_string()),
+            Some("a.txt".to_string())
+        );
+
+        // Showing the tree narrows the editor to the tree's open file.
+        inner_diff.update_in(cx, |diff, window, cx| diff.toggle_file_tree(window, cx));
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.excerpt_file_paths(cx), vec!["a.txt"]);
+        });
+        file_tree.update(cx, |file_tree, cx| {
+            assert!(file_tree.open_next_file(cx));
+        });
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.excerpt_file_paths(cx), vec!["b.txt"]);
+        });
+
+        // Hiding it restores the classic all-files multibuffer.
+        inner_diff.update_in(cx, |diff, window, cx| diff.toggle_file_tree(window, cx));
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.excerpt_file_paths(cx), vec!["a.txt", "b.txt"]);
+        });
+    }
+
+    #[gpui::test]
     async fn test_toggle_full_file_view_restores_hunk_excerpts(cx: &mut TestAppContext) {
         init_test(cx);
 

@@ -4393,7 +4393,7 @@ impl GitStore {
                 .display_diffs
                 .get(id)
                 .and_then(|state| state.buffers.as_ref())
-                .and_then(|(buffers, _)| buffers.read(cx).statuses_by_path())
+                .and_then(|(buffers, _)| buffers.read(cx).statuses_by_path(cx))
             {
                 snapshot.statuses_by_path = statuses;
             }

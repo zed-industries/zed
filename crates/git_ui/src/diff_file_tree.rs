@@ -86,7 +86,7 @@ impl DiffFileTree {
     fn rebuild_entries(&mut self, cx: &mut Context<Self>) {
         let mut root = TreeNode::default();
         let mut statuses_by_file = HashMap::default();
-        if let Some(statuses) = self.branch_diff.read(cx).statuses_by_path() {
+        if let Some(statuses) = self.branch_diff.read(cx).statuses_by_path(cx) {
             for entry in statuses.iter() {
                 statuses_by_file.insert(entry.repo_path.clone(), entry.status);
                 let components: Vec<&str> = entry.repo_path.components().collect();

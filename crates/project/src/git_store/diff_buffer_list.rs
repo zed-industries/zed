@@ -188,6 +188,9 @@ impl DiffBufferList {
             .as_ref()
             .and_then(|repo| repo.read(cx).status_for_path(path))
             .map(|entry| entry.status);
+        if !self.diff_base.is_merge_base() {
+            return repo_status.filter(|status| self.status_matches_diff_base(*status));
+        }
         if repo_status.is_some_and(|status| {
             status_overrides_tree(
                 status,
@@ -204,8 +207,32 @@ impl DiffBufferList {
             .map(diff_status_to_file_status)
     }
 
-    pub fn statuses_by_path(&self) -> Option<SumTree<StatusEntry>> {
-        self.statuses_by_path.clone()
+    /// Whether `status` belongs in this list, matching the per-base filter of
+    /// [`Self::load_buffers`]. Merge bases are filtered against the tree diff
+    /// instead.
+    fn status_matches_diff_base(&self, status: FileStatus) -> bool {
+        let staging_matches = match self.diff_base {
+            DiffBase::Head | DiffBase::Merge { .. } => true,
+            DiffBase::Index => status.staging().has_unstaged(),
+            DiffBase::Staged => status.staging().has_staged(),
+        };
+        staging_matches && status.has_changes()
+    }
+
+    pub fn statuses_by_path(&self, cx: &App) -> Option<SumTree<StatusEntry>> {
+        if self.diff_base.is_merge_base() {
+            return self.statuses_by_path.clone();
+        }
+        // Non-merge bases have no tree diff to wait for: the file list is the
+        // repository's own status, filtered per diff base. `cached_status`
+        // iterates a path-ordered tree, as `SumTree::from_iter` requires.
+        let repo = self.repo.as_ref()?;
+        let entries = repo
+            .read(cx)
+            .cached_status()
+            .filter(|entry| self.status_matches_diff_base(entry.status))
+            .collect::<Vec<_>>();
+        Some(SumTree::from_iter(entries, ()))
     }
 
     pub fn base_oid_for_path(&self, path: &RepoPath) -> Option<Option<git::Oid>> {
