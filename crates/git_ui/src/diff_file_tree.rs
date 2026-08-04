@@ -9,7 +9,7 @@ use gpui::{
 use project::git_store::diff_buffer_list::{BranchDiffEvent, DiffBufferList};
 use std::collections::BTreeMap;
 use theme::ActiveTheme;
-use ui::{CommonAnimationExt as _, prelude::*};
+use ui::{CommonAnimationExt as _, WithScrollbar, prelude::*};
 
 const TREE_INDENT: f32 = 12.0;
 
@@ -512,7 +512,7 @@ impl Focusable for DiffFileTree {
 }
 
 impl Render for DiffFileTree {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entry_count = self.entries.len();
         let is_loading = self.branch_diff.read(cx).is_tree_base_loading();
 
@@ -538,15 +538,22 @@ impl Render for DiffFileTree {
             })
             .when(entry_count > 0, |this| {
                 this.child(
-                    uniform_list(
-                        "diff-file-tree",
-                        entry_count,
-                        cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
-                            range.map(|index| this.render_entry(index, cx)).collect()
-                        }),
-                    )
-                    .size_full()
-                    .track_scroll(&self.scroll_handle),
+                    div()
+                        .size_full()
+                        .child(
+                            uniform_list(
+                                "diff-file-tree",
+                                entry_count,
+                                cx.processor(
+                                    |this, range: std::ops::Range<usize>, _window, cx| {
+                                        range.map(|index| this.render_entry(index, cx)).collect()
+                                    },
+                                ),
+                            )
+                            .size_full()
+                            .track_scroll(&self.scroll_handle),
+                        )
+                        .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                 )
             })
     }

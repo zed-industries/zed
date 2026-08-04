@@ -1,6 +1,6 @@
 use crate::{
     branch_diff::BranchDiff,
-    diff_multibuffer::{DiffMultibuffer, ToggleFullFileView},
+    diff_multibuffer::{DiffMultibuffer, ToggleFileTree, ToggleFullFileView},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     staged_diff::StagedDiff,
     unstaged_diff::UnstagedDiff,
@@ -227,6 +227,7 @@ impl ProjectDiff {
                 branch_diff,
                 Capability::ReadWrite,
                 "No uncommitted changes",
+                false,
                 move |editor, cx| {
                     editor.set_diff_hunk_delegate(Some(Arc::new(UncommittedDiffHunkDelegate)), cx);
                     editor.rhs_editor().update(cx, |rhs_editor, _cx| {
@@ -809,6 +810,7 @@ impl Render for ProjectDiffToolbar {
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
         let is_multibuffer_empty = project_diff.read(cx).multibuffer(cx).read(cx).is_empty();
         let show_full_files = project_diff.read(cx).diff.read(cx).show_full_files();
+        let show_file_tree = project_diff.read(cx).diff.read(cx).show_file_tree();
 
         let stage_all_button_width = rems(5.);
 
@@ -856,6 +858,19 @@ impl Render for ProjectDiffToolbar {
                                 this.dispatch_action(&GoToHunk, window, cx)
                             })),
                     ),
+            )
+            .child(
+                IconButton::new("project-diff-toggle-file-tree", IconName::FileTree)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(show_file_tree)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Toggle Changed Files Tree",
+                        &ToggleFileTree,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&ToggleFileTree, window, cx)
+                    })),
             )
             .child(
                 IconButton::new("project-diff-toggle-full-files", IconName::ExpandVertical)
@@ -1662,6 +1677,68 @@ mod tests {
 
         let text = String::from_utf8(fs.read_file_sync("/project/foo.txt").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
+    }
+
+    #[gpui::test]
+    async fn test_toggle_full_file_view_restores_hunk_excerpts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut lines: Vec<String> = (0..60).map(|index| format!("line {index}")).collect();
+        let base_text = lines.join("\n") + "\n";
+        lines[30] = "changed".to_string();
+        let file_text = lines.join("\n") + "\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": file_text,
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", base_text)],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        let inner_diff = diff.read_with(cx, |diff, _| diff.diff.clone());
+        let row_count = |cx: &mut gpui::VisualTestContext| {
+            inner_diff.read_with(cx, |diff, cx| {
+                diff.multibuffer().read(cx).snapshot(cx).max_point().row
+            })
+        };
+
+        let hunk_rows = row_count(cx);
+        assert!(
+            hunk_rows < 20,
+            "expected a hunk-sized excerpt, got {hunk_rows} rows"
+        );
+
+        inner_diff.update_in(cx, |diff, window, cx| {
+            diff.set_show_full_files(true, window, cx)
+        });
+        cx.run_until_parked();
+        let full_rows = row_count(cx);
+        assert!(
+            full_rows >= 60,
+            "expected the whole file to be excerpted, got {full_rows} rows"
+        );
+
+        inner_diff.update_in(cx, |diff, window, cx| {
+            diff.set_show_full_files(false, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(row_count(cx), hunk_rows);
     }
 
     #[gpui::test]

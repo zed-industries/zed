@@ -1,5 +1,5 @@
 use crate::{
-    diff_multibuffer::DiffMultibuffer,
+    diff_multibuffer::{DiffMultibuffer, ToggleFileTree},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
 };
 use anyhow::{Context as _, Result};
@@ -227,6 +227,7 @@ impl StagedDiff {
                 branch_diff,
                 Capability::ReadOnly,
                 "No staged changes",
+                false,
                 move |editor, cx| {
                     editor.set_diff_hunk_delegate(Some(Arc::new(StagedDiffDelegate)), cx);
                     editor.rhs_editor().update(cx, |rhs_editor, _cx| {
@@ -635,6 +636,7 @@ impl Render for StagedDiffToolbar {
         let diff = staged_diff.read(cx).diff.read(cx);
         let (additions, deletions) = diff.calculate_changed_lines(cx);
         let is_multibuffer_empty = diff.multibuffer().read(cx).is_empty();
+        let show_file_tree = diff.show_file_tree();
 
         h_flex()
             .my_neg_1()
@@ -680,6 +682,19 @@ impl Render for StagedDiffToolbar {
                                 this.dispatch_action(&GoToHunk, window, cx)
                             })),
                     ),
+            )
+            .child(
+                IconButton::new("staged-diff-toggle-file-tree", IconName::FileTree)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(show_file_tree)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Toggle Changed Files Tree",
+                        &ToggleFileTree,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&ToggleFileTree, window, cx)
+                    })),
             )
             .child(Divider::vertical())
             .child(

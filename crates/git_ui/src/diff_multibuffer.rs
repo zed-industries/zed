@@ -1,5 +1,6 @@
 use crate::{
     conflict_view,
+    diff_file_tree::{DiffFileTree, DiffFileTreeEvent},
     git_panel::{GitPanel, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
 };
@@ -7,17 +8,19 @@ use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
-    EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, actions::GoToHunk,
-    multibuffer_context_lines, scroll::Autoscroll,
+    EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    actions::{GoToHunk, GoToPreviousHunk},
+    multibuffer_context_lines,
+    scroll::Autoscroll,
 };
 use futures_lite::future::yield_now;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
-    App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Subscription, Task, WeakEntity, actions,
+    App, AppContext as _, AsyncWindowContext, DragMoveEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Pixels, Render, SharedString, Subscription, Task, WeakEntity, actions, px,
 };
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point};
-use multi_buffer::{MultiBuffer, PathKey};
+use multi_buffer::{MultiBuffer, PathKey, ToPoint as _};
 use project::{
     ConflictSet, Project, ProjectPath,
     git_store::{
@@ -41,9 +44,17 @@ actions!(
     [
         /// Toggles between showing only the changed hunks and the entire
         /// contents of each file in the diff views.
-        ToggleFullFileView
+        ToggleFullFileView,
+        /// Toggles the changed-files tree sidebar in the diff views.
+        ToggleFileTree
     ]
 );
+
+const FILE_TREE_MIN_WIDTH: f32 = 140.0;
+const FILE_TREE_MAX_WIDTH: f32 = 500.0;
+const FILE_TREE_DEFAULT_WIDTH: f32 = 240.0;
+
+struct DraggedFileTreeHandle;
 
 /// Where to land inside a file when navigating to it: its first hunk, or its
 /// last one (used when stepping backwards into the previous file).
@@ -65,11 +76,19 @@ pub struct DiffMultibuffer {
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<diff_buffer_list::DiffBufferList>,
     editor: Entity<SplittableEditor>,
+    file_tree: Entity<DiffFileTree>,
+    show_file_tree: bool,
+    file_tree_width: Pixels,
     buffer_subscriptions: HashMap<RepoPath, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     path_filter: Option<RepoPath>,
     show_full_files: bool,
+    // `update_excerpts_for_path` merges new ranges with overlapping existing
+    // excerpts, so it can only ever grow them. When the full-file toggle
+    // changes, the next refresh must replace excerpts wholesale or switching
+    // full files off would leave the old whole-file excerpts in place.
+    refresh_replaces_excerpts: bool,
     pending_scroll: Option<(PathKey, PathTarget)>,
     review_comment_count: usize,
     empty_label: SharedString,
@@ -82,6 +101,7 @@ impl DiffMultibuffer {
         branch_diff: Entity<diff_buffer_list::DiffBufferList>,
         multibuffer_capability: Capability,
         empty_label: impl Into<SharedString>,
+        show_file_tree: bool,
         configure_editor: impl FnOnce(&mut SplittableEditor, &mut Context<SplittableEditor>) + 'static,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
@@ -110,6 +130,30 @@ impl DiffMultibuffer {
             diff_display_editor
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
+
+        let file_tree = cx.new(|cx| DiffFileTree::new(branch_diff.clone(), cx));
+        let file_tree_subscription = cx.subscribe_in(
+            &file_tree,
+            window,
+            |this, _, event: &DiffFileTreeEvent, window, cx| {
+                // With the tree hidden its only emissions are auto-selections,
+                // which must not narrow or scroll the classic all-files view.
+                if !this.show_file_tree {
+                    return;
+                }
+                let DiffFileTreeEvent::OpenEntry {
+                    repo_path,
+                    status,
+                    target,
+                } = event;
+                let Some(repo) = this.branch_diff.read(cx).repo().cloned() else {
+                    return;
+                };
+                let path_key = project_diff_path_key(repo.read(cx), repo_path, *status, cx);
+                this.set_path_filter(Some(repo_path.clone()), window, cx);
+                this.move_to_path_with_target(path_key, *target, window, cx);
+            },
+        );
 
         let primary_editor = editor.read(cx).rhs_editor().clone();
         let review_comment_subscription =
@@ -181,15 +225,19 @@ impl DiffMultibuffer {
             focus_handle,
             editor,
             multibuffer,
+            file_tree,
+            show_file_tree,
+            file_tree_width: px(FILE_TREE_DEFAULT_WIDTH),
             buffer_subscriptions: Default::default(),
             path_filter: None,
             show_full_files: false,
+            refresh_replaces_excerpts: false,
             pending_scroll: None,
             review_comment_count: 0,
             empty_label: empty_label.into(),
             _task: task,
             _subscription: Subscription::join(
-                branch_diff_subscription,
+                Subscription::join(branch_diff_subscription, file_tree_subscription),
                 Subscription::join(editor_subscription, review_comment_subscription),
             ),
         }
@@ -237,6 +285,12 @@ impl DiffMultibuffer {
         let repo = git_repo.read(cx);
         let path_key = project_diff_path_key(repo, &entry.repo_path, entry.status, cx);
 
+        if self.show_file_tree {
+            self.file_tree.update(cx, |file_tree, cx| {
+                file_tree.set_active_path(Some(entry.repo_path.clone()), cx)
+            });
+            self.set_path_filter(Some(entry.repo_path.clone()), window, cx);
+        }
         self.move_to_path(path_key, window, cx)
     }
 
@@ -261,6 +315,12 @@ impl DiffMultibuffer {
             .map(|entry| entry.status)
             .unwrap_or(FileStatus::Untracked);
         let path_key = project_diff_path_key(&git_repo.read(cx), &repo_path, status, cx);
+        if self.show_file_tree {
+            self.file_tree.update(cx, |file_tree, cx| {
+                file_tree.set_active_path(Some(repo_path.clone()), cx)
+            });
+            self.set_path_filter(Some(repo_path), window, cx);
+        }
         self.move_to_path(path_key, window, cx)
     }
 
@@ -297,6 +357,100 @@ impl DiffMultibuffer {
         self.show_full_files
     }
 
+    pub(crate) fn show_file_tree(&self) -> bool {
+        self.show_file_tree
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn file_tree(&self) -> &Entity<DiffFileTree> {
+        &self.file_tree
+    }
+
+    pub(crate) fn toggle_file_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_file_tree = !self.show_file_tree;
+        // The single-file filter only makes sense alongside the tree: without
+        // it there would be no way to reach the other files.
+        let path_filter = if self.show_file_tree {
+            self.file_tree
+                .read(cx)
+                .open_file()
+                .map(|(path, _)| path.clone())
+        } else {
+            None
+        };
+        self.set_path_filter(path_filter, window, cx);
+        cx.notify();
+    }
+
+    fn sync_file_tree_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(project_path) = self.active_project_path(cx) else {
+            return;
+        };
+        let Some(repo) = self.branch_diff.read(cx).repo().cloned() else {
+            return;
+        };
+        let Some(repo_path) = repo.read(cx).project_path_to_repo_path(&project_path, cx) else {
+            return;
+        };
+        self.file_tree.update(cx, |file_tree, cx| {
+            file_tree.set_active_path(Some(repo_path), cx)
+        });
+    }
+
+    fn go_to_next_hunk_across_files(
+        &mut self,
+        _: &GoToHunk,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hunk_nav_across_files(true, cx);
+    }
+
+    fn go_to_previous_hunk_across_files(
+        &mut self,
+        _: &GoToPreviousHunk,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hunk_nav_across_files(false, cx);
+    }
+
+    /// In single-file mode, hunk navigation that runs off the edge of the
+    /// displayed file moves to the neighboring file instead of wrapping within
+    /// the current one, as PhpStorm does. Runs in the capture phase so it can
+    /// preempt the editor's own wrap-around handling; when the cursor is not at
+    /// the edge, the event propagates to the editor untouched.
+    fn hunk_nav_across_files(&mut self, next: bool, cx: &mut Context<Self>) {
+        if !self.show_file_tree {
+            return;
+        }
+        let editor = self.editor.read(cx).focused_editor().clone();
+        let at_edge = editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let head = editor.selections.newest_anchor().head().to_point(&snapshot);
+            if next {
+                !snapshot
+                    .diff_hunks_in_range(head..snapshot.max_point())
+                    .any(|hunk| hunk.row_range.start.0 > head.row)
+            } else {
+                snapshot.diff_hunk_before(head).is_none()
+            }
+        });
+        if !at_edge {
+            return;
+        }
+        let opened = self.file_tree.update(cx, |file_tree, cx| {
+            if next {
+                file_tree.open_next_file(cx)
+            } else {
+                file_tree.open_previous_file(cx)
+            }
+        });
+        if opened {
+            cx.stop_propagation();
+        }
+    }
+
     /// Switches between excerpts limited to the changed hunks and excerpts
     /// spanning each file's entire contents.
     pub(crate) fn set_show_full_files(
@@ -309,6 +463,7 @@ impl DiffMultibuffer {
             return;
         }
         self.show_full_files = show_full_files;
+        self.refresh_replaces_excerpts = true;
         self._task = window.spawn(cx, {
             let this = cx.weak_entity();
             async |cx| Self::refresh(this, cx).await
@@ -479,6 +634,7 @@ impl DiffMultibuffer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        cx.emit(event.clone());
         match event {
             EditorEvent::SelectionsChanged { local: true } => {
                 // Only follow the git panel selection from the view the user is
@@ -486,6 +642,9 @@ impl DiffMultibuffer {
                 // refresh on their own and must not hijack the panel selection.
                 if !editor.focus_handle(cx).contains_focused(window, cx) {
                     return;
+                }
+                if self.show_file_tree {
+                    self.sync_file_tree_selection(cx);
                 }
                 let Some(project_path) = self.active_project_path(cx) else {
                     return;
@@ -613,16 +772,28 @@ impl DiffMultibuffer {
         let buffer_id = snapshot.text.remote_id();
         let mut needs_fold = false;
 
+        let replace_excerpts = self.refresh_replaces_excerpts;
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
-            let is_newly_added = editor.update_excerpts_for_path(
-                path_key.clone(),
-                display_buffer,
-                excerpt_ranges,
-                multibuffer_context_lines(cx),
-                diff,
-                cx,
-            );
+            let is_newly_added = if replace_excerpts {
+                editor.set_excerpts_for_path(
+                    path_key.clone(),
+                    display_buffer,
+                    excerpt_ranges,
+                    multibuffer_context_lines(cx),
+                    diff,
+                    cx,
+                )
+            } else {
+                editor.update_excerpts_for_path(
+                    path_key.clone(),
+                    display_buffer,
+                    excerpt_ranges,
+                    multibuffer_context_lines(cx),
+                    diff,
+                    cx,
+                )
+            };
             if let Some(conflict_set) = conflict_set {
                 editor.rhs_editor().update(cx, |editor, cx| {
                     conflict_view::buffer_ranges_updated(editor, conflict_set, cx);
@@ -810,6 +981,7 @@ impl DiffMultibuffer {
                 });
             }
             this.pending_scroll.take();
+            this.refresh_replaces_excerpts = false;
             cx.notify();
         })?;
 
@@ -976,24 +1148,44 @@ impl Focusable for DiffMultibuffer {
     }
 }
 
+impl DiffMultibuffer {
+    fn render_file_tree_resize_handle(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        div()
+            .id("diff-file-tree-resize-container")
+            .relative()
+            .h_full()
+            .flex_shrink_0()
+            .w(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("diff-file-tree-resize-handle")
+                    .absolute()
+                    .left(px(-3.))
+                    .w(px(6.))
+                    .h_full()
+                    .cursor_col_resize()
+                    .block_mouse_except_scroll()
+                    .on_drag(DraggedFileTreeHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for DiffMultibuffer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
         let is_loading = self.branch_diff.read(cx).is_tree_base_loading() || !self._task.is_ready();
         let empty_label = self.empty_label.clone();
 
-        div()
-            .track_focus(&self.focus_handle)
-            .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
-            .on_action(cx.listener(|this, _: &ToggleFullFileView, window, cx| {
-                let show_full_files = !this.show_full_files;
-                this.set_show_full_files(show_full_files, window, cx);
-            }))
+        let editor_pane = div()
+            .h_full()
+            .flex_1()
+            .min_w_0()
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
             .justify_center()
-            .size_full()
             .when(is_empty && is_loading, |el| {
                 let rems = TextSize::Large.rems(cx);
                 el.child(
@@ -1046,7 +1238,40 @@ impl Render for DiffMultibuffer {
                         ),
                 )
             })
-            .when(!is_empty, |el| el.child(self.editor.clone()))
+            .when(!is_empty, |el| el.child(self.editor.clone()));
+
+        h_flex()
+            .track_focus(&self.focus_handle)
+            .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
+            .size_full()
+            .on_action(cx.listener(|this, _: &ToggleFullFileView, window, cx| {
+                let show_full_files = !this.show_full_files;
+                this.set_show_full_files(show_full_files, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFileTree, window, cx| {
+                this.toggle_file_tree(window, cx);
+            }))
+            .capture_action(cx.listener(Self::go_to_next_hunk_across_files))
+            .capture_action(cx.listener(Self::go_to_previous_hunk_across_files))
+            .on_drag_move::<DraggedFileTreeHandle>(cx.listener(
+                |this, event: &DragMoveEvent<DraggedFileTreeHandle>, _window, cx| {
+                    let width = event.event.position.x - event.bounds.left();
+                    this.file_tree_width =
+                        width.clamp(px(FILE_TREE_MIN_WIDTH), px(FILE_TREE_MAX_WIDTH));
+                    cx.notify();
+                },
+            ))
+            .when(self.show_file_tree, |this| {
+                this.child(
+                    div()
+                        .h_full()
+                        .flex_shrink_0()
+                        .w(self.file_tree_width)
+                        .child(self.file_tree.clone()),
+                )
+                .child(self.render_file_tree_resize_handle(cx))
+            })
+            .child(editor_pane)
     }
 }
 

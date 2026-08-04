@@ -1238,35 +1238,54 @@ impl SplittableEditor {
         diff: Entity<BufferDiff>,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.excerpts_for_path_impl(path, buffer, ranges, context_line_count, diff, false, cx)
+    }
+
+    /// Like [`Self::update_excerpts_for_path`], but replaces any existing
+    /// excerpts with the provided ranges instead of expanding the new ranges to
+    /// cover overlapping existing excerpts. Needed to shrink excerpts, which
+    /// the merging behavior of `update_excerpts_for_path` can never do.
+    pub fn set_excerpts_for_path(
+        &mut self,
+        path: PathKey,
+        buffer: Entity<Buffer>,
+        ranges: impl IntoIterator<Item = Range<Point>> + Clone,
+        context_line_count: u32,
+        diff: Entity<BufferDiff>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.excerpts_for_path_impl(path, buffer, ranges, context_line_count, diff, true, cx)
+    }
+
+    fn excerpts_for_path_impl(
+        &mut self,
+        path: PathKey,
+        buffer: Entity<Buffer>,
+        ranges: impl IntoIterator<Item = Range<Point>> + Clone,
+        context_line_count: u32,
+        diff: Entity<BufferDiff>,
+        replace: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let has_ranges = ranges.clone().into_iter().next().is_some();
-        if self.lhs.is_none() {
-            return self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
-                let added_a_new_excerpt = rhs_multibuffer.update_excerpts_for_path(
-                    path,
+        let result = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
+            let added_a_new_excerpt = if replace {
+                rhs_multibuffer.set_excerpts_for_path(
+                    path.clone(),
                     buffer.clone(),
                     ranges,
                     context_line_count,
                     cx,
-                );
-                if has_ranges
-                    && rhs_multibuffer
-                        .diff_for(buffer.read(cx).remote_id())
-                        .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
-                {
-                    rhs_multibuffer.add_diff(diff, cx);
-                }
-                added_a_new_excerpt
-            });
-        }
-
-        let result = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
-            let added_a_new_excerpt = rhs_multibuffer.update_excerpts_for_path(
-                path.clone(),
-                buffer.clone(),
-                ranges,
-                context_line_count,
-                cx,
-            );
+                )
+            } else {
+                rhs_multibuffer.update_excerpts_for_path(
+                    path.clone(),
+                    buffer.clone(),
+                    ranges,
+                    context_line_count,
+                    cx,
+                )
+            };
             if has_ranges
                 && rhs_multibuffer
                     .diff_for(buffer.read(cx).remote_id())
@@ -1277,7 +1296,9 @@ impl SplittableEditor {
             added_a_new_excerpt
         });
 
-        self.sync_lhs_for_paths(vec![(path, diff)], cx);
+        if self.lhs.is_some() {
+            self.sync_lhs_for_paths(vec![(path, diff)], cx);
+        }
         result
     }
 
