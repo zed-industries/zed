@@ -4950,16 +4950,16 @@ impl<T: DeserializeOwned> ToolInput<T> {
     /// Wait for the final deserialized input, ignoring all partial updates.
     /// Non-streaming tools can use this to wait until the whole input is available.
     pub async fn recv(mut self) -> Result<T> {
-        while let Ok(value) = self.next().await {
-            match value {
-                ToolInputPayload::Full(value) => return Ok(value),
-                ToolInputPayload::Partial(_) => {}
-                ToolInputPayload::InvalidJson { error_message } => {
+        loop {
+            match self.next().await {
+                Ok(ToolInputPayload::Full(value)) => return Ok(value),
+                Ok(ToolInputPayload::Partial(_)) => {}
+                Ok(ToolInputPayload::InvalidJson { error_message }) => {
                     return Err(anyhow!(error_message));
                 }
+                Err(e) => return Err(e),
             }
         }
-        Err(anyhow!("tool input was not fully received"))
     }
 
     pub async fn next(&mut self) -> Result<ToolInputPayload<T>> {
