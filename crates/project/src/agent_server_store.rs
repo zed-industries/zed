@@ -31,6 +31,8 @@ use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTar
 
 use crate::worktree_store::WorktreeStore;
 
+const ARCHIVE_CACHE_FORMAT_VERSION: u8 = 2;
+
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
     #[serde(rename = "command")]
@@ -1042,9 +1044,10 @@ fn versioned_archive_cache_dir(
     let archive_hash = format!("{:x}", archive_hasher.finalize());
 
     base_dir.join(format!(
-        "v_{sanitized_version}_{}_{}",
+        "v_{sanitized_version}_{}_{}_{}",
         &version_hash[..16],
         &archive_hash[..16],
+        ARCHIVE_CACHE_FORMAT_VERSION,
     ))
 }
 
@@ -2001,6 +2004,7 @@ mod tests {
             .expect("cache directory should have a file name");
 
         assert!(file_name.starts_with("v_release-2.3.5_"));
+        assert!(file_name.ends_with("_2"));
         assert_ne!(slash_version_dir, colon_version_dir);
 
         let lowercase_checksum_dir = versioned_archive_cache_dir(
@@ -2125,6 +2129,60 @@ mod tests {
                 .join("agent")
         );
         assert_eq!(std::fs::read(command.path).unwrap(), contents);
+    }
+
+    #[cfg(feature = "test-support")]
+    async fn registry_raw_binary_ignores_legacy_cache_format(
+        cx: &mut TestAppContext,
+    ) -> Result<()> {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir()?;
+        let installation_dir = temp_dir.path().join("agent");
+        let version = "1.0.0";
+        let sanitized_version = sanitize_path_component(version);
+        let mut version_hasher = Sha256::new();
+        version_hasher.update(version.as_bytes());
+        let version_hash = format!("{:x}", version_hasher.finalize());
+
+        let mut archive_hasher = Sha256::new();
+        archive_hasher.update(TEST_ARCHIVE_URL.as_bytes());
+        let archive_hash = format!("{:x}", archive_hasher.finalize());
+
+        let legacy_version_dir = installation_dir.join(format!(
+            "v_{sanitized_version}_{}_{}",
+            &version_hash[..16],
+            &archive_hash[..16],
+        ));
+        let legacy_agent_path = legacy_version_dir.join("agent");
+        std::fs::create_dir_all(&legacy_version_dir)?;
+        std::fs::write(&legacy_agent_path, b"stale agent")?;
+
+        let contents = b"current agent";
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let command = get_command.await?;
+        cx.run_until_parked();
+        let current_agent_path =
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None)
+                .join("agent");
+
+        assert_eq!(command.path, current_agent_path);
+        assert_eq!(std::fs::read(&command.path)?, contents);
+        assert!(!legacy_agent_path.exists());
+        Ok(())
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_raw_binary_ignores_legacy_cache_format_test(cx: &mut TestAppContext) {
+        if let Err(error) = registry_raw_binary_ignores_legacy_cache_format(cx).await {
+            panic!("legacy cache format test failed: {error:#}");
+        }
     }
 
     #[gpui::test]
