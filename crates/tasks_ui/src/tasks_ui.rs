@@ -201,22 +201,17 @@ fn spawn_task_or_modal(
             task_name,
             reveal_target,
         } => {
-            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
-                reveal_target: Some(reveal_target),
-            });
-            spawn_task_by_name(task_name.clone(), overrides, window, cx).detach_and_log_err(cx);
+            spawn_task_by_name(task_name.clone(), *reveal_target, window, cx)
+                .detach_and_log_err(cx);
         }
         Spawn::ByTag {
             task_tag,
             reveal_target,
         } => {
-            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
-                reveal_target: Some(reveal_target),
-            });
             let tag = task_tag.clone();
             spawn_tasks_filtered(
                 move |(_, task)| task.tags.contains(&tag),
-                overrides,
+                *reveal_target,
                 window,
                 cx,
             )
@@ -230,7 +225,7 @@ fn spawn_task_or_modal(
 
 pub fn spawn_task_by_name(
     name: String,
-    overrides: Option<TaskOverrides>,
+    reveal_target: Option<RevealTarget>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
@@ -247,10 +242,7 @@ pub fn spawn_task_by_name(
         .into_iter()
         .collect();
 
-        let reveal_target = overrides.and_then(|overrides| overrides.reveal_target);
-        let did_spawn = schedule_tasks(&workspace, tasks, &task_contexts, reveal_target, cx)?;
-
-        if !did_spawn {
+        if !schedule_tasks(&workspace, tasks, &task_contexts, reveal_target, cx)? {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     spawn_task_or_modal(workspace, &Spawn::ViaModal { reveal_target }, window, cx);
@@ -398,7 +390,7 @@ pub fn toggle_modal(
 
 pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
-    overrides: Option<TaskOverrides>,
+    reveal_target: Option<RevealTarget>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>>
@@ -409,10 +401,7 @@ where
         let (task_contexts, mut tasks) = load_task_candidates(&workspace, cx).await?;
         tasks.retain(|(task_source_kind, target_task)| predicate((task_source_kind, target_task)));
 
-        let reveal_target = overrides.and_then(|overrides| overrides.reveal_target);
-        let did_spawn = schedule_tasks(&workspace, tasks, &task_contexts, reveal_target, cx)?;
-
-        if !did_spawn {
+        if !schedule_tasks(&workspace, tasks, &task_contexts, reveal_target, cx)? {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     spawn_task_or_modal(workspace, &Spawn::ViaModal { reveal_target }, window, cx);
