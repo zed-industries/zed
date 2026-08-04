@@ -68,6 +68,7 @@ pub(super) struct DynamicRegistrations {
     rename: CapabilityRegistrations<OneOf<bool, lsp::RenameOptions>>,
     code_action: CapabilityRegistrations<lsp::CodeActionProviderCapability>,
     definition: CapabilityRegistrations<OneOf<bool, lsp::DefinitionOptions>>,
+    document_highlight: CapabilityRegistrations<OneOf<bool, lsp::DocumentHighlightOptions>>,
     completion: CapabilityRegistrations<lsp::CompletionOptions>,
     hover: CapabilityRegistrations<lsp::HoverProviderCapability>,
     signature_help: CapabilityRegistrations<lsp::SignatureHelpOptions>,
@@ -445,6 +446,18 @@ impl LspStore {
                         cx,
                         |registrations| &mut registrations.definition,
                         |capabilities| &mut capabilities.definition_provider,
+                    )?;
+                }
+                "textDocument/documentHighlight" => {
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        options,
+                        cx,
+                        |registrations| &mut registrations.document_highlight,
+                        |capabilities| &mut capabilities.document_highlight_provider,
                     )?;
                 }
                 "textDocument/completion" => {
@@ -836,6 +849,15 @@ impl LspStore {
                         cx,
                         |registrations| &mut registrations.definition,
                         |capabilities| &mut capabilities.definition_provider,
+                    )?;
+                }
+                "textDocument/documentHighlight" => {
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.document_highlight,
+                        |capabilities| &mut capabilities.document_highlight_provider,
                     )?;
                 }
                 "textDocument/completion" => {

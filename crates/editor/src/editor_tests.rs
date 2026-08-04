@@ -33792,6 +33792,91 @@ async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.lsp_highlight_debounce = Some(DelayMs(0));
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state(indoc! {"
+        fn main() {
+            let foo = 1;
+            fˇoo;
+        }
+    "});
+    cx.run_until_parked();
+
+    let mut document_highlight_requests = cx
+        .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+            |_, _, _| async move {
+                Ok(Some(vec![lsp::DocumentHighlight {
+                    range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 7)),
+                    kind: Some(lsp::DocumentHighlightKind::READ),
+                }]))
+            },
+        );
+    let method = "textDocument/documentHighlight";
+    let registration_id = "document-highlight";
+
+    cx.lsp
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: registration_id.to_string(),
+                    method: method.to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+    document_highlight_requests
+        .next()
+        .await
+        .expect("dynamic registration should refresh document highlights");
+    cx.run_until_parked();
+
+    assert!(cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .is_some_and(|(_, ranges)| !ranges.is_empty())
+    }));
+
+    cx.lsp
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: registration_id.to_string(),
+                    method: method.to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+
+    assert!(cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .is_none_or(|(_, ranges)| ranges.is_empty())
+    }));
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {

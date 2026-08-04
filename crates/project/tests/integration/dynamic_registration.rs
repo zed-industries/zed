@@ -133,6 +133,57 @@ async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext
 }
 
 #[gpui::test]
+async fn test_dynamic_document_highlight_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/documentHighlight";
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        None,
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "document-highlight",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "file" }],
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    assert!(
+        server_capabilities(&project, server_id, cx)
+            .document_highlight_provider
+            .is_some()
+    );
+    assert_eq!(
+        refresh_events.lock().clone(),
+        vec![format!("document_highlights({server_id})")]
+    );
+
+    unregister_capabilities(&fake_server, method, &["document-highlight"]).await;
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).document_highlight_provider,
+        None,
+    );
+    assert_eq!(
+        refresh_events.lock().clone(),
+        vec![
+            format!("document_highlights({server_id})"),
+            format!("document_highlights({server_id})"),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_multi_registration_inlay_hint(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let (project, fake_server) =
@@ -1858,6 +1909,9 @@ fn observe_refresh_events(
                         label("document_colors", server_id)
                     }
                     Event::RefreshDocumentLinks { server_id } => label("document_links", server_id),
+                    Event::RefreshDocumentHighlights { server_id } => {
+                        format!("document_highlights({server_id})")
+                    }
                     Event::RefreshFoldingRanges { server_id } => label("folding_ranges", server_id),
                     Event::RefreshDocumentSymbols { server_id } => {
                         label("document_symbols", server_id)
