@@ -40,8 +40,18 @@ function Get-VSArch {
     }
 }
 
+# Locate the Visual Studio installation (edition differs between machines).
+$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vsPath = if (Test-Path $vsWhere) {
+    (& $vsWhere -latest -products * -property installationPath).Trim()
+} else {
+    "C:\Program Files\Microsoft Visual Studio\2022\Community"
+}
+if (-not $vsPath -or -not (Test-Path "$vsPath\Common7\Tools\Launch-VsDevShell.ps1")) {
+    throw "Visual Studio 2022 with Launch-VsDevShell.ps1 not found"
+}
 Push-Location
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+& "$vsPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
 Pop-Location
 
 $target = "$Architecture-pc-windows-msvc"
