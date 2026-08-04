@@ -27,6 +27,7 @@ language.workspace = true
 menu.workspace = true
 open_path_prompt.workspace = true
 picker.workspace = true
+picker_preview.workspace = true
 project.workspace = true
 settings.workspace = true
 serde.workspace = true
@@ -35,7 +36,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-project_panel.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

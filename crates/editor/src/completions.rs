@@ -830,14 +830,19 @@ impl Editor {
         let old_text = buffer
             .text_for_range(replace_range.clone())
             .collect::<String>();
-        let lookbehind = newest_range_buffer
-            .start
-            .to_offset(buffer_snapshot)
-            .saturating_sub(replace_range.start.to_offset(&buffer_snapshot));
-        let lookahead = replace_range
-            .end
-            .to_offset(&buffer_snapshot)
-            .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+        let (lookbehind, lookahead) = if buffer.remote_id() == buffer_snapshot.remote_id() {
+            let lookbehind = newest_range_buffer
+                .start
+                .to_offset(&buffer)
+                .saturating_sub(replace_range.start.to_offset(&buffer));
+            let lookahead = replace_range
+                .end
+                .to_offset(&buffer)
+                .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+            (lookbehind, lookahead)
+        } else {
+            (0, 0)
+        };
         let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
         let suffix = &old_text[lookbehind.min(old_text.len())..];
 
@@ -1135,7 +1140,7 @@ fn has_strong_snippet_prefix_match(
 
     languages.iter().any(|language| {
         snippet_store
-            .snippets_for(Some(language.lsp_id()), cx)
+            .snippets_for(Some(language.snippet_scope_id()), cx)
             .iter()
             .flat_map(|snippet| snippet.prefix.iter())
             .flat_map(|prefix| snippet_candidate_suffixes(prefix, &is_word_char))
@@ -1156,7 +1161,7 @@ fn snippet_completions(
     let scopes: Vec<_> = languages
         .iter()
         .filter_map(|language| {
-            let language_name = language.lsp_id();
+            let language_name = language.snippet_scope_id();
             let snippets = snippet_store.snippets_for(Some(language_name), cx);
 
             if snippets.is_empty() {

@@ -15,14 +15,14 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
-use crate::PinchEvent;
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Display, Element, ElementId, Entity, EntityId, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    Display, Element, ElementId, Entity, EntityId, ExternalDragPayload, ExternalDragPayloadSource,
+    FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+    PinchEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
     size,
 };
@@ -262,7 +262,10 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && !hitbox.contains(&window.mouse_position()) {
+                if phase == DispatchPhase::Capture
+                    && !window.has_active_prompt()
+                    && !hitbox.contains(&window.mouse_position())
+                {
                     (listener)(event, window, cx)
                 }
             }));
@@ -298,6 +301,22 @@ impl Interactivity {
         listener: impl Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_move_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to the mouse exit event, during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_mouse_exit`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_mouse_exit(
+        &mut self,
+        listener: impl Fn(&MouseExitEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.mouse_exit_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx);
@@ -586,12 +605,41 @@ impl Interactivity {
             self.drag_listener.is_none(),
             "calling on_drag more than once on the same element is not supported"
         );
-        self.drag_listener = Some((
-            Arc::new(value),
-            Box::new(move |value, offset, window, cx| {
+        self.drag_listener = Some(DragListener {
+            value: Arc::new(value),
+            render: Box::new(move |value, offset, window, cx| {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
-        ));
+            external_payload: None,
+        });
+    }
+
+    /// Registers a callback resolving a payload to offer the platform if a drag started by this
+    /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+    /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+    /// type `T`.
+    pub fn external_drag_payload<T>(
+        &mut self,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) where
+        Self: Sized,
+        T: 'static,
+    {
+        let Some(drag_listener) = self.drag_listener.as_mut() else {
+            debug_assert!(false, "external_drag_payload must be called after on_drag");
+            return;
+        };
+        debug_assert!(
+            drag_listener.value.as_ref().type_id() == TypeId::of::<T>(),
+            "external_drag_payload must use the same dragged value type as on_drag"
+        );
+        debug_assert!(
+            drag_listener.external_payload.is_none(),
+            "calling external_drag_payload more than once on the same element is not supported"
+        );
+        drag_listener.external_payload = Some(Box::new(move |value, window, cx| {
+            resolver(value.downcast_ref::<T>()?, window, cx)
+        }));
     }
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
@@ -919,6 +967,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to the mouse exit event, during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_mouse_exit`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_mouse_exit(
+        mut self,
+        listener: impl Fn(&MouseExitEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_mouse_exit(listener);
+        self
+    }
+
     /// Bind the given callback to the mouse drag event of the given type. Note that this
     /// will be called for all move events, inside or outside of this element, as long as the
     /// drag was started with this element under the mouse. Useful for implementing draggable
@@ -1197,7 +1257,26 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_label = Some(label.into());
+        self.interactivity().aria.label = Some(label.into());
+        self
+    }
+
+    /// Set the accessible description for this element. Unlike the label (which
+    /// names the element), the description provides supplementary information
+    /// that assistive technology announces after the name, role, and value -
+    /// for example a settings subtitle or a hint.
+    fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.description = Some(description.into());
+        self
+    }
+
+    /// Set the keyboard shortcut(s) that activate this element, announced by
+    /// assistive technology (maps to AccessKit's `keyboard_shortcut`).
+    ///
+    /// Note that this does not create a keymap. It simply instructs assistive
+    /// technology what the keymap is.
+    fn aria_keyshortcuts(mut self, keyshortcuts: impl Into<SharedString>) -> Self {
+        self.interactivity().aria.keyshortcuts = Some(keyshortcuts.into());
         self
     }
 
@@ -1240,106 +1319,106 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
-        self.interactivity().aria_selected = Some(selected);
+        self.interactivity().aria.selected = Some(selected);
         self
     }
 
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
-        self.interactivity().aria_expanded = Some(expanded);
+        self.interactivity().aria.expanded = Some(expanded);
         self
     }
 
     /// Set the toggled state for this element.
     fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
-        self.interactivity().aria_toggled = Some(toggled);
+        self.interactivity().aria.toggled = Some(toggled);
         self
     }
 
     /// Set the numeric value for this element.
     fn aria_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_numeric_value = Some(value);
+        self.interactivity().aria.numeric_value = Some(value);
         self
     }
 
     /// Set the step by which assistive technology should expect the numeric
     /// value of this element to change (e.g. when incrementing a spin button).
     fn aria_numeric_value_step(mut self, step: f64) -> Self {
-        self.interactivity().aria_numeric_value_step = Some(step);
+        self.interactivity().aria.numeric_value_step = Some(step);
         self
     }
 
     /// Set the string value of this element, e.g. the text content of a simple
     /// text input.
     fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_value = Some(value.into());
+        self.interactivity().aria.value = Some(value.into());
         self
     }
 
     /// Set the placeholder text reported to assistive technology for this
     /// element, shown when a text input is empty.
     fn aria_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
-        self.interactivity().aria_placeholder = Some(placeholder.into());
+        self.interactivity().aria.placeholder = Some(placeholder.into());
         self
     }
 
     /// Set the minimum numeric value for this element.
     fn aria_min_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_min_numeric_value = Some(value);
+        self.interactivity().aria.min_numeric_value = Some(value);
         self
     }
 
     /// Set the maximum numeric value for this element.
     fn aria_max_numeric_value(mut self, value: f64) -> Self {
-        self.interactivity().aria_max_numeric_value = Some(value);
+        self.interactivity().aria.max_numeric_value = Some(value);
         self
     }
 
     /// Set the orientation of this element.
     fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
-        self.interactivity().aria_orientation = Some(orientation);
+        self.interactivity().aria.orientation = Some(orientation);
         self
     }
 
     /// Set the heading level of this element.
     fn aria_level(mut self, level: usize) -> Self {
-        self.interactivity().aria_level = Some(level);
+        self.interactivity().aria.level = Some(level);
         self
     }
 
     /// Set the position in set of this element.
     fn aria_position_in_set(mut self, position: usize) -> Self {
-        self.interactivity().aria_position_in_set = Some(position);
+        self.interactivity().aria.position_in_set = Some(position);
         self
     }
 
     /// Set the size of set for this element.
     fn aria_size_of_set(mut self, size: usize) -> Self {
-        self.interactivity().aria_size_of_set = Some(size);
+        self.interactivity().aria.size_of_set = Some(size);
         self
     }
 
     /// Set the row index for this element.
     fn aria_row_index(mut self, index: usize) -> Self {
-        self.interactivity().aria_row_index = Some(index);
+        self.interactivity().aria.row_index = Some(index);
         self
     }
 
     /// Set the column index for this element.
     fn aria_column_index(mut self, index: usize) -> Self {
-        self.interactivity().aria_column_index = Some(index);
+        self.interactivity().aria.column_index = Some(index);
         self
     }
 
     /// Set the row count for this element.
     fn aria_row_count(mut self, count: usize) -> Self {
-        self.interactivity().aria_row_count = Some(count);
+        self.interactivity().aria.row_count = Some(count);
         self
     }
 
     /// Set the column count for this element.
     fn aria_column_count(mut self, count: usize) -> Self {
-        self.interactivity().aria_column_count = Some(count);
+        self.interactivity().aria.column_count = Some(count);
         self
     }
 
@@ -1381,6 +1460,14 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the overflow y to scroll.
     fn overflow_y_scroll(mut self) -> Self {
         self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    /// Restrict scrolling of this element to the axis of the input gesture.
+    ///
+    /// See [`Style::restrict_scroll_to_axis`](crate::Style::restrict_scroll_to_axis) for details.
+    fn restrict_scroll_to_axis(mut self) -> Self {
+        self.interactivity().base_style.restrict_scroll_to_axis = Some(true);
         self
     }
 
@@ -1469,6 +1556,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Registers a callback resolving a payload to offer the platform if a drag started by this
+    /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+    /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+    /// type `T`.
+    /// The fluent API equivalent to [`Interactivity::external_drag_payload`].
+    fn external_drag_payload<T>(
+        mut self,
+        resolver: impl Fn(&T, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+        T: 'static,
+    {
+        self.interactivity().external_drag_payload(resolver);
+        self
+    }
+
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
     /// The fluent API equivalent to [`Interactivity::on_hover`].
@@ -1525,6 +1629,8 @@ pub(crate) type MousePressureListener =
     Box<dyn Fn(&MousePressureEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 pub(crate) type MouseMoveListener =
     Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+pub(crate) type MouseExitListener =
+    Box<dyn Fn(&MouseExitEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -1534,8 +1640,14 @@ pub(crate) type PinchListener =
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
+pub(crate) struct DragListener {
+    value: Arc<dyn Any>,
+    render: Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>,
+    external_payload: Option<ExternalDragPayloadResolver>,
+}
+
+type ExternalDragPayloadResolver =
+    Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
 
 type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
 
@@ -1868,6 +1980,30 @@ impl IntoElement for Div {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct AriaProperties {
+    pub(crate) label: Option<SharedString>,
+    pub(crate) description: Option<SharedString>,
+    pub(crate) keyshortcuts: Option<SharedString>,
+    pub(crate) selected: Option<bool>,
+    pub(crate) expanded: Option<bool>,
+    pub(crate) toggled: Option<accesskit::Toggled>,
+    pub(crate) numeric_value: Option<f64>,
+    pub(crate) min_numeric_value: Option<f64>,
+    pub(crate) max_numeric_value: Option<f64>,
+    pub(crate) numeric_value_step: Option<f64>,
+    pub(crate) value: Option<SharedString>,
+    pub(crate) placeholder: Option<SharedString>,
+    pub(crate) orientation: Option<accesskit::Orientation>,
+    pub(crate) level: Option<usize>,
+    pub(crate) position_in_set: Option<usize>,
+    pub(crate) size_of_set: Option<usize>,
+    pub(crate) row_index: Option<usize>,
+    pub(crate) column_index: Option<usize>,
+    pub(crate) row_count: Option<usize>,
+    pub(crate) column_count: Option<usize>,
+}
+
 /// The interactivity struct. Powers all of the general-purpose
 /// interactivity in the `Div` element.
 #[derive(Default)]
@@ -1887,6 +2023,7 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
@@ -1907,6 +2044,7 @@ pub struct Interactivity {
     pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
+    pub(crate) mouse_exit_listeners: Vec<MouseExitListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
@@ -1917,7 +2055,7 @@ pub struct Interactivity {
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) aux_click_listeners: Vec<ClickListener>,
-    pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
+    pub(crate) drag_listener: Option<DragListener>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
@@ -1932,24 +2070,7 @@ pub struct Interactivity {
     pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
     pub(crate) report_active_descendant_focus: bool,
     pub(crate) override_role: Option<accesskit::Role>,
-    pub(crate) aria_label: Option<SharedString>,
-    pub(crate) aria_selected: Option<bool>,
-    pub(crate) aria_expanded: Option<bool>,
-    pub(crate) aria_toggled: Option<accesskit::Toggled>,
-    pub(crate) aria_numeric_value: Option<f64>,
-    pub(crate) aria_min_numeric_value: Option<f64>,
-    pub(crate) aria_max_numeric_value: Option<f64>,
-    pub(crate) aria_numeric_value_step: Option<f64>,
-    pub(crate) aria_value: Option<SharedString>,
-    pub(crate) aria_placeholder: Option<SharedString>,
-    pub(crate) aria_orientation: Option<accesskit::Orientation>,
-    pub(crate) aria_level: Option<usize>,
-    pub(crate) aria_position_in_set: Option<usize>,
-    pub(crate) aria_size_of_set: Option<usize>,
-    pub(crate) aria_row_index: Option<usize>,
-    pub(crate) aria_column_index: Option<usize>,
-    pub(crate) aria_row_count: Option<usize>,
-    pub(crate) aria_column_count: Option<usize>,
+    pub(crate) aria: AriaProperties,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -2024,7 +2145,9 @@ impl Interactivity {
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                    let scroll_handle_state = scroll_handle.0.borrow();
+                    self.scroll_offset = Some(scroll_handle_state.offset.clone());
+                    self.ongoing_scroll = Some(scroll_handle_state.ongoing_scroll.clone());
                 } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
                     || self.base_style.overflow.y == Some(Overflow::Scroll))
                     && let Some(element_state) = element_state.as_mut()
@@ -2033,6 +2156,12 @@ impl Interactivity {
                         element_state
                             .scroll_offset
                             .get_or_insert_with(Rc::default)
+                            .clone(),
+                    );
+                    self.ongoing_scroll = Some(
+                        element_state
+                            .ongoing_scroll
+                            .get_or_insert_with(|| Rc::new(RefCell::new(OngoingScroll::default())))
                             .clone(),
                     );
                 }
@@ -2079,6 +2208,13 @@ impl Interactivity {
                     if focus_handle.is_focused(window) {
                         window.a11y.set_focus(node_id);
                     }
+                } else if focus_handle.is_focused(window) {
+                    // Focusable, but with no element id it can't have an
+                    // accessibility node, so screen readers fall back to the
+                    // whole window.
+                    window
+                        .a11y
+                        .note_focus_without_node(focus_handle.id, "it has no element id");
                 }
             }
         }
@@ -2152,12 +2288,14 @@ impl Interactivity {
             || !self.mouse_pressure_listeners.is_empty()
             || !self.mouse_down_listeners.is_empty()
             || !self.mouse_move_listeners.is_empty()
+            || !self.mouse_exit_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
             || self.has_pinch_listeners()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
+            || !self.drag_over_styles.is_empty()
             || self.tooltip_builder.is_some()
             || window.is_inspector_picking(cx)
     }
@@ -2265,9 +2403,6 @@ impl Interactivity {
                 if self.tab_group {
                     tab_group = self.tab_index;
                 }
-                if let Some(focus_handle) = &self.tracked_focus_handle {
-                    window.next_frame.tab_stops.insert(focus_handle);
-                }
 
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
@@ -2276,6 +2411,17 @@ impl Interactivity {
                                 style.overflow_mask(bounds, window.rem_size()),
                                 |window| {
                                     window.with_tab_group(tab_group, |window| {
+                                        // Register the container's own focus handle *inside* its
+                                        // tab group, so that focusing the container and then
+                                        // calling `focus_next` descends into this group's first
+                                        // item. Inserting it before `with_tab_group` would give the
+                                        // container a shallower tab path than its children; with
+                                        // sibling groups every container would then sort ahead of
+                                        // every item, and `focus_next` from a container would jump
+                                        // to the first item in the whole window instead of its own.
+                                        if let Some(focus_handle) = &self.tracked_focus_handle {
+                                            window.next_frame.tab_stops.insert(focus_handle);
+                                        }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
                                             self.paint_debug_info(
@@ -2531,6 +2677,13 @@ impl Interactivity {
             })
         }
 
+        for listener in self.mouse_exit_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &MouseExitEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
@@ -2588,8 +2741,8 @@ impl Interactivity {
                     if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
                         if let Some(hover_state) = &hover_state {
                             hover_state.borrow_mut().group = group_hovered;
+                            cx.notify(current_view);
                         }
-                        cx.notify(current_view);
                     }
                 });
             }
@@ -2683,18 +2836,31 @@ impl Interactivity {
                         if let Some(mouse_down) = pending_mouse_down.clone()
                             && !cx.has_active_drag()
                             && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
-                            && let Some((drag_value, drag_listener)) = drag_listener.take()
+                            && let Some(listener) = drag_listener.take()
                             && mouse_down.button == MouseButton::Left
                         {
                             *clicked_state.borrow_mut() = ElementClickedState::default();
                             let cursor_offset = event.position - hitbox.origin;
-                            let drag =
-                                (drag_listener)(drag_value.as_ref(), cursor_offset, window, cx);
+                            let drag = (listener.render)(
+                                listener.value.as_ref(),
+                                cursor_offset,
+                                window,
+                                cx,
+                            );
+                            let external_payload_source =
+                                listener.external_payload.map(|external_payload| {
+                                    let value = listener.value.clone();
+                                    Box::new(move |window: &mut Window, cx: &mut App| {
+                                        external_payload(value.as_ref(), window, cx)
+                                    })
+                                        as ExternalDragPayloadSource
+                                });
                             cx.active_drag = Some(AnyDrag {
                                 view: drag,
-                                value: drag_value,
+                                value: listener.value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
+                                external_payload_source,
                             });
                             pending_mouse_down.take();
                             window.refresh();
@@ -2821,7 +2987,6 @@ impl Interactivity {
             }
 
             if let Some(hover_listener) = self.hover_listener.take() {
-                let hitbox = hitbox.clone();
                 let was_hovered = element_state
                     .hover_listener_state
                     .get_or_insert_with(Default::default)
@@ -2830,21 +2995,34 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
-
-                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble {
-                        return;
-                    }
-                    let is_hovered = has_mouse_down.borrow().is_none()
-                        && !cx.has_active_drag()
-                        && hitbox.is_hovered(window);
+                let hover_listener = Rc::new(hover_listener);
+                let update_hover = move |is_hovered: bool, window: &mut Window, cx: &mut App| {
                     let mut was_hovered = was_hovered.borrow_mut();
-
                     if is_hovered != *was_hovered {
                         *was_hovered = is_hovered;
                         drop(was_hovered);
-
                         hover_listener(&is_hovered, window, cx);
+                    }
+                };
+
+                window.on_mouse_event({
+                    let update_hover = update_hover.clone();
+                    let hitbox = hitbox.clone();
+                    move |_: &MouseMoveEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let is_hovered = has_mouse_down.borrow().is_none()
+                                && !cx.has_active_drag()
+                                && hitbox.is_hovered(window);
+                            update_hover(is_hovered, window, cx);
+                        }
+                    }
+                });
+
+                // The pointer can leave the window without a final MouseMove, so also
+                // clear hover on MouseExited.
+                window.on_mouse_event(move |_: &MouseExitEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        update_hover(false, window, cx);
                     }
                 });
             }
@@ -2989,6 +3167,7 @@ impl Interactivity {
         _cx: &mut App,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
+            let ongoing_scroll = self.ongoing_scroll.clone();
             let overflow = style.overflow;
             let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
@@ -2999,24 +3178,35 @@ impl Interactivity {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
-                    let delta = event.delta.pixel_delta(line_height);
+                    let mut delta = event.delta.pixel_delta(line_height);
 
-                    let mut delta_x = Pixels::ZERO;
-                    if overflow.x == Overflow::Scroll {
-                        if !delta.x.is_zero() {
-                            delta_x = delta.x;
-                        } else if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll {
-                            delta_x = delta.y;
-                        }
+                    if restrict_scroll_to_axis
+                        && event.delta.precise()
+                        && let Some(ongoing_scroll) = &ongoing_scroll
+                    {
+                        ongoing_scroll
+                            .borrow_mut()
+                            .filter(&mut delta, event.touch_phase);
                     }
-                    let mut delta_y = Pixels::ZERO;
-                    if overflow.y == Overflow::Scroll {
-                        if !delta.y.is_zero() {
-                            delta_y = delta.y;
-                        } else if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll {
-                            delta_y = delta.x;
+
+                    let mut delta_x = match overflow.x {
+                        Overflow::Scroll if !delta.x.is_zero() => delta.x,
+                        Overflow::Scroll
+                            if !restrict_scroll_to_axis && overflow.y != Overflow::Scroll =>
+                        {
+                            delta.y
                         }
-                    }
+                        _ => Pixels::ZERO,
+                    };
+                    let mut delta_y = match overflow.y {
+                        Overflow::Scroll if !delta.y.is_zero() => delta.y,
+                        Overflow::Scroll
+                            if !restrict_scroll_to_axis && overflow.x != Overflow::Scroll =>
+                        {
+                            delta.x
+                        }
+                        _ => Pixels::ZERO,
+                    };
                     if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
                         if delta_x.abs() > delta_y.abs() {
                             delta_y = Pixels::ZERO;
@@ -3174,58 +3364,64 @@ impl Interactivity {
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
-        if let Some(label) = &self.aria_label {
+        if let Some(label) = &self.aria.label {
             node.set_label(label.to_string());
         }
-        if let Some(selected) = self.aria_selected {
+        if let Some(description) = &self.aria.description {
+            node.set_description(description.to_string());
+        }
+        if let Some(keyshortcuts) = &self.aria.keyshortcuts {
+            node.set_keyboard_shortcut(keyshortcuts.to_string());
+        }
+        if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
         }
-        if let Some(expanded) = self.aria_expanded {
+        if let Some(expanded) = self.aria.expanded {
             node.set_expanded(expanded);
         }
-        if let Some(toggled) = self.aria_toggled {
+        if let Some(toggled) = self.aria.toggled {
             node.set_toggled(toggled);
         }
-        if let Some(value) = self.aria_numeric_value {
+        if let Some(value) = self.aria.numeric_value {
             node.set_numeric_value(value);
         }
-        if let Some(value) = self.aria_min_numeric_value {
+        if let Some(value) = self.aria.min_numeric_value {
             node.set_min_numeric_value(value);
         }
-        if let Some(value) = self.aria_max_numeric_value {
+        if let Some(value) = self.aria.max_numeric_value {
             node.set_max_numeric_value(value);
         }
-        if let Some(step) = self.aria_numeric_value_step {
+        if let Some(step) = self.aria.numeric_value_step {
             node.set_numeric_value_step(step);
         }
-        if let Some(value) = &self.aria_value {
+        if let Some(value) = &self.aria.value {
             node.set_value(value.to_string());
         }
-        if let Some(placeholder) = &self.aria_placeholder {
+        if let Some(placeholder) = &self.aria.placeholder {
             node.set_placeholder(placeholder.to_string());
         }
-        if let Some(orientation) = self.aria_orientation {
+        if let Some(orientation) = self.aria.orientation {
             node.set_orientation(orientation);
         }
-        if let Some(level) = self.aria_level {
+        if let Some(level) = self.aria.level {
             node.set_level(level);
         }
-        if let Some(position) = self.aria_position_in_set {
+        if let Some(position) = self.aria.position_in_set {
             node.set_position_in_set(position);
         }
-        if let Some(size) = self.aria_size_of_set {
+        if let Some(size) = self.aria.size_of_set {
             node.set_size_of_set(size);
         }
-        if let Some(index) = self.aria_row_index {
+        if let Some(index) = self.aria.row_index {
             node.set_row_index(index);
         }
-        if let Some(index) = self.aria_column_index {
+        if let Some(index) = self.aria.column_index {
             node.set_column_index(index);
         }
-        if let Some(count) = self.aria_row_count {
+        if let Some(count) = self.aria.row_count {
             node.set_row_count(count);
         }
-        if let Some(count) = self.aria_column_count {
+        if let Some(count) = self.aria.column_count {
             node.set_column_count(count);
         }
         if !self.click_listeners.is_empty() {
@@ -3258,6 +3454,7 @@ pub struct InteractiveElementState {
     /// blur). `None` means no activation key is pending.
     pub(crate) pending_keyboard_down: Option<Rc<RefCell<Option<u64>>>>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
@@ -3793,6 +3990,7 @@ impl ScrollAnchor {
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
+    ongoing_scroll: Rc<RefCell<OngoingScroll>>,
     bounds: Bounds<Pixels>,
     max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
@@ -4015,9 +4213,108 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, MouseMoveEvent,
-        TestAppContext, util::FluentBuilder as _,
+        TestAppContext, canvas, util::FluentBuilder as _,
     };
-    use std::rc::Weak;
+    use std::{cell::Cell, rc::Weak};
+
+    struct GroupHoverTestView {
+        render_count: Rc<Cell<usize>>,
+        anonymous_paint_count: Rc<Cell<usize>>,
+        stateful_width: Rc<Cell<Pixels>>,
+    }
+
+    impl Render for GroupHoverTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            let anonymous_paint_count = self.anonymous_paint_count.clone();
+            let stateful_width = self.stateful_width.clone();
+            div().size_full().child(
+                div()
+                    .ml(px(20.))
+                    .mt(px(20.))
+                    .size(px(50.))
+                    .relative()
+                    .group("hover-group")
+                    .child(
+                        div()
+                            .absolute()
+                            .size_full()
+                            .invisible()
+                            .group_hover("hover-group", |style| style.visible())
+                            .child(canvas(
+                                |_, _, _| {},
+                                move |_, _, _, _| {
+                                    anonymous_paint_count.set(anonymous_paint_count.get() + 1)
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("stateful-group-hover-target")
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size(px(10.))
+                            .group_hover("hover-group", |style| style.size(px(20.)))
+                            .child(canvas(
+                                move |bounds, _, _| stateful_width.set(bounds.size.width),
+                                |_, _, _, _| {},
+                            )),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn group_hover_styles_update_only_on_transitions(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+        let anonymous_paint_count = Rc::new(Cell::new(0));
+        let stateful_width = Rc::new(Cell::new(px(0.)));
+        let window = cx.add_window({
+            let render_count = render_count.clone();
+            let anonymous_paint_count = anonymous_paint_count.clone();
+            let stateful_width = stateful_width.clone();
+            move |_, _| GroupHoverTestView {
+                render_count,
+                anonymous_paint_count,
+                stateful_width,
+            }
+        });
+        let window = AnyWindowHandle::from(window);
+
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(anonymous_paint_count.get(), 0);
+        assert_eq!(stateful_width.get(), px(10.));
+
+        let move_mouse = |cx: &mut TestAppContext, position| {
+            cx.update_window(window, |_, window, cx| {
+                window.simulate_mouse_move(position, cx)
+            })
+            .unwrap();
+        };
+
+        let initial_render_count = render_count.get();
+        move_mouse(cx, point(px(25.), px(25.)));
+        assert_eq!(render_count.get(), initial_render_count + 1);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(20.));
+
+        move_mouse(cx, point(px(30.), px(30.)));
+        assert_eq!(render_count.get(), initial_render_count + 1);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(20.));
+
+        move_mouse(cx, point(px(5.), px(5.)));
+        assert_eq!(render_count.get(), initial_render_count + 2);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(10.));
+
+        move_mouse(cx, point(px(10.), px(10.)));
+        assert_eq!(render_count.get(), initial_render_count + 2);
+        assert_eq!(anonymous_paint_count.get(), 1);
+        assert_eq!(stateful_width.get(), px(10.));
+    }
 
     struct TestTooltipView;
 
@@ -4185,7 +4482,7 @@ mod tests {
 
         test_app
             .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             })
             .unwrap();
 
@@ -4205,7 +4502,7 @@ mod tests {
 
         test_app
             .update_window(any_window, |_, window, cx| {
-                window.draw(cx).clear();
+                window.draw(cx).clear(cx);
             })
             .unwrap();
 
@@ -4325,16 +4622,97 @@ mod tests {
         assert!(active_tooltip.borrow().is_none());
     }
 
+    struct MouseDownOutOwner {
+        mouse_down_out_count: Rc<RefCell<usize>>,
+    }
+
+    impl Render for MouseDownOutOwner {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mouse_down_out_count = self.mouse_down_out_count.clone();
+            div()
+                .size_full()
+                .child(div().id("target").w(px(50.)).h(px(50.)).on_mouse_down_out(
+                    move |_, _, _| {
+                        *mouse_down_out_count.borrow_mut() += 1;
+                    },
+                ))
+        }
+    }
+
+    #[test]
+    fn mouse_down_out_is_suppressed_while_window_prompt_is_active() {
+        let mut test_app = TestAppContext::single();
+        let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let window = test_app.add_window({
+            let mouse_down_out_count = mouse_down_out_count.clone();
+            move |_, _| MouseDownOutOwner {
+                mouse_down_out_count,
+            }
+        });
+        let any_window: AnyWindowHandle = window.into();
+
+        fn dispatch_mouse_down_outside_target(
+            test_app: &mut TestAppContext,
+            any_window: AnyWindowHandle,
+        ) {
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.dispatch_event(
+                        MouseDownEvent {
+                            position: point(px(75.), px(75.)),
+                            button: MouseButton::Left,
+                            modifiers: Default::default(),
+                            click_count: 1,
+                            first_mouse: false,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                })
+                .unwrap();
+        }
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "mouse down outside the element should fire mouse-down-out listeners"
+        );
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                cx.set_prompt_builder(crate::fallback_prompt_renderer);
+                let _receiver =
+                    window.prompt(crate::PromptLevel::Warning, "message", None, &["Ok"], cx);
+                assert!(window.has_active_prompt());
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+
+        dispatch_mouse_down_outside_target(&mut test_app, any_window);
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "mouse down over an active prompt should not fire mouse-down-out listeners"
+        );
+    }
+
     #[test]
     fn test_write_a11y_info_string_and_numeric_properties() {
         let mut interactivity = Interactivity::default();
-        interactivity.aria_label = Some("Buffer Font Size".into());
-        interactivity.aria_value = Some("15".into());
-        interactivity.aria_placeholder = Some("Search".into());
-        interactivity.aria_numeric_value = Some(15.0);
-        interactivity.aria_min_numeric_value = Some(6.0);
-        interactivity.aria_max_numeric_value = Some(72.0);
-        interactivity.aria_numeric_value_step = Some(1.0);
+        interactivity.aria.label = Some("Buffer Font Size".into());
+        interactivity.aria.value = Some("15".into());
+        interactivity.aria.placeholder = Some("Search".into());
+        interactivity.aria.numeric_value = Some(15.0);
+        interactivity.aria.min_numeric_value = Some(6.0);
+        interactivity.aria.max_numeric_value = Some(72.0);
+        interactivity.aria.numeric_value_step = Some(1.0);
 
         let mut node = accesskit::Node::new(accesskit::Role::SpinButton);
         interactivity.write_a11y_info(&mut node);
@@ -4411,7 +4789,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         cx.update_window(window, |_, window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         })
         .unwrap();
     }
@@ -4551,5 +4929,70 @@ mod tests {
         key_up(&mut cx, window, "cmd-enter");
 
         assert!(clicks.borrow().is_empty(), "clicks: {:?}", clicks.borrow());
+    }
+
+    /// Two sibling tab groups, each a focusable container that is *not* itself a
+    /// tab stop and holds a single tab stop. Mirrors how the title bar and
+    /// status bar expose their controls as ARIA toolbars.
+    struct TabGroupFocus {
+        group_a: FocusHandle,
+        item_a: FocusHandle,
+        group_b: FocusHandle,
+        item_b: FocusHandle,
+    }
+
+    impl Render for TabGroupFocus {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            fn group(container: &FocusHandle, item: &FocusHandle) -> Div {
+                div()
+                    .track_focus(container)
+                    .tab_group()
+                    .child(div().track_focus(item))
+            }
+            div()
+                .child(group(&self.group_a, &self.item_a))
+                .child(group(&self.group_b, &self.item_b))
+        }
+    }
+
+    /// Focusing a tab-group container and pressing Tab (`focus_next`) must move
+    /// focus to the first tab stop *inside that container*, as documented on
+    /// [`InteractiveElement::tab_stop`].
+    #[test]
+    fn focus_next_from_tab_group_container_enters_that_group() {
+        let mut cx = TestAppContext::single();
+        let (group_a, item_a, group_b, item_b) = cx.update(|cx| {
+            (
+                cx.focus_handle(),
+                cx.focus_handle().tab_stop(true),
+                cx.focus_handle(),
+                cx.focus_handle().tab_stop(true),
+            )
+        });
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let (group_a, item_a, group_b, item_b) =
+                    (group_a, item_a, group_b.clone(), item_b.clone());
+                move |_, _| TabGroupFocus {
+                    group_a,
+                    item_a,
+                    group_b,
+                    item_b,
+                }
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        // Focus the *second* group's container, then advance like Tab would.
+        let focused = cx
+            .update_window(window, |_, window, cx| {
+                window.focus(&group_b, cx);
+                window.focus_next(cx);
+                window.focused(cx).map(|handle| handle.id)
+            })
+            .unwrap();
+
+        assert_eq!(focused, Some(item_b.id));
     }
 }

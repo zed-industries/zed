@@ -52,8 +52,14 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
+    /// The agent UI font family. Determines the family of response text in the agent panel.
+    /// Falls back to the UI font family if unset.
+    agent_ui_font_family: Option<SharedString>,
     /// The agent font size. Determines the size of text in the agent panel. Falls back to the UI font size if unset.
     agent_ui_font_size: Option<Pixels>,
+    /// The agent buffer font family. Determines the family of user messages in the agent panel.
+    /// Falls back to the buffer font family if unset.
+    agent_buffer_font_family: Option<SharedString>,
     /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
     git_commit_buffer_font_size: Option<Pixels>,
@@ -64,7 +70,7 @@ pub struct ThemeSettings {
     /// Falls back to the buffer font family if unset.
     markdown_preview_code_font_family: Option<SharedString>,
     /// The font size to use for rendering in the markdown preview.
-    /// Falls back to the buffer font size if unset.
+    /// Falls back to the UI font size if unset.
     markdown_preview_font_size: Option<Pixels>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
@@ -416,6 +422,12 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.ui_font_size(cx))
     }
 
+    pub fn agent_ui_font_family(&self) -> &SharedString {
+        self.agent_ui_font_family
+            .as_ref()
+            .unwrap_or(&self.ui_font.family)
+    }
+
     /// Returns the agent panel buffer font size.
     pub fn agent_buffer_font_size(&self, cx: &App) -> Pixels {
         cx.try_global::<AgentBufferFontSize>()
@@ -423,6 +435,12 @@ impl ThemeSettings {
             .or(self.agent_buffer_font_size)
             .map(clamp_font_size)
             .unwrap_or_else(|| self.buffer_font_size(cx))
+    }
+
+    pub fn agent_buffer_font_family(&self) -> &SharedString {
+        self.agent_buffer_font_family
+            .as_ref()
+            .unwrap_or(&self.buffer_font.family)
     }
 
     pub fn git_commit_buffer_font_size(&self, cx: &App) -> Pixels {
@@ -451,14 +469,14 @@ impl ThemeSettings {
 
     /// Returns the markdown preview font size.
     ///
-    /// Note: the fallback deliberately uses `self.buffer_font_size` instead of `buffer_font_size(cx)`,
-    /// so that temporary editor zoom does not also resize the markdown preview.
+    /// Note: the fallback deliberately uses `self.ui_font_size` instead of `ui_font_size(cx)`,
+    /// so that temporary UI zoom does not also resize the markdown preview.
     pub fn markdown_preview_font_size(&self, cx: &App) -> Pixels {
         cx.try_global::<MarkdownPreviewFontSize>()
             .map(|size| size.0)
             .or(self.markdown_preview_font_size)
             .map(clamp_font_size)
-            .unwrap_or_else(|| clamp_font_size(self.buffer_font_size))
+            .unwrap_or_else(|| clamp_font_size(self.ui_font_size))
     }
 
     /// Returns the buffer font size, read from the settings.
@@ -737,7 +755,15 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
+            agent_ui_font_family: content
+                .agent_ui_font_family
+                .as_ref()
+                .map(|font| font.0.clone().into()),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
+            agent_buffer_font_family: content
+                .agent_buffer_font_family
+                .as_ref()
+                .map(|font| font.0.clone().into()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             git_commit_buffer_font_size: content.git_commit_buffer_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content

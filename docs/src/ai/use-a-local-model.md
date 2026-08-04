@@ -39,7 +39,7 @@ Zed automatically discovers the served models with their context length and tool
 ```json [settings]
 {
   "language_models": {
-    "llama_cpp": {
+    "llama.cpp": {
       "api_url": "http://localhost:8080",
       "auto_discover": false,
       "available_models": [
@@ -63,7 +63,7 @@ Zed uses the context length the server reports (`/props`). Override it for all m
 ```json [settings]
 {
   "language_models": {
-    "llama_cpp": {
+    "llama.cpp": {
       "context_window": 8192
     }
   }
