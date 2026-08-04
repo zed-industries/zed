@@ -4,7 +4,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
-use language::{OffsetRangeExt, ParseStatus, Point};
+use language::{Bias, OffsetRangeExt, ParseStatus, Point};
 use project::{
     Project, ProjectPath, SearchResults, WorktreeSettings,
     search::{SearchQuery, SearchResult},
@@ -121,6 +121,7 @@ impl AgentTool for GrepTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
+        const MAX_SNIPPET_BYTES: usize = 2048;
 
         let project = self.project.clone();
         cx.spawn(async move |cx|  {
@@ -260,27 +261,27 @@ impl AgentTool for GrepTool {
                             let capped_ancestor_range = Point::new(full_ancestor_range.start.row, 0)..Point::new(end_row, end_col);
 
                             if capped_ancestor_range.contains_inclusive(&full_lines) {
-                                return (capped_ancestor_range, Some(full_ancestor_range), symbols)
+                                return (capped_ancestor_range, Some(full_ancestor_range), symbols, matched)
                             }
                         }
 
-                        let mut matched = matched;
-                        matched.start.column = 0;
-                        matched.start.row =
-                            matched.start.row.saturating_sub(CONTEXT_LINES);
-                        matched.end.row = cmp::min(
+                        let mut expanded = matched.clone();
+                        expanded.start.column = 0;
+                        expanded.start.row =
+                            expanded.start.row.saturating_sub(CONTEXT_LINES);
+                        expanded.end.row = cmp::min(
                             snapshot.max_point().row,
-                            matched.end.row + CONTEXT_LINES,
+                            expanded.end.row + CONTEXT_LINES,
                         );
-                        matched.end.column = snapshot.line_len(matched.end.row);
+                        expanded.end.column = snapshot.line_len(expanded.end.row);
 
-                        (matched, None, symbols)
+                        (expanded, None, symbols, matched)
                     })
                     .peekable();
 
                 let mut file_header_written = false;
 
-                while let Some((mut range, ancestor_range, parent_symbols)) = ranges.next(){
+                while let Some((mut range, ancestor_range, parent_symbols, match_range)) = ranges.next(){
                     if skips_remaining > 0 {
                         skips_remaining -= 1;
                         continue;
@@ -292,13 +293,32 @@ impl AgentTool for GrepTool {
                         break 'outer;
                     }
 
-                    while let Some((next_range, _, _)) = ranges.peek() {
+                    while let Some((next_range, _, _, _)) = ranges.peek() {
                         if range.end.row >= next_range.start.row {
                             range.end = next_range.end;
                             ranges.next();
                         } else {
                             break;
                         }
+                    }
+
+                    // Cap the snippet size so that very long lines (e.g. minified or
+                    // generated code) can't blow up the output. The capped window is
+                    // centered on the match, even if that means dropping context lines.
+                    let mut truncated = false;
+                    let offsets = range.to_offset(&snapshot);
+                    if offsets.end - offsets.start > MAX_SNIPPET_BYTES {
+                        let match_offsets = match_range.to_offset(&snapshot);
+                        let center = match_offsets.start
+                            + (match_offsets.end - match_offsets.start).min(MAX_SNIPPET_BYTES) / 2;
+                        let start = center
+                            .saturating_sub(MAX_SNIPPET_BYTES / 2)
+                            .clamp(offsets.start, offsets.end);
+                        let end = (start + MAX_SNIPPET_BYTES).min(offsets.end);
+                        range = (snapshot.clip_offset(start, Bias::Right)
+                            ..snapshot.clip_offset(end, Bias::Left))
+                            .to_point(&snapshot);
+                        truncated = true;
                     }
 
                     if !file_header_written {
@@ -326,6 +346,11 @@ impl AgentTool for GrepTool {
                     output.push_str("```\n");
                     output.push_str(&snippet);
                     output.push_str("\n```\n");
+
+                    if truncated {
+                        writeln!(output, "\nSnippet truncated to {MAX_SNIPPET_BYTES} bytes around the match. Read the file to see more.")
+                            .ok();
+                    }
 
                     if let Some(abs_path) = &abs_path {
                         let uri = MentionUri::Selection {
@@ -720,6 +745,47 @@ mod tests {
         assert!(
             snippet.starts_with("````\n"),
             "snippet should be wrapped in a fence longer than the inner ```, got:\n{snippet}"
+        );
+    }
+
+    // A match on a very long line (e.g. minified or generated code) must not
+    // emit the entire line; the snippet is capped and centered on the match.
+    #[gpui::test]
+    async fn test_grep_truncates_long_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let long_line = format!("{}NEEDLE{}", "a".repeat(50_000), "b".repeat(50_000));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "minified.js": format!("before\n{long_line}\nafter"),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let input = GrepToolInput {
+            regex: "NEEDLE".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        };
+        let result = run_grep_tool(input, project, cx).await;
+
+        assert!(
+            result.len() < 4096,
+            "output should be capped, got {} bytes",
+            result.len()
+        );
+        assert!(
+            result.contains("NEEDLE"),
+            "the match itself should be centered in the snippet, got:\n{result}"
+        );
+        assert!(
+            result.contains("Snippet truncated"),
+            "output should mention truncation, got:\n{result}"
         );
     }
 
