@@ -634,7 +634,19 @@ async fn run_terminal_tool(
     // gate is transient (never persisted): on "Continue" the normal flow
     // (including any escalation prompt) proceeds; on "Abort" the command is
     // cancelled. It recurs until the warning is disabled in settings.
-    if sandboxing && !want_unsandboxed && persistent.warn_ntfs_grants {
+    //
+    // The warning only makes sense when a WSL sandbox will actually wrap the
+    // command, so it is skipped when the command is guaranteed to run without
+    // one (`unsandboxed_floor`: the user already turned the sandbox off for
+    // this thread) and when WSL is structurally absent (no registered distro —
+    // sandbox creation is guaranteed to fail, and the creation-failure
+    // fallback prompt handles that conversation instead).
+    if sandboxing
+        && !want_unsandboxed
+        && !unsandboxed_floor
+        && persistent.warn_ntfs_grants
+        && sandbox::wsl_distro_registered()
+    {
         let effective = event_stream.effective_sandbox_request(&request, &persistent);
         let contains_windows_fs = effective
             .write_paths
@@ -650,15 +662,15 @@ async fn run_terminal_tool(
                         .any(|path| sandbox::path_is_on_windows_drive(path))
             });
         if contains_windows_fs
-            && cx
+            && let Err(error) = cx
                 .update(|cx| event_stream.authorize_windows_fs_warning(cx))
                 .await
-                .is_err()
         {
-            return Ok(
-                "Command cancelled: the user declined to run a command whose sandbox writes to a Windows drive."
-                    .to_string(),
-            );
+            // Carry the underlying error so a prompt-delivery failure is
+            // distinguishable from a genuine user abort.
+            return Ok(format!(
+                "Command cancelled: the user declined to run a command whose sandbox writes to a Windows drive ({error})."
+            ));
         }
     }
 

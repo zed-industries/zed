@@ -14912,3 +14912,91 @@ fn test_split_leading_icon_char() {
     assert_eq!(trimmed.as_ref(), "abc");
     assert_eq!(positions, vec![0, 1]);
 }
+
+#[gpui::test]
+async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let local_project = init_test_project("/local", cx).await;
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
+    let local_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree("/remote-project", serde_json::json!({ "src": {} }))
+        .await;
+    let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let _headless = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs: server_fs.clone(),
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::new(server_executor)),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+    let remote_client = remote::RemoteClient::connect_mock(opts.clone(), cx).await;
+
+    // Stand in for the save prompt from a concurrent workspace removal: as
+    // soon as the remote workspace is activated mid-open, activate the local
+    // workspace again. The open must still return the workspace it created,
+    // not whichever workspace is active once it finishes.
+    multi_workspace.update_in(cx, |_, window, cx| {
+        let local_workspace = local_workspace.clone();
+        cx.subscribe_in(&cx.entity(), window, move |this, _, event, window, cx| {
+            if matches!(event, MultiWorkspaceEvent::WorkspaceAdded(_)) {
+                this.activate(local_workspace.clone(), None, window, cx);
+            }
+        })
+        .detach();
+    });
+
+    let created = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            let key = ProjectGroupKey::new(
+                Some(opts.clone()),
+                PathList::new(&[PathBuf::from("/remote-project")]),
+            );
+            mw.find_or_create_workspace(
+                PathList::new(&[PathBuf::from("/remote-project")]),
+                Some(opts),
+                Some(key),
+                move |_, _, _| Task::ready(Ok(Some(remote_client))),
+                &[],
+                None,
+                workspace::OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening the remote project should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        created.read_with(cx, |workspace, cx| PathList::new(&workspace.root_paths(cx))),
+        PathList::new(&[PathBuf::from("/remote-project")]),
+        "the returned workspace should be the remote workspace that was created"
+    );
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        local_workspace,
+        "the local workspace should have re-activated during the open"
+    );
+}

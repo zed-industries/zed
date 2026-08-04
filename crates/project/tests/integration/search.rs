@@ -1,3 +1,5 @@
+use std::io::BufReader;
+
 use language::Buffer;
 use project::search::SearchQuery;
 use text::Rope;
@@ -177,4 +179,48 @@ async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
 
     let results = search_query.search(&snapshot, None).await;
     assert_eq!(results, vec![0..6, 12..18]);
+}
+
+#[gpui::test]
+async fn regex_with_eol_detects_lines() {
+    let re = SearchQuery::regex(
+        "Bool$",
+        false,
+        false,
+        false,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let input = " Bool\nsomething else";
+    let result = re
+        .detect(BufReader::new(Box::new(input.as_bytes())))
+        .await
+        .unwrap();
+    assert!(result.is_some());
+}
+
+#[gpui::test]
+async fn multi_line_regex_detects_matches() {
+    let re = SearchQuery::regex(
+        "Bool$\nbool",
+        false,
+        false,
+        false,
+        false,
+        PathMatcher::default(),
+        PathMatcher::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let input = " Bool\nbool";
+    let result = re
+        .detect(BufReader::new(Box::new(input.as_bytes())))
+        .await
+        .unwrap();
+    assert!(result.is_some());
 }
