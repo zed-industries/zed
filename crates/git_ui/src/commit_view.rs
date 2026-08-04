@@ -4,7 +4,7 @@ use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
     SelectionEffects, SplittableEditor, hover_markdown_style, multibuffer_context_lines,
-    scroll::Autoscroll,
+    scroll::ScrollAnchor,
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
@@ -514,13 +514,29 @@ impl CommitView {
                                 this.editor.update(cx, |editor, cx| {
                                     editor.rhs_editor().update(cx, |editor, cx| {
                                         editor.change_selections(
-                                            SelectionEffects::scroll(
-                                                Autoscroll::center(),
-                                            )
-                                            .nav_history(false),
+                                            SelectionEffects::no_scroll().nav_history(false),
                                             window,
                                             cx,
                                             |s| s.select_ranges([anchor..anchor]),
+                                        );
+                                        // Pin the scroll anchor directly to the target line with a
+                                        // negative offset so the line is centered. A regular center
+                                        // autoscroll computes its landing point as
+                                        // (target_top - margin), which when the target row is close
+                                        // to the file start falls above the file's first line and
+                                        // gets clipped to the previous file's content, causing the
+                                        // anchor to drift as later files are inserted above.
+                                        let margin = editor
+                                            .visible_line_count()
+                                            .map(|lines| ((lines - 1.0) / 2.0).floor())
+                                            .unwrap_or(0.0);
+                                        editor.set_scroll_anchor(
+                                            ScrollAnchor {
+                                                anchor,
+                                                offset: gpui::point(0.0, -margin),
+                                            },
+                                            window,
+                                            cx,
                                         );
                                     });
                                 });
