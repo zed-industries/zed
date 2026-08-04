@@ -1321,7 +1321,7 @@ impl MultiWorkspace {
             let window_handle =
                 window_handle.ok_or_else(|| anyhow::anyhow!("Window is not a MultiWorkspace"))?;
 
-            open_remote_project_with_existing_connection(
+            let (workspace, _items) = open_remote_project_with_existing_connection(
                 connection_options,
                 new_project,
                 effective_paths_vec,
@@ -1334,7 +1334,6 @@ impl MultiWorkspace {
             .await?;
 
             window_handle.update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().clone();
                 multi_workspace.add(workspace.clone(), window, cx);
                 workspace
             })

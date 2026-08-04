@@ -8798,8 +8798,10 @@ impl Repository {
                 RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
                     let (is_merge, includes_worktree, base, head) = match diff_type {
                         DiffTreeType::MergeBase { base, head } => (true, false, base, head),
+                        // Older servers ignore `includes_worktree` and use the existing fields,
+                        // so HEAD keeps this request valid as a committed-only fallback.
                         DiffTreeType::MergeBaseWithWorktree { base } => {
-                            (true, true, base, SharedString::default())
+                            (true, true, base, "HEAD".into())
                         }
                         DiffTreeType::Since { base, head } => (false, false, base, head),
                     };
