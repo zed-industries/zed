@@ -387,7 +387,9 @@ mod test {
             the lazy Oneˇ."},
             Mode::Replace,
         );
-        cx.simulate_keystrokes("enter T w o");
+        cx.simulate_keystrokes("enter");
+        cx.wait_for_autoindent_applied().await;
+        cx.simulate_keystrokes("T w o");
         cx.assert_state(
             indoc! {"
             One

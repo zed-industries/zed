@@ -756,6 +756,13 @@ where
         let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
         let simple_brackets_highlights = (0..rows).map(|_| "«1[]1»\n").collect::<String>();
         cx.set_state(&simple_brackets);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.update_editor(|editor, window, cx| {
+            editor.colorize_brackets(true, cx);
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
         cx.update_editor(|editor, window, cx| {
             editor.move_to_end(&MoveToEnd, window, cx);
         });
@@ -770,7 +777,7 @@ where
         let paired_brackets = (0..rows).map(|_| "ˇ[]()\n").collect::<String>();
         let paired_brackets_highlights = (0..rows).map(|_| "«1[]1»«1()1»\n").collect::<String>();
         cx.set_state(&paired_brackets);
-        // Wait for reparse to complete after content change
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         cx.update_editor(|editor, _, cx| {

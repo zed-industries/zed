@@ -1528,6 +1528,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1590,6 +1591,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1654,6 +1656,7 @@ mod tests {
             "}\n" //
         );
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -1770,6 +1773,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang(), cx));
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);

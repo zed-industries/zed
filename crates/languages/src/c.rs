@@ -414,12 +414,40 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 }
 
 #[cfg(test)]
-mod tests {
-    use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
-    use language::{AutoindentMode, Buffer};
+pub(crate) mod tests {
+    use gpui::{AppContext as _, BorrowAppContext, Entity, TestAppContext};
+    use language::{AutoindentMode, Buffer, Language};
     use settings::SettingsStore;
-    use std::num::NonZeroU32;
+    use std::{num::NonZeroU32, sync::Arc};
     use unindent::Unindent;
+
+    pub(crate) async fn wait_for_autoindent(buffer: &Entity<Buffer>, cx: &mut TestAppContext) {
+        if let Some(waiter) = buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied()) {
+            assert!(waiter.await.is_ok(), "auto-indent request was canceled");
+        }
+    }
+
+    pub(crate) async fn assert_autoindent(
+        language: Arc<Language>,
+        input: String,
+        expected: String,
+        message: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, input)], Some(AutoindentMode::EachLine), cx);
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            expected,
+            "{message}"
+        );
+    }
 
     #[gpui::test]
     async fn test_c_autoindent_basic(cx: &mut TestAppContext) {
@@ -434,20 +462,25 @@ mod tests {
         });
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
-
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+        buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..0, "int main() {}")], None, cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
 
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 1;
             buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        buffer.read_with(cx, |buffer, _| {
             assert_eq!(
                 buffer.text(),
                 "int main() {\n  \n}",
                 "content inside braces should be indented"
             );
-
-            buffer
         });
     }
 
@@ -464,13 +497,9 @@ mod tests {
         });
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
-
-            buffer.edit(
-                [(
-                    0..0,
-                    r#"
+        assert_autoindent(
+            language,
+            r#"
                     int main() {
                     switch (a) {
                     case 1:
@@ -485,14 +514,8 @@ mod tests {
                     }
                     }
                     "#
-                    .unindent(),
-                )],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            assert_eq!(
-                buffer.text(),
-                r#"
+            .unindent(),
+            r#"
                 int main() {
                   switch (a) {
                     case 1:
@@ -507,12 +530,11 @@ mod tests {
                   }
                 }
                 "#
-                .unindent(),
-                "statements under a case label should be indented, and the next label outdented"
-            );
-
-            buffer
-        });
+            .unindent(),
+            "statements under a case label should be indented, and the next label outdented",
+            cx,
+        )
+        .await;
     }
 
     #[gpui::test]
@@ -528,9 +550,11 @@ mod tests {
         });
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
-
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language.clone(), cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 [(
                     0..0,
@@ -545,6 +569,9 @@ mod tests {
                 Some(AutoindentMode::EachLine),
                 cx,
             );
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        buffer.read_with(cx, |buffer, _| {
             assert_eq!(
                 buffer.text(),
                 r#"
@@ -556,9 +583,14 @@ mod tests {
                 .unindent(),
                 "body of if-statement without braces should be indented"
             );
+        });
 
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 4;
             buffer.edit([(ix..ix, "\n.c")], Some(AutoindentMode::EachLine), cx);
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        buffer.read_with(cx, |buffer, _| {
             assert_eq!(
                 buffer.text(),
                 r#"
@@ -571,24 +603,17 @@ mod tests {
                 .unindent(),
                 "field expression (.c) should be indented further than the statement body"
             );
+        });
 
-            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
-            buffer.edit(
-                [(
-                    0..0,
-                    r#"
+        for (input, expected, message) in [
+            (
+                r#"
                     int main() {
                     if (a) a++;
                     else b++;
                     }
                     "#
-                    .unindent(),
-                )],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            assert_eq!(
-                buffer.text(),
+                .unindent(),
                 r#"
                 int main() {
                   if (a) a++;
@@ -596,14 +621,10 @@ mod tests {
                 }
                 "#
                 .unindent(),
-                "single-line if/else without braces should align at the same level"
-            );
-
-            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
-            buffer.edit(
-                [(
-                    0..0,
-                    r#"
+                "single-line if/else without braces should align at the same level",
+            ),
+            (
+                r#"
                     int main() {
                     if (a)
                     b++;
@@ -611,13 +632,7 @@ mod tests {
                     c++;
                     }
                     "#
-                    .unindent(),
-                )],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            assert_eq!(
-                buffer.text(),
+                .unindent(),
                 r#"
                 int main() {
                   if (a)
@@ -627,27 +642,17 @@ mod tests {
                 }
                 "#
                 .unindent(),
-                "multi-line if/else without braces should indent statement bodies"
-            );
-
-            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
-            buffer.edit(
-                [(
-                    0..0,
-                    r#"
+                "multi-line if/else without braces should indent statement bodies",
+            ),
+            (
+                r#"
                     int main() {
                     if (a)
                     if (b)
                     c++;
                     }
                     "#
-                    .unindent(),
-                )],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            assert_eq!(
-                buffer.text(),
+                .unindent(),
                 r#"
                 int main() {
                   if (a)
@@ -656,14 +661,10 @@ mod tests {
                 }
                 "#
                 .unindent(),
-                "nested if statements without braces should indent properly"
-            );
-
-            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
-            buffer.edit(
-                [(
-                    0..0,
-                    r#"
+                "nested if statements without braces should indent properly",
+            ),
+            (
+                r#"
                     int main() {
                     if (a)
                     b++;
@@ -673,13 +674,7 @@ mod tests {
                     f++;
                     }
                     "#
-                    .unindent(),
-                )],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            assert_eq!(
-                buffer.text(),
+                .unindent(),
                 r#"
                 int main() {
                   if (a)
@@ -691,14 +686,10 @@ mod tests {
                 }
                 "#
                 .unindent(),
-                "else-if chains should align all conditions at same level with indented bodies"
-            );
-
-            buffer.edit([(0..buffer.len(), "")], Some(AutoindentMode::EachLine), cx);
-            buffer.edit(
-                [(
-                    0..0,
-                    r#"
+                "else-if chains should align all conditions at same level with indented bodies",
+            ),
+            (
+                r#"
                     int main() {
                     if (a) {
                     b++;
@@ -706,13 +697,7 @@ mod tests {
                     c++;
                     }
                     "#
-                    .unindent(),
-                )],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            assert_eq!(
-                buffer.text(),
+                .unindent(),
                 r#"
                 int main() {
                   if (a) {
@@ -722,10 +707,10 @@ mod tests {
                 }
                 "#
                 .unindent(),
-                "mixed braces should indent properly"
-            );
-
-            buffer
-        });
+                "mixed braces should indent properly",
+            ),
+        ] {
+            assert_autoindent(language.clone(), input, expected, message, cx).await;
+        }
     }
 }

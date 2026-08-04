@@ -1472,7 +1472,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{BorrowAppContext, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Entity, Hsla, TestAppContext};
     use lsp::CompletionItemLabelDetails;
     use pretty_assertions::assert_eq;
     use settings::SettingsStore;
@@ -2090,6 +2090,12 @@ mod tests {
         );
     }
 
+    async fn wait_for_autoindent(buffer: &Entity<Buffer>, cx: &mut TestAppContext) {
+        if let Some(waiter) = buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied()) {
+            assert!(waiter.await.is_ok(), "auto-indent request was canceled");
+        }
+    }
+
     #[gpui::test]
     async fn test_rust_autoindent(cx: &mut TestAppContext) {
         // cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -2105,61 +2111,122 @@ mod tests {
 
         let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
 
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
 
-            // indent between braces
+        // indent between braces
+        buffer.update(cx, |buffer, cx| {
             buffer.set_text("fn a() {}", cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 1;
             buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "fn a() {\n  \n}");
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "fn a() {\n  \n}"
+        );
 
-            // indent between braces, even after empty lines
+        // indent between braces, even after empty lines
+        buffer.update(cx, |buffer, cx| {
             buffer.set_text("fn a() {\n\n\n}", cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 2;
             buffer.edit([(ix..ix, "\n")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "fn a() {\n\n\n  \n}");
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "fn a() {\n\n\n  \n}"
+        );
 
-            // indent a line that continues a field expression
+        // indent a line that continues a field expression
+        buffer.update(cx, |buffer, cx| {
             buffer.set_text("fn a() {\n  \n}", cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 2;
             buffer.edit([(ix..ix, "b\n.c")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n}");
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "fn a() {\n  b\n    .c\n}"
+        );
 
-            // indent further lines that continue the field expression, even after empty lines
+        // indent further lines that continue the field expression, even after empty lines
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 2;
             buffer.edit([(ix..ix, "\n\n.d")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "fn a() {\n  b\n    .c\n    \n    .d\n}");
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "fn a() {\n  b\n    .c\n    \n    .d\n}"
+        );
 
-            // dedent the line after the field expression
+        // dedent the line after the field expression
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 2;
             buffer.edit([(ix..ix, ";\ne")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(
-                buffer.text(),
-                "fn a() {\n  b\n    .c\n    \n    .d;\n  e\n}"
-            );
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "fn a() {\n  b\n    .c\n    \n    .d;\n  e\n}"
+        );
 
-            // indent inside a struct within a call
+        // indent inside a struct within a call
+        buffer.update(cx, |buffer, cx| {
             buffer.set_text("const a: B = c(D {});", cx);
+        });
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 3;
             buffer.edit([(ix..ix, "\n\n")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "const a: B = c(D {\n  \n});");
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "const a: B = c(D {\n  \n});"
+        );
 
-            // indent further inside a nested call
+        // indent further inside a nested call
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 4;
             buffer.edit([(ix..ix, "e: f(\n\n)")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(buffer.text(), "const a: B = c(D {\n  e: f(\n    \n  )\n});");
+        });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "const a: B = c(D {\n  e: f(\n    \n  )\n});"
+        );
 
-            // keep that indent after an empty line
+        // keep that indent after an empty line
+        buffer.update(cx, |buffer, cx| {
             let ix = buffer.len() - 8;
             buffer.edit([(ix..ix, "\n")], Some(AutoindentMode::EachLine), cx);
-            assert_eq!(
-                buffer.text(),
-                "const a: B = c(D {\n  e: f(\n    \n    \n  )\n});"
-            );
-
-            buffer
         });
+        wait_for_autoindent(&buffer, cx).await;
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "const a: B = c(D {\n  e: f(\n    \n    \n  )\n});"
+        );
     }
 
     #[test]

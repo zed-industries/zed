@@ -2715,7 +2715,7 @@ impl LspInstaller for RuffLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, Entity, TestAppContext};
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -2930,6 +2930,20 @@ mod tests {
         );
     }
 
+    async fn wait_for_autoindent(buffer: &Entity<Buffer>, cx: &mut TestAppContext) {
+        if let Some(waiter) = buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied()) {
+            assert!(waiter.await.is_ok(), "auto-indent request was canceled");
+        }
+    }
+
+    async fn append(buffer: &Entity<Buffer>, text: &str, cx: &mut TestAppContext) {
+        buffer.update(cx, |buffer, cx| {
+            let ix = buffer.len();
+            buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
+        });
+        wait_for_autoindent(buffer, cx).await;
+    }
+
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -2944,93 +2958,124 @@ mod tests {
             });
         });
 
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
-            let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
-                let ix = buffer.len();
-                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
-            };
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
 
+        {
             // indent after "def():"
-            append(&mut buffer, "def a():\n", cx);
-            assert_eq!(buffer.text(), "def a():\n  ");
+            append(&buffer, "def a():\n", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "def a():\n  "
+            );
 
             // preserve indent after blank line
-            append(&mut buffer, "\n  ", cx);
-            assert_eq!(buffer.text(), "def a():\n  \n  ");
+            append(&buffer, "\n  ", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "def a():\n  \n  "
+            );
 
             // indent after "if"
-            append(&mut buffer, "if a:\n  ", cx);
-            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    ");
+            append(&buffer, "if a:\n  ", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "def a():\n  \n  if a:\n    "
+            );
 
             // preserve indent after statement
-            append(&mut buffer, "b()\n", cx);
-            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    b()\n    ");
+            append(&buffer, "b()\n", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "def a():\n  \n  if a:\n    b()\n    "
+            );
 
             // preserve indent after statement
-            append(&mut buffer, "else", cx);
-            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    b()\n    else");
+            append(&buffer, "else", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "def a():\n  \n  if a:\n    b()\n    else"
+            );
 
             // dedent "else""
-            append(&mut buffer, ":", cx);
-            assert_eq!(buffer.text(), "def a():\n  \n  if a:\n    b()\n  else:");
+            append(&buffer, ":", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "def a():\n  \n  if a:\n    b()\n  else:"
+            );
 
             // indent lines after else
-            append(&mut buffer, "\n", cx);
+            append(&buffer, "\n", cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    "
             );
 
             // indent after an open paren. the closing paren is not indented
             // because there is another token before it on the same line.
-            append(&mut buffer, "foo(\n1)", cx);
+            append(&buffer, "foo(\n1)", cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n      1)"
             );
 
             // dedent the closing paren if it is shifted to the beginning of the line
-            let argument_ix = buffer.text().find('1').unwrap();
-            buffer.edit(
-                [(argument_ix..argument_ix + 1, "")],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
+            let argument_ix = buffer
+                .read_with(cx, |buffer, _| buffer.text())
+                .find('1')
+                .unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(argument_ix..argument_ix + 1, "")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+            });
+            wait_for_autoindent(&buffer, cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )"
             );
 
             // preserve indent after the close paren
-            append(&mut buffer, "\n", cx);
+            append(&buffer, "\n", cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n    "
             );
 
             // manually outdent the last line
-            let end_whitespace_ix = buffer.len() - 4;
-            buffer.edit(
-                [(end_whitespace_ix..buffer.len(), "")],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
+            let end_whitespace_ix = buffer.read_with(cx, |buffer, _| buffer.len() - 4);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(end_whitespace_ix..buffer.len(), "")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+            });
+            wait_for_autoindent(&buffer, cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n"
             );
 
             // preserve the newly reduced indentation on the next newline
-            append(&mut buffer, "\n", cx);
+            append(&buffer, "\n", cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n\n"
             );
 
             // reset to a for loop statement
             let statement = "for i in range(10):\n  print(i)\n";
-            buffer.edit([(0..buffer.len(), statement)], None, cx);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), statement)], None, cx);
+            });
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
 
             // insert single line comment after each line
             let eol_ixs = statement
@@ -3042,21 +3087,30 @@ mod tests {
                 .enumerate()
                 .map(|(i, &eol_ix)| (eol_ix..eol_ix, format!(" # comment {}", i + 1)))
                 .collect::<Vec<(std::ops::Range<usize>, String)>>();
-            buffer.edit(editions, Some(AutoindentMode::EachLine), cx);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(editions, Some(AutoindentMode::EachLine), cx);
+            });
+            wait_for_autoindent(&buffer, cx).await;
             assert_eq!(
-                buffer.text(),
+                buffer.read_with(cx, |buffer, _| buffer.text()),
                 "for i in range(10): # comment 1\n  print(i) # comment 2\n"
             );
 
             // reset to a simple if statement
-            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
+            });
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
 
             // dedent "else" on the line after a closing paren
-            append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
-
-            buffer
-        });
+            append(&buffer, "\n  else:\n", cx).await;
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "if a:\n  b(\n  )\nelse:\n  "
+            );
+        }
     }
 
     #[test]

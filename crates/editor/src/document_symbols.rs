@@ -526,7 +526,10 @@ mod tests {
                 },
             );
 
-        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        let state = "fn maˇin() {\n    let x = 1;\n}\n";
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
 
         // Step 1: With tree-sitter (default), breadcrumbs use tree-sitter outline
@@ -880,7 +883,10 @@ mod tests {
                 }
             });
 
-        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        let state = "fn maˇin() {\n    let x = 1;\n}\n";
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
 
         // Tree-sitter should be used instead
@@ -946,7 +952,10 @@ mod tests {
                 .languages()
                 .set_theme(cx.theme().clone());
         });
-        cx.set_state("fn maˇin() {}");
+        let state = "fn maˇin() {}";
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
 
         cx.update_editor(|editor, _window, cx| {
@@ -1091,7 +1100,10 @@ mod tests {
                 },
             );
 
-        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        let state = "fn maˇin() {\n    let x = 1;\n}\n";
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
 
         cx.update_editor(|editor, _window, cx| {

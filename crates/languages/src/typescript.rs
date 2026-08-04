@@ -974,6 +974,9 @@ mod tests {
             .unindent();
 
             let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
             let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
             assert_eq!(
                 outline
@@ -1033,6 +1036,9 @@ mod tests {
             .unindent();
 
             let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
             let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
             assert_eq!(
                 outline
@@ -1393,6 +1399,9 @@ mod tests {
             .unindent();
 
             let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
             let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
             assert_eq!(
                 outline
@@ -1464,6 +1473,9 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
         let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline

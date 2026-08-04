@@ -1697,6 +1697,7 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
         \"#;
         }ˇ
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.fold_at_level(&FoldAtLevel(1), window, cx);
@@ -1728,6 +1729,7 @@ async fn test_fold_with_unindented_multiline_raw_string_includes_closing_bracket
         \"#;
         }
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.fold_at_level(&FoldAtLevel(1), window, cx);
@@ -1776,6 +1778,7 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
             */
         }ˇ
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.fold_at_level(&FoldAtLevel(1), window, cx);
@@ -1806,6 +1809,7 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
             */
         }
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.fold_at_level(&FoldAtLevel(1), window, cx);
@@ -4062,6 +4066,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
     cx.set_state(r#"macro!("// ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -4074,6 +4079,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     });
     // Deletion stops before brackets if asked to not ignore them.
     cx.assert_editor_state(r#"macro!("ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -4086,6 +4092,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     });
     // Deletion has to remove a single bracket and then stop again.
     cx.assert_editor_state(r#"macro!(ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -4098,6 +4105,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state(r#"macro!ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -4110,6 +4118,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state(r#"ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
@@ -4122,6 +4131,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state(r#"ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
@@ -4135,6 +4145,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     });
     // Brackets on the right are not paired anymore, hence deletion does not stop at them
     cx.assert_editor_state(r#"ˇ");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
@@ -4147,6 +4158,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
         );
     });
     cx.assert_editor_state(r#"ˇ"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
@@ -4161,6 +4173,7 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     cx.assert_editor_state(r#"ˇ"#);
 
     cx.set_state(r#"macro!("// ˇCOMMENT");"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
@@ -4458,6 +4471,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
     test:ˇ
     hello: bye"});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
     test:
         ˇ
@@ -4467,6 +4481,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
     test:ˇ"});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
     test:
         ˇ"});
@@ -4476,6 +4491,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
     test:
         - foo: barˇ"});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
     test:
         - foo: bar
@@ -4487,6 +4503,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
         - foo: bar
         - bar: # testˇ"});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
     test:
         - foo: bar
@@ -4499,6 +4516,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
         - foo: bar
         - bar: fooˇ"});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
     test:
         - foo: bar
@@ -4510,6 +4528,7 @@ async fn test_newline_yaml(cx: &mut TestAppContext) {
     test:
         - fooˇ"});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
     test:
         - foo
@@ -4623,8 +4642,10 @@ async fn test_newline_above(cx: &mut TestAppContext) {
             )ˇ
         ˇ);ˇ
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|e, window, cx| e.newline_above(&NewlineAbove, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         ˇ
         const a: A = (
@@ -4671,8 +4692,10 @@ async fn test_newline_below(cx: &mut TestAppContext) {
             )ˇ
         ˇ);ˇ
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|e, window, cx| e.newline_below(&NewlineBelow, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: A = (
             ˇ
@@ -5276,8 +5299,10 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /**ˇ
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
          * ˇ
@@ -5287,7 +5312,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         ˇ/**
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
 
         ˇ/**
@@ -5296,7 +5323,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /*ˇ*
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /*
         ˇ*
@@ -5305,7 +5334,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /**ˇ*/
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
          * ˇ
@@ -5315,7 +5346,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /**ˇ */
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
          * ˇ
@@ -5325,7 +5358,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /** ˇ*/
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(
             indoc! {"
         /**s
@@ -5338,6 +5373,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         // Ensure that delimiter space is preserved when newline on already
         // spaced delimiter.
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(
             indoc! {"
         /**s
@@ -5355,7 +5391,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          *ˇ
          */
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
          *
@@ -5368,7 +5406,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
         ˇ*/
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
 
@@ -5378,7 +5418,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /**ˇ/
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
         ˇ/
@@ -5388,7 +5430,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /** */ˇ
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /** */
         ˇ
@@ -5400,7 +5444,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          *
          */ˇ
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
          *
@@ -5413,7 +5459,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         /** */ textˇ
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /** */ text
         ˇ
@@ -5426,7 +5474,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          *
          */ˇtext
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         /**
          *
@@ -5439,7 +5489,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.set_state(indoc! {"
         * textˇ
     "});
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.wait_for_autoindent_applied().await;
         cx.assert_editor_state(indoc! {"
         * text
         ˇ
@@ -5453,7 +5505,9 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         /**ˇ
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         /**
         ˇ
@@ -5613,7 +5667,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         ˇ    )
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5635,7 +5691,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         ˇ    )
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         ˇ
         const a: B = (
@@ -5649,6 +5707,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     "});
     // test when all cursors are at suggested indent then tab is inserted
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
             ˇ
         const a: B = (
@@ -5674,7 +5733,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         ˇ   )
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5698,7 +5759,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
            ˇ)
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5722,7 +5785,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         ˇ   )
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5733,6 +5798,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         );
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5756,7 +5822,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
             ˇ)
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5775,7 +5843,9 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         ˇ    )
         );
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(
@@ -5834,8 +5904,10 @@ async fn test_tab_with_mixed_whitespace_rust(cx: &mut TestAppContext) {
             }
         }
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         fn a() {
             if b {
@@ -9278,6 +9350,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
+        cx.run_until_parked();
         cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
@@ -10320,6 +10393,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
 
     // Paste it at the same position.
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(),
@@ -10338,6 +10412,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
         );
     "});
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         d(
             e,
@@ -10367,6 +10442,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
 
     // Paste it at the same position.
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(),
@@ -10388,6 +10464,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
         );
     "});
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(),
@@ -10417,6 +10494,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
     // Paste it on a line with a lower indent level
     cx.update_editor(|e, window, cx| e.move_to_end(&Default::default(), window, cx));
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         const a: B = (
             c(),
@@ -10483,6 +10561,7 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
     "});
 
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         fn a() {
             b();
@@ -10503,6 +10582,7 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
     "});
 
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         fn a() {
             b();
@@ -12854,6 +12934,7 @@ async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     });
 
     cx.set_state(indoc! { r#"use mod1::{mod2::{«mod3ˇ», mod4}, mod5::{mod6, «mod7ˇ»}};"# });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
     });
@@ -12871,6 +12952,7 @@ async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
           // it
           // works
     }"# });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     let buffer = cx.update_multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap());
     let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
@@ -13070,7 +13152,8 @@ async fn test_autoindent(cx: &mut TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
 
-    editor.update_in(cx, |editor, window, cx| {
+    let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+    cx.update_editor(|editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 MultiBufferOffset(5)..MultiBufferOffset(5),
@@ -13079,6 +13162,9 @@ async fn test_autoindent(cx: &mut TestAppContext) {
             ])
         });
         editor.newline(&Newline, window, cx);
+    });
+    cx.wait_for_autoindent_applied().await;
+    cx.update_editor(|editor, _, cx| {
         assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
         assert_eq!(
             editor.selections.ranges(&editor.display_snapshot(cx)),
@@ -13313,13 +13399,17 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
         .await;
 
     // Position cursor at end of line containing `{`
-    editor.update_in(cx, |editor, window, cx| {
+    let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+    cx.update_editor(|editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([MultiBufferOffset(10)..MultiBufferOffset(10)]) // After "fn foo() {"
         });
         editor.newline(&Newline, window, cx);
+    });
+    cx.wait_for_autoindent_applied().await;
 
-        // With SyntaxAware, tree-sitter adds indentation for being inside `{}`
+    // With SyntaxAware, tree-sitter adds indentation for being inside `{}`
+    cx.update_editor(|editor, _, cx| {
         assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
     });
 }
@@ -13428,10 +13518,12 @@ async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) 
     });
 
     cx.set_state(r#"struct A {ˇ}"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Default::default(), window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
 
     cx.assert_editor_state(indoc!(
         "struct A {
@@ -13440,6 +13532,7 @@ async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) 
     ));
 
     cx.set_state(r#"select_biased!(ˇ)"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Default::default(), window, cx);
@@ -13448,6 +13541,7 @@ async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) 
         editor.newline(&Default::default(), window, cx);
         editor.handle_input("a", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
 
     cx.assert_editor_state(indoc!(
         "select_biased!(
@@ -13973,6 +14067,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut TestAppContext) {
         "#
         .unindent(),
     );
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     // Precondition: different languages are active at different locations.
     cx.update_editor(|editor, window, cx| {
@@ -14069,6 +14164,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut TestAppContext) {
         "#
         .unindent(),
     );
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("<", window, cx);
@@ -14226,6 +14322,7 @@ async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
         def main():
             items = ['"', ˇ]
     "#});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("\"", window, cx);
     });
@@ -14239,6 +14336,7 @@ async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
         def main():
             items = ['""', ˇ]
     "#});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("\"", window, cx);
     });
@@ -14252,6 +14350,7 @@ async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
         def main():
             items = ["'", ˇ]
     "#});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("'", window, cx);
     });
@@ -14265,6 +14364,7 @@ async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
         def main():
             items = ["''", ˇ]
     "#});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("'", window, cx);
     });
@@ -14278,6 +14378,7 @@ async fn test_autoclose_quotes_with_scope_awareness(cx: &mut TestAppContext) {
         def main():
             items = ['"""', "'''''", ˇ]
     "#});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("\"", window, cx);
     });
@@ -14336,6 +14437,7 @@ async fn test_surround_backticks_in_rust(cx: &mut TestAppContext) {
         /// «Aˇ»
         fn main() {}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("`", window, cx);
     });
@@ -14351,6 +14453,7 @@ async fn test_surround_backticks_in_rust(cx: &mut TestAppContext) {
             let name = "«Jesper Kouthoofdˇ»";
         }
     "#});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("`", window, cx);
     });
@@ -18647,6 +18750,7 @@ async fn test_signature_help_delay_only_for_auto(cx: &mut TestAppContext) {
         cx,
     )
     .await;
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     let mocked_response = lsp::SignatureHelp {
         signatures: vec![lsp::SignatureInformation {
@@ -18669,6 +18773,7 @@ async fn test_signature_help_delay_only_for_auto(cx: &mut TestAppContext) {
 
         fn sample(param1: u8) {}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     // Manual trigger should show immediately without delay
     cx.update_editor(|editor, window, cx| {
@@ -18699,6 +18804,7 @@ async fn test_signature_help_delay_only_for_auto(cx: &mut TestAppContext) {
 
         fn sample(param1: u8) {}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.move_right(&MoveRight, window, cx);
     });
@@ -19038,6 +19144,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
         cx,
     )
     .await;
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     // A test that directly calls `show_signature_help`
     cx.update_editor(|editor, window, cx| {
@@ -19063,7 +19170,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
         active_signature: Some(0),
         active_parameter: Some(0),
     };
-    handle_signature_help_request(&mut cx, mocked_response).await;
+    handle_signature_help_request(&mut cx, mocked_response.clone()).await;
 
     cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
@@ -19079,26 +19186,27 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     });
 
     // When exiting outside from inside the brackets, `signature_help` is closed.
-    cx.set_state(indoc! {"
+    let state = indoc! {"
         fn main() {
             sample(ˇ);
         }
 
         fn sample(param1: u8, param2: u8) {}
-    "});
+    "};
+    cx.set_state(state);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+    cx.update_editor(|editor, window, cx| {
+        editor.show_signature_help(&ShowSignatureHelp, window, cx);
+    });
+    handle_signature_help_request(&mut cx, mocked_response).await;
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
 
     cx.update_editor(|editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)])
         });
     });
-
-    let mocked_response = lsp::SignatureHelp {
-        signatures: Vec::new(),
-        active_signature: None,
-        active_parameter: None,
-    };
-    handle_signature_help_request(&mut cx, mocked_response).await;
 
     cx.condition(|editor, _| !editor.signature_help_state.is_shown())
         .await;
@@ -19110,11 +19218,15 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     // When entering inside the brackets from outside, `show_signature_help` is automatically called.
     cx.set_state(indoc! {"
         fn main() {
-            sample(ˇ);
+            sampleˇ();
         }
 
         fn sample(param1: u8, param2: u8) {}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+    cx.update_editor(|editor, window, cx| {
+        editor.move_right(&MoveRight, window, cx);
+    });
 
     let mocked_response = lsp::SignatureHelp {
         signatures: vec![lsp::SignatureInformation {
@@ -19150,6 +19262,10 @@ async fn test_signature_help(cx: &mut TestAppContext) {
 
         fn sample(param1: u8, param2: u8) {}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+    cx.update_editor(|editor, window, cx| {
+        editor.show_signature_help(&ShowSignatureHelp, window, cx);
+    });
 
     let mocked_response = lsp::SignatureHelp {
         signatures: vec![lsp::SignatureInformation {
@@ -19249,6 +19365,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     handle_signature_help_request(&mut cx, mocked_response.clone()).await;
     cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
+
     cx.update_editor(|editor, _, cx| {
         editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
     });
@@ -22629,7 +22746,8 @@ async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
 
-    editor.update_in(cx, |editor, window, cx| {
+    let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+    cx.update_editor(|editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
@@ -22638,7 +22756,10 @@ async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
             ])
         });
         editor.newline(&Newline, window, cx);
+    });
+    cx.wait_for_autoindent_applied().await;
 
+    cx.update_editor(|editor, _, cx| {
         assert_eq!(
             editor.buffer().read(cx).read(cx).text(),
             concat!(
@@ -25572,6 +25693,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
         });
 
     cx.set_state(r#"<p class="bgˇ" />"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     // Trigger completion when typing a dash, because the dash is an extra
     // word character in the 'element' scope, which contains the cursor.
@@ -25603,6 +25725,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     // When filtering completions, consider the character after the '-' to
     // be the start of a subword.
     cx.set_state(r#"<p class="yelˇ" />"#);
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
@@ -30305,6 +30428,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
     let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let editor = cx.new_window_entity(|window, cx| {
@@ -33244,7 +33368,9 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         <span>ˇ</span>
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         <span>
         ˇ
@@ -33254,7 +33380,9 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         <span><span></span>ˇ</span>
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         <span><span></span>
         ˇ</span>
@@ -33264,7 +33392,9 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
         <span>ˇ
         </span>
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         <span>
         ˇ
@@ -34534,6 +34664,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
         ˇ    else:
         ˇ        log('for else')
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
@@ -34588,6 +34719,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestApp
         ˇ        def status():
         ˇ            return 0
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
@@ -34994,6 +35126,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
         ˇ    done
         ˇ}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
@@ -35047,6 +35180,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
         ˇ    esac
         ˇ}
     "});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
@@ -36839,9 +36973,11 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
             - [ˇ] Item 2.b
         "
     });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("x", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
         - [ ] Item 1
@@ -36860,9 +36996,11 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
             - [x] Item 2.a
             - [x] Item 2.bˇ"
     });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         - [ ] Item 1
             - [ ] Item 1.a
@@ -36876,6 +37014,7 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("Item 2.c", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
         - [ ] Item 1
@@ -36894,9 +37033,11 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
             1. Item 2.a
             2. Item 2.bˇ"
     });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         1. Item 1
             1. Item 1.a
@@ -36910,6 +37051,7 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("Item 2.c", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
         1. Item 1
@@ -36926,9 +37068,11 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
             - Item 1.a
             - Item 1.a
         ˇ"});
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("-", window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
         - Item 1
@@ -36940,9 +37084,11 @@ async fn test_markdown_indents(cx: &mut gpui::TestAppContext) {
     cx.set_state(indoc! {"
         > Item 1ˇ"
     });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
     cx.update_editor(|editor, window, cx| {
         editor.newline(&Newline, window, cx);
     });
+    cx.wait_for_autoindent_applied().await;
     cx.assert_editor_state(indoc! {"
         > Item 1
         ˇ"
@@ -38314,6 +38460,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                 buffer.set_language(Some(rust_lang()), cx);
             })
     });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     let fn_foo = || empty_range(0, 0);
     let impl_bar = || empty_range(4, 0);
@@ -38473,6 +38620,7 @@ async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestApp
                 buffer.set_language(Some(rust_lang()), cx);
             })
     });
+    cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
 
     let text_origin_x = cx.update_editor(|editor, _, _| {
         editor
@@ -42543,6 +42691,7 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
 #[track_caller]
 fn assert_select_delimiters(around: bool, before: &str, after: &str, cx: &mut EditorTestContext) {
     let _state_context = cx.set_state(before);
+    cx.run_until_parked();
 
     if around {
         cx.dispatch_action(SelectAroundDelimiters);
@@ -42695,12 +42844,14 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
 
     let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.run_until_parked();
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
 
     let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.run_until_parked();
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
     cx.dispatch_action(SelectAroundDelimiters);
@@ -42709,6 +42860,7 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo«([1, 2, 3])ˇ»;");
 
     let _state_context = cx.set_state("foo(x, { ˇa: 1 });");
+    cx.run_until_parked();
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(x, {« a: 1 ˇ»});");
     cx.dispatch_action(SelectAroundDelimiters);

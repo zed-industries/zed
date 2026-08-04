@@ -138,11 +138,14 @@ mod tests {
         .await;
 
         // positioning cursor inside bracket highlights both
-        cx.set_state(indoc! {r#"
+        let state = indoc! {r#"
             pub fn test("Test ˇargument") {
                 another_test(1, 2, 3);
             }
-        "#});
+        "#};
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
@@ -153,11 +156,14 @@ mod tests {
         "#},
         );
 
-        cx.set_state(indoc! {r#"
+        let state = indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, ˇ2, 3);
             }
-        "#});
+        "#};
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
@@ -168,11 +174,14 @@ mod tests {
         "#},
         );
 
-        cx.set_state(indoc! {r#"
+        let state = indoc! {r#"
             pub fn test("Test argument") {
                 anotherˇ_test(1, 2, 3);
             }
-        "#});
+        "#};
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
@@ -184,11 +193,14 @@ mod tests {
         );
 
         // positioning outside of brackets removes highlight
-        cx.set_state(indoc! {r#"
+        let state = indoc! {r#"
             pub fˇn test("Test argument") {
                 another_test(1, 2, 3);
             }
-        "#});
+        "#};
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,
@@ -200,11 +212,14 @@ mod tests {
         );
 
         // non empty selection dismisses highlight
-        cx.set_state(indoc! {r#"
+        let state = indoc! {r#"
             pub fn test("Te«st argˇ»ument") {
                 another_test(1, 2, 3);
             }
-        "#});
+        "#};
+        cx.set_state(state);
+        cx.update_buffer(|buffer, _| buffer.parsing_idle()).await;
+        cx.set_selections_state(state);
         cx.run_until_parked();
         cx.assert_editor_text_highlights(
             HighlightKey::MatchingBracket,

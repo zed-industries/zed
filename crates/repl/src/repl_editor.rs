@@ -830,60 +830,64 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_markdown_code_blocks(cx: &mut App) {
+    async fn test_markdown_code_blocks(cx: &mut gpui::TestAppContext) {
         use crate::kernels::LocalKernelSpecification;
         use jupyter_protocol::JupyterKernelspec;
 
-        // Initialize settings
-        settings::init(cx);
-        editor::init(cx);
+        let (language_registry, markdown) = cx.update(|cx| {
+            // Initialize settings
+            settings::init(cx);
+            editor::init(cx);
 
-        // Initialize the ReplStore with a fake filesystem
-        let fs = Arc::new(project::RealFs::new(None, cx.background_executor().clone()));
-        ReplStore::init(fs, cx);
+            // Initialize the ReplStore with a fake filesystem
+            let fs = Arc::new(project::RealFs::new(None, cx.background_executor().clone()));
+            ReplStore::init(fs, cx);
 
-        // Add mock kernel specifications for TypeScript and Python
-        let store = ReplStore::global(cx);
-        store.update(cx, |store, cx| {
-            let typescript_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
-                name: "typescript".into(),
-                kernelspec: JupyterKernelspec {
-                    argv: vec![],
-                    display_name: "TypeScript".into(),
-                    language: "typescript".into(),
-                    interrupt_mode: None,
-                    metadata: None,
-                    env: None,
-                },
-                path: std::path::PathBuf::new(),
+            // Add mock kernel specifications for TypeScript and Python
+            let store = ReplStore::global(cx);
+            store.update(cx, |store, cx| {
+                let typescript_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
+                    name: "typescript".into(),
+                    kernelspec: JupyterKernelspec {
+                        argv: vec![],
+                        display_name: "TypeScript".into(),
+                        language: "typescript".into(),
+                        interrupt_mode: None,
+                        metadata: None,
+                        env: None,
+                    },
+                    path: std::path::PathBuf::new(),
+                });
+
+                let python_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
+                    name: "python".into(),
+                    kernelspec: JupyterKernelspec {
+                        argv: vec![],
+                        display_name: "Python".into(),
+                        language: "python".into(),
+                        interrupt_mode: None,
+                        metadata: None,
+                        env: None,
+                    },
+                    path: std::path::PathBuf::new(),
+                });
+
+                store.set_kernel_specs_for_testing(vec![typescript_spec, python_spec], cx);
             });
 
-            let python_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
-                name: "python".into(),
-                kernelspec: JupyterKernelspec {
-                    argv: vec![],
-                    display_name: "Python".into(),
-                    language: "python".into(),
-                    interrupt_mode: None,
-                    metadata: None,
-                    env: None,
-                },
-                path: std::path::PathBuf::new(),
-            });
-
-            store.set_kernel_specs_for_testing(vec![typescript_spec, python_spec], cx);
+            let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+            let typescript = languages::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            );
+            let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
+            let language_registry =
+                Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+            language_registry.add(markdown.clone());
+            language_registry.add(typescript);
+            language_registry.add(python);
+            (language_registry, markdown)
         });
-
-        let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
-        let typescript = languages::language(
-            "typescript",
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        );
-        let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
-        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-        language_registry.add(markdown.clone());
-        language_registry.add(typescript);
-        language_registry.add(python);
 
         // Two code blocks intersecting with selection
         let buffer = cx.new(|cx| {
@@ -907,9 +911,11 @@ mod tests {
             buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
-        let snapshot = buffer.read(cx).snapshot();
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx);
+        let (snippets, _) =
+            cx.update(|cx| runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -952,9 +958,11 @@ mod tests {
             buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
-        let snapshot = buffer.read(cx).snapshot();
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx);
+        let (snippets, _) =
+            cx.update(|cx| runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -991,9 +999,11 @@ mod tests {
             buffer.set_language(Some(markdown.clone()), cx);
             buffer
         });
-        let snapshot = buffer.read(cx).snapshot();
+        buffer.update(cx, |buffer, _| buffer.parsing_idle()).await;
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx);
+        let (snippets, _) =
+            cx.update(|cx| runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx));
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())

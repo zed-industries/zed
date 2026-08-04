@@ -1133,7 +1133,7 @@ impl Buffer {
             reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: if cfg!(any(test, feature = "test-support")) {
-                Some(Duration::from_millis(10))
+                None
             } else {
                 Some(Duration::from_millis(1))
             },

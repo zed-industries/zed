@@ -2019,7 +2019,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_go_outline_includes_methods_with_receiver_forms(cx: &mut TestAppContext) {
+    async fn test_go_outline_includes_methods_with_receiver_forms(cx: &mut TestAppContext) {
         let language = go_language();
 
         let source = r#"
@@ -2051,6 +2051,9 @@ mod tests {
 
         let buffer =
             cx.new(|cx| crate::Buffer::local(source.clone(), cx).with_language(language, cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
         let outline = snapshot.outline(None);
 

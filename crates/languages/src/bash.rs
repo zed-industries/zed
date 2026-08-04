@@ -175,12 +175,35 @@ impl LspAdapter for BashLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, Entity, TestAppContext};
     use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
     use unindent::Unindent;
     use util::test::marked_text_offsets;
+
+    async fn wait_for_autoindent(buffer: &Entity<Buffer>, cx: &mut TestAppContext) {
+        if let Some(waiter) = buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied()) {
+            assert!(waiter.await.is_ok(), "auto-indent request was canceled");
+        }
+    }
+
+    async fn expect_indents_to(
+        buffer: &Entity<Buffer>,
+        cx: &mut TestAppContext,
+        input: &str,
+        expected: &str,
+    ) {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(0..buffer.len(), input)],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+        });
+        wait_for_autoindent(buffer, cx).await;
+        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), expected);
+    }
 
     #[gpui::test]
     async fn test_bash_autoindent(cx: &mut TestAppContext) {
@@ -196,90 +219,92 @@ mod tests {
             });
         });
 
-        cx.new(|cx| {
-            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
 
-            let expect_indents_to =
-                |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {
-                    buffer.edit(
-                        [(0..buffer.len(), input)],
-                        Some(AutoindentMode::EachLine),
-                        cx,
-                    );
-                    assert_eq!(buffer.text(), expected);
-                };
-
+        {
             // Do not indent after shebang
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "#!/usr/bin/env bash\n#",
                 "#!/usr/bin/env bash\n#",
-            );
+            )
+            .await;
 
             // indent function correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "function name() {\necho \"Hello, World!\"\n}",
                 "function name() {\n  echo \"Hello, World!\"\n}",
-            );
+            )
+            .await;
 
             // indent if-else correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "if true;then\nfoo\nelse\nbar\nfi",
                 "if true;then\n  foo\nelse\n  bar\nfi",
-            );
+            )
+            .await;
 
             // indent if-elif-else correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "if true;then\nfoo\nelif true;then\nbar\nelse\nbar\nfi",
                 "if true;then\n  foo\nelif true;then\n  bar\nelse\n  bar\nfi",
-            );
+            )
+            .await;
 
             // indent case-when-else correctly
             expect_indents_to(
-                &mut buffer,
-                cx,
-                "case $1 in\nfoo) echo \"Hello, World!\";;\n*) echo \"Unknown argument\";;\nesac",
-                "case $1 in\n  foo) echo \"Hello, World!\";;\n  *) echo \"Unknown argument\";;\nesac",
-            );
+            &buffer,
+            cx,
+            "case $1 in\nfoo) echo \"Hello, World!\";;\n*) echo \"Unknown argument\";;\nesac",
+            "case $1 in\n  foo) echo \"Hello, World!\";;\n  *) echo \"Unknown argument\";;\nesac",
+        )
+        .await;
 
             // indent for-loop correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "for i in {1..10};do\nfoo\ndone",
                 "for i in {1..10};do\n  foo\ndone",
-            );
+            )
+            .await;
 
             // indent while-loop correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "while true; do\nfoo\ndone",
                 "while true; do\n  foo\ndone",
-            );
+            )
+            .await;
 
             // indent array correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "array=(\n1\n2\n3\n)",
                 "array=(\n  1\n  2\n  3\n)",
-            );
+            )
+            .await;
 
             // indents non-"function" function correctly
             expect_indents_to(
-                &mut buffer,
+                &buffer,
                 cx,
                 "foo() {\necho \"Hello, World!\"\n}",
                 "foo() {\n  echo \"Hello, World!\"\n}",
-            );
+            )
+            .await;
 
             let (input, offsets) = marked_text_offsets(
                 &r#"
@@ -292,17 +317,28 @@ mod tests {
                 .unindent(),
             );
 
-            buffer.edit([(0..buffer.len(), input)], None, cx);
-            buffer.edit(
-                [(offsets[0]..offsets[0], "\n")],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
-            buffer.edit(
-                [(offsets[0] + 3..offsets[0] + 3, "elif")],
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), input)], None, cx);
+            });
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(offsets[0]..offsets[0], "\n")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+            });
+            wait_for_autoindent(&buffer, cx).await;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(offsets[0] + 3..offsets[0] + 3, "elif")],
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
+            });
+            wait_for_autoindent(&buffer, cx).await;
             let expected = r#"
                 if foo; then
                   1
@@ -313,9 +349,10 @@ mod tests {
                 "#
             .unindent();
 
-            pretty_assertions::assert_eq!(buffer.text(), expected);
-
-            buffer
-        });
+            pretty_assertions::assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                expected
+            );
+        }
     }
 }
