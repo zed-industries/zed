@@ -1537,7 +1537,7 @@ fn render_settings_item_link(
                     .left(rems_from_px(-8.5_f32))
             } else {
                 this.visible_on_hover("setting-item")
-                    .left(rems_from_px(-22._f32))
+                    .left(rems_from_px(-22.0_f32))
             }
         })
         .child(
