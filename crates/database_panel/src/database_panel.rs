@@ -5,6 +5,7 @@ mod schema;
 use std::sync::Arc;
 
 use anyhow::Result;
+use collections::HashSet;
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorEvent};
 use fs::Fs;
@@ -54,6 +55,10 @@ actions!(
         RunQuery,
         /// Focuses the database panel's filter field.
         FocusFilter,
+        /// Indexes every configured connection: all databases, their tables,
+        /// and their columns, so filtering and completions cover the whole
+        /// schema without expanding entries first.
+        IndexAllDatabases,
     ]
 );
 
@@ -217,6 +222,10 @@ pub struct DatabasePanel {
     /// Whether the previous entry rebuild used a filter query, to detect the
     /// moment the filter is cleared and reveal the selection in the tree.
     filter_was_active: bool,
+    /// Connections currently being fully indexed by [`IndexAllDatabases`];
+    /// schema load completions keep advancing these until every database,
+    /// table, and column is loaded.
+    indexing: HashSet<usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -300,6 +309,7 @@ impl DatabasePanel {
                 context_menu: None,
                 filter_editor,
                 filter_was_active: false,
+                indexing: HashSet::default(),
                 _subscriptions: subscriptions,
             };
             this.settings_changed(cx);
@@ -315,6 +325,9 @@ impl DatabasePanel {
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let contents = DatabasePanelSettings::get_global(cx).connections.clone();
+        // Connection indices may shift when the settings change, so the
+        // index-keyed set would point at the wrong connections.
+        self.indexing.clear();
         let mut previous = std::mem::take(&mut self.connections);
         for (content_index, content) in contents.iter().enumerate() {
             let Some((name, config)) = resolve_connection(content) else {
@@ -624,6 +637,91 @@ impl DatabasePanel {
         }
     }
 
+    /// Fully indexes every connection, including ones that were never
+    /// expanded: databases, then tables, then columns, one bulk request per
+    /// database. Unlike the implicit filter indexing, this connects everywhere
+    /// on purpose, so filtering and completions see the complete schema.
+    fn index_all_databases(
+        &mut self,
+        _: &IndexAllDatabases,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for connection_ix in 0..self.connections.len() {
+            self.indexing.insert(connection_ix);
+            let Some(connection) = self.connections.get(connection_ix) else {
+                continue;
+            };
+            match &connection.databases {
+                // Explicitly requesting an index retries earlier failures;
+                // the continuation never does, to avoid retry loops.
+                LoadState::NotLoaded | LoadState::Error(_) => {
+                    self.load_databases(connection_ix, cx)
+                }
+                LoadState::Loading => {}
+                LoadState::Loaded(_) => self.continue_indexing(connection_ix, cx),
+            }
+        }
+        cx.notify();
+    }
+
+    /// Advances the full indexing of `connection_ix` after a schema load
+    /// completes, until every database, table, and column is loaded. Entries
+    /// whose load failed are left in their error state rather than retried.
+    fn continue_indexing(&mut self, connection_ix: usize, cx: &mut Context<Self>) {
+        if !self.indexing.contains(&connection_ix) {
+            return;
+        }
+        let Some(connection) = self.connections.get(connection_ix) else {
+            self.indexing.remove(&connection_ix);
+            return;
+        };
+        let mut pending = false;
+        match &connection.databases {
+            LoadState::Loading => pending = true,
+            LoadState::NotLoaded | LoadState::Error(_) => {}
+            LoadState::Loaded(databases) => {
+                for database_ix in 0..databases.len() {
+                    let Some(connection) = self.connections.get(connection_ix) else {
+                        break;
+                    };
+                    let LoadState::Loaded(databases) = &connection.databases else {
+                        break;
+                    };
+                    let Some(database) = databases.get(database_ix) else {
+                        break;
+                    };
+                    match &database.tables {
+                        LoadState::NotLoaded => {
+                            pending = true;
+                            self.load_tables(connection_ix, database_ix, cx);
+                        }
+                        LoadState::Loading => pending = true,
+                        LoadState::Error(_) => {}
+                        LoadState::Loaded(tables) => {
+                            if tables
+                                .iter()
+                                .any(|table| matches!(table.columns, LoadState::NotLoaded))
+                            {
+                                pending = true;
+                                self.load_all_columns(connection_ix, database_ix, cx);
+                            } else if tables
+                                .iter()
+                                .any(|table| matches!(table.columns, LoadState::Loading))
+                            {
+                                pending = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !pending {
+            self.indexing.remove(&connection_ix);
+            cx.notify();
+        }
+    }
+
     fn load_all_columns(
         &mut self,
         connection_ix: usize,
@@ -693,6 +791,7 @@ impl DatabasePanel {
                 }
                 this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
+                this.continue_indexing(connection_ix, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -943,6 +1042,7 @@ impl DatabasePanel {
                 };
                 this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
+                this.continue_indexing(connection_ix, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -994,6 +1094,7 @@ impl DatabasePanel {
                 };
                 this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
+                this.continue_indexing(connection_ix, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1046,6 +1147,7 @@ impl DatabasePanel {
                 };
                 this.save_schema_cache(connection_ix, cx);
                 this.rebuild_entries(cx);
+                this.continue_indexing(connection_ix, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1839,6 +1941,26 @@ impl DatabasePanel {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(if self.indexing.is_empty() {
+                        IconButton::new("database-panel-index-all", IconName::DatabaseZap)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Index All Databases",
+                                &IndexAllDatabases,
+                                &self.focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.index_all_databases(&IndexAllDatabases, window, cx)
+                            }))
+                            .into_any_element()
+                    } else {
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_rotate_animation(2)
+                            .into_any_element()
+                    })
                     .child(
                         IconButton::new("database-panel-refresh", IconName::RotateCw)
                             .icon_size(IconSize::Small)
@@ -1905,6 +2027,7 @@ impl Render for DatabasePanel {
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::refresh))
+            .on_action(cx.listener(Self::index_all_databases))
             .on_action(cx.listener(Self::copy_name))
             .on_action(cx.listener(Self::add_connection))
             .on_action(cx.listener(Self::remove_connection))
