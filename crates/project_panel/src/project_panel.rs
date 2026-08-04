@@ -73,10 +73,11 @@ use util::{
 };
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
-    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings,
+    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings, copy_remote_file_url,
     dock::{DockPosition, Panel, PanelEvent},
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    open_file_on_remote,
 };
 use worktree::CreatedEntry;
 use zed_actions::{
@@ -1198,6 +1199,16 @@ impl ProjectPanel {
                                     )
                                     .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
+                                    })
+                                    .when(!is_dir, |menu| {
+                                        menu.action(
+                                            "Open File on Remote",
+                                            git::OpenFileOnRemote.boxed_clone(),
+                                        )
+                                        .action(
+                                            "Copy Remote File URL",
+                                            git::CopyRemoteFileUrl.boxed_clone(),
+                                        )
                                     })
                             })
                             .when(!should_hide_rename, |menu| {
@@ -3788,6 +3799,53 @@ impl ProjectPanel {
         if !file_paths.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(file_paths.join("\n")));
         }
+    }
+
+    fn open_file_on_remote(
+        &mut self,
+        _: &git::OpenFileOnRemote,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_file_project_path(cx) else {
+            return;
+        };
+        open_file_on_remote(
+            self.project.clone(),
+            project_path,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    fn copy_remote_file_url(
+        &mut self,
+        _: &git::CopyRemoteFileUrl,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_file_project_path(cx) else {
+            return;
+        };
+        copy_remote_file_url(
+            self.project.clone(),
+            project_path,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let (worktree, entry) = self.selected_sub_entry(cx)?;
+        if entry.is_dir() {
+            return None;
+        }
+        Some(ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: entry.path.clone(),
+        })
     }
 
     fn reveal_in_finder(
@@ -7101,6 +7159,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::open_file_on_remote))
+                .on_action(cx.listener(Self::copy_remote_file_url))
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))

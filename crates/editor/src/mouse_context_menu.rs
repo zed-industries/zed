@@ -310,7 +310,7 @@ pub fn deploy_context_menu(
                 )
                 .action_disabled_when(
                     !has_git_repo,
-                    "Copy Permalink",
+                    "Copy Remote File URL",
                     Box::new(CopyPermalinkToLine),
                 )
                 .action_disabled_when(
