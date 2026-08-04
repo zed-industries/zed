@@ -434,6 +434,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 
     init_cursor_hide_mode(cx);
+    init_app_appearance(cx);
     init_reduce_motion(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
@@ -918,15 +919,45 @@ fn register_actions(
              _: &input_latency_ui::DumpInputLatencyHistogram,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
-                let report =
-                    input_latency_ui::format_input_latency_report(window, cx);
                 let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&report, None, true, cx)
-                });
-                let editor =
-                    cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
-                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                // In a collab session the report buffer is visible to other
+                // participants, so attribute the data to this user's machine.
+                let reported_by = if project.read(cx).is_shared()
+                    || project.read(cx).is_via_collab()
+                {
+                    workspace
+                        .user_store()
+                        .read(cx)
+                        .current_user()
+                        .map(|user| user.username.to_string())
+                } else {
+                    None
+                };
+                let report_data = input_latency_ui::snapshot_input_latency_report(
+                    window,
+                    reported_by,
+                    cx,
+                );
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let report = cx
+                        .background_spawn(async move {
+                            input_latency_ui::format_input_latency_report(&report_data)
+                        })
+                        .await;
+                    let buffer = project
+                        .update(cx, |project, cx| project.create_buffer(None, true, cx))
+                        .await?;
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(report, cx);
+                    });
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let editor = cx
+                            .new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                        workspace
+                            .add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    })
+                })
+                .detach_and_log_err(cx);
             },
         )
         .register_action(
@@ -936,39 +967,42 @@ fn register_actions(
              cx: &mut Context<Workspace>| {
                 let json = accessibility_tree_dump(window);
                 let language = workspace.app_state().languages.language_for_name("JSON");
+                let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
                     let language = language.await.log_err();
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer(&json, language, true, cx)
-                            });
-                            let title = "Accessibility Tree".to_string();
-                            let buffer = cx.new(|cx| {
-                                MultiBuffer::singleton(buffer, cx).with_title(title.clone())
-                            });
-                            let editor = cx.new(|cx| {
-                                let mut editor = Editor::for_multibuffer(
-                                    buffer,
-                                    Some(project),
-                                    window,
-                                    cx,
-                                );
-                                editor.set_breadcrumb_header(title);
-                                editor
-                            });
-                            workspace.add_item_to_active_pane(
-                                Box::new(editor),
-                                None,
-                                true,
+                    let buffer = project
+                        .update(cx, |project, cx| {
+                            project.create_buffer(language, true, cx)
+                        })
+                        .await?;
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_text(json, cx);
+                    });
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let title = "Accessibility Tree".to_string();
+                        let buffer = cx.new(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title(title.clone())
+                        });
+                        let editor = cx.new(|cx| {
+                            let mut editor = Editor::for_multibuffer(
+                                buffer,
+                                Some(project),
                                 window,
                                 cx,
                             );
-                        })
-                        .log_err();
+                            editor.set_breadcrumb_header(title);
+                            editor
+                        });
+                        workspace.add_item_to_active_pane(
+                            Box::new(editor),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
                 })
-                .detach();
+                .detach_and_log_err(cx);
             },
         )
         .register_action(
@@ -1064,6 +1098,12 @@ fn register_actions(
             if workspace.project().read(cx).is_local() {
                 return;
             }
+            let create_new_window = action.create_new_window.unwrap_or_else(|| {
+                matches!(
+                    WorkspaceSettings::get_global(cx).default_open_behavior,
+                    DefaultOpenBehavior::NewWindow
+                )
+            });
             telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
@@ -1082,7 +1122,13 @@ fn register_actions(
                 };
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
-                        open_new_ssh_project_from_project(this, paths, window, cx)
+                        open_new_ssh_project_from_project(
+                            this,
+                            paths,
+                            create_new_window,
+                            window,
+                            cx,
+                        )
                     })
                     .log_err()
                 {
@@ -2018,6 +2064,24 @@ fn init_cursor_hide_mode(cx: &mut App) {
     cx.observe_global::<SettingsStore>(apply).detach();
 }
 
+fn init_app_appearance(cx: &mut App) {
+    // Force the native window chrome (border + titlebar) to match the selected theme.
+    // `System` follows the OS (no override); any other theme forces its appearance, so a
+    // dark theme doesn't render a light window border when the system is in light mode.
+    let apply = |cx: &mut App| {
+        let appearance = match ThemeSettings::get_global(cx).theme.mode() {
+            Some(theme_settings::ThemeAppearanceMode::System) => None,
+            _ => Some(match cx.theme().appearance() {
+                theme::Appearance::Light => gpui::WindowAppearance::Light,
+                theme::Appearance::Dark => gpui::WindowAppearance::Dark,
+            }),
+        };
+        cx.set_window_appearance(appearance);
+    };
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
 #[derive(Copy, Clone, Debug, settings::RegisterSetting)]
 struct ReduceMotionSetting(settings::ReduceMotionMode);
 
@@ -2361,6 +2425,7 @@ fn filter_disabled_ai_bindings(bindings: Vec<KeyBinding>, cx: &App) -> Vec<KeyBi
 pub fn open_new_ssh_project_from_project(
     workspace: &mut Workspace,
     paths: Vec<PathBuf>,
+    create_new_window: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
@@ -2369,6 +2434,11 @@ pub fn open_new_ssh_project_from_project(
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();
+    let requesting_window = if create_new_window {
+        None
+    } else {
+        window.window_handle().downcast::<MultiWorkspace>()
+    };
     cx.spawn_in(window, async move |_, cx| {
         open_remote_project(
             connection_options,
@@ -2376,6 +2446,7 @@ pub fn open_new_ssh_project_from_project(
             app_state,
             workspace::OpenOptions {
                 workspace_matching: workspace::WorkspaceMatching::None,
+                requesting_window,
                 ..Default::default()
             },
             cx,
@@ -2789,15 +2860,21 @@ mod tests {
     use editor::{
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
+    use extension::ExtensionHostProxy;
+    use fs::FakeFs;
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, TestAppContext,
         UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
     };
+    use http_client::BlockedHttpClient;
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
+    use node_runtime::NodeRuntime;
     use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath};
     use prompt_store::PromptBuilder;
+    use remote::RemoteClient;
+    use remote_server::{HeadlessAppState, HeadlessProject};
     use semver::Version;
     use serde_json::json;
     use settings::{SaturatingBool, SettingsStore, watch_config_file};
@@ -2877,6 +2954,116 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_remote_from_existing_connection_reuses_window(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+        });
+
+        let (connection_options, server_session, connect_guard) =
+            RemoteClient::fake_server(cx, server_cx);
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "project": {},
+                    "other-project": {},
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+        let extension_host_proxy = Arc::new(ExtensionHostProxy::new());
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs,
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            connection_options,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("opening the initial remote project should succeed");
+        executor.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let remote_client = workspace
+                        .project()
+                        .read(cx)
+                        .remote_client()
+                        .expect("initial project should have a remote client");
+                    remote_client.update(cx, |remote_client, cx| {
+                        remote_client.force_server_not_running(cx);
+                    });
+                });
+            })
+            .unwrap();
+        executor.run_until_parked();
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, _cx| {
+                    workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                        let (sender, receiver) = futures::channel::oneshot::channel();
+                        sender
+                            .send(Some(vec![PathBuf::from(path!("/other-project"))]))
+                            .expect("path prompt receiver should be open");
+                        receiver
+                    }));
+                });
+                window.dispatch_action(
+                    Box::new(zed_actions::OpenRemote {
+                        from_existing_connection: true,
+                        create_new_window: Some(false),
+                    }),
+                    cx,
+                );
+            })
+            .unwrap();
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "create_new_window: false should reuse the current window"
+        );
+        cx.simulate_prompt_answer("Cancel");
+        executor.run_until_parked();
     }
 
     #[gpui::test]
@@ -5585,6 +5772,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
+                "copilot_edit_predictions",
                 "csv",
                 "debug_panel",
                 "debugger",
@@ -5838,7 +6026,6 @@ mod tests {
             outline_panel::init(cx);
             terminal_view::init(cx);
             copilot_chat::init(
-                app_state.fs.clone(),
                 app_state.client.http_client(),
                 copilot_chat::CopilotChatConfiguration::default(),
                 cx,

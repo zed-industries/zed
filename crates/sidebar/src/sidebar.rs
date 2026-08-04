@@ -69,7 +69,7 @@ use workspace::{
     notifications::NotificationId, sidebar_side_context_menu,
 };
 
-use git_ui::worktree_service::{RemoteBranchName, worktree_create_targets};
+use git_ui_core::worktree_service::{RemoteBranchName, worktree_create_targets};
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
 
@@ -748,7 +748,7 @@ fn create_worktree_in_workspace(
 ) {
     workspace.update(cx, |workspace, cx| {
         let focused_dock = workspace.focused_dock_position(window, cx);
-        git_ui::worktree_service::handle_create_worktree(
+        git_ui_core::worktree_service::handle_create_worktree(
             workspace,
             &CreateWorktree {
                 worktree_name: None,
@@ -7502,8 +7502,10 @@ impl Sidebar {
 
         h_flex()
             .h(header_height)
-            .mt_px()
-            .pb_px()
+            .map(|header| match window.window_decorations() {
+                Decorations::Client { .. } => header.mt(px(-1.)),
+                Decorations::Server => header.mt_px().pb_px(),
+            })
             .when(left_window_controls, |this| {
                 this.children(Self::render_left_window_controls(window, cx))
             })
