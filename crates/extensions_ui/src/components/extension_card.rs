@@ -146,7 +146,7 @@ impl ExtensionCard {
             description: extension.description.clone().map(Into::into),
             authors: extension.authors.join(", ").into(),
             repository_url: extension.repository.clone().map(Into::into),
-            repository_icon: IconName::Github,
+            repository_icon: IconName::Link,
             provided_features: provided_feature_labels(extension.provides()),
             source: ExtensionCardSource::Dev,
         };
@@ -171,7 +171,7 @@ impl ExtensionCard {
             description: extension.manifest.description.clone().map(Into::into),
             authors: extension.manifest.authors.join(", ").into(),
             repository_url: Some(extension.manifest.repository.clone().into()),
-            repository_icon: IconName::Github,
+            repository_icon: IconName::Link,
             provided_features: provided_feature_labels(extension.manifest.provides.iter().copied()),
             source: ExtensionCardSource::Remote {
                 status,
