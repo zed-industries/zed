@@ -31,11 +31,15 @@ do not port pieces of its topology logic into the new design.
 2. **No tests.** Do not write unit tests, do not port the old test module
    or the `race_against_lyon` harness. Validation is visual: run the
    examples and Zed itself.
-3. **Strokes stay broken.** `PathBuilder` built with `PathStyle::Stroke`
-   should return an empty path that renders nothing. The eventual stroke
-   design is SDF capsule instances (see `trapezoid_path_rendering.md`
-   round two), *not* the winding pipeline — do not write interim code that
-   routes strokes through fills; it would be thrown away.
+3. **Strokes are fills.** (Supersedes the spike-era "strokes stay
+   broken" rule and the SDF-capsule direction, which was investigated
+   and declined: distance-to-quadratic needs a per-pixel cubic root
+   solve, joins/miters/dashes each need bespoke distance hacks, and it
+   would be a second parallel data model.) `PathBuilder::build` expands
+   `PathStyle::Stroke` into a closed filled outline — tiny-skia-path's
+   port of Skia's stroker does the offsetting, caps, joins, and dashing
+   — filled nonzero, so overlapping segments and joins union via
+   winding. The fill pipeline never knows strokes exist.
 4. Non-negotiable rendering constraints (do not trade these away for any
    simplification): no MSAA, no intermediate textures, no extra render
    passes, single blend per pixel per path, exact quadratic curves
@@ -405,7 +409,9 @@ coverage = abs(w - 2.0 * round(w * 0.5));
   evaluation (MSAA/supersampling) or exact CPU face decomposition, both
   ruled out by the ground rules. Accepted permanently, not just for the
   spike.
-- Strokes render nothing (deliberate, see ground rules).
+- Stroke outlines self-overlap at joins by design (winding union), so
+  even-odd is meaningless for them; built strokes always carry the
+  nonzero rule, and the oracle tests them under nonzero only.
 - Performance is unmeasured; `BIN_SIZE` is untuned. Get it correct first.
 
 ## Optimization ledger — standing decisions, do not re-propose without new evidence
@@ -498,6 +504,14 @@ Done:
   (Slug avoids this only by having no backdrop at all). `leg_y` is
   additionally consumed only continuously, but re-deriving it would be
   per-pixel work for a per-(tile, curve) constant.
+- Strokes as fills (`PathBuilder::stroke_outline`): stroke expansion is
+  pure CPU preprocessing in the builder — lyon path → tiny-skia path →
+  optional `dash()` → `stroke()` → ordinary nonzero fill `Path`. No new
+  instance type, no tile-model, scene, or shader changes. tiny-skia-path
+  was already a transitive dependency (resvg), so the Skia stroker came
+  at zero build cost; `STROKE_RESOLUTION_SCALE = 2.0` keeps its offset
+  approximation within `PATH_FLATTEN_TOLERANCE` device pixels up to 2x
+  displays.
 
 Deferred pending measurement (the solid-color `paths_bench` A/B, then a
 GPU capture, decide priority — in that order):
@@ -518,14 +532,14 @@ Declined (re-open only with a capture proving the premise):
   lanes: grows every entry to save solves that feed the area integral
   anyway in the columns that pay.
 
-For the depth-buffer project (not actionable until it exists):
-
-- Opaque interior runs are exact-coverage-one quads. Once the depth
-  buffer lands, pieceless bins with opaque paint qualify for phase-1
-  front-to-back opaque drawing with depth write, and early-z then
-  rejects exactly the redundant overdraw that `paths_bench` punishes —
-  dense opaque overlap gets cheaper without touching the winding math.
-  Boundary bins keep blending in phase 2.
+Declined, round two (drawing paths into the depth buffer's opaque
+phase): opaque interior runs are exact-coverage-one quads and would
+qualify for front-to-back depth writes once the depth buffer lands, but
+only interior runs of opaque paths ever qualify, real UI content rarely
+has enough dense opaque path overlap to matter, and `paths_bench`'s
+adversarial overlap is not a justification ("just to juice paths_bench?
+not worth it"). Re-open only with a capture from real content showing
+opaque path overdraw as a measured cost.
 
 ## Slug reference code — read before writing the shader
 

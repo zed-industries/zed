@@ -826,7 +826,7 @@ fn monotone_quadratic_root(a: f32, b: f32, c: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PathBuilder, Pixels, px, size};
+    use crate::{LineCap, LineJoin, PathBuilder, PathStyle, Pixels, StrokeOptions, px, size};
     use lyon::path::FillRule;
 
     /// Rasterize every shape from the `painting` example at scale 1.0 (the
@@ -996,6 +996,149 @@ mod tests {
         }
     }
 
+    /// Stroke expansion produces ordinary fill paths; run stroked shapes
+    /// — caps, joins, dashes, and curves — through the same oracle as
+    /// fills. Nonzero only: stroke outlines deliberately self-overlap at
+    /// joins (that is how overlapping segments union), and built strokes
+    /// always carry the nonzero rule. Under even-odd those overlaps are
+    /// meaningless, and boundary pixels of a winding-2 wedge hit the
+    /// renderer's known mean-winding/fill-rule conflation.
+    #[test]
+    fn stroked_shapes_match_reference() {
+        let mut failures = Vec::new();
+        let nonzero = &[FillRule::NonZero][..];
+
+        // The painting example's wave: a polyline with bevel joins.
+        let options = StrokeOptions::default()
+            .with_line_width(2.0)
+            .with_line_join(LineJoin::Bevel);
+        let mut builder = PathBuilder::stroke(px(2.0)).with_style(PathStyle::Stroke(options));
+        builder.move_to(point(px(40.0), px(120.0)));
+        for i in 1..20 {
+            builder.line_to(point(
+                px(40.0 + i as f32 * 10.0),
+                px(120.0 + (i as f32 * 10.0).sin() * 40.0),
+            ));
+        }
+        failures.extend(check_path_under_rules(
+            "wave",
+            builder.build().unwrap(),
+            nonzero,
+        ));
+
+        // A closed rectangle stroke: inner and outer contours forming a
+        // ring.
+        let mut builder = PathBuilder::stroke(px(4.0));
+        builder.move_to(point(px(20.0), px(20.0)));
+        builder.line_to(point(px(80.0), px(20.0)));
+        builder.line_to(point(px(80.0), px(60.0)));
+        builder.line_to(point(px(20.0), px(60.0)));
+        builder.close();
+        failures.extend(check_path_under_rules(
+            "rectangle ring",
+            builder.build().unwrap(),
+            nonzero,
+        ));
+
+        // A dashed diagonal line: disjoint contours from one stroke.
+        let mut builder = PathBuilder::stroke(px(2.0)).dash_array(&[px(6.0), px(4.0)]);
+        builder.move_to(point(px(10.0), px(10.0)));
+        builder.line_to(point(px(90.0), px(70.0)));
+        failures.extend(check_path_under_rules(
+            "dashed diagonal",
+            builder.build().unwrap(),
+            nonzero,
+        ));
+
+        // A stroked arc with round caps (the circular-progress shape).
+        let options = StrokeOptions::default()
+            .with_line_width(3.0)
+            .with_line_join(LineJoin::Round)
+            .with_start_cap(LineCap::Round)
+            .with_end_cap(LineCap::Round);
+        let mut builder = PathBuilder::stroke(px(3.0)).with_style(PathStyle::Stroke(options));
+        builder.move_to(point(px(50.0), px(10.0)));
+        builder.arc_to(
+            point(px(40.0), px(40.0)),
+            px(0.0),
+            false,
+            true,
+            point(px(90.0), px(50.0)),
+        );
+        failures.extend(check_path_under_rules(
+            "round arc",
+            builder.build().unwrap(),
+            nonzero,
+        ));
+
+        assert!(
+            failures.is_empty(),
+            "{} wrong pixels:\n{}",
+            failures.len(),
+            failures[..failures.len().min(60)].join("\n"),
+        );
+    }
+
+    /// Stroke semantics, not just renderer consistency: a stroked line
+    /// covers exactly the rectangle centered on it, butt caps flush with
+    /// its endpoints, and a closed stroke leaves its hole empty.
+    #[test]
+    fn stroke_covers_the_stroked_region() {
+        // A width-4 horizontal line from (10, 20) to (50, 20) covers
+        // x in [10, 50], y in [18, 22].
+        let mut builder = PathBuilder::stroke(px(4.0));
+        builder.move_to(point(px(10.0), px(20.0)));
+        builder.line_to(point(px(50.0), px(20.0)));
+        let device = bin_path(
+            &builder.build().unwrap(),
+            FillRule::NonZero,
+            huge_mask(),
+            1.0,
+        );
+        for (pixel_x, pixel_y, expected) in [
+            (30, 19, 1.0), // on the centerline
+            (10, 18, 1.0), // corner pixel, wholly inside
+            (49, 21, 1.0), // corner pixel at the far end
+            (30, 17, 0.0), // above the stroke
+            (30, 22, 0.0), // below the stroke
+            (8, 19, 0.0),  // beyond the butt cap
+            (51, 19, 0.0), // beyond the other butt cap
+        ] {
+            let coverage = emulated_coverage(&device, pixel_x, pixel_y);
+            assert!(
+                (coverage - expected).abs() < 1e-3,
+                "pixel ({pixel_x}, {pixel_y}) expected {expected}, got {coverage}",
+            );
+        }
+
+        // A width-2 closed square stroke covers a one-pixel band on each
+        // side of its edges and must leave the hole empty.
+        let mut builder = PathBuilder::stroke(px(2.0));
+        builder.move_to(point(px(20.0), px(20.0)));
+        builder.line_to(point(px(60.0), px(20.0)));
+        builder.line_to(point(px(60.0), px(60.0)));
+        builder.line_to(point(px(20.0), px(60.0)));
+        builder.close();
+        let device = bin_path(
+            &builder.build().unwrap(),
+            FillRule::NonZero,
+            huge_mask(),
+            1.0,
+        );
+        for (pixel_x, pixel_y, expected) in [
+            (40, 19, 1.0), // top edge band: y in [19, 21]
+            (19, 40, 1.0), // left edge band: x in [19, 21]
+            (40, 40, 0.0), // the hole
+            (40, 15, 0.0), // outside
+        ] {
+            let coverage = emulated_coverage(&device, pixel_x, pixel_y);
+            assert!(
+                (coverage - expected).abs() < 1e-3,
+                "pixel ({pixel_x}, {pixel_y}) expected {expected}, got {coverage}",
+            );
+        }
+    }
+
     /// A mask so large it never clips the test shapes.
     fn huge_mask() -> Bounds<Pixels> {
         Bounds {
@@ -1018,12 +1161,20 @@ mod tests {
     }
 
     fn check_path(name: &str, path: crate::Path) -> Vec<String> {
-        let mut failures = Vec::new();
         // Every shape runs under both fill rules: the even-odd fold is a
         // separate branch of the shader's coverage mapping, and the
         // self-intersecting shapes (the star) give it a non-trivial
         // interior to disagree about.
-        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+        check_path_under_rules(name, path, &[FillRule::NonZero, FillRule::EvenOdd])
+    }
+
+    fn check_path_under_rules(
+        name: &str,
+        path: crate::Path,
+        fill_rules: &[FillRule],
+    ) -> Vec<String> {
+        let mut failures = Vec::new();
+        for &fill_rule in fill_rules {
             for scale in [1.0f32, 1.25, 1.5, 2.0] {
                 let device = bin_path(&path, fill_rule, huge_mask(), scale);
                 // The device-space curves: exactly the buffer the GPU would

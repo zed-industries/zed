@@ -7538,6 +7538,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
+ "tiny-skia-path",
  "tracing",
  "ttf-parser",
  "unicode-segmentation",
