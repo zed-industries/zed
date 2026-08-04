@@ -4111,8 +4111,7 @@ dependencies = [
 [[package]]
 name = "cosmic-text"
 version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be17b688510d934ce13f48a2beba700e11583e281e0fda99c22bb256a14eda73"
+source = "git+https://github.com/jotuel/cosmic-text.git?branch=test-in-zed#f9c8a8a35736163273f83aacfd11e5835841b532"
 dependencies = [
  "bitflags 2.13.1",
  "fontdb",
@@ -4128,6 +4127,7 @@ dependencies = [
  "sys-locale",
  "unicode-bidi",
  "unicode-linebreak",
+ "unicode-properties",
  "unicode-script",
  "unicode-segmentation",
 ]
