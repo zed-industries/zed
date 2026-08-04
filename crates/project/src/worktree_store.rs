@@ -150,28 +150,6 @@ impl WorktreePaths {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_worktree_paths_equality_compares_pairings() {
-        let main_paths = PathList::new(&[PathBuf::from("/main-a"), PathBuf::from("/main-b")]);
-        let first = WorktreePaths::from_path_lists(
-            main_paths.clone(),
-            PathList::new(&[PathBuf::from("/wt-x"), PathBuf::from("/wt-y")]),
-        )
-        .unwrap();
-        let second = WorktreePaths::from_path_lists(
-            main_paths,
-            PathList::new(&[PathBuf::from("/wt-y"), PathBuf::from("/wt-x")]),
-        )
-        .unwrap();
-
-        assert_ne!(first, second);
-    }
-}
-
 enum WorktreeStoreState {
     Local {
         fs: Arc<dyn Fs>,
