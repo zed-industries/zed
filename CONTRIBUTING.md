@@ -62,6 +62,13 @@ submitted. **If you'd like your PR to have the best chance of being merged**:
 - Keep AI assistance under your judgement and responsibility: it's unlikely
   we'll merge a vibe-coded PR that the author doesn't understand.
 
+**A note on open pull requests:** currently we cap them at **three per author**.
+We're lucky to get a lot of contributions, and the pattern we've seen is that landing
+your first PR dramatically improves the odds for every PR after it. A stack of
+simultaneous PRs, by contrast, tends to just sit and rot against a moving `main`
+branch. It's better to start with one, see it through, then bring on the next.
+It also keeps things sane when the contributions are coming in faster than we can
+review them, including the occasional automated burst.
 
 ## Things we will (probably) not merge
 

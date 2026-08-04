@@ -323,9 +323,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "1.3.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d386d6a58f4dbe0ebfa98e915caa54005dabdefd419de3d4678b28cd5752444"
+checksum = "6d87bc7769eba641753ba5dc52f73ec3765d51022c6753bf040967125ddc86a8"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -347,19 +347,19 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "1.3.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97b94934d118a69e921d14e94d4af5b3076563318c52662c89a0ecb3f139e1da"
+checksum = "3abd4080f51e4f24f5042beb7fb7a66ede29a2dc1c2582c329532e1c27264ddc"
 dependencies = [
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06679e1542356341f4550ccfb16338b64f37f6af70de2105446ef6fbb078234c"
+checksum = "d5c231915b4ab578c722eca2d1bd7df4d300bfd6cac3b8e9f0d1e3ddc95b187c"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -491,7 +491,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "git",
- "git_ui",
+ "git_ui_core",
  "gpui",
  "gpui_tokio",
  "heapless",
@@ -2700,6 +2700,7 @@ dependencies = [
  "postage",
  "project",
  "serde",
+ "serde_json",
  "settings",
  "telemetry",
  "util",
@@ -3188,7 +3189,6 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-tungstenite",
- "base64 0.22.1",
  "chrono",
  "clock",
  "cloud_api_client",
@@ -3204,12 +3204,12 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
- "httparse",
  "log",
  "objc2-foundation 0.3.2",
  "parking_lot",
  "paths",
  "postage",
+ "proxy_handshake",
  "rand 0.9.4",
  "regex",
  "release_channel",
@@ -3231,7 +3231,6 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.26.4",
- "tokio-socks",
  "url",
  "util",
  "windows 0.61.3",
@@ -3487,6 +3486,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
+ "title_bar",
  "tokio",
  "toml 0.8.23",
  "tower 0.4.13",
@@ -3527,6 +3527,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "telemetry",
  "theme",
  "theme_settings",
@@ -3886,9 +3887,8 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
- "collections",
+ "credentials_provider",
  "dirs",
- "fs",
  "futures 0.3.32",
  "gpui",
  "http_client",
@@ -3897,8 +3897,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sqlez",
- "tempfile",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -3907,6 +3906,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "copilot",
+ "copilot_chat",
  "gpui",
  "language",
  "log",
@@ -4581,8 +4581,10 @@ dependencies = [
  "anyhow",
  "editor",
  "feature_flags",
+ "fuzzy",
  "gpui",
  "log",
+ "picker",
  "text",
  "ui",
  "workspace",
@@ -6430,6 +6432,7 @@ dependencies = [
  "cloud_api_types",
  "collections",
  "command_palette_hooks",
+ "component",
  "db",
  "editor",
  "extension",
@@ -6447,7 +6450,6 @@ dependencies = [
  "semver",
  "serde",
  "settings",
- "smallvec",
  "strum 0.27.2",
  "telemetry",
  "theme_settings",
@@ -6625,7 +6627,6 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
- "project_panel",
  "remote_connection",
  "serde",
  "serde_json",
@@ -6916,6 +6917,7 @@ dependencies = [
  "paths",
  "proto",
  "rope",
+ "rustix 1.1.2",
  "serde",
  "serde_json",
  "slotmap",
@@ -7152,8 +7154,9 @@ name = "fuzzy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "gpui_util",
  "log",
- "util",
+ "path",
 ]
 
 [[package]]
@@ -7163,8 +7166,9 @@ dependencies = [
  "criterion",
  "fuzzy",
  "gpui",
+ "gpui_util",
  "nucleo",
- "util",
+ "path",
 ]
 
 [[package]]
@@ -7416,6 +7420,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "git",
+ "git_ui_core",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -7431,10 +7436,8 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "proto",
  "rand 0.9.4",
  "release_channel",
- "remote",
  "remote_connection",
  "schemars 1.0.4",
  "search",
@@ -7458,6 +7461,48 @@ dependencies = [
  "util",
  "watch",
  "windows 0.61.3",
+ "workspace",
+ "zed_actions",
+ "zlog",
+ "ztracing",
+]
+
+[[package]]
+name = "git_ui_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "askpass",
+ "buffer_diff",
+ "collections",
+ "db",
+ "editor",
+ "fs",
+ "futures 0.3.32",
+ "fuzzy",
+ "git",
+ "gpui",
+ "language",
+ "log",
+ "menu",
+ "notifications",
+ "picker",
+ "project",
+ "proto",
+ "rand 0.9.4",
+ "remote",
+ "remote_connection",
+ "serde",
+ "serde_json",
+ "settings",
+ "task",
+ "terminal",
+ "theme",
+ "theme_settings",
+ "ui",
+ "unindent",
+ "util",
+ "watch",
  "workspace",
  "zed_actions",
  "zeroize",
@@ -8030,7 +8075,6 @@ dependencies = [
  "log",
  "parking_lot",
  "raw-window-handle",
- "smallvec",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -8060,6 +8104,7 @@ dependencies = [
  "raw-window-handle",
  "smallvec",
  "swash",
+ "unicode-bidi",
  "unicode-segmentation",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -8994,6 +9039,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fs",
  "gpui",
  "language",
  "log",
@@ -9001,6 +9047,7 @@ dependencies = [
  "project",
  "serde",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "util",
@@ -9706,6 +9753,7 @@ dependencies = [
  "fuzzy_nucleo",
  "globset",
  "gpui",
+ "grammars",
  "http_client",
  "imara-diff",
  "indoc",
@@ -9860,7 +9908,6 @@ dependencies = [
  "collections",
  "component",
  "convert_case 0.11.0",
- "copilot",
  "copilot_chat",
  "copilot_ui",
  "credentials_provider",
@@ -9883,10 +9930,10 @@ dependencies = [
  "log",
  "menu",
  "mistral",
- "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
+ "openai_subscribed",
  "opencode",
  "parking_lot",
  "pretty_assertions",
@@ -9896,13 +9943,10 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sha2",
- "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
- "url",
  "util",
  "x_ai",
 ]
@@ -12432,7 +12476,6 @@ dependencies = [
  "gpui",
  "picker",
  "project",
- "project_panel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -12458,6 +12501,30 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "openai_subscribed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "http_client",
+ "language_model",
+ "log",
+ "oauth_callback_server",
+ "open_ai",
+ "parking_lot",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smol",
+ "url",
+ "util",
 ]
 
 [[package]]
@@ -14219,10 +14286,12 @@ dependencies = [
  "futures 0.3.32",
  "git",
  "git_ui",
+ "git_ui_core",
  "gpui",
  "itertools 0.14.0",
  "language",
  "log",
+ "markdown",
  "markdown_preview",
  "menu",
  "notifications",
@@ -14231,7 +14300,6 @@ dependencies = [
  "rayon",
  "remote_connection",
  "schemars 1.0.4",
- "search",
  "serde",
  "serde_json",
  "settings",
@@ -14490,6 +14558,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proxy_handshake"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures 0.3.32",
+ "httparse",
+ "percent-encoding",
+ "piper",
+ "proptest",
+ "thiserror 2.0.17",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -16106,6 +16189,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.32",
+ "gpui",
  "http_proxy",
  "libc",
  "log",
@@ -16115,6 +16199,7 @@ dependencies = [
  "serde_json",
  "smol",
  "tempfile",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
@@ -17019,7 +17104,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "git",
- "git_ui",
+ "git_ui_core",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -18143,6 +18228,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18912,7 +19008,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "fs",
- "git_ui",
+ "git_ui_core",
  "gpui",
  "icons",
  "livekit_client",
@@ -19014,7 +19110,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
 dependencies = [
  "either",
- "futures-io",
  "futures-util",
  "thiserror 1.0.69",
  "tokio",
@@ -19405,7 +19500,7 @@ dependencies = [
 [[package]]
 name = "trash"
 version = "5.2.5"
-source = "git+https://github.com/zed-industries/trash-rs?rev=47761739192828a66b11a94ba5420b82d63c03c5#47761739192828a66b11a94ba5420b82d63c03c5"
+source = "git+https://github.com/zed-industries/trash-rs?rev=41c6c800d884a89351f3b8856d12894cccee261d#41c6c800d884a89351f3b8856d12894cccee261d"
 dependencies = [
  "chrono",
  "libc",
@@ -19815,6 +19910,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui_macros",
+ "web-time",
  "windows 0.61.3",
 ]
 
@@ -20562,8 +20658,7 @@ dependencies = [
 [[package]]
 name = "wasm_thread"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7516db7f32decdadb1c3b8deb1b7d78b9df7606c5cc2f6241737c2ab3a0258e"
+source = "git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937#0cf96c7708dfb97ccf3da50347e25edcf75d6937"
 dependencies = [
  "futures 0.3.32",
  "js-sys",
@@ -23157,7 +23252,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.13.0"
+version = "1.15.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -23219,6 +23314,7 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "git_ui",
+ "git_ui_core",
  "go_to_line",
  "gpui",
  "gpui_platform",
@@ -23271,6 +23367,7 @@ dependencies = [
  "recent_projects",
  "release_channel",
  "remote",
+ "remote_server",
  "repl",
  "reqwest_client",
  "rope",

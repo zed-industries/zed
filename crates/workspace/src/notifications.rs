@@ -428,7 +428,7 @@ fn workspace_error_notification_id() -> NotificationId {
     NotificationId::unique::<WorkspaceErrorNotification>()
 }
 
-fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+pub fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let settings = ThemeSettings::get_global(cx);
     let ui_font_family = settings.ui_font.family.clone();
     let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
