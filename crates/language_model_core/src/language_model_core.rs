@@ -111,8 +111,12 @@ pub enum LanguageModelCompletionError {
     /// bytes, not tokens, so neither trimming the context to fewer tokens of
     /// text nor switching to a larger context window helps — the payload
     /// itself (typically images or other attachments) has to shrink.
-    #[error("request payload too large for {provider}'s API")]
-    RequestPayloadTooLarge { provider: LanguageModelProviderName },
+    ///
+    /// `message` is the provider's response body; providers that state the
+    /// rejected size or their limit do so there. Callers know the request
+    /// they sent, so its size is theirs to report.
+    #[error("request body exceeded the provider's size limit: {message}")]
+    RequestPayloadTooLarge { message: String },
     /// The model requires the user to consent to the upstream provider
     /// retaining inference logs (see `LanguageModel::requires_data_retention`)
     /// and that consent has not been given.
@@ -282,7 +286,7 @@ impl LanguageModelCompletionError {
                 Some(tokens) => Self::PromptTooLarge {
                     tokens: Some(tokens),
                 },
-                None => Self::RequestPayloadTooLarge { provider },
+                None => Self::RequestPayloadTooLarge { message },
             },
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
                 provider,
