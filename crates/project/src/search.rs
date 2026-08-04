@@ -390,7 +390,7 @@ impl SearchQuery {
         }
     }
 
-    pub(crate) async fn detect(
+    pub async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
     ) -> Result<Option<LineHint>> {
