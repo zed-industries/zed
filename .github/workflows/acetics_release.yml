@@ -72,6 +72,8 @@ jobs:
           CC_x86_64_unknown_linux_musl: musl-gcc
           ZED_COMMIT_SHA: ${{ github.sha }}
         run: cargo build --release --package remote_server --target x86_64-unknown-linux-musl
+      - name: Strip debug symbols
+        run: strip --strip-debug target/x86_64-unknown-linux-musl/release/remote_server
       - name: Compress remote server
         run: gzip -f --stdout --best target/x86_64-unknown-linux-musl/release/remote_server > target/zed-remote-server-linux-x86_64.gz
       - name: Upload remote server
