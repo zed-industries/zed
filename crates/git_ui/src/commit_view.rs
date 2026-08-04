@@ -358,12 +358,14 @@ impl CommitView {
                 });
             })?;
 
+            let files_total = commit_diff.files.len();
             for file in commit_diff.files {
                 let file_path = file.path.clone();
                 let is_created = file.old_text.is_none();
                 let is_deleted = file.new_text.is_none();
                 let raw_new_text = file.new_text.unwrap_or_default();
                 let raw_old_text = file.old_text;
+                let file_new_lines = raw_new_text.lines().count();
 
                 let is_binary = file.is_binary
                     || is_binary_content(raw_new_text.as_bytes())
@@ -494,6 +496,14 @@ impl CommitView {
 
                 if let Some((target_path, target_row)) = &scroll_to {
                     if *target_path == file_path {
+                        log::info!(
+                            "commit_view scroll_to: path={:?} target_row={} new_text_lines={} files_total={} expected_max_row={}",
+                            file_path,
+                            target_row,
+                            file_new_lines,
+                            files_total,
+                            expected_max_row
+                        );
                         let anchor = this.update(cx, |this, cx| {
                             this.multibuffer
                                 .read(cx)
