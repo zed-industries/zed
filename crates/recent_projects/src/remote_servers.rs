@@ -506,7 +506,8 @@ impl ProjectPicker {
                         connection, project, paths, app_state, window, None, None, cx,
                     )
                     .await
-                    .log_err();
+                    .log_err()
+                    .map(|(_workspace, items)| items);
 
                     if let Some(items) = items {
                         for (item, path) in items.into_iter().zip(paths_with_positions) {

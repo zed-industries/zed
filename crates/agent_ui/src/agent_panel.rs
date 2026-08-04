@@ -2951,7 +2951,7 @@ impl AgentPanel {
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
                 if focus {
-                    self.focus_handle(cx).focus(window, cx);
+                    self.activation_focus_handle(cx).focus(window, cx);
                 }
                 return;
             }
@@ -3545,7 +3545,7 @@ impl AgentPanel {
 
         active_thread.update(cx, |active_thread, cx| {
             active_thread.expand_message_editor(&ExpandMessageEditor, window, cx);
-            active_thread.focus_handle(cx).focus(window, cx);
+            active_thread.activation_focus_handle(cx).focus(window, cx);
         })
     }
 
@@ -3659,7 +3659,7 @@ impl AgentPanel {
             cx.emit(PanelEvent::ZoomOut);
         } else {
             if !self.focus_handle(cx).contains_focused(window, cx) {
-                cx.focus_self(window);
+                self.activation_focus_handle(cx).focus(window, cx);
             }
             cx.emit(PanelEvent::ZoomIn);
         }
@@ -4233,7 +4233,7 @@ impl AgentPanel {
         self.refresh_base_view_subscriptions(window, cx);
 
         if focus {
-            self.focus_handle(cx).focus(window, cx);
+            self.activation_focus_handle(cx).focus(window, cx);
         }
         cx.emit(AgentPanelEvent::ActiveViewChanged);
     }
@@ -4792,7 +4792,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
                 };
                 let creation = window.update(cx, |_root, window, cx| {
                     workspace.update(cx, |workspace, cx| {
-                        git_ui::worktree_service::create_worktree_workspace(
+                        git_ui_core::worktree_service::create_worktree_workspace(
                             workspace, &action, window, None, cx,
                         )
                     })
@@ -4923,12 +4923,8 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
 }
 
 impl Focusable for AgentPanel {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.visible_surface() {
-            VisibleSurface::Uninitialized => self.focus_handle.clone(),
-            VisibleSurface::AgentThread(conversation_view) => conversation_view.focus_handle(cx),
-            VisibleSurface::Terminal(terminal_view) => terminal_view.focus_handle(cx),
-        }
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -4954,6 +4950,16 @@ impl Panel for AgentPanel {
 
     fn panel_key() -> &'static str {
         AGENT_PANEL_KEY
+    }
+
+    fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        match self.visible_surface() {
+            VisibleSurface::Uninitialized => self.focus_handle.clone(),
+            VisibleSurface::AgentThread(conversation_view) => {
+                conversation_view.read(cx).activation_focus_handle(cx)
+            }
+            VisibleSurface::Terminal(terminal_view) => terminal_view.focus_handle(cx),
+        }
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
@@ -5355,7 +5361,10 @@ impl AgentPanel {
                                 let conversation_view = conversation_view.downgrade();
                                 move |_: &menu::Confirm, window, cx| {
                                     if let Some(conversation_view) = conversation_view.upgrade() {
-                                        conversation_view.focus_handle(cx).focus(window, cx);
+                                        conversation_view
+                                            .read(cx)
+                                            .activation_focus_handle(cx)
+                                            .focus(window, cx);
                                     }
                                 }
                             })
@@ -5363,7 +5372,10 @@ impl AgentPanel {
                                 let conversation_view = conversation_view.downgrade();
                                 move |_: &editor::actions::Cancel, window, cx| {
                                     if let Some(conversation_view) = conversation_view.upgrade() {
-                                        conversation_view.focus_handle(cx).focus(window, cx);
+                                        conversation_view
+                                            .read(cx)
+                                            .activation_focus_handle(cx)
+                                            .focus(window, cx);
                                     }
                                 }
                             })
@@ -6039,21 +6051,14 @@ impl AgentPanel {
         };
 
         let is_full_screen = self.is_zoomed(window, cx);
-        let (icon_id, icon_name, tooltip_text) = if is_full_screen {
-            (
-                "disable-full-screen",
-                IconName::Minimize,
-                "Disable Full Screen",
-            )
+        let (icon_name, tooltip_text) = if is_full_screen {
+            (IconName::Minimize, "Disable Full Screen")
         } else {
-            (
-                "enable-full-screen",
-                IconName::Maximize,
-                "Enable Full Screen",
-            )
+            (IconName::Maximize, "Enable Full Screen")
         };
-        let full_screen_button = IconButton::new(icon_id, icon_name)
+        let full_screen_button = IconButton::new("toggle-full-screen", icon_name)
             .icon_size(IconSize::Small)
+            .toggle_state(is_full_screen)
             .tooltip(move |_, cx| Tooltip::for_action(tooltip_text, &ToggleZoom, cx))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.toggle_zoom(&ToggleZoom, window, cx);
@@ -6440,6 +6445,7 @@ impl Render for AgentPanel {
             .relative()
             .size_full()
             .justify_between()
+            .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
@@ -6516,8 +6522,10 @@ impl Render for AgentPanel {
 
         match self.visible_font_size() {
             WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
+                let theme_settings = ThemeSettings::get_global(cx);
+                WithRemSize::new(theme_settings.agent_ui_font_size(cx))
                     .size_full()
+                    .font_family(theme_settings.agent_ui_font_family().clone())
                     .child(content)
                     .into_any()
             }
@@ -6818,7 +6826,7 @@ mod tests {
     use anyhow::{Result, anyhow};
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
-    use gpui::{App, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{App, Modifiers, TestAppContext, UpdateGlobal, VisualTestContext, px, size};
     use parking_lot::Mutex;
     use project::{Project, WorktreePaths};
     use settings::{SettingsStore, WorkingDirectory};
@@ -7017,6 +7025,121 @@ mod tests {
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+
+    #[gpui::test]
+    async fn test_clicking_tool_call_output_keeps_agent_panel_focused_and_zoomed(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.simulate_resize(size(px(900.), px(700.)));
+
+        let connection = StubAgentConnection::new();
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<AgentPanel>(window, cx);
+            panel
+        });
+        open_thread_with_connection(&panel, connection.clone(), cx);
+
+        let session_id = active_session_id(&panel, cx);
+        let tool_call_id = acp::ToolCallId::new("tool-call-output-focus-regression");
+        cx.update(|_window, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::ToolCall(
+                    acp::ToolCall::new(tool_call_id.clone(), "Read file")
+                        .kind(acp::ToolKind::Fetch)
+                        .status(acp::ToolCallStatus::InProgress),
+                ),
+                cx,
+            );
+            connection.send_update(
+                session_id,
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                    tool_call_id.clone(),
+                    acp::ToolCallUpdateFields::new()
+                        .status(acp::ToolCallStatus::Completed)
+                        .content(vec![acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(
+                                "tool output text".to_string(),
+                            )),
+                        ))]),
+                )),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        thread_view.update(cx, |thread_view, cx| {
+            thread_view.entry_view_state.update(cx, |state, _cx| {
+                state.expand_tool_call(tool_call_id);
+            });
+            cx.notify();
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+
+        // The thread receives only tool-call updates, so entry index 0 should remain stable.
+        let output_bounds = cx
+            .debug_bounds("tool-call-output-0-0")
+            .expect("tool call output should be rendered");
+        cx.simulate_click(output_bounds.center(), Modifiers::default());
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(
+                panel.focus_handle(cx).contains_focused(window, cx),
+                "clicking tool call output should keep focus within the agent panel"
+            );
+            assert!(
+                panel.is_zoomed(window, cx),
+                "clicking tool call output should not close Zen Mode"
+            );
+        });
+
+        let title_editor_focus_handle = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .expect("active thread view should be present")
+                .read(cx)
+                .title_editor
+                .focus_handle(cx)
+        });
+        cx.update(|window, cx| {
+            title_editor_focus_handle.focus(window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(
+                panel.focus_handle(cx).contains_focused(window, cx),
+                "focusing the thread title editor should keep focus within the agent panel"
+            );
+            assert!(
+                panel.is_zoomed(window, cx),
+                "focusing the thread title editor should not close Zen Mode"
+            );
+        });
     }
 
     #[gpui::test]
@@ -11024,19 +11147,19 @@ mod tests {
 
     #[gpui::test]
     fn test_resolve_worktree_branch_target() {
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+        let resolved = git_ui_core::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::ExistingBranch {
                 name: "feature".to_string(),
             },
         );
         assert_eq!(resolved, Some("feature".to_string()));
 
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+        let resolved = git_ui_core::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::CurrentBranch,
         );
         assert_eq!(resolved, None);
 
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+        let resolved = git_ui_core::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::RemoteBranch {
                 remote_name: "origin".to_string(),
                 branch_name: "main".to_string(),
@@ -12042,7 +12165,7 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
+                    git_ui_core::worktree_service::await_and_rollback_on_failure(
                         creation_infos,
                         fs_clone,
                         cx,
@@ -12130,7 +12253,7 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
+                    git_ui_core::worktree_service::await_and_rollback_on_failure(
                         creation_infos,
                         fs_clone,
                         cx,
@@ -12201,7 +12324,7 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
+                    git_ui_core::worktree_service::await_and_rollback_on_failure(
                         creation_infos,
                         fs_clone,
                         cx,
@@ -12276,7 +12399,7 @@ mod tests {
         let result = multi_workspace
             .update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| {
-                    git_ui::worktree_service::await_and_rollback_on_failure(
+                    git_ui_core::worktree_service::await_and_rollback_on_failure(
                         creation_infos,
                         fs_clone,
                         cx,
@@ -12428,7 +12551,7 @@ mod tests {
 
         panel.read_with(cx, |panel, cx| {
             let (git_repos, non_git_paths) =
-                git_ui::worktree_service::classify_worktrees(panel.project.read(cx), cx);
+                git_ui_core::worktree_service::classify_worktrees(panel.project.read(cx), cx);
 
             let git_work_dirs: Vec<PathBuf> = git_repos
                 .iter()

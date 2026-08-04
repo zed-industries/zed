@@ -3621,34 +3621,37 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     init_test(cx);
 
     let home = paths::home_dir();
+    let project_path = home.join("example.com").join("project");
     let fs = FakeFs::new(executor);
     fs.insert_tree(
         home,
         json!({
             ".config": {
                 "git": {
-                    "ignore": "foo\n/bar\nbaz\n"
+                    "ignore": "foo\n/bar\nbaz\n*.com\n"
                 }
             },
-            "project": {
-                ".git": {},
-                ".gitignore": "!baz",
-                "foo": "",
-                "bar": "",
-                "sub": {
-                    "bar": "",
-                },
-                "subrepo": {
+            "example.com": {
+                "project": {
                     ".git": {},
-                    "bar": ""
-                },
-                "baz": ""
+                    ".gitignore": "!baz",
+                    "foo": "",
+                    "bar": "",
+                    "sub": {
+                        "bar": "",
+                    },
+                    "subrepo": {
+                        ".git": {},
+                        "bar": ""
+                    },
+                    "baz": ""
+                }
             }
         }),
     )
     .await;
     let worktree = Worktree::local(
-        home.join("project"),
+        project_path.clone(),
         true,
         fs.clone(),
         Arc::default(),
@@ -3681,7 +3684,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     // Ignore statuses are updated when excludesFile changes
     fs.write(
         &home.join(".config").join("git").join("ignore"),
-        "/bar\nbaz\n".as_bytes(),
+        "/bar\nbaz\n*.com\n".as_bytes(),
     )
     .await
     .unwrap();
@@ -3705,7 +3708,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 
     // Statuses are updated when .git added/removed
     fs.remove_dir(
-        &home.join("project").join("subrepo").join(".git"),
+        &project_path.join("subrepo").join(".git"),
         RemoveOptions {
             recursive: true,
             ..Default::default()
@@ -5022,6 +5025,124 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
         assert!(
             got_git_update,
             "should emit UpdatedGitRepositories for a .git rescan event"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_dot_git_event_explained_by_filtered_sibling_does_not_emit_git_repo_update(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // On Windows, creating or deleting a file directly inside .git (such as
+    // git's transient index.lock) updates the directory's last-write time, so
+    // ReadDirectoryChangesW reports a Changed event for the .git directory
+    // itself alongside the event for the file. Bare .git events schedule a git
+    // rescan (to cope with coalesced events on macOS), but when the same batch
+    // contains a filtered-out event that explains the directory change, acting
+    // on the bare event turns every ignored lock file into a rescan. Since
+    // Zed's own rescans take .git/index.lock via `git diff`, that feeds back
+    // into an infinite loop of git scans.
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let dot_git = project_dir.join(DOT_GIT);
+
+    // The exact batch Windows delivers when git creates .git/index.lock.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "a bare .git event accompanied only by a filtered index.lock event \
+             should NOT emit UpdatedGitRepositories"
+        );
+    }
+
+    // Same batch with the events in the opposite order.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Removed));
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "event order within the batch should not matter for suppressing \
+             the bare .git event"
+        );
+    }
+
+    // A meaningful change in the same batch must still trigger a rescan.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
+        fs.emit_fs_event(dot_git.join("HEAD"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "a meaningful .git change in the same batch as a filtered event \
+             should still emit UpdatedGitRepositories"
+        );
+    }
+
+    // A standalone bare .git event (macOS event coalescing) must still
+    // trigger a rescan.
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git, Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "a standalone bare .git event should still emit UpdatedGitRepositories"
         );
     }
 }

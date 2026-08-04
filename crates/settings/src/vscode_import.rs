@@ -350,6 +350,7 @@ impl VsCodeSettings {
                 "never" => Some(false),
                 _ => None,
             }),
+            git_gutter_width: None,
         })
     }
 
@@ -993,7 +994,9 @@ impl VsCodeSettings {
             buffer_font_weight: self.read_f32("editor.fontWeight").map(FontWeightContent),
             buffer_line_height: None,
             buffer_font_features: None,
+            agent_ui_font_family: None,
             agent_ui_font_size: None,
+            agent_buffer_font_family: None,
             agent_buffer_font_size: None,
             git_commit_buffer_font_size: None,
             markdown_preview_font_family: None,

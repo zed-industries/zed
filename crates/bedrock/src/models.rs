@@ -788,10 +788,14 @@ impl ConverseModel {
 
             // Canada has no Claude-specific `ca.` profiles. AWS instead lists
             // ca-central-1 and ca-west-1 as source regions of the US geo
-            // profile for these models, which keeps data within US and Canada
-            // regions. See the per-model cards, e.g.
-            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>.
-            (Self::ClaudeOpus5, "ca") => Ok(format!("us.{}", model_id)),
+            // profiles for these models, which keep data within US and Canada
+            // regions:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
+            (Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7, "ca") => {
+                Ok(format!("us.{}", model_id))
+            }
 
             // EU region inference profiles
             (
@@ -826,7 +830,9 @@ impl ConverseModel {
             // (plus `global.`):
             // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
             (
-                Self::ClaudeSonnet4_6
+                Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
+                | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
@@ -1243,6 +1249,14 @@ mod tests {
             "anthropic.claude-opus-5"
         );
         assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-northeast-1", false)?,
+            "jp.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ap-northeast-3", false)?,
+            "jp.anthropic.claude-opus-4-7"
+        );
+        assert_eq!(
             ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-northeast-3", false)?,
             "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
@@ -1264,6 +1278,14 @@ mod tests {
         assert_eq!(
             ConverseModel::ClaudeOpus5.cross_region_inference_id("ca-central-1", false)?,
             "us.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ca-west-1", false)?,
+            "us.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-4-7"
         );
         Ok(())
     }
