@@ -184,7 +184,7 @@ async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn regex_with_eol_detects_lines() {
     let re = SearchQuery::regex(
-        " Bool$",
+        "Bool$",
         false,
         false,
         false,
@@ -206,7 +206,7 @@ async fn regex_with_eol_detects_lines() {
 #[gpui::test]
 async fn multi_line_regex_detects_matches() {
     let re = SearchQuery::regex(
-        " Bool$bool",
+        "Bool$\nbool",
         false,
         false,
         false,
