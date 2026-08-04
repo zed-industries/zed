@@ -478,7 +478,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
                 &provider_name,
                 move |event| mapper.map_event(event),
             );
-            futures::pin_mut!(events);
+            let mut events = std::pin::pin!(events);
             // The final usage arrives after the compaction block closes, so
             // hold the finished context and keep consuming to the end of the
             // stream.
@@ -637,10 +637,16 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             cloud_llm_client::LanguageModelProvider::Anthropic => {
                 self.compact_anthropic(request, cx)
             }
+            // Unreachable while the `supports_explicit_compaction` guard
+            // above holds, but a provider mismatch should degrade to the
+            // same unsupported error rather than panic.
             cloud_llm_client::LanguageModelProvider::Google
-            | cloud_llm_client::LanguageModelProvider::XAi => unreachable!(
-                "supports_explicit_compaction is limited to OpenAI and Anthropic models"
-            ),
+            | cloud_llm_client::LanguageModelProvider::XAi => async {
+                Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                    "this cloud model does not support explicit compaction"
+                )))
+            }
+            .boxed(),
         }
     }
 
