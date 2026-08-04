@@ -1,5 +1,6 @@
 use crate::display::WebDisplay;
 use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -10,7 +11,7 @@ use gpui::{
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -63,6 +64,8 @@ pub(crate) struct WebWindowInner {
 pub struct WebWindow {
     inner: Rc<WebWindowInner>,
     display: Rc<dyn PlatformDisplay>,
+    lifecycle: Rc<Cell<WebWindowLifecycle>>,
+    active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
@@ -70,50 +73,69 @@ pub struct WebWindow {
 }
 
 impl WebWindow {
-    pub fn new(
-        _handle: AnyWindowHandle,
-        _params: WindowParams,
-        context: &WgpuContext,
-        browser_window: web_sys::Window,
-    ) -> anyhow::Result<Self> {
+    pub(crate) fn prepare_canvas(
+        browser_window: &web_sys::Window,
+    ) -> anyhow::Result<web_sys::HtmlCanvasElement> {
         let document = browser_window
             .document()
             .ok_or_else(|| anyhow::anyhow!("No `document` found on window"))?;
-
         let canvas: web_sys::HtmlCanvasElement = document
             .create_element("canvas")
-            .map_err(|e| anyhow::anyhow!("Failed to create canvas element: {e:?}"))?
+            .map_err(|error| anyhow::anyhow!("Failed to create canvas element: {error:?}"))?
             .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not a canvas: {e:?}"))?;
-
-        let dpr = browser_window.device_pixel_ratio() as f32;
-        let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
-        let has_device_pixel_support = check_device_pixel_support();
-
+            .map_err(|error| anyhow::anyhow!("Created element is not a canvas: {error:?}"))?;
         canvas.set_tab_index(-1);
 
         let style = canvas.style();
-        style
-            .set_property("width", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas width style: {e:?}"))?;
-        style
-            .set_property("height", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas height style: {e:?}"))?;
-        style
-            .set_property("display", "block")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas display style: {e:?}"))?;
-        style
-            .set_property("outline", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas outline style: {e:?}"))?;
-        style
-            .set_property("touch-action", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set touch-action style: {e:?}"))?;
+        for (property, value) in [
+            ("width", "100%"),
+            ("height", "100%"),
+            ("display", "block"),
+            ("outline", "none"),
+            ("touch-action", "none"),
+        ] {
+            style.set_property(property, value).map_err(|error| {
+                anyhow::anyhow!("Failed to set canvas {property} style: {error:?}")
+            })?;
+        }
 
         let body = document
             .body()
             .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
         body.append_child(&canvas)
-            .map_err(|e| anyhow::anyhow!("Failed to append canvas to body: {e:?}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to append canvas to body: {error:?}"))?;
+        Ok(canvas)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        _handle: AnyWindowHandle,
+        _params: WindowParams,
+        context: &WgpuContext,
+        canvas: web_sys::HtmlCanvasElement,
+        surface: wgpu::Surface<'static>,
+        browser_window: web_sys::Window,
+        lifecycle: Rc<Cell<WebWindowLifecycle>>,
+        active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
+    ) -> anyhow::Result<Self> {
+        let document = browser_window
+            .document()
+            .ok_or_else(|| anyhow::anyhow!("No `document` found on window"))?;
+        let body = document
+            .body()
+            .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
+        let dpr = browser_window.device_pixel_ratio() as f32;
+        let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
+        let has_device_pixel_support = check_device_pixel_support();
+        let renderer_config = WgpuSurfaceConfig {
+            size: Size {
+                width: DevicePixels(0),
+                height: DevicePixels(0),
+            },
+            transparent: false,
+            preferred_present_mode: None,
+        };
+        let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
         let input_element: web_sys::HtmlInputElement = document
             .create_element("input")
@@ -130,19 +152,6 @@ impl WebWindow {
         body.append_child(&input_element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         input_element.focus().ok();
-
-        let device_size = Size {
-            width: DevicePixels(0),
-            height: DevicePixels(0),
-        };
-
-        let renderer_config = WgpuSurfaceConfig {
-            size: device_size,
-            transparent: false,
-            preferred_present_mode: None,
-        };
-
-        let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -203,6 +212,8 @@ impl WebWindow {
         Ok(Self {
             inner,
             display,
+            lifecycle,
+            active_window,
             _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
@@ -515,6 +526,8 @@ impl Drop for WebWindow {
         canvas.remove();
         let input_element: &web_sys::Element = self.inner.input_element.as_ref();
         input_element.remove();
+        self.active_window.borrow_mut().take();
+        self.lifecycle.set(WebWindowLifecycle::Closed);
     }
 }
 
