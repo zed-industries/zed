@@ -946,6 +946,9 @@ impl LanguageServer {
                         link_support: Some(true),
                         dynamic_registration: Some(true),
                     }),
+                    document_highlight: Some(DocumentHighlightClientCapabilities {
+                        dynamic_registration: Some(true),
+                    }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
                             code_action_kind: CodeActionKindLiteralSupport {
@@ -2493,6 +2496,16 @@ mod tests {
         server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone()]));
 
         let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
+
+        assert_eq!(
+            params
+                .capabilities
+                .text_document
+                .as_ref()
+                .and_then(|capabilities| capabilities.document_highlight.as_ref())
+                .and_then(|capabilities| capabilities.dynamic_registration),
+            Some(true)
+        );
 
         #[allow(deprecated)]
         let root_uri = params.root_uri.expect("root_uri should be set");
