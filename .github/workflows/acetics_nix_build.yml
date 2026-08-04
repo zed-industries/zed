@@ -1,0 +1,44 @@
+name: acetics_nix_build
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - acetics-dev
+  pull_request:
+    branches:
+      - acetics-dev
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}
+jobs:
+  build_nix_linux_x86_64:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/local/lib/node_modules "${AGENT_TOOLSDIRECTORY:-}"
+          sudo docker image prune --all --force
+          df -h /
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Cachix
+        uses: cachix/cachix-action@v16
+        with:
+          name: catvert
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachixArgs: -v
+      - name: Build
+        run: nix build .#default -L --accept-flake-config
