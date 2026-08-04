@@ -35379,6 +35379,110 @@ async fn test_bookmarks_tab_retries_failed_path_when_file_appears(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.lsp_highlight_debounce = Some(DelayMs(0));
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state(indoc! {"
+        fn main() {
+            let foo = 1;
+            fˇoo;
+        }
+    "});
+    cx.run_until_parked();
+
+    let mut document_highlight_requests = cx
+        .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+            |_, _, _| async move {
+                Ok(Some(vec![lsp::DocumentHighlight {
+                    range: lsp::Range::new(lsp::Position::new(2, 4), lsp::Position::new(2, 7)),
+                    kind: Some(lsp::DocumentHighlightKind::READ),
+                }]))
+            },
+        );
+    let method = "textDocument/documentHighlight";
+    let python_registration_id = "python-document-highlight";
+    let rust_registration_id = "rust-document-highlight";
+
+    cx.lsp
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: python_registration_id.to_string(),
+                    method: method.to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "python", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.lsp
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: rust_registration_id.to_string(),
+                    method: method.to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+    document_highlight_requests
+        .next()
+        .await
+        .expect("adding an applicable selector should refresh document highlights");
+    cx.run_until_parked();
+
+    assert!(cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .is_some_and(|(_, ranges)| !ranges.is_empty())
+    }));
+
+    cx.lsp
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: rust_registration_id.to_string(),
+                    method: method.to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+
+    assert!(cx.editor(|editor, _, _| {
+        editor
+            .background_highlights
+            .get(&HighlightKey::DocumentHighlightRead)
+            .is_none_or(|(_, ranges)| ranges.is_empty())
+    }));
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {

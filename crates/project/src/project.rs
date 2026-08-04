@@ -415,6 +415,9 @@ pub enum Event {
     RefreshDocumentLinks {
         server_id: Option<LanguageServerId>,
     },
+    RefreshDocumentHighlights {
+        server_id: LanguageServerId,
+    },
     RefreshFoldingRanges {
         server_id: Option<LanguageServerId>,
     },
@@ -3784,12 +3787,15 @@ impl Project {
 
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
+                        let mut document_highlights_changed = false;
                         self.lsp_store.update(cx, |lsp_store, _| {
                             if let Some(capabilities) = update.capabilities.as_ref() {
-                                lsp_store.insert_synced_server_capabilities(
-                                    *language_server_id,
-                                    capabilities,
-                                );
+                                document_highlights_changed = lsp_store
+                                    .insert_synced_server_capabilities(
+                                        *language_server_id,
+                                        capabilities,
+                                    )
+                                    .document_highlights_changed;
                             }
 
                             if let Some(language_server_status) = lsp_store
@@ -3820,6 +3826,11 @@ impl Project {
                                     .collect();
                             }
                         });
+                        if document_highlights_changed {
+                            cx.emit(Event::RefreshDocumentHighlights {
+                                server_id: *language_server_id,
+                            });
+                        }
                     }
                     proto::update_language_server::Variant::RegisteredForBuffer(update) => {
                         if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {

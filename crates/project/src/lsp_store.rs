@@ -4443,6 +4443,11 @@ enum ChunkFetch {
     Running(CacheInlayHintsTask),
 }
 
+#[derive(Default)]
+pub(crate) struct SyncedServerCapabilitiesChanges {
+    pub(crate) document_highlights_changed: bool,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SyncedServerCapabilities {
     #[serde(flatten)]
@@ -5819,32 +5824,62 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         capabilities_json: &str,
-    ) {
-        if let Some(capabilities) =
+    ) -> SyncedServerCapabilitiesChanges {
+        let Some(capabilities) =
             serde_json::from_str::<SyncedServerCapabilities>(capabilities_json).log_err()
-        {
-            self.lsp_server_capabilities
-                .insert(server_id, capabilities.server_capabilities);
-            match capabilities.initial_server_capabilities {
-                Some(capabilities) => {
-                    self.lsp_server_initial_capabilities
-                        .insert(server_id, capabilities);
-                }
-                None => {
-                    self.lsp_server_initial_capabilities.remove(&server_id);
-                }
+        else {
+            return SyncedServerCapabilitiesChanges::default();
+        };
+
+        let previous_document_highlight_provider = self
+            .lsp_server_capabilities
+            .get(&server_id)
+            .and_then(|capabilities| capabilities.document_highlight_provider.as_ref());
+        let current_document_highlight_provider = capabilities
+            .server_capabilities
+            .document_highlight_provider
+            .as_ref();
+
+        let previous_document_highlight_registrations = self
+            .lsp_server_text_document_registrations
+            .get(&server_id)
+            .and_then(|registrations| registrations.get("textDocument/documentHighlight"));
+        let current_document_highlight_registrations = capabilities
+            .text_document_registrations
+            .as_ref()
+            .and_then(|registrations| registrations.get("textDocument/documentHighlight"));
+        let changes = SyncedServerCapabilitiesChanges {
+            document_highlights_changed: previous_document_highlight_provider
+                != current_document_highlight_provider
+                || !dynamic_text_document_registration_value_sets_equal(
+                    previous_document_highlight_registrations,
+                    current_document_highlight_registrations,
+                ),
+        };
+
+        self.lsp_server_capabilities
+            .insert(server_id, capabilities.server_capabilities);
+        match capabilities.initial_server_capabilities {
+            Some(capabilities) => {
+                self.lsp_server_initial_capabilities
+                    .insert(server_id, capabilities);
             }
-            match capabilities.text_document_registrations {
-                Some(registrations) => {
-                    self.lsp_server_text_document_registrations
-                        .insert(server_id, registrations);
-                }
-                None => {
-                    self.lsp_server_text_document_registrations
-                        .remove(&server_id);
-                }
+            None => {
+                self.lsp_server_initial_capabilities.remove(&server_id);
             }
         }
+        match capabilities.text_document_registrations {
+            Some(registrations) => {
+                self.lsp_server_text_document_registrations
+                    .insert(server_id, registrations);
+            }
+            None => {
+                self.lsp_server_text_document_registrations
+                    .remove(&server_id);
+            }
+        }
+
+        changes
     }
 
     fn remote_document_selector_context(
@@ -14675,6 +14710,34 @@ impl LspStore {
         }
         lsp_data
     }
+}
+
+fn dynamic_text_document_registration_value_sets_equal(
+    previous: Option<
+        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
+    >,
+    current: Option<
+        &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
+    >,
+) -> bool {
+    previous
+        .into_iter()
+        .flat_map(|registrations| registrations.values())
+        .all(|previous_registration| {
+            current
+                .into_iter()
+                .flat_map(|registrations| registrations.values())
+                .any(|current_registration| current_registration == previous_registration)
+        })
+        && current
+            .into_iter()
+            .flat_map(|registrations| registrations.values())
+            .all(|current_registration| {
+                previous
+                    .into_iter()
+                    .flat_map(|registrations| registrations.values())
+                    .any(|previous_registration| previous_registration == current_registration)
+            })
 }
 
 fn document_selector_context_for_buffer(

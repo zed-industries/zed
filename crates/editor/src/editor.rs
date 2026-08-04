@@ -2056,6 +2056,9 @@ impl Editor {
                     project::Event::RefreshDocumentLinks { .. } => {
                         editor.refresh_document_links(None, cx);
                     }
+                    project::Event::RefreshDocumentHighlights { .. } => {
+                        editor.refresh_document_highlights(cx);
+                    }
                     project::Event::RefreshFoldingRanges { .. } => {
                         editor.refresh_folding_ranges(None, window, cx);
                     }
