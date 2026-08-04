@@ -351,6 +351,12 @@ fn server_precedences(
     let ordered_adapters = language_name
         .map(|language_name| languages.lsp_adapters(language_name))
         .unwrap_or_default();
+
+    // We base this on the ids that are present rather than the adapter count,
+    // otherwise a server we can't resolve an adapter for outranks the
+    // configured ones and overrides them
+    let configured_base = tokens.keys().map(|id| id.0).max().map_or(0, |max| max + 1);
+
     tokens
         .keys()
         .map(|&server_id| {
@@ -361,8 +367,10 @@ fn server_precedences(
                         .iter()
                         .position(|ordered_adapter| ordered_adapter.name == adapter.name)
                 });
-            let precedence =
-                configured_precedence.unwrap_or_else(|| ordered_adapters.len() + server_id.0);
+            let precedence = match configured_precedence {
+                Some(index) => configured_base + index,
+                None => server_id.0,
+            };
             (server_id, precedence as u32)
         })
         .collect()
