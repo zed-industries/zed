@@ -90,9 +90,7 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
     let mut reader = read::seek::ZipFileReader::new(BufReader::new(reader))
         .await
         .context("reading the zip archive")?;
-    let destination = &destination
-        .canonicalize()
-        .unwrap_or_else(|_| destination.to_path_buf());
+    let destination_dir = ArchiveExtractionRoot::new(destination)?;
     for (i, entry) in reader.file().entries().to_vec().into_iter().enumerate() {
         let filename = entry
             .filename()
@@ -104,43 +102,220 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
         }
 
         let path = destination.join(filename);
+        let archive_path = Path::new(filename);
 
         if entry
             .dir()
             .with_context(|| format!("reading zip entry metadata for path {path:?}"))?
         {
-            std::fs::create_dir_all(&path)
+            destination_dir
+                .open_directory(archive_path)
                 .with_context(|| format!("creating directory {path:?}"))?;
         } else {
-            let parent_dir = path
-                .parent()
-                .with_context(|| format!("no parent directory for {path:?}"))?;
-            std::fs::create_dir_all(parent_dir)
-                .with_context(|| format!("creating parent directory {parent_dir:?}"))?;
-            let mut file = smol::fs::File::create(&path)
-                .await
-                .with_context(|| format!("creating file {path:?}"))?;
+            let (parent_dir, file_name, parent_depth) =
+                destination_dir
+                    .open_parent(archive_path)
+                    .with_context(|| format!("creating parent directory for {path:?}"))?;
             let mut entry_reader = reader
                 .reader_with_entry(i)
                 .await
                 .with_context(|| format!("reading entry for path {path:?}"))?;
-            futures::io::copy(&mut entry_reader, &mut file)
-                .await
-                .with_context(|| format!("extracting into file {path:?}"))?;
 
-            if let Some(perms) = entry.unix_permissions()
-                && perms != 0o000
+            if entry
+                .unix_permissions()
+                .is_some_and(|permissions| permissions & 0o170000 == 0o120000)
             {
-                use std::os::unix::fs::PermissionsExt;
-                let permissions = std::fs::Permissions::from_mode(u32::from(perms));
-                file.set_permissions(permissions)
+                use std::os::fd::AsRawFd as _;
+
+                use nix::unistd::symlinkat;
+
+                let mut target = Vec::new();
+                futures::AsyncReadExt::read_to_end(&mut entry_reader, &mut target)
                     .await
-                    .with_context(|| format!("setting permissions for file {path:?}"))?;
+                    .with_context(|| format!("reading symlink target for path {path:?}"))?;
+                let target = std::str::from_utf8(&target)
+                    .with_context(|| format!("reading symlink target for path {path:?}"))?;
+                let target_path = Path::new(target);
+                anyhow::ensure!(
+                    symlink_target_is_safe(parent_depth, target_path),
+                    "symlink target escapes extraction directory: {path:?} -> {target:?}"
+                );
+                symlinkat(target_path, Some(parent_dir.as_raw_fd()), file_name)
+                    .with_context(|| format!("creating symlink {path:?} -> {target:?}"))?;
+            } else {
+                let mut file = smol::fs::File::from(
+                    open_archive_file(&parent_dir, file_name)
+                        .with_context(|| format!("creating file {path:?}"))?,
+                );
+                futures::io::copy(&mut entry_reader, &mut file)
+                    .await
+                    .with_context(|| format!("extracting into file {path:?}"))?;
+
+                if let Some(perms) = entry.unix_permissions()
+                    && perms != 0o000
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let permissions = std::fs::Permissions::from_mode(u32::from(perms));
+                    file.set_permissions(permissions)
+                        .await
+                        .with_context(|| format!("setting permissions for file {path:?}"))?;
+                }
             }
         }
     }
 
     Ok(())
+}
+
+#[cfg(unix)]
+struct ArchiveExtractionRoot {
+    directory: std::fs::File,
+}
+
+#[cfg(unix)]
+impl ArchiveExtractionRoot {
+    fn new(destination: &Path) -> Result<Self> {
+        use std::os::fd::FromRawFd as _;
+
+        use nix::{
+            fcntl::{OFlag, open},
+            sys::stat::Mode,
+        };
+
+        std::fs::create_dir_all(destination)
+            .with_context(|| format!("creating extraction directory {destination:?}"))?;
+        let directory = open(
+            destination,
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .with_context(|| format!("opening extraction directory {destination:?}"))?;
+        let directory = unsafe { std::fs::File::from_raw_fd(directory) };
+
+        Ok(Self { directory })
+    }
+
+    fn open_directory(&self, path: &Path) -> Result<std::fs::File> {
+        self.open_directory_components(&normal_components(path))
+    }
+
+    fn open_parent<'a>(
+        &self,
+        path: &'a Path,
+    ) -> Result<(std::fs::File, &'a std::ffi::OsStr, usize)> {
+        let mut components = normal_components(path);
+        let file_name = components.pop().context("archive entry has no file name")?;
+        let parent_depth = components.len();
+        let directory = self.open_directory_components(&components)?;
+
+        Ok((directory, file_name, parent_depth))
+    }
+
+    fn open_directory_components(&self, components: &[&std::ffi::OsStr]) -> Result<std::fs::File> {
+        let mut directory = self
+            .directory
+            .try_clone()
+            .context("cloning extraction directory")?;
+
+        for component in components {
+            directory = open_or_create_directory(&directory, component)?;
+        }
+
+        Ok(directory)
+    }
+}
+
+#[cfg(unix)]
+fn normal_components(path: &Path) -> Vec<&std::ffi::OsStr> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(component) => Some(component),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn open_or_create_directory(
+    parent: &std::fs::File,
+    component: &std::ffi::OsStr,
+) -> Result<std::fs::File> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+
+    use nix::{
+        errno::Errno,
+        fcntl::{OFlag, openat},
+        sys::stat::{Mode, mkdirat},
+    };
+
+    let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+    let directory = match openat(Some(parent.as_raw_fd()), component, flags, Mode::empty()) {
+        Ok(file_descriptor) => file_descriptor,
+        Err(Errno::ENOENT) => {
+            match mkdirat(
+                Some(parent.as_raw_fd()),
+                component,
+                Mode::from_bits_truncate(0o755),
+            ) {
+                Ok(()) | Err(Errno::EEXIST) => {}
+                Err(error) => return Err(error).context("creating extraction directory"),
+            }
+            openat(Some(parent.as_raw_fd()), component, flags, Mode::empty())
+                .context("opening extraction directory")?
+        }
+        Err(error) => return Err(error).context("opening extraction directory"),
+    };
+
+    Ok(unsafe { std::fs::File::from_raw_fd(directory) })
+}
+
+#[cfg(unix)]
+fn open_archive_file(parent: &std::fs::File, file_name: &std::ffi::OsStr) -> Result<std::fs::File> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+
+    use nix::{
+        fcntl::{OFlag, openat},
+        sys::stat::Mode,
+    };
+
+    let file_descriptor = openat(
+        Some(parent.as_raw_fd()),
+        file_name,
+        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::from_bits_truncate(0o666),
+    )
+    .context("opening archive file")?;
+    Ok(unsafe { std::fs::File::from_raw_fd(file_descriptor) })
+}
+
+#[cfg(unix)]
+fn symlink_target_is_safe(parent_depth: usize, target: &Path) -> bool {
+    if target.is_absolute() {
+        return false;
+    }
+
+    let mut depth = parent_depth;
+    let mut encountered_normal_component = false;
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(_) => {
+                encountered_normal_component = true;
+                depth += 1;
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                // A preceding component may be an archive symlink. Traversing upwards
+                // after it would make the lexical depth check diverge from filesystem resolution.
+                if encountered_normal_component || depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            _ => return false,
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -276,6 +451,356 @@ mod tests {
             let extracted_perms = std::fs::metadata(&extracted_path).unwrap().permissions();
             assert_eq!(extracted_perms.mode() & 0o777, 0o755);
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_preserves_symlinks() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+            let target = ZipEntryBuilder::new(
+                "Python.framework/Versions/3.12/Python".into(),
+                async_zip::Compression::Stored,
+            );
+            writer.write_entry_whole(target, b"python binary").await?;
+            let link = ZipEntryBuilder::new("Python".into(), async_zip::Compression::Stored)
+                .unix_permissions(0o120777);
+            writer
+                .write_entry_whole(link, b"Python.framework/Versions/3.12/Python")
+                .await?;
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            extract_seekable_zip(extract_dir.path(), archive).await?;
+
+            assert_eq!(
+                std::fs::read_link(extract_dir.path().join("Python"))?,
+                Path::new("Python.framework/Versions/3.12/Python")
+            );
+            assert!(
+                std::fs::symlink_metadata(extract_dir.path().join("Python"))?
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_file_content(&extract_dir.path().join("Python"), "python binary");
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_allows_valid_symlink_from_root() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+
+            let target = ZipEntryBuilder::new("target.txt".into(), async_zip::Compression::Stored);
+            writer.write_entry_whole(target, b"target content").await?;
+
+            let link = ZipEntryBuilder::new("link".into(), async_zip::Compression::Stored)
+                .unix_permissions(0o120777);
+            writer.write_entry_whole(link, b"./target.txt").await?;
+
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            extract_seekable_zip(extract_dir.path(), archive).await?;
+
+            assert_eq!(
+                std::fs::read_link(extract_dir.path().join("link"))?,
+                Path::new("./target.txt")
+            );
+            assert_file_content(&extract_dir.path().join("link"), "target content");
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_allows_valid_nested_symlink_traversal() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("lib/target".into(), async_zip::Compression::Stored),
+                    b"target content",
+                )
+                .await?;
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("bin/python".into(), async_zip::Compression::Stored)
+                        .unix_permissions(0o120777),
+                    b"../lib/target",
+                )
+                .await?;
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            extract_seekable_zip(extract_dir.path(), archive).await?;
+
+            assert_file_content(&extract_dir.path().join("bin/python"), "target content");
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_absolute_symlink_target() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("link".into(), async_zip::Compression::Stored)
+                        .unix_permissions(0o120777),
+                    b"/etc/passwd",
+                )
+                .await?;
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            assert!(
+                extract_seekable_zip(extract_dir.path(), archive)
+                    .await
+                    .is_err()
+            );
+            assert!(!extract_dir.path().join("link").exists());
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_target_with_late_traversal() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("c/target".into(), async_zip::Compression::Stored),
+                    b"target content",
+                )
+                .await?;
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("d/a".into(), async_zip::Compression::Stored)
+                        .unix_permissions(0o120777),
+                    b"../c",
+                )
+                .await?;
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("b".into(), async_zip::Compression::Stored)
+                        .unix_permissions(0o120777),
+                    b"d/a/../../outside",
+                )
+                .await?;
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            assert!(
+                extract_seekable_zip(extract_dir.path(), archive)
+                    .await
+                    .is_err()
+            );
+            assert!(!extract_dir.path().join("b").exists());
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlink_traversal() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+
+            let target =
+                ZipEntryBuilder::new("dir/target.txt".into(), async_zip::Compression::Stored);
+            writer.write_entry_whole(target, b"target content").await?;
+
+            let link = ZipEntryBuilder::new("link".into(), async_zip::Compression::Stored)
+                .unix_permissions(0o120777);
+            writer
+                .write_entry_whole(link, b"../../../etc/passwd")
+                .await?;
+
+            let link2 = ZipEntryBuilder::new("link2".into(), async_zip::Compression::Stored)
+                .unix_permissions(0o120777);
+            writer
+                .write_entry_whole(link2, b"../../../../etc/passwd")
+                .await?;
+
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            let result = extract_seekable_zip(extract_dir.path(), archive).await;
+
+            assert!(
+                result.is_err(),
+                "Expected extraction to fail for escaping symlink"
+            );
+            let error = match result {
+                Ok(()) => anyhow::bail!("expected extraction to reject an escaping symlink"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("escapes extraction directory"));
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlinked_parent_directories() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+
+            let symlink = |path: &str| {
+                ZipEntryBuilder::new(path.into(), async_zip::Compression::Stored)
+                    .unix_permissions(0o120777)
+            };
+            writer
+                .write_entry_whole(symlink("foo/bar/redirect"), b"../../safe")
+                .await?;
+            writer
+                .write_entry_whole(symlink("foo/bar/redirect/link"), b"../../outside")
+                .await?;
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new(
+                        "foo/bar/redirect/link/payload".into(),
+                        async_zip::Compression::Stored,
+                    ),
+                    b"must not escape",
+                )
+                .await?;
+            writer.close().await?;
+            archive.set_position(0);
+
+            let root = tempfile::tempdir()?;
+            let destination = root.path().join("extract");
+            let outside = root.path().join("outside");
+            std::fs::create_dir(&outside)?;
+
+            assert!(extract_seekable_zip(&destination, archive).await.is_err());
+            assert!(!outside.join("payload").exists());
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_symlinked_destination() -> Result<()> {
+        use std::os::unix::fs::symlink;
+
+        smol::block_on(async {
+            let archive = build_zip_with_entries(&[("payload", b"must not extract")]).await;
+            let root = tempfile::tempdir()?;
+            let redirected_destination = root.path().join("redirected");
+            std::fs::create_dir(&redirected_destination)?;
+            let destination = root.path().join("extract");
+            symlink(&redirected_destination, &destination)?;
+
+            assert!(extract_seekable_zip(&destination, archive).await.is_err());
+            assert!(!redirected_destination.join("payload").exists());
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_rejects_regular_file_over_symlink() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("target".into(), async_zip::Compression::Stored),
+                    b"safe content",
+                )
+                .await?;
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("link".into(), async_zip::Compression::Stored)
+                        .unix_permissions(0o120777),
+                    b"target",
+                )
+                .await?;
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("link".into(), async_zip::Compression::Stored),
+                    b"must not overwrite the target",
+                )
+                .await?;
+            writer.close().await?;
+            archive.set_position(0);
+
+            let extract_dir = tempfile::tempdir()?;
+            assert!(
+                extract_seekable_zip(extract_dir.path(), archive)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                std::fs::read_to_string(extract_dir.path().join("target"))?,
+                "safe content"
+            );
+            Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_surfaces_corrupt_payload_errors() -> Result<()> {
+        smol::block_on(async {
+            let mut archive = Cursor::new(Vec::new());
+            let mut writer = ZipFileWriter::new(&mut archive);
+            writer
+                .write_entry_whole(
+                    ZipEntryBuilder::new("payload".into(), async_zip::Compression::Deflate),
+                    b"payload contents",
+                )
+                .await?;
+            writer.close().await?;
+
+            let mut archive = archive.into_inner();
+            let filename_length = u16::from_le_bytes(
+                archive
+                    .get(26..28)
+                    .context("reading ZIP local header filename length")?
+                    .try_into()
+                    .context("decoding ZIP local header filename length")?,
+            ) as usize;
+            let extra_field_length = u16::from_le_bytes(
+                archive
+                    .get(28..30)
+                    .context("reading ZIP local header extra field length")?
+                    .try_into()
+                    .context("decoding ZIP local header extra field length")?,
+            ) as usize;
+            let compressed_data_offset = 30 + filename_length + extra_field_length;
+            let compressed_data = archive
+                .get_mut(compressed_data_offset)
+                .context("reading ZIP compressed payload")?;
+            *compressed_data ^= 0xff;
+
+            let extract_dir = tempfile::tempdir()?;
+            assert!(
+                extract_seekable_zip(extract_dir.path(), Cursor::new(archive))
+                    .await
+                    .is_err()
+            );
+            Ok(())
+        })
     }
 
     #[cfg(unix)]
