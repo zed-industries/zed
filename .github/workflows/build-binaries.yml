@@ -77,6 +77,8 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_15.3.app
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
+      - name: Fetch dependencies
+        run: cargo fetch
       - name: Bundle macOS app
         run: ./script/bundle-mac
       - name: Upload artifacts
@@ -106,6 +108,9 @@ jobs:
           sed -i "s/^version = \"[^\"]*\"/version = \"${{ needs.prepare.outputs.version }}\"/" crates/zed/Cargo.toml
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@72d126e709cad40056a62344eee609d696d62d33
+      - name: Fetch dependencies
+        shell: bash
+        run: cargo fetch
       - name: Bundle Windows installer
         shell: pwsh
         run: ./script/bundle-windows.ps1
