@@ -1,7 +1,7 @@
 use crate::{
     branch_picker,
     diff_file_tree::{DiffFileTree, DiffFileTreeEvent},
-    diff_multibuffer::{DiffMultibuffer, project_diff_path_key},
+    diff_multibuffer::{DiffMultibuffer, ToggleFullFileView, project_diff_path_key},
     project_diff::{
         self, CompareWithBranch, DeployBranchDiff, ProjectDiff, ReviewDiff,
         render_send_review_to_agent_button,
@@ -1004,6 +1004,7 @@ impl Render for BranchDiffToolbar {
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
         let show_file_tree = branch_diff.read(cx).show_file_tree;
+        let show_full_files = branch_diff.read(cx).diff.read(cx).show_full_files();
 
         h_flex()
             .my_neg_1()
@@ -1026,6 +1027,20 @@ impl Render for BranchDiffToolbar {
                                 .ok();
                         }
                     }),
+            )
+            .child(
+                IconButton::new("branch-diff-toggle-full-files", IconName::ExpandVertical)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(show_full_files)
+                    .disabled(is_multibuffer_empty)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Toggle Full File Contents",
+                        &ToggleFullFileView,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&ToggleFullFileView, window, cx)
+                    })),
             )
             .child(
                 h_group_sm()

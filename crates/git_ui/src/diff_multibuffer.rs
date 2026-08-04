@@ -14,9 +14,9 @@ use futures_lite::future::yield_now;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
     App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Subscription, Task, WeakEntity,
+    SharedString, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
@@ -35,6 +35,15 @@ use workspace::{
     item::{Item, SaveOptions},
 };
 use ztracing::instrument;
+
+actions!(
+    git,
+    [
+        /// Toggles between showing only the changed hunks and the entire
+        /// contents of each file in the diff views.
+        ToggleFullFileView
+    ]
+);
 
 /// Where to land inside a file when navigating to it: its first hunk, or its
 /// last one (used when stepping backwards into the previous file).
@@ -60,6 +69,7 @@ pub struct DiffMultibuffer {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     path_filter: Option<RepoPath>,
+    show_full_files: bool,
     pending_scroll: Option<(PathKey, PathTarget)>,
     review_comment_count: usize,
     empty_label: SharedString,
@@ -173,6 +183,7 @@ impl DiffMultibuffer {
             multibuffer,
             buffer_subscriptions: Default::default(),
             path_filter: None,
+            show_full_files: false,
             pending_scroll: None,
             review_comment_count: 0,
             empty_label: empty_label.into(),
@@ -275,6 +286,29 @@ impl DiffMultibuffer {
             return;
         }
         self.path_filter = path_filter;
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn show_full_files(&self) -> bool {
+        self.show_full_files
+    }
+
+    /// Switches between excerpts limited to the changed hunks and excerpts
+    /// spanning each file's entire contents.
+    pub(crate) fn set_show_full_files(
+        &mut self,
+        show_full_files: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_full_files == show_full_files {
+            return;
+        }
+        self.show_full_files = show_full_files;
         self._task = window.spawn(cx, {
             let this = cx.weak_entity();
             async |cx| Self::refresh(this, cx).await
@@ -554,7 +588,9 @@ impl DiffMultibuffer {
         let snapshot = display_buffer.read(cx).snapshot();
         let diff_snapshot = diff.read(cx).snapshot(cx);
 
-        let excerpt_ranges = {
+        let excerpt_ranges = if self.show_full_files {
+            vec![Point::zero()..snapshot.max_point()]
+        } else {
             let diff_hunk_ranges = diff_snapshot
                 .hunks_intersecting_range(
                     Anchor::min_max_range_for_buffer(snapshot.remote_id()),
@@ -949,6 +985,10 @@ impl Render for DiffMultibuffer {
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
+            .on_action(cx.listener(|this, _: &ToggleFullFileView, window, cx| {
+                let show_full_files = !this.show_full_files;
+                this.set_show_full_files(show_full_files, window, cx);
+            }))
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()

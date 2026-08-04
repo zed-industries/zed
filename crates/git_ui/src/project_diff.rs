@@ -1,6 +1,6 @@
 use crate::{
     branch_diff::BranchDiff,
-    diff_multibuffer::DiffMultibuffer,
+    diff_multibuffer::{DiffMultibuffer, ToggleFullFileView},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     staged_diff::StagedDiff,
     unstaged_diff::UnstagedDiff,
@@ -808,6 +808,7 @@ impl Render for ProjectDiffToolbar {
 
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
         let is_multibuffer_empty = project_diff.read(cx).multibuffer(cx).read(cx).is_empty();
+        let show_full_files = project_diff.read(cx).diff.read(cx).show_full_files();
 
         let stage_all_button_width = rems(5.);
 
@@ -855,6 +856,20 @@ impl Render for ProjectDiffToolbar {
                                 this.dispatch_action(&GoToHunk, window, cx)
                             })),
                     ),
+            )
+            .child(
+                IconButton::new("project-diff-toggle-full-files", IconName::ExpandVertical)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(show_full_files)
+                    .disabled(is_multibuffer_empty)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Toggle Full File Contents",
+                        &ToggleFullFileView,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&ToggleFullFileView, window, cx)
+                    })),
             )
             .child(Divider::vertical())
             .child(
