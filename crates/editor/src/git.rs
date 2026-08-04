@@ -1665,7 +1665,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to copy permalink: {err}");
+                let message = format!("Failed to copy remote file URL: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -1706,7 +1706,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to open permalink: {err}");
+                let message = format!("Failed to open file on remote: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
