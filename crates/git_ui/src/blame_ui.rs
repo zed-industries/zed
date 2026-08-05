@@ -1,9 +1,14 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips},
-    commit_view::CommitView,
+    commit_view::{CommitView, GitBlob, build_buffer},
 };
-use editor::{BlameRenderer, Editor, hover_markdown_style};
-use git::{blame::BlameEntry, commit::ParsedCommitMessage, repository::CommitSummary};
+use anyhow::Context as _;
+use editor::{BlameRenderer, Editor, GitBlame, MultiBuffer, hover_markdown_style};
+use git::{
+    blame::BlameEntry,
+    commit::ParsedCommitMessage,
+    repository::{CommitSummary, RepoPath},
+};
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, Pixels, Rems, ScrollHandle, Subscription, TextStyle,
     TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
@@ -14,10 +19,12 @@ use project::{
     project_settings::{InlineBlameLocation, ProjectSettings},
 };
 use settings::Settings as _;
+use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
-use workspace::Workspace;
+use util::paths::PathStyle;
+use workspace::{Workspace, notifications::NotifyTaskExt as _};
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 const GIT_BLAME_GUTTER_MARGIN: Rems = rems(0.5);
@@ -209,6 +216,8 @@ impl BlameRenderer for GitBlameRenderer {
                             let blame_entry = blame_entry.clone();
                             let details = details.clone();
                             let editor = editor.clone();
+                            let repository = repository.clone();
+                            let workspace = workspace.clone();
                             move |event, window, cx| {
                                 cx.stop_propagation();
 
@@ -216,6 +225,8 @@ impl BlameRenderer for GitBlameRenderer {
                                     &blame_entry,
                                     details.as_ref(),
                                     editor.clone(),
+                                    repository.clone(),
+                                    workspace.clone(),
                                     event.position,
                                     window,
                                     cx,
@@ -512,12 +523,21 @@ fn deploy_blame_entry_context_menu(
     blame_entry: &BlameEntry,
     details: Option<&ParsedCommitMessage>,
     editor: Entity<Editor>,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
     position: gpui::Point<Pixels>,
     window: &mut Window,
     cx: &mut App,
 ) {
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
+        let blame_revision = RepoPath::new(&blame_entry.filename)
+            .ok()
+            .map(|path| (blame_entry.sha.to_string(), path));
+        let blame_previous_revision = blame_entry.previous.as_deref().and_then(|previous| {
+            let (sha, filename) = previous.split_once(' ')?;
+            Some((sha.to_string(), RepoPath::new(filename).ok()?))
+        });
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy Commit SHA", None, move |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
@@ -530,6 +550,35 @@ fn deploy_blame_entry_context_menu(
                     })
                 },
             )
+            .separator()
+            .when_some(blame_revision, |this, (revision, path)| {
+                let repository = repository.clone();
+                let workspace = workspace.clone();
+                this.entry("Blame Revision", None, move |window, cx| {
+                    open_buffer_blame_at_revision(
+                        repository.clone(),
+                        workspace.clone(),
+                        path.clone(),
+                        revision.clone(),
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .when_some(blame_previous_revision, |this, (revision, path)| {
+                let repository = repository.clone();
+                let workspace = workspace.clone();
+                this.entry("Blame Previous Revision", None, move |window, cx| {
+                    open_buffer_blame_at_revision(
+                        repository.clone(),
+                        workspace.clone(),
+                        path.clone(),
+                        revision.clone(),
+                        window,
+                        cx,
+                    );
+                })
+            })
     });
 
     editor.update(cx, move |editor, cx| {
@@ -537,6 +586,96 @@ fn deploy_blame_entry_context_menu(
         editor.deploy_mouse_context_menu(position, context_menu, window, cx);
         cx.notify();
     });
+}
+
+fn open_buffer_blame_at_revision(
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    path: RepoPath,
+    revision: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let blame_task = repository.update(cx, |repository, cx| {
+        repository.blame_buffer_at_revision(path.clone(), revision.clone(), cx)
+    });
+
+    window
+        .spawn(cx, {
+            let workspace = workspace.clone();
+            async move |cx| {
+                let (content, blame) = blame_task.await?;
+
+                let (language_registry, first_worktree_id) =
+                    workspace.read_with(cx, |workspace, cx| {
+                        let project = workspace.project().read(cx);
+                        let language_registry = project.languages().clone();
+                        let first_worktree_id = project
+                            .worktrees(cx)
+                            .next()
+                            .map(|worktree| worktree.read(cx).id());
+                        (language_registry, first_worktree_id)
+                    })?;
+
+                let worktree_id = repository
+                    .update(cx, |repository, cx| {
+                        repository
+                            .repo_path_to_project_path(&path, cx)
+                            .map(|project_path| project_path.worktree_id)
+                    })
+                    .or(first_worktree_id)
+                    .context("project has no worktrees")?;
+
+                let short_sha = revision.get(..git::SHORT_SHA_LENGTH).unwrap_or(&revision);
+                let file_name = path
+                    .file_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| path.display(PathStyle::local()).to_string());
+                let display_name = format!("{file_name} @ {short_sha}");
+
+                let file = Arc::new(GitBlob {
+                    path: path.clone(),
+                    worktree_id,
+                    is_deleted: false,
+                    is_binary: false,
+                    display_name: display_name.clone(),
+                }) as Arc<dyn language::File>;
+
+                let buffer = build_buffer(content, file, &language_registry, cx).await?;
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let existing = workspace.active_pane().read(cx).items().find_map(|item| {
+                        let editor = item.downcast::<Editor>()?;
+                        let buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
+                        let file = buffer.read(cx).file()?;
+                        (file.file_name(cx) == display_name.as_str()).then_some(editor)
+                    });
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                        return;
+                    }
+
+                    let project = workspace.project().clone();
+                    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                    let editor = cx.new(|cx| {
+                        let mut editor = Editor::for_multibuffer(
+                            multi_buffer.clone(),
+                            Some(project.clone()),
+                            window,
+                            cx,
+                        );
+                        editor.set_read_only(true);
+                        editor
+                    });
+                    let git_blame = cx.new(|cx| {
+                        GitBlame::new_static(multi_buffer, project, repository, blame, cx)
+                    });
+                    editor.update(cx, |editor, cx| editor.set_blame(git_blame, window, cx));
+                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                })
+            }
+        })
+        .detach_and_notify_err(workspace, window, cx);
 }
 
 fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {

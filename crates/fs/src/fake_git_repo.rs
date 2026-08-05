@@ -989,6 +989,20 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        _revision: String,
+    ) -> BoxFuture<'_, Result<git::blame::Blame>> {
+        self.with_state_async(false, move |state| {
+            state
+                .blames
+                .get(&path)
+                .with_context(|| format!("failed to get blame for {:?}", path))
+                .cloned()
+        })
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,

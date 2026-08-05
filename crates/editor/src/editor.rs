@@ -106,7 +106,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::BlameRenderer;
+pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
     DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
     RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
@@ -158,7 +158,7 @@ use futures::{
     future::{self, Shared},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{GitBlame, GlobalBlameRenderer};
+use git::blame::GlobalBlameRenderer;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,

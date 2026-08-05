@@ -87,12 +87,12 @@ pub struct CommitView {
     remote: Option<GitRemote>,
 }
 
-struct GitBlob {
-    path: RepoPath,
-    worktree_id: WorktreeId,
-    is_deleted: bool,
-    is_binary: bool,
-    display_name: String,
+pub(crate) struct GitBlob {
+    pub(crate) path: RepoPath,
+    pub(crate) worktree_id: WorktreeId,
+    pub(crate) is_deleted: bool,
+    pub(crate) is_binary: bool,
+    pub(crate) display_name: String,
 }
 
 struct CommitDiffAddon {
@@ -957,7 +957,7 @@ impl language::File for GitBlob {
     }
 }
 
-async fn build_buffer(
+pub(crate) async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
     language_registry: &Arc<language::LanguageRegistry>,
