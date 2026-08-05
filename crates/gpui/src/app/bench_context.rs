@@ -10,17 +10,17 @@ use anyhow::{Result, anyhow};
 use hdrhistogram::Histogram;
 
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BenchDispatcher,
-    Bounds, Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform,
-    PlatformHeadlessRenderer, PlatformTextSystem, Render, Reservation, Task, TestPlatform,
-    VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform, PlatformHeadlessRenderer,
+    PlatformTextSystem, Render, Reservation, Task, TestPlatform, ThreadedDispatcher, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
     profiler::{self, FrameTiming, FrameTimingCollector},
 };
 
 /// Returns a benchmark platform backed by this thread's shared dispatcher.
 ///
-/// The platform uses this thread's shared multithreaded [`BenchDispatcher`], so
+/// The platform uses this thread's shared multithreaded [`ThreadedDispatcher`], so
 /// background work runs with production concurrency in real time. The dispatcher
 /// is cached per thread and reused across benchmark invocations so worker and
 /// timer threads persist for the whole process instead of being recreated for
@@ -42,10 +42,10 @@ pub fn bench_platform(
     text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {
-        static DISPATCHER: OnceCell<Arc<BenchDispatcher>> = const { OnceCell::new() };
+        static DISPATCHER: OnceCell<Arc<ThreadedDispatcher>> = const { OnceCell::new() };
     }
     let dispatcher = DISPATCHER.with(|cell| {
-        cell.get_or_init(|| Arc::new(BenchDispatcher::new()))
+        cell.get_or_init(|| Arc::new(ThreadedDispatcher::new()))
             .clone()
     });
     let background_executor = BackgroundExecutor::new(dispatcher.clone());
@@ -257,6 +257,52 @@ impl Drop for FrameTraceScope {
     }
 }
 
+struct MeasuredTaskInput<Input> {
+    input: Input,
+    frame_trace_scope: Option<FrameTraceScope>,
+}
+
+struct MeasuredTaskOutput<Output> {
+    frame_trace_scope: Option<FrameTraceScope>,
+    report: BenchReport,
+    _output: Output,
+}
+
+impl<Output> Drop for MeasuredTaskOutput<Output> {
+    fn drop(&mut self) {
+        let frame_trace_scope = self
+            .frame_trace_scope
+            .take()
+            .expect("measured task output should retain its frame trace scope");
+        self.report
+            .record_frame_timings(frame_trace_scope.finish().iter());
+    }
+}
+
+fn run_task_to_completion<Output>(
+    foreground_executor: &ForegroundExecutor,
+    task: Task<Output>,
+) -> Output
+where
+    Output: 'static,
+{
+    let output = Rc::new(RefCell::new(None));
+    foreground_executor
+        .spawn({
+            let output = output.clone();
+            async move {
+                *output.borrow_mut() = Some(task.await);
+            }
+        })
+        .detach();
+
+    foreground_executor
+        .dispatcher()
+        .as_threaded()
+        .expect("BenchAppContext requires a ThreadedDispatcher")
+        .run_until(|| output.borrow_mut().take())
+}
+
 /// A GPUI app context for Criterion benchmarks.
 ///
 /// `BenchAppContext` is intentionally separate from `TestAppContext`: it owns a
@@ -276,7 +322,7 @@ pub struct BenchAppContext<'a, 'measurement> {
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context backed by the provided platform.
     ///
-    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// The platform's executors must be backed by a [`ThreadedDispatcher`]
     /// (see [`bench_platform`]) so the context can drain foreground work via
     /// [`Self::run_until_idle`]; panics otherwise.
     pub fn new(
@@ -289,7 +335,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Creates a new benchmark app context backed by the provided platform.
     ///
-    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// The platform's executors must be backed by a [`ThreadedDispatcher`]
     /// (see [`bench_platform`]) so the context can drain foreground work via
     /// [`Self::run_until_idle`]; panics otherwise.
     #[doc(hidden)]
@@ -312,9 +358,9 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         // Validate up front so misconfiguration fails at construction with a
         // clear message instead of deep inside `run_until_idle`.
         assert!(
-            background_executor.dispatcher().as_bench().is_some(),
+            background_executor.dispatcher().as_threaded().is_some(),
             "BenchAppContext requires a platform whose executors are backed by a \
-             BenchDispatcher; construct one with gpui::bench_platform"
+             ThreadedDispatcher; construct one with gpui::bench_platform"
         );
         let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
@@ -360,11 +406,11 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs queued foreground tasks on this thread and waits for in flight
     /// background work to finish. Timers that aren't due yet are not waited
-    /// for (see [`BenchDispatcher::run_until_idle`]).
+    /// for (see [`ThreadedDispatcher::run_until_idle`]).
     pub fn run_until_idle(&self) {
         self.background_executor
             .dispatcher()
-            .as_bench()
+            .as_threaded()
             .expect("validated in BenchAppContext::build")
             .run_until_idle();
     }
@@ -382,6 +428,74 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
         self.report.record_frame_timings(collector.finish().iter());
+        self.replace_bencher(bencher);
+    }
+
+    /// Measures a GPUI task to completion using Criterion's iteration loop.
+    ///
+    /// The closure is invoked once per Criterion iteration. The returned task
+    /// may depend on foreground work, background work, timers, or external
+    /// workers that wake GPUI tasks. Its output is dropped after the timed
+    /// interval.
+    ///
+    /// Any window draws triggered by the task are recorded into the benchmark's
+    /// frame report through the GPUI frame profiler.
+    pub fn bench_task<Output>(&mut self, mut benchmark: impl FnMut(&mut Self) -> Task<Output>)
+    where
+        Output: 'static,
+    {
+        self.bench_batched_task_internal("bench_task", |_| (), |_, cx| benchmark(cx));
+    }
+
+    /// Measures a GPUI task with per-iteration setup outside the timed interval.
+    ///
+    /// `setup` runs before timing starts. The returned input is passed by mutable
+    /// reference to `benchmark`, which returns the task whose completion is
+    /// measured. Both the setup input and task output are dropped after timing
+    /// stops.
+    ///
+    /// Each iteration is kept in its own Criterion batch so frame tracing and
+    /// destruction cannot overlap adjacent measurements.
+    pub fn bench_batched_task<Input, Output>(
+        &mut self,
+        setup: impl FnMut(&mut Self) -> Input,
+        benchmark: impl FnMut(&mut Input, &mut Self) -> Task<Output>,
+    ) where
+        Output: 'static,
+    {
+        self.bench_batched_task_internal("bench_batched_task", setup, benchmark);
+    }
+
+    fn bench_batched_task_internal<Input, Output>(
+        &mut self,
+        benchmark_kind: &str,
+        mut setup: impl FnMut(&mut Self) -> Input,
+        mut benchmark: impl FnMut(&mut Input, &mut Self) -> Task<Output>,
+    ) where
+        Output: 'static,
+    {
+        let bencher = self.take_bencher(benchmark_kind);
+        let mut setup_context = self.clone();
+        let mut benchmark_context = self.clone();
+        let foreground_executor = self.foreground_executor.clone();
+        let report = self.report.clone();
+
+        bencher.iter_batched_ref(
+            || MeasuredTaskInput {
+                input: setup(&mut setup_context),
+                frame_trace_scope: Some(FrameTraceScope::start()),
+            },
+            |measured_input| {
+                let task = benchmark(&mut measured_input.input, &mut benchmark_context);
+                let output = run_task_to_completion(&foreground_executor, task);
+                MeasuredTaskOutput {
+                    frame_trace_scope: measured_input.frame_trace_scope.take(),
+                    report: report.clone(),
+                    _output: output,
+                }
+            },
+            criterion::BatchSize::PerIteration,
+        );
         self.replace_bencher(bencher);
     }
 
@@ -414,7 +528,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
         let mut benchmark = || {
             dispatcher
-                .as_bench()
+                .as_threaded()
                 .expect("validated in BenchAppContext::build")
                 .run_ready_main_tasks();
             self.with_window(view.entity_id(), |window, cx| {
@@ -496,7 +610,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
         let dispatcher = self.background_executor.dispatcher();
         let dispatcher = dispatcher
-            .as_bench()
+            .as_threaded()
             .expect("validated in BenchAppContext::build");
 
         drop(self.app);
@@ -777,5 +891,40 @@ impl VisualContext for BenchWindowContext<'_, '_> {
         self.window.update(&mut self.cx, |_, window, cx| {
             entity.read(cx).focus_handle(cx).focus(window, cx)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{rc::Rc, sync::Arc};
+
+    use super::*;
+
+    #[test]
+    fn task_completion_supports_non_send_foreground_output() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+
+        background_executor
+            .spawn(async move {
+                sender
+                    .send(())
+                    .expect("foreground receiver should remain alive");
+            })
+            .detach();
+        let expected_output = Rc::new(42);
+        let task_output = expected_output.clone();
+        let task = foreground_executor.spawn(async move {
+            receiver.await.expect("background task should send a value");
+            task_output
+        });
+
+        let output = run_task_to_completion(&foreground_executor, task);
+        assert!(
+            Rc::ptr_eq(&output, &expected_output),
+            "task runner should preserve non-Send foreground output"
+        );
     }
 }

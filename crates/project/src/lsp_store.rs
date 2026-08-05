@@ -1145,10 +1145,10 @@ impl LocalLspStore {
             .on_request::<lsp::request::WorkspaceDiagnosticRefresh, _, _>({
                 let this = lsp_store.clone();
                 move |(), cx| {
-                    let this = this.clone();
+                    let lsp_store = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        this.update(&mut cx, |lsp_store, cx| {
+                        lsp_store.update(&mut cx, |lsp_store, cx| {
                             lsp_store.pull_workspace_diagnostics(server_id);
                             lsp_store
                                 .downstream_client
@@ -1160,11 +1160,13 @@ impl LocalLspStore {
                                     })
                                 })
                                 .transpose()?;
-                            anyhow::Ok(
-                                lsp_store.pull_document_diagnostics_for_server(server_id, None, cx),
-                            )
-                        })??
-                        .await;
+                            // Respond before pulling: awaiting a round-trip to the same server
+                            // here can deadlock servers that bound their request concurrency
+                            // and await this response.
+                            let _ =
+                                lsp_store.pull_document_diagnostics_for_server(server_id, None, cx);
+                            anyhow::Ok(())
+                        })??;
                         Ok(())
                     }
                 }
