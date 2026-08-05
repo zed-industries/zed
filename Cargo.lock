@@ -3887,17 +3887,16 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "collections",
  "credentials_provider",
- "dirs",
  "futures 0.3.32",
  "gpui",
  "http_client",
+ "language_model",
  "log",
- "paths",
  "serde",
  "serde_json",
- "settings",
- "zed_credentials_provider",
+ "util",
 ]
 
 [[package]]
@@ -6439,6 +6438,7 @@ dependencies = [
  "extension_host",
  "fs",
  "fuzzy",
+ "git",
  "gpui",
  "language",
  "log",
@@ -6567,7 +6567,6 @@ dependencies = [
  "fs",
  "gpui",
  "inventory",
- "release_channel",
  "schemars 1.0.4",
  "serde_json",
  "settings",
@@ -8099,6 +8098,7 @@ dependencies = [
  "itertools 0.14.0",
  "js-sys",
  "log",
+ "naga",
  "parking_lot",
  "pollster 0.4.0",
  "profiling",
@@ -14281,7 +14281,6 @@ dependencies = [
  "collections",
  "criterion",
  "editor",
- "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.32",
@@ -16200,6 +16199,7 @@ dependencies = [
  "serde_json",
  "smol",
  "tempfile",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
@@ -21357,6 +21357,7 @@ dependencies = [
  "thiserror 2.0.17",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
+ "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -21377,6 +21378,15 @@ name = "wgpu-core-deps-emscripten"
 version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01e09be551dc939498bdd5f6b2c66e55ab275dad25825267a08605a80fc9f0af"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-wasm"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af1fb1798be2a912497d4c224f72d39bb0cb34af50e8bcc29865bc339c943059"
 dependencies = [
  "wgpu-hal",
 ]
@@ -23252,7 +23262,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.15.0"
+version = "1.16.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -23421,6 +23431,7 @@ dependencies = [
  "workspace",
  "zed-reqwest",
  "zed_actions",
+ "zed_credentials_provider",
  "zed_env_vars",
  "zlog",
  "zlog_settings",
