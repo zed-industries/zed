@@ -13,6 +13,13 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
+> **Shortcut:** `script/win-init.sh` (run from Git Bash) checks every dependency
+> in this section and installs the missing Visual Studio components for you.
+> Use `script/win-init.sh --check-only` to report without changing anything.
+> Then `script/win-setenv.cmd` loads the build environment into a cmd session,
+> and `script/win-build.sh` does a release build. The manual steps below remain
+> the reference for what those scripts do.
+
 - Install [rustup](https://www.rust-lang.org/tools/install)
 
 - Install either [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is the release year. Adjust architecture as needed).
