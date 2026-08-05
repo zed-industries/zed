@@ -6306,13 +6306,12 @@ impl GitPanel {
             return;
         }
         self.active_tab = tab;
+        self.activation_focus_handle(cx).focus(window, cx);
         match tab {
             GitPanelTab::History => {
-                self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
             }
             GitPanelTab::Changes => {
-                self.focus_handle.focus(window, cx);
                 self.set_commit_history(CommitHistory::Loading, cx);
                 self._repo_subscriptions.clear();
             }
