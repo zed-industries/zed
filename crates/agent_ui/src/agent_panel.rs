@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
     agent::{
-        AddSelectionToThread, ConflictContent, LogoutAgent, OpenSettings, ReauthenticateAgent,
-        ResetAgentZoom, ResetOnboarding, ResolveConflictedFilesWithAgent,
+        AddSelectionToThread, ConflictContent, FixDiagnosticWithAgent, LogoutAgent, OpenSettings,
+        ReauthenticateAgent, ResetAgentZoom, ResetOnboarding, ResolveConflictedFilesWithAgent,
         ResolveConflictsWithAgent, ReviewBranchDiff, SelectAgent,
     },
     assistant::{
@@ -582,6 +582,32 @@ pub fn init(cx: &mut App) {
                         );
                     });
                 })
+                .register_action(|workspace, action: &FixDiagnosticWithAgent, window, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        return;
+                    };
+                    let content_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        diagnostic_fix_prompt(action),
+                    ))];
+
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                    panel.update(cx, |panel, cx| {
+                        panel.external_thread(
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(AgentInitialContent::ContentBlock {
+                                blocks: content_blocks,
+                                auto_submit: true,
+                            }),
+                            true,
+                            AgentThreadSource::AgentPanel,
+                            window,
+                            cx,
+                        );
+                    });
+                })
                 .register_action(
                     |workspace, action: &ResolveConflictsWithAgent, window, cx| {
                         let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
@@ -889,6 +915,13 @@ fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::C
     }
 
     blocks
+}
+
+fn diagnostic_fix_prompt(action: &FixDiagnosticWithAgent) -> String {
+    format!(
+        "Fix the following diagnostic in `{}` at line {}, column {}:\n\n{}",
+        action.path, action.line, action.column, action.message
+    )
 }
 
 fn build_conflicted_files_resolution_prompt(
@@ -6843,6 +6876,21 @@ mod tests {
         assert!(is_known_terminal_agent_command("codex"));
         assert!(!is_known_terminal_agent_command("cargo"));
         assert!(!is_known_terminal_agent_command("internal-agent"));
+    }
+
+    #[test]
+    fn test_diagnostic_fix_prompt() {
+        let action = FixDiagnosticWithAgent {
+            path: "/project/src/main.rs".into(),
+            line: 12,
+            column: 7,
+            message: "mismatched types".into(),
+        };
+
+        assert_eq!(
+            diagnostic_fix_prompt(&action),
+            "Fix the following diagnostic in `/project/src/main.rs` at line 12, column 7:\n\nmismatched types"
+        );
     }
 
     #[test]
