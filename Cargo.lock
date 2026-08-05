@@ -6439,6 +6439,7 @@ dependencies = [
  "extension_host",
  "fs",
  "fuzzy",
+ "git",
  "gpui",
  "language",
  "log",
@@ -8098,6 +8099,7 @@ dependencies = [
  "itertools 0.14.0",
  "js-sys",
  "log",
+ "naga",
  "parking_lot",
  "pollster 0.4.0",
  "profiling",
@@ -14280,7 +14282,6 @@ dependencies = [
  "collections",
  "criterion",
  "editor",
- "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.32",
@@ -21357,6 +21358,7 @@ dependencies = [
  "thiserror 2.0.17",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
+ "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -21377,6 +21379,15 @@ name = "wgpu-core-deps-emscripten"
 version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01e09be551dc939498bdd5f6b2c66e55ab275dad25825267a08605a80fc9f0af"
+dependencies = [
+ "wgpu-hal",
+]
+
+[[package]]
+name = "wgpu-core-deps-wasm"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af1fb1798be2a912497d4c224f72d39bb0cb34af50e8bcc29865bc339c943059"
 dependencies = [
  "wgpu-hal",
 ]

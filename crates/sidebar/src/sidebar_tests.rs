@@ -1056,6 +1056,80 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let header = |path: &str| ListEntry::ProjectHeader {
+        key: ProjectGroupKey::new(None, PathList::new(&[std::path::PathBuf::from(path)])),
+        label: path.into(),
+        highlight_positions: Vec::new(),
+        has_running_threads: false,
+        waiting_thread_count: 0,
+        has_notifications: false,
+        is_active: false,
+        has_threads: true,
+    };
+    let thread = |name: &str| {
+        ListEntry::Thread(Arc::new(ThreadEntry {
+            metadata: ThreadMetadata {
+                thread_id: ThreadId::new(),
+                session_id: Some(acp::SessionId::new(Arc::from(name))),
+                agent_id: AgentId::new("zed-agent"),
+                worktree_paths: WorktreePaths::default(),
+                title: Some(name.to_string().into()),
+                title_override: None,
+                updated_at: Utc::now(),
+                created_at: Some(Utc::now()),
+                interacted_at: None,
+                archived: false,
+                remote_connection: None,
+            },
+            icon: IconName::ZedAgent,
+            icon_from_external_svg: None,
+            status: AgentThreadStatus::Completed,
+            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+            is_live: false,
+            is_background: false,
+            is_title_generating: false,
+            draft: None,
+            highlight_positions: Vec::new(),
+            worktrees: Vec::new(),
+            diff_stats: DiffStats::default(),
+        }))
+    };
+
+    sidebar.update_in(cx, |s, _window, _cx| {
+        s.contents.entries = vec![
+            header("/project-a"),
+            thread("a-newest"),
+            thread("a-oldest"),
+            header("/project-b"),
+            thread("b-newest"),
+        ];
+
+        let neighbor_session = |position: usize| match s.neighboring_activatable_entry(position) {
+            Some(ActivatableEntry::Thread { metadata, .. }) => metadata.session_id,
+            _ => None,
+        };
+
+        assert_eq!(
+            neighbor_session(2),
+            Some(acp::SessionId::new(Arc::from("a-newest"))),
+            "the neighbor should be the sibling in the same project, not the next project's thread"
+        );
+        assert_eq!(
+            neighbor_session(4),
+            Some(acp::SessionId::new(Arc::from("a-oldest"))),
+            "an empty project should fall back to another project"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     use workspace::ProjectGroup;
 
@@ -8236,6 +8310,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
+    let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     let _worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
@@ -8263,6 +8338,38 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         &worktree_project,
         cx,
     );
+    cx.run_until_parked();
+
+    let remote_host =
+        remote::RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 99 });
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(workspace::ProjectGroup {
+            key: ProjectGroupKey::new(
+                Some(remote_host.clone()),
+                PathList::new(&[PathBuf::from("/remote/project")]),
+            ),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+    cx.update(|_window, cx| {
+        let metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("remote-thread"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote Thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/remote/project",
+            )])),
+            archived: false,
+            remote_connection: Some(remote_host),
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+    });
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -8293,6 +8400,14 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         1,
         "linked worktree workspace should be removed after archiving its last thread"
     );
+
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.workspace(),
+            &main_workspace,
+            "archiving the worktree's last thread should activate its own project, not the remote one"
+        );
+    });
 
     // The linked worktree checkout directory should also be removed from disk.
     assert!(
@@ -8746,12 +8861,10 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
     cx.run_until_parked();
 
     // Remove the worktree workspace and delete the worktree from disk.
-    let main_workspace =
-        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
     let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.remove(
             vec![worktree_workspace],
-            move |_this, _window, _cx| Task::ready(Ok(main_workspace)),
+            RemovalIntent::KeepProject,
             window,
             cx,
         )
@@ -12459,7 +12572,8 @@ mod property_test {
                     let key = &keys[project_group_index];
                     let ws = mw
                         .workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| mw.workspace().clone());
                     let project = ws.read(cx).project().clone();
                     (ws, project)
@@ -12612,7 +12726,8 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[index];
                     mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
                 multi_workspace.update_in(cx, |mw, window, cx| {
@@ -12681,7 +12796,8 @@ mod property_test {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
                     mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                        .first()
+                        .cloned()
                         .unwrap()
                 });
                 let main_project = main_workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -12700,8 +12816,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                    mw.workspaces_for_project_group(key, cx).first().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -12728,8 +12843,7 @@ mod property_test {
                 let workspace = multi_workspace.read_with(cx, |mw, cx| {
                     let keys = mw.project_group_keys();
                     let key = &keys[project_group_index];
-                    mw.workspaces_for_project_group(key, cx)
-                        .and_then(|ws| ws.first().cloned())
+                    mw.workspaces_for_project_group(key, cx).first().cloned()
                 });
                 let Some(workspace) = workspace else { return };
                 let project = workspace.read_with(cx, |ws, _| ws.project().clone());
@@ -14978,9 +15092,9 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
                 Some(opts),
                 Some(key),
                 move |_, _, _| Task::ready(Ok(Some(remote_client))),
-                &[],
                 None,
                 workspace::OpenMode::Activate,
+                None,
                 window,
                 cx,
             )
