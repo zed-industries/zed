@@ -166,5 +166,5 @@ jobs:
           gh release create "$VERSION" \
             --title "Zed $VERSION" \
             --notes "Auto-built from hee10k/zed. Install and run 'zed update' to receive future builds.
-commit: $COMMIT_SHA" \
+            commit: $COMMIT_SHA" \
             assets/*
