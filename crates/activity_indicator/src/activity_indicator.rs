@@ -7,8 +7,7 @@ use gpui::{
     SharedString, Styled, Window, actions,
 };
 use language::{
-    BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
-    LanguageServerStatusUpdate, ServerHealth,
+    BinaryStatus, LanguageServerId, LanguageServerName, LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
     LanguageServerProgress, LspStoreEvent, ProgressToken, Project, ProjectEnvironmentEvent,
@@ -52,6 +51,7 @@ pub struct ActivityIndicator {
 
 #[derive(Debug)]
 struct ServerStatus {
+    language_server_id: LanguageServerId,
     name: LanguageServerName,
     status: LanguageServerStatusUpdate,
 }
@@ -78,28 +78,11 @@ struct Content {
 impl ActivityIndicator {
     pub fn new(
         workspace: &mut Workspace,
-        languages: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let this = cx.new(|cx| {
-            let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn(async move |this, cx| {
-                while let Some((name, binary_status)) = status_events.next().await {
-                    this.update(cx, |this: &mut ActivityIndicator, cx| {
-                        this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus {
-                            name,
-                            status: LanguageServerStatusUpdate::Binary(binary_status),
-                        });
-                        cx.notify();
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
             let fs = project.read(cx).fs().clone();
             let mut job_events = fs.subscribe_to_jobs();
             cx.spawn(async move |this, cx| {
@@ -124,7 +107,12 @@ impl ActivityIndicator {
             cx.subscribe(
                 &project.read(cx).lsp_store(),
                 |activity_indicator, _, event, cx| {
-                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
+                    if let LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name,
+                        message,
+                    } = event
+                    {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
                             message
                         {
@@ -186,10 +174,14 @@ impl ActivityIndicator {
                                 None => return,
                             };
 
-                            activity_indicator.statuses.retain(|s| s.name != name);
                             activity_indicator
                                 .statuses
-                                .push(ServerStatus { name, status });
+                                .retain(|status| status.language_server_id != *language_server_id);
+                            activity_indicator.statuses.push(ServerStatus {
+                                language_server_id: *language_server_id,
+                                name,
+                                status,
+                            });
                         }
                         cx.notify()
                     }

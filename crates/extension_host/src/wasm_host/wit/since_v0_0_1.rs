@@ -2,7 +2,7 @@ use super::{latest, since_v0_6_0};
 use crate::wasm_host::WasmState;
 use crate::wasm_host::wit::since_v0_0_4;
 use anyhow::Result;
-use extension::{ExtensionLanguageServerProxy, WorktreeDelegate};
+use extension::WorktreeDelegate;
 use gpui::BackgroundExecutor;
 use language::BinaryStatus;
 use semver::Version;
@@ -148,11 +148,7 @@ impl ExtensionImports for WasmState {
             LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
-        self.host
-            .proxy
-            .update_language_server_status(lsp::LanguageServerName(server_name.into()), status);
-
-        Ok(())
+        self.update_language_server_status(lsp::LanguageServerName(server_name.into()), status)
     }
 
     async fn download_file(

@@ -2089,9 +2089,37 @@ impl Project {
         init_worktree_trust: bool,
         cx: &mut gpui::TestAppContext,
     ) -> Entity<Project> {
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+        Self::test_project_with_language_registry(
+            fs,
+            root_paths,
+            init_worktree_trust,
+            languages,
+            cx,
+        )
+        .await
+    }
+
+    #[cfg(feature = "test-support")]
+    pub async fn test_with_language_registry(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<Project> {
+        Self::test_project_with_language_registry(fs, root_paths, false, languages, cx).await
+    }
+
+    #[cfg(feature = "test-support")]
+    async fn test_project_with_language_registry(
+        fs: Arc<dyn Fs>,
+        root_paths: impl IntoIterator<Item = &Path>,
+        init_worktree_trust: bool,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
-        let languages = LanguageRegistry::test(cx.executor());
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -2101,7 +2129,7 @@ impl Project {
                 client,
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
-                Arc::new(languages),
+                languages,
                 fs,
                 None,
                 LocalProjectFlags {

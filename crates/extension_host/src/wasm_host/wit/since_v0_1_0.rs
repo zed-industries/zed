@@ -4,7 +4,7 @@ use ::settings::{Settings, WorktreeId};
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
+use extension::{KeyValueStoreDelegate, WorktreeDelegate};
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
 use gpui::BackgroundExecutor;
@@ -495,11 +495,7 @@ impl ExtensionImports for WasmState {
             LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
-        self.host
-            .proxy
-            .update_language_server_status(::lsp::LanguageServerName(server_name.into()), status);
-
-        Ok(())
+        self.update_language_server_status(::lsp::LanguageServerName(server_name.into()), status)
     }
 
     async fn download_file(

@@ -18,7 +18,7 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor, EntityId};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -88,9 +88,15 @@ impl std::fmt::Display for LanguageNotFound {
     }
 }
 
+type BinaryStatusUpdate = (
+    (EntityId, LanguageServerId),
+    LanguageServerName,
+    BinaryStatus,
+);
+
 #[derive(Clone, Default)]
 struct ServerStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, BinaryStatus)>>>>,
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<BinaryStatusUpdate>>>>,
 }
 
 pub struct LoadedLanguage {
@@ -802,8 +808,15 @@ impl LanguageRegistry {
         self.state.read().all_lsp_adapters.get(name).cloned()
     }
 
-    pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(server_name, status);
+    pub fn update_lsp_binary_status_for_language_server(
+        &self,
+        lsp_store_id: EntityId,
+        language_server_id: LanguageServerId,
+        server_name: LanguageServerName,
+        status: BinaryStatus,
+    ) {
+        self.lsp_binary_status_tx
+            .send((lsp_store_id, language_server_id), server_name, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -847,9 +860,7 @@ impl LanguageRegistry {
         Some(server)
     }
 
-    pub fn language_server_binary_statuses(
-        &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    pub fn language_server_binary_statuses(&self) -> mpsc::UnboundedReceiver<BinaryStatusUpdate> {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -943,14 +954,22 @@ impl LanguageRegistryState {
 }
 
 impl ServerStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    fn subscribe(&self) -> mpsc::UnboundedReceiver<BinaryStatusUpdate> {
         let (tx, rx) = mpsc::unbounded();
         self.txs.lock().push(tx);
         rx
     }
 
-    fn send(&self, name: LanguageServerName, status: BinaryStatus) {
+    fn send(
+        &self,
+        source: (EntityId, LanguageServerId),
+        name: LanguageServerName,
+        status: BinaryStatus,
+    ) {
         let mut txs = self.txs.lock();
-        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
+        txs.retain(|tx| {
+            tx.unbounded_send((source, name.clone(), status.clone()))
+                .is_ok()
+        });
     }
 }

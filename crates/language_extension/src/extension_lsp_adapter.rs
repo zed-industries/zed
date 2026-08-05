@@ -5,7 +5,9 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
+use extension::{
+    Extension, ExtensionLanguageServerProxy, LanguageServerStatusDelegate, WorktreeDelegate,
+};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
@@ -48,6 +50,12 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 
     async fn shell_env(&self) -> Vec<(String, String)> {
         self.0.shell_env().await.into_iter().collect()
+    }
+}
+
+impl LanguageServerStatusDelegate for WorktreeDelegateAdapter {
+    fn update_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        self.0.update_status(server_name, status);
     }
 }
 
@@ -119,20 +127,6 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             Ok(())
         })
     }
-
-    fn update_language_server_status(
-        &self,
-        language_server_id: LanguageServerName,
-        status: BinaryStatus,
-    ) {
-        log::debug!(
-            "updating binary status for {} to {:?}",
-            language_server_id,
-            status
-        );
-        self.language_registry
-            .update_lsp_binary_status(language_server_id, status);
-    }
 }
 
 struct ExtensionLspAdapter {
@@ -167,12 +161,13 @@ impl DynLspInstaller for ExtensionLspAdapter {
     ) -> LanguageServerBinaryLocations {
         async move {
             let ret = maybe!(async move {
-                let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+                let delegate = Arc::new(WorktreeDelegateAdapter(delegate));
                 let command = self
                     .extension
                     .language_server_command(
                         self.language_server_id.clone(),
                         self.language_name.clone(),
+                        delegate.clone(),
                         delegate,
                     )
                     .await?;

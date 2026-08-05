@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use extension::{
-    ExtensionCapability, ExtensionHostProxy, ExtensionLibraryKind, ExtensionManifest,
-    LanguageServerManifestEntry, LibManifestEntry, SchemaVersion,
+    ExtensionCapability, ExtensionLibraryKind, ExtensionManifest, LanguageServerManifestEntry,
+    LibManifestEntry, SchemaVersion,
     extension_builder::{CompilationConcurrency, CompileExtensionOptions, ExtensionBuilder},
 };
 use extension_host::wasm_host::WasmHost;
@@ -107,16 +107,7 @@ fn wasm_host(cx: &TestAppContext, extensions_dir: &TempTree) -> Arc<WasmHost> {
     let work_dir = extensions_dir.join("work");
     let fs = Arc::new(RealFs::new(None, cx.executor()));
 
-    cx.update(|cx| {
-        WasmHost::new(
-            fs,
-            http_client,
-            NodeRuntime::unavailable(),
-            Arc::new(ExtensionHostProxy::new()),
-            work_dir,
-            cx,
-        )
-    })
+    cx.update(|cx| WasmHost::new(fs, http_client, NodeRuntime::unavailable(), work_dir, cx))
 }
 
 fn manifest() -> ExtensionManifest {
