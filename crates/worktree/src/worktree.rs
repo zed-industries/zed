@@ -184,6 +184,10 @@ pub struct Snapshot {
     entries_by_id: SumTree<PathEntry>,
     root_repo_common_dir: Option<Arc<SanitizedPath>>,
     root_repo_is_linked_worktree: bool,
+    /// See [`discover_shared_objects_main_path`]. Participates in project
+    /// grouping and labels alongside `root_repo_common_dir`, never in git
+    /// operations.
+    root_repo_shared_objects_main_path: Option<Arc<SanitizedPath>>,
     always_included_entries: Vec<Arc<RelPath>>,
 
     /// A number that increases every time the worktree begins scanning
@@ -364,6 +368,8 @@ struct LocalRepositoryEntry {
     /// `common_dir_abs_path`. For a submodule or worktree, this is some subdirectory of the
     /// commondir like `/project/.git/modules/foo`.
     repository_dir_abs_path: Arc<Path>,
+    /// See [`discover_shared_objects_main_path`].
+    shared_objects_main_path: Option<Arc<Path>>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -473,18 +479,10 @@ impl Worktree {
             None
         };
 
-        let (root_repo_common_dir, root_repo_is_linked_worktree) = if visible {
-            discover_root_repo_metadata(&abs_path, fs.as_ref())
-                .await
-                .map(|(common_dir, is_linked_worktree)| {
-                    (
-                        Some(SanitizedPath::from_arc(common_dir)),
-                        is_linked_worktree,
-                    )
-                })
-                .unwrap_or((None, false))
+        let root_repo_metadata = if visible {
+            discover_root_repo_metadata(&abs_path, fs.as_ref()).await
         } else {
-            (None, false)
+            None
         };
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -506,8 +504,13 @@ impl Worktree {
                 ),
                 root_file_handle,
             };
-            snapshot.root_repo_common_dir = root_repo_common_dir;
-            snapshot.root_repo_is_linked_worktree = root_repo_is_linked_worktree;
+            if let Some(metadata) = root_repo_metadata {
+                snapshot.root_repo_common_dir = Some(SanitizedPath::from_arc(metadata.common_dir));
+                snapshot.root_repo_is_linked_worktree = metadata.is_linked_worktree;
+                snapshot.root_repo_shared_objects_main_path = metadata
+                    .shared_objects_main_path
+                    .map(SanitizedPath::from_arc);
+            }
 
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
@@ -598,6 +601,9 @@ impl Worktree {
                 .root_repo_common_dir
                 .map(|p| SanitizedPath::new_arc(Path::new(&p)));
             snapshot.root_repo_is_linked_worktree = worktree.root_repo_is_linked_worktree;
+            snapshot.root_repo_shared_objects_main_path = worktree
+                .root_repo_shared_objects_main_path
+                .map(|p| SanitizedPath::new_arc(Path::new(&p)));
 
             let background_snapshot = Arc::new(Mutex::new((
                 snapshot.clone(),
@@ -662,6 +668,8 @@ impl Worktree {
                         let old_root_repo_common_dir = this.snapshot.root_repo_common_dir.clone();
                         let old_root_repo_is_linked_worktree =
                             this.snapshot.root_repo_is_linked_worktree;
+                        let old_root_repo_shared_objects_main_path =
+                            this.snapshot.root_repo_shared_objects_main_path.clone();
                         let mut changed_entries: Vec<(Arc<RelPath>, ProjectEntryId, PathChange)> =
                             Vec::new();
                         {
@@ -708,6 +716,8 @@ impl Worktree {
                         if this.snapshot.root_repo_common_dir != old_root_repo_common_dir
                             || this.snapshot.root_repo_is_linked_worktree
                                 != old_root_repo_is_linked_worktree
+                            || this.snapshot.root_repo_shared_objects_main_path
+                                != old_root_repo_shared_objects_main_path
                             || (is_first_update && this.snapshot.root_repo_common_dir.is_none())
                         {
                             cx.emit(Event::UpdatedRootRepoCommonDir {
@@ -804,6 +814,9 @@ impl Worktree {
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
             root_repo_is_linked_worktree: self.root_repo_is_linked_worktree(),
+            root_repo_shared_objects_main_path: self
+                .root_repo_shared_objects_main_path()
+                .map(|p| p.to_string_lossy().into_owned()),
         }
     }
 
@@ -1404,26 +1417,28 @@ impl LocalWorktree {
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
 
-        if let Some((common_dir, is_linked_worktree)) = new_snapshot
-            .local_repo_for_work_directory_path(RelPath::empty())
-            .map(|repo| {
-                (
-                    SanitizedPath::from_arc(repo.common_dir_abs_path.clone()),
-                    repo.repository_dir_abs_path != repo.common_dir_abs_path,
-                )
-            })
-        {
+        if let Some(repo) = new_snapshot.local_repo_for_work_directory_path(RelPath::empty()) {
+            let common_dir = SanitizedPath::from_arc(repo.common_dir_abs_path.clone());
+            let is_linked_worktree = repo.repository_dir_abs_path != repo.common_dir_abs_path;
+            let shared_objects_main_path = repo
+                .shared_objects_main_path
+                .clone()
+                .map(SanitizedPath::from_arc);
             new_snapshot.root_repo_common_dir = Some(common_dir);
             new_snapshot.root_repo_is_linked_worktree = is_linked_worktree;
+            new_snapshot.root_repo_shared_objects_main_path = shared_objects_main_path;
         } else {
             new_snapshot.root_repo_common_dir = None;
             new_snapshot.root_repo_is_linked_worktree = false;
+            new_snapshot.root_repo_shared_objects_main_path = None;
         }
 
         let root_repo_metadata_changed = self.snapshot.root_repo_common_dir
             != new_snapshot.root_repo_common_dir
             || self.snapshot.root_repo_is_linked_worktree
-                != new_snapshot.root_repo_is_linked_worktree;
+                != new_snapshot.root_repo_is_linked_worktree
+            || self.snapshot.root_repo_shared_objects_main_path
+                != new_snapshot.root_repo_shared_objects_main_path;
         let old_root_repo_common_dir =
             root_repo_metadata_changed.then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
@@ -2539,6 +2554,7 @@ impl Snapshot {
             entries_by_id: Default::default(),
             root_repo_common_dir: None,
             root_repo_is_linked_worktree: false,
+            root_repo_shared_objects_main_path: None,
             scan_id: 1,
             completed_scan_id: 0,
         }
@@ -2574,6 +2590,13 @@ impl Snapshot {
         self.root_repo_is_linked_worktree
     }
 
+    /// See [`discover_shared_objects_main_path`].
+    pub fn root_repo_shared_objects_main_path(&self) -> Option<&Arc<Path>> {
+        self.root_repo_shared_objects_main_path
+            .as_ref()
+            .map(SanitizedPath::cast_arc_ref)
+    }
+
     fn build_initial_update(&self, project_id: u64, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = self
             .entries_by_path
@@ -2591,6 +2614,9 @@ impl Snapshot {
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
             root_repo_is_linked_worktree: self.root_repo_is_linked_worktree,
+            root_repo_shared_objects_main_path: self
+                .root_repo_shared_objects_main_path()
+                .map(|p| p.to_string_lossy().into_owned()),
             updated_entries,
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
@@ -2745,10 +2771,14 @@ impl Snapshot {
             Some(dir) => {
                 self.root_repo_common_dir = Some(dir);
                 self.root_repo_is_linked_worktree = update.root_repo_is_linked_worktree;
+                self.root_repo_shared_objects_main_path = update
+                    .root_repo_shared_objects_main_path
+                    .map(|p| SanitizedPath::new_arc(Path::new(&p)));
             }
             None if update.is_last_update => {
                 self.root_repo_common_dir = None;
                 self.root_repo_is_linked_worktree = false;
+                self.root_repo_shared_objects_main_path = None;
             }
             None => {}
         }
@@ -2995,6 +3025,9 @@ impl LocalSnapshot {
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
             root_repo_is_linked_worktree: self.root_repo_is_linked_worktree,
+            root_repo_shared_objects_main_path: self
+                .root_repo_shared_objects_main_path()
+                .map(|p| p.to_string_lossy().into_owned()),
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
@@ -3571,6 +3604,11 @@ impl BackgroundScannerState {
 
         let (repository_dir_abs_path, common_dir_abs_path) =
             discover_git_paths(&dot_git_abs_path, fs).await;
+        let shared_objects_main_path = if repository_dir_abs_path == common_dir_abs_path {
+            discover_shared_objects_main_path(&repository_dir_abs_path, fs).await
+        } else {
+            None
+        };
         watcher
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
@@ -3612,6 +3650,7 @@ impl BackgroundScannerState {
             dot_git_abs_path,
             common_dir_abs_path,
             repository_dir_abs_path,
+            shared_objects_main_path,
         };
 
         self.snapshot
@@ -7028,16 +7067,25 @@ fn resolve_commondir_path(repository_dir_abs_path: &Path, commondir_path: &str) 
     }
 }
 
-pub async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
-    discover_root_repo_metadata(root_abs_path, fs)
-        .await
-        .map(|(common_dir, _)| common_dir)
+/// Git metadata discovered for the repository at a worktree's root, relating
+/// the repository to the "main" repository it was derived from, if any.
+#[derive(Debug, Clone)]
+pub struct RootRepoMetadata {
+    /// Absolute path to the repository's common git directory: the main
+    /// checkout's `.git` for a linked worktree, the repository's own git
+    /// directory otherwise.
+    pub common_dir: Arc<Path>,
+    /// Whether the repository is a linked worktree (created with
+    /// `git worktree add`) rather than the main checkout.
+    pub is_linked_worktree: bool,
+    /// See [`discover_shared_objects_main_path`].
+    pub shared_objects_main_path: Option<Arc<Path>>,
 }
 
-async fn discover_root_repo_metadata(
+pub async fn discover_root_repo_metadata(
     root_abs_path: &Path,
     fs: &dyn Fs,
-) -> Option<(Arc<Path>, bool)> {
+) -> Option<RootRepoMetadata> {
     let root_dot_git = root_abs_path.join(DOT_GIT);
     if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
         return None;
@@ -7045,7 +7093,62 @@ async fn discover_root_repo_metadata(
     let dot_git_path: Arc<Path> = root_dot_git.into();
     let (repository_dir, common_dir) = discover_git_paths(&dot_git_path, fs).await;
     let is_linked_worktree = repository_dir != common_dir;
-    Some((common_dir, is_linked_worktree))
+    let shared_objects_main_path = if is_linked_worktree {
+        None
+    } else {
+        discover_shared_objects_main_path(&repository_dir, fs).await
+    };
+    Some(RootRepoMetadata {
+        common_dir,
+        is_linked_worktree,
+        shared_objects_main_path,
+    })
+}
+
+/// The working directory of the repository whose object store this repository
+/// borrows via `objects/info/alternates` — e.g. a repository created with
+/// `git clone --shared`, or an agent tool's checkout that shares the user's
+/// repository objects. Returns `None` when the repository owns its objects,
+/// or when no alternate resolves to another working directory's `.git/objects`
+/// (bare repositories have no working directory to relate to).
+///
+/// Sharing an object store is treated as evidence that the two checkouts
+/// belong to the same project, so this path participates in project grouping
+/// and window labeling the same way a linked worktree's main checkout does.
+/// It deliberately has no effect on git semantics: unlike a linked worktree,
+/// such a repository has its own refs, index, and `HEAD`.
+async fn discover_shared_objects_main_path(
+    repository_dir_abs_path: &Path,
+    fs: &dyn Fs,
+) -> Option<Arc<Path>> {
+    let alternates = fs
+        .load(&repository_dir_abs_path.join("objects/info/alternates"))
+        .await
+        .ok()?;
+    for line in alternates.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Relative entries are resolved against the repository's own objects
+        // directory, per gitrepository-layout(5).
+        let objects_dir = if Path::new(line).is_absolute() {
+            PathBuf::from(line)
+        } else {
+            repository_dir_abs_path.join("objects").join(line)
+        };
+        let Some(objects_dir) = fs.canonicalize(&objects_dir).await.log_err() else {
+            continue;
+        };
+        if objects_dir.file_name() == Some(OsStr::new("objects"))
+            && let Some(git_dir) = objects_dir.parent()
+            && git_dir.file_name() == Some(OsStr::new(DOT_GIT))
+            && let Some(main_path) = git_dir.parent()
+        {
+            return Some(main_path.into());
+        }
+    }
+    None
 }
 
 async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {

@@ -4366,6 +4366,161 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_root_repo_shared_objects_main_path(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": { "objects": {} },
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    // A standalone repository that borrows the main repository's object store
+    // via `objects/info/alternates`, like one created by `git clone --shared`.
+    fs.insert_tree(
+        path!("/agent_checkout"),
+        json!({
+            ".git": {
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", path!("/main_repo/.git/objects")),
+                    }
+                }
+            },
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    // The same relationship expressed through a separate git dir: the
+    // checkout holds only a `.git` file pointing at a git dir elsewhere,
+    // whose alternates borrow the main repository's objects.
+    fs.insert_tree(
+        path!("/clones"),
+        json!({
+            "checkout.git": {
+                "HEAD": "ref: refs/heads/main",
+                "config": "[core]\n\tbare = false\n",
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", path!("/main_repo/.git/objects")),
+                    }
+                },
+            },
+            "checkout": {
+                ".git": format!("gitdir: {}", path!("/clones/checkout.git")),
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+    // An alternate that doesn't point into another working directory's `.git`
+    // (e.g. a bare object store) names no main path.
+    fs.insert_tree(
+        path!("/bare_backed"),
+        json!({
+            ".git": {
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", path!("/object_store/objects")),
+                    }
+                }
+            },
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.insert_tree(path!("/object_store"), json!({ "objects": {} }))
+        .await;
+
+    let tree = Worktree::local(
+        path!("/agent_checkout").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        let snapshot = tree.snapshot();
+        assert_eq!(
+            snapshot
+                .root_repo_shared_objects_main_path()
+                .map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo"))),
+        );
+        assert!(
+            !snapshot.root_repo_is_linked_worktree(),
+            "sharing an object store must not make the repository a linked worktree"
+        );
+        assert_eq!(
+            snapshot.root_repo_common_dir().map(|p| p.as_ref()),
+            Some(Path::new(path!("/agent_checkout/.git"))),
+            "the repository keeps its own git directory"
+        );
+    });
+
+    let separate_git_dir_tree = Worktree::local(
+        path!("/clones/checkout").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(1),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    separate_git_dir_tree
+        .update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    separate_git_dir_tree.read_with(cx, |tree, _| {
+        let snapshot = tree.snapshot();
+        assert_eq!(
+            snapshot
+                .root_repo_shared_objects_main_path()
+                .map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo"))),
+        );
+        assert!(!snapshot.root_repo_is_linked_worktree());
+    });
+
+    let bare_backed_tree = Worktree::local(
+        path!("/bare_backed").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(2),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    bare_backed_tree
+        .update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    bare_backed_tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.snapshot().root_repo_shared_objects_main_path(), None);
+    });
+}
+
+#[gpui::test]
 async fn test_invisible_worktree_does_not_track_ancestor_git_repository(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -5714,6 +5869,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
+                root_repo_shared_objects_main_path: None,
             },
             client,
             PathStyle::Unix,
@@ -5772,6 +5928,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
+                root_repo_shared_objects_main_path: None,
             });
     });
 
@@ -5811,6 +5968,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
+                root_repo_shared_objects_main_path: None,
             },
             client,
             PathStyle::Unix,
@@ -5866,6 +6024,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 removed_repositories: vec![],
                 root_repo_common_dir: Some("/home/user/project/.git".to_string()),
                 root_repo_is_linked_worktree: false,
+                root_repo_shared_objects_main_path: None,
             });
     });
 
@@ -5910,6 +6069,7 @@ async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
                 abs_path: "/home/user/monty/feature-a".to_string(),
                 root_repo_common_dir: Some("/home/user/monty/.bare".to_string()),
                 root_repo_is_linked_worktree: true,
+                root_repo_shared_objects_main_path: None,
             },
             client,
             PathStyle::Unix,
@@ -5940,6 +6100,7 @@ async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
         removed_repositories: vec![],
         root_repo_common_dir: None,
         root_repo_is_linked_worktree: false,
+        root_repo_shared_objects_main_path: None,
     };
 
     // A mid-scan update without repo info must not clobber the seeded
@@ -6026,6 +6187,7 @@ async fn test_remote_worktree_update_entries_carry_changed_paths(cx: &mut TestAp
                 abs_path: path!("/root").to_string(),
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
+                root_repo_shared_objects_main_path: None,
             },
             AnyProtoClient::new(NoopProtoClient::new()),
             PathStyle::local(),

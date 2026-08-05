@@ -9751,15 +9751,23 @@ pub async fn apply_restored_multiworkspace_state(
             }
             let mut resolved_paths = Vec::new();
             for path in key.path_list().paths() {
-                if key.host().is_none()
-                    && let Some(common_dir) =
-                        project::discover_root_repo_common_dir(path, fs.as_ref()).await
-                    && !project::is_submodule_git_dir(&common_dir)
-                {
-                    let main_path = project::repo_identity_path(&common_dir);
-                    resolved_paths.push(main_path.to_path_buf());
+                let metadata = if key.host().is_none() {
+                    project::discover_root_repo_metadata(path, fs.as_ref()).await
                 } else {
-                    resolved_paths.push(path.to_path_buf());
+                    None
+                };
+                match metadata {
+                    Some(metadata) => {
+                        if let Some(main_path) = metadata.shared_objects_main_path {
+                            resolved_paths.push(main_path.to_path_buf());
+                        } else if !project::is_submodule_git_dir(&metadata.common_dir) {
+                            let main_path = project::repo_identity_path(&metadata.common_dir);
+                            resolved_paths.push(main_path.to_path_buf());
+                        } else {
+                            resolved_paths.push(path.to_path_buf());
+                        }
+                    }
+                    None => resolved_paths.push(path.to_path_buf()),
                 }
             }
             let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));

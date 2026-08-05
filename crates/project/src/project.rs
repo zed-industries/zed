@@ -147,8 +147,8 @@ use util::{
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
     Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
-    discover_root_repo_common_dir,
+    RootRepoMetadata, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
+    WorktreeSettings, discover_root_repo_metadata,
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -2163,6 +2163,7 @@ impl Project {
                 abs_path: abs_path.to_string(),
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
+                root_repo_shared_objects_main_path: None,
             },
             client,
             PathStyle::Unix,

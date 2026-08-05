@@ -603,9 +603,9 @@ fn workspace_menu_worktree_labels(
     workspace: &Entity<Workspace>,
     cx: &App,
 ) -> Vec<WorkspaceMenuWorktreeLabel> {
-    let root_paths = workspace.read(cx).root_paths(cx);
-    let show_folder_name = root_paths.len() > 1;
     let project = workspace.read(cx).project().clone();
+    let worktrees: Vec<_> = project.read(cx).visible_worktrees(cx).collect();
+    let show_folder_name = worktrees.len() > 1;
     let repository_snapshots: Vec<_> = project
         .read(cx)
         .repositories(cx)
@@ -613,10 +613,12 @@ fn workspace_menu_worktree_labels(
         .map(|repo| repo.read(cx).snapshot())
         .collect();
 
-    root_paths
+    worktrees
         .into_iter()
-        .map(|root_path| {
-            let root_path = root_path.as_ref();
+        .map(|worktree| {
+            let worktree = worktree.read(cx);
+            let root_path_arc = worktree.abs_path();
+            let root_path: &std::path::Path = root_path_arc.as_ref();
             let folder_name = root_path
                 .file_name()
                 .map(|name| SharedString::from(name.to_string_lossy().to_string()))
@@ -632,6 +634,11 @@ fn workspace_menu_worktree_labels(
                         .and_then(|main_worktree_path| {
                             project::linked_worktree_short_name(main_worktree_path, root_path)
                         })
+                        .unwrap_or_else(|| folder_name.clone())
+                } else if let Some(main_worktree_path) =
+                    worktree.root_repo_shared_objects_main_path()
+                {
+                    project::linked_worktree_short_name(main_worktree_path, root_path)
                         .unwrap_or_else(|| folder_name.clone())
                 } else {
                     "main".into()

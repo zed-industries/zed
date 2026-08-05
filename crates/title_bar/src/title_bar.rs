@@ -257,6 +257,21 @@ impl Render for TitleBar {
                         repo.is_linked_worktree()
                             .then_some(project_name.clone())
                             .flatten()
+                    })
+                    .or_else(|| {
+                        // A repository that borrows another repository's
+                        // object store (e.g. an agent checkout) labels like a
+                        // linked worktree of that repository, though git-wise
+                        // it is independent.
+                        worktree
+                            .read(cx)
+                            .root_repo_shared_objects_main_path()
+                            .and_then(|main_worktree_path| {
+                                linked_worktree_short_name(
+                                    main_worktree_path,
+                                    worktree_abs_path.as_ref(),
+                                )
+                            })
                     });
 
                 let identity = repo_identity_path(&repo.common_dir_abs_path);

@@ -538,6 +538,9 @@ impl HeadlessProject {
                     .root_repo_common_dir()
                     .map(|p| p.to_string_lossy().into_owned()),
                 root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
+                root_repo_shared_objects_main_path: worktree
+                    .root_repo_shared_objects_main_path()
+                    .map(|p| p.to_string_lossy().into_owned()),
             }
         });
 

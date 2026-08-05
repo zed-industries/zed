@@ -13316,6 +13316,70 @@ async fn test_project_group_keys_remain_distinct_for_sibling_repo_subdirectories
     );
 }
 
+#[gpui::test]
+async fn test_project_group_keys_match_for_repos_sharing_an_object_store(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": { "objects": {} },
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    // A standalone repository borrowing the main repository's object store via
+    // `objects/info/alternates` (e.g. `git clone --shared`, or an agent tool's
+    // checkout of the user's repository). It has its own refs and `HEAD`, but
+    // for project grouping it belongs to the main repository.
+    fs.insert_tree(
+        path!("/checkouts/agent/main_repo"),
+        json!({
+            ".git": {
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", path!("/main_repo/.git/objects")),
+                    }
+                }
+            },
+            "file.txt": "content",
+        }),
+    )
+    .await;
+
+    let main_project = Project::test(fs.clone(), [path!("/main_repo").as_ref()], cx).await;
+    let agent_project = Project::test(fs, [path!("/checkouts/agent/main_repo").as_ref()], cx).await;
+
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    agent_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        project_group_key_paths(&agent_project, cx),
+        vec![PathBuf::from(path!("/main_repo"))],
+        "a repository sharing the main repository's object store should group under it"
+    );
+    assert_eq!(
+        project_group_key_paths(&main_project, cx),
+        project_group_key_paths(&agent_project, cx),
+    );
+
+    let (folder_paths, main_paths) = project_worktree_paths(&agent_project, cx);
+    assert_eq!(
+        folder_paths,
+        vec![PathBuf::from(path!("/checkouts/agent/main_repo"))]
+    );
+    assert_eq!(main_paths, vec![PathBuf::from(path!("/main_repo"))]);
+}
+
 fn project_group_key_paths(project: &Entity<Project>, cx: &TestAppContext) -> Vec<PathBuf> {
     project.read_with(cx, |project, cx| {
         ProjectGroupKey::from_project(project, cx)

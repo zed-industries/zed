@@ -903,6 +903,8 @@ impl WorktreeStore {
                         abs_path: response.canonicalized_path,
                         root_repo_common_dir: response.root_repo_common_dir,
                         root_repo_is_linked_worktree: response.root_repo_is_linked_worktree,
+                        root_repo_shared_objects_main_path: response
+                            .root_repo_shared_objects_main_path,
                     },
                     client,
                     path_style,
@@ -1041,7 +1043,9 @@ impl WorktreeStore {
     ) -> Option<Entity<Worktree>> {
         self.visible_worktrees(cx).find(|worktree| {
             let worktree = worktree.read(cx);
-            if let Some(common_dir) = worktree.root_repo_common_dir() {
+            if let Some(main_path) = worktree.root_repo_shared_objects_main_path() {
+                main_path.as_ref() == path
+            } else if let Some(common_dir) = worktree.root_repo_common_dir() {
                 common_dir.parent() == Some(path)
             } else {
                 worktree.abs_path().as_ref() == path
@@ -1232,6 +1236,9 @@ impl WorktreeStore {
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
                     root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
+                    root_repo_shared_objects_main_path: worktree
+                        .root_repo_shared_objects_main_path()
+                        .map(|p| p.to_string_lossy().into_owned()),
                 }
             })
             .collect()
@@ -1482,15 +1489,20 @@ impl WorktreeStore {
                 let snapshot = worktree.read(cx).snapshot();
                 let folder_path = snapshot.abs_path().to_path_buf();
                 let main_path = snapshot
-                    .root_repo_common_dir()
-                    .filter(|dir| !crate::git_store::is_submodule_git_dir(dir))
-                    .map(|dir| crate::git_store::repo_identity_path(dir))
-                    .filter(|repo_path| {
-                        snapshot.root_repo_is_linked_worktree()
-                            || *repo_path == folder_path.as_path()
-                            || !folder_path.starts_with(*repo_path)
+                    .root_repo_shared_objects_main_path()
+                    .map(|main_path| main_path.to_path_buf())
+                    .or_else(|| {
+                        snapshot
+                            .root_repo_common_dir()
+                            .filter(|dir| !crate::git_store::is_submodule_git_dir(dir))
+                            .map(|dir| crate::git_store::repo_identity_path(dir))
+                            .filter(|repo_path| {
+                                snapshot.root_repo_is_linked_worktree()
+                                    || *repo_path == folder_path.as_path()
+                                    || !folder_path.starts_with(*repo_path)
+                            })
+                            .map(Path::to_path_buf)
                     })
-                    .map(Path::to_path_buf)
                     .unwrap_or_else(|| folder_path.clone());
                 (main_path, folder_path)
             })
