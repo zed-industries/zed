@@ -10322,6 +10322,156 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_filter_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "big.rs": "x".repeat(2000),
+            "small.rs": "x",
+            "notes.md": "x",
+            "nested": {
+                "deep": {
+                    "inner.rs": "x",
+                },
+            },
+            "other": {
+                "thing.md": "x",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Everything below the root starts collapsed; this is what makes the
+    // assertions below meaningful, since a filter has to reach into directories
+    // the user never expanded.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > nested",
+            "    > other",
+            "      big.rs",
+            "      notes.md",
+            "      small.rs",
+        ]
+    );
+
+    set_filter(&panel, "-iname *.rs", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v nested",
+            "        v deep",
+            "              inner.rs",
+            "      big.rs",
+            "      small.rs",
+        ],
+        "`-iname *.rs` should reach into collapsed directories, keep the \
+         directories leading to a match, and drop `other/` entirely"
+    );
+
+    set_filter(&panel, "-name *.RS", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root"],
+        "`-name` is case-sensitive, so an upper-case glob matches nothing here"
+    );
+
+    set_filter(&panel, "-size +1k", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "      big.rs"],
+        "`-size +1k` should keep only the file over 1 KiB"
+    );
+
+    // An unsigned `-size` means "greater than", and counts KiB: `-size 1` is
+    // the same as `-size +1k`.
+    set_filter(&panel, "-size 1", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "      big.rs"],
+        "`-size 1` should behave as `+1k`"
+    );
+
+    set_filter(&panel, "-iname *.rs -size +1k", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "      big.rs"],
+        "predicates should combine with AND"
+    );
+
+    set_filter(&panel, "-iname *.nope", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root"],
+        "a filter matching nothing should leave only the worktree root"
+    );
+
+    // Invalid input leaves the tree unfiltered rather than blanking it while
+    // the user is still typing, and surfaces the parse error.
+    set_filter(&panel, "-iname *.rs -size bogus", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > nested",
+            "    > other",
+            "      big.rs",
+            "      notes.md",
+            "      small.rs",
+        ]
+    );
+    panel.update(cx, |panel, _| {
+        assert!(
+            panel.filter_error.is_some(),
+            "an unparseable filter should be reported"
+        );
+    });
+
+    // Toggling the filter off clears it and restores the user's own expansion
+    // state -- the filter must not have expanded anything permanently.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_filter(&ToggleFilter, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > nested",
+            "    > other",
+            "      big.rs",
+            "      notes.md",
+            "      small.rs",
+        ],
+        "clearing the filter should restore the original collapsed tree"
+    );
+}
+
+fn set_filter(panel: &Entity<ProjectPanel>, text: &str, cx: &mut VisualTestContext) {
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filter_enabled = true;
+        panel
+            .filter_editor
+            .update(cx, |editor, cx| editor.set_text(text, window, cx));
+    });
+    cx.run_until_parked();
+}
+
 pub(crate) fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
     let path = rel_path(path);
     panel.update_in(cx, |panel, window, cx| {

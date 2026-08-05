@@ -37,6 +37,7 @@ use project::{
     ProjectPath, Worktree, WorktreeId,
     git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
+    search::MetadataFilters,
 };
 use project_panel_settings::ProjectPanelSettings;
 use rayon::slice::ParallelSliceMut;
@@ -90,6 +91,7 @@ use crate::{
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
+const FILTER_PLACEHOLDER: &str = "Filter: e.g. -iname *.rs -size 9 -mtime -7";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 struct VisibleEntriesForWorktree {
@@ -149,6 +151,15 @@ pub struct ProjectPanel {
     selection: Option<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     filename_editor: Entity<Editor>,
+    /// `find(1)`-style predicates narrowing which files the tree shows.
+    filter_editor: Entity<Editor>,
+    filter_enabled: bool,
+    /// Whether the entries currently on screen were produced by a filter. Not
+    /// the same as `filter_enabled`: an empty or unparseable input leaves the
+    /// box open but the tree unfiltered, and the chevrons must follow the tree.
+    filter_is_applied: bool,
+    /// Parse error for the current filter text, shown under the input.
+    filter_error: Option<String>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
@@ -377,6 +388,8 @@ actions!(
         ToggleHideGitIgnore,
         /// Toggles visibility of hidden files.
         ToggleHideHidden,
+        /// Toggles the `find(1)`-style file filter input.
+        ToggleFilter,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -469,6 +482,19 @@ pub fn init(cx: &mut App) {
             if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
                 workspace.close_panel::<ProjectPanel>(window, cx);
             }
+        });
+
+        // Registered on the workspace, not just on the panel's own element:
+        // an element-level handler is only reachable while the panel has focus,
+        // which also hides the command from the command palette everywhere else.
+        workspace.register_action(|workspace, _: &ToggleFilter, window, cx| {
+            let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                return;
+            };
+            workspace.open_panel::<ProjectPanel>(window, cx);
+            panel.update(cx, |panel, cx| {
+                panel.toggle_filter(&ToggleFilter, window, cx);
+            });
         });
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
@@ -755,6 +781,25 @@ impl ProjectPanel {
 
             let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
+            let filter_editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(FILTER_PLACEHOLDER, window, cx);
+                editor
+            });
+            cx.subscribe_in(
+                &filter_editor,
+                window,
+                |project_panel, _, editor_event, window, cx| {
+                    if matches!(editor_event, EditorEvent::BufferEdited) {
+                        // Assigning `update_visible_entries_task` drops the
+                        // previous task, so an in-flight traversal for older
+                        // filter text is cancelled rather than racing this one.
+                        project_panel.update_visible_entries(None, false, false, window, cx);
+                    }
+                },
+            )
+            .detach();
+
             cx.subscribe_in(
                 &filename_editor,
                 window,
@@ -840,6 +885,12 @@ impl ProjectPanel {
                 selection: None,
                 context_menu: None,
                 filename_editor,
+                filter_editor,
+                // Shown by default: the filter is discoverable only if the input
+                // is visible, and an empty input filters nothing.
+                filter_enabled: true,
+                filter_is_applied: false,
+                filter_error: None,
                 clipboard: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
@@ -4222,6 +4273,135 @@ impl ProjectPanel {
         }
     }
 
+    /// Tests one entry against the filter. Predicates apply to *files* only:
+    /// `-size`/`-mtime`/`-mmin` are meaningless for a directory, and a directory
+    /// matching `-iname` would still have no matching contents to show. So
+    /// directories earn their place solely by being an ancestor of a match.
+    fn entry_matches_filter(entry: &GitEntry, filter: &MetadataFilters) -> bool {
+        entry.is_file()
+            && filter.matches(
+                entry.path.file_name().unwrap_or_default(),
+                entry.size,
+                entry.mtime,
+            )
+    }
+
+    /// Keeps matching files plus every directory on the path to one.
+    ///
+    /// Expects `entries` in traversal order; the ancestor set is built from the
+    /// kept files, so ordering only affects the early-exit optimisation below.
+    fn retain_filtered_entries(entries: &mut Vec<GitEntry>, filter: &MetadataFilters) {
+        // The placeholder for an in-progress create/rename has no real name or
+        // metadata, so any filter would drop it and the inline input would
+        // vanish mid-typing. It and its ancestors are always kept.
+        let is_pending_edit = |entry: &GitEntry| entry.id == NEW_ENTRY_ID;
+
+        let mut kept_dirs: HashSet<String> = HashSet::default();
+        for entry in entries.iter() {
+            if !is_pending_edit(entry) && !Self::entry_matches_filter(entry, filter) {
+                continue;
+            }
+            // `ancestors()` yields the path itself first, then each parent down
+            // to the empty root -- which is the worktree root entry's own path,
+            // so the root survives too. Once an ancestor is already present all
+            // of its own ancestors are as well, so we can stop.
+            for ancestor in entry.path.ancestors().skip(1) {
+                if !kept_dirs.insert(ancestor.as_unix_str().to_owned()) {
+                    break;
+                }
+            }
+        }
+
+        entries.retain(|entry| {
+            if is_pending_edit(entry) {
+                true
+            } else if entry.is_file() {
+                Self::entry_matches_filter(entry, filter)
+            } else {
+                // The worktree root has the empty path. Keep it even when
+                // nothing matches, so a filter with no hits shows an empty
+                // project rather than an empty panel, which reads as a bug.
+                entry.path.as_unix_str().is_empty() || kept_dirs.contains(entry.path.as_unix_str())
+            }
+        });
+    }
+
+    fn render_filter_bar(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        if !self.filter_enabled {
+            return None;
+        }
+        let colors = cx.theme().colors();
+        Some(
+            v_flex()
+                .w_full()
+                .flex_none()
+                .p_1p5()
+                .gap_1()
+                .border_b_1()
+                .border_color(colors.border)
+                .child(
+                    h_flex()
+                        .h_6()
+                        .w_full()
+                        .px_1p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(if self.filter_error.is_some() {
+                            Color::Error.color(cx)
+                        } else {
+                            colors.border
+                        })
+                        .child(self.filter_editor.clone()),
+                )
+                .children(self.filter_error.as_ref().map(|error| {
+                    Label::new(error.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Error)
+                })),
+        )
+    }
+
+    fn toggle_filter(&mut self, _: &ToggleFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_enabled = !self.filter_enabled;
+        if self.filter_enabled {
+            window.focus(&self.filter_editor.focus_handle(cx), cx);
+        } else {
+            // Clear rather than merely hide: a filter that keeps pruning the
+            // tree while its input is invisible is indistinguishable from a bug.
+            self.filter_editor
+                .update(cx, |editor, cx| editor.set_text("", window, cx));
+            self.filter_error = None;
+            window.focus(&self.focus_handle, cx);
+        }
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    /// Parses the filter input, recording any error for display. Returns `None`
+    /// when no filter is active, which lets callers skip the whole-tree walk.
+    fn active_filter(&mut self, cx: &App) -> Option<MetadataFilters> {
+        if !self.filter_enabled {
+            return None;
+        }
+        let text = self.filter_editor.read(cx).text(cx);
+        if text.trim().is_empty() {
+            self.filter_error = None;
+            return None;
+        }
+        match MetadataFilters::new(&text) {
+            Ok(filters) => {
+                self.filter_error = None;
+                Some(filters).filter(|filters| !filters.is_empty())
+            }
+            Err(e) => {
+                // Keep the tree unfiltered while the user is mid-word rather
+                // than blanking it on every transiently invalid keystroke.
+                self.filter_error = Some(e.to_string());
+                None
+            }
+        }
+    }
+
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
@@ -4231,6 +4411,8 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         let now = Instant::now();
+        let filter = self.active_filter(cx);
+        let filter_is_applied = filter.is_some();
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
@@ -4259,6 +4441,10 @@ impl ProjectPanel {
         let visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
+                    // Width estimates for entries traversed while a filter is
+                    // active, resolved to a maximum only over those that survive
+                    // the retain. Cleared per worktree.
+                    let mut entry_widths: HashMap<ProjectEntryId, usize> = HashMap::default();
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
@@ -4433,17 +4619,27 @@ impl ProjectPanel {
                             let width_estimate =
                                 item_width_estimate(depth, chars, entry.canonical_path.is_some());
 
-                            match max_width_item.as_mut() {
-                                Some((id, worktree_id, width)) => {
-                                    if *width < width_estimate {
-                                        *id = entry.id;
-                                        *worktree_id = worktree_snapshot.id();
-                                        *width = width_estimate;
+                            // While filtering we cannot tell yet whether this
+                            // entry survives -- directory retention depends on
+                            // descendants that have not been traversed. Stash
+                            // the estimate and pick the maximum over the
+                            // retained entries once the retain has run, so the
+                            // panel does not size itself for hidden content.
+                            if filter.is_some() {
+                                entry_widths.insert(entry.id, width_estimate);
+                            } else {
+                                match max_width_item.as_mut() {
+                                    Some((id, worktree_id, width)) => {
+                                        if *width < width_estimate {
+                                            *id = entry.id;
+                                            *worktree_id = worktree_snapshot.id();
+                                            *width = width_estimate;
+                                        }
                                     }
-                                }
-                                None => {
-                                    max_width_item =
-                                        Some((entry.id, worktree_snapshot.id(), width_estimate))
+                                    None => {
+                                        max_width_item =
+                                            Some((entry.id, worktree_snapshot.id(), width_estimate))
+                                    }
                                 }
                             }
 
@@ -4461,12 +4657,46 @@ impl ProjectPanel {
                                     }
                                 };
 
-                            if expanded_dir_ids.binary_search(&entry.id).is_err()
+                            // With a filter active, descend into collapsed
+                            // directories too -- otherwise matches would only
+                            // ever surface under folders the user had already
+                            // expanded, which reads as the filter being broken.
+                            // Note this does not touch `expanded_dir_ids`, which
+                            // is persisted across updates: auto-expanding there
+                            // would leave the tree blown open once the filter is
+                            // cleared.
+                            if filter.is_none()
+                                && expanded_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
                             {
                                 continue;
                             }
                             entry_iter.advance();
+                        }
+
+                        if let Some(filter) = &filter {
+                            Self::retain_filtered_entries(&mut visible_worktree_entries, filter);
+
+                            for entry in &visible_worktree_entries {
+                                let Some(width_estimate) = entry_widths.get(&entry.id).copied()
+                                else {
+                                    continue;
+                                };
+                                match max_width_item.as_mut() {
+                                    Some((id, item_worktree_id, width)) => {
+                                        if *width < width_estimate {
+                                            *id = entry.id;
+                                            *item_worktree_id = worktree_id;
+                                            *width = width_estimate;
+                                        }
+                                    }
+                                    None => {
+                                        max_width_item =
+                                            Some((entry.id, worktree_id, width_estimate))
+                                    }
+                                }
+                            }
+                            entry_widths.clear();
                         }
 
                         par_sort_worktree_entries(
@@ -4505,6 +4735,9 @@ impl ProjectPanel {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.state = new_state;
+                // Flipped together with the entries it describes, so the
+                // chevrons never disagree with what is on screen.
+                this.filter_is_applied = filter_is_applied;
                 if let Some((worktree_id, entry_id)) = new_selected_entry {
                     this.selection = Some(SelectedEntry {
                         worktree_id,
@@ -6530,7 +6763,12 @@ impl ProjectPanel {
             .get(&worktree_id)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+        // A filter traverses into collapsed directories without recording them
+        // as expanded, so every directory it lists is showing its (filtered)
+        // children. Rendering a collapsed chevron above visible children would
+        // contradict what the user sees.
+        let is_expanded =
+            self.filter_is_applied || expanded_entry_ids.binary_search(&entry.id).is_ok();
 
         let icon = match entry.kind {
             EntryKind::File => {
@@ -6929,7 +7167,7 @@ impl Render for ProjectPanel {
         let is_collab = project.is_via_collab();
         let is_local = project.is_local();
 
-        if has_worktree {
+        let body = if has_worktree {
             let item_count = self
                 .state
                 .visible_entries
@@ -7023,6 +7261,7 @@ impl Render for ProjectPanel {
                     },
                 ))
                 .key_context(self.dispatch_context(window, cx))
+                .on_action(cx.listener(Self::toggle_filter))
                 .on_action(cx.listener(Self::scroll_up))
                 .on_action(cx.listener(Self::scroll_down))
                 .on_action(cx.listener(Self::scroll_cursor_center))
@@ -7566,7 +7805,12 @@ impl Render for ProjectPanel {
                         ))
                     })
                 })
-        }
+        };
+
+        v_flex()
+            .size_full()
+            .children(self.render_filter_bar(cx))
+            .child(body)
     }
 }
 

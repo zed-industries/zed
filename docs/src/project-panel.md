@@ -152,6 +152,44 @@ See also [Diagnostics & Quick Fixes](./diagnostics.md) for editor and tab diagno
 
 ## Filtering and Sorting
 
+### File Filter
+
+A filter input sits above the tree and narrows it down using predicates borrowed
+from `find(1)`. It is shown by default; {#action project_panel::ToggleFilter}
+hides it (and clears whatever was typed).
+
+| Predicate | Meaning                                | Example                             |
+| --------- | -------------------------------------- | ----------------------------------- |
+| `-name`   | Case-sensitive glob on the file name    | `-name *.rs`                        |
+| `-iname`  | Case-insensitive glob on the file name  | `-iname *.RS`                       |
+| `-size`   | File size                               | `-size 9` (larger than 9 KiB)       |
+| `-mtime`  | Age in whole days                       | `-mtime -7` (modified in last week) |
+| `-mmin`   | Age in whole minutes                    | `-mmin +30` (untouched for 30 min)  |
+
+`+N` means "greater than N" and `-N` means "less than N". Predicates combine
+with AND, and because they are whitespace-separated a glob cannot contain
+spaces.
+
+`-size` is tuned for the common "show me the big files" case and departs from
+`find` twice: its default unit is **KiB**, and an unsigned value means
+**greater than** rather than "equal to". So `-size 9` is the same as
+`-size +9k`, and `-size +1` matches files over 1024 bytes. An explicit unit
+suffix still wins — `c` (bytes), `b` (512-byte blocks), `k`, `M`, `G`.
+
+For `-mtime` and `-mmin` an unsigned value keeps `find`'s "equal to" meaning, so
+`-mtime 7` is "modified 7 days ago", not "older than 7 days".
+
+The predicates apply to **files**. Directories are shown only when they lead to
+a matching file, so `-iname src` matches nothing on its own. While a filter is
+active the tree is searched in full, including directories you have not
+expanded; clearing the filter restores your own expansion state untouched.
+
+The same syntax works in the [project search](./finding-navigating.md#file-metadata-filters)
+filter row.
+
+> Note: files inside a gitignored directory that has never been expanded are not
+> scanned yet, so the filter cannot see them.
+
 ### Hiding Files
 
 - `project_panel.hide_gitignore` hides files matched by `.gitignore`. Toggle

@@ -1408,10 +1408,11 @@ impl Delegate {
             return None;
         }
 
-        // Reuse the include/exclude filters configured on the shared project
-        // search view so the text finder respects them too.
+        // Reuse the include/exclude and metadata filters configured on the
+        // shared project search view so the text finder respects them too.
         let (files_to_include, files_to_exclude) =
             self.project_search_view.read(cx).file_path_filters(cx);
+        let metadata_filters = self.project_search_view.read(cx).metadata_filters(cx);
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
@@ -1428,6 +1429,7 @@ impl Delegate {
                 match_full_paths,
                 open_buffers,
             )
+            .map(|query| query.with_metadata_filters(metadata_filters))
             .log_err()
     }
 
