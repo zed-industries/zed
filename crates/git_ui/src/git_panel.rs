@@ -1222,7 +1222,7 @@ impl GitPanel {
                 view_mode: GitPanelViewMode::from_settings(cx),
                 tree_expanded_dirs: HashMap::default(),
                 projected_entries_by_path: HashMap::default(),
-                focus_handle: cx.focus_handle(),
+                focus_handle,
                 fs,
                 new_count: 0,
                 new_staged_count: 0,
