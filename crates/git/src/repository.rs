@@ -889,6 +889,12 @@ pub trait GitRepository: Send + Sync {
         line_ending: LineEnding,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: String,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
@@ -2368,6 +2374,21 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git?;
                 crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
+            })
+            .boxed()
+    }
+
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: String,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+        let git = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                crate::blame::Blame::for_path_at_revision(&git, &path, &revision).await
             })
             .boxed()
     }
@@ -5439,6 +5460,88 @@ mod tests {
                 Some("space file committed contents".into()),
                 None,
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_at_revision(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let file_path = repo_dir.path().join("file1");
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(&file_path, "line one\nline two\n")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file1")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "First commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+        let first_sha = repo.head_sha().await.unwrap();
+
+        smol::fs::write(&file_path, "line one\nline two changed\n")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file1")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Second commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(test_commit_envs()),
+        )
+        .await
+        .unwrap();
+        let second_sha = repo.head_sha().await.unwrap();
+
+        let blame_at_head = repo
+            .blame_at_revision(repo_path("file1"), second_sha.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_head
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                .collect::<Vec<_>>(),
+            vec![(first_sha.clone(), 0..1), (second_sha.clone(), 1..2)]
+        );
+        assert_eq!(
+            blame_at_head.entries[1].previous,
+            Some(format!("{first_sha} file1"))
+        );
+
+        let blame_at_first = repo
+            .blame_at_revision(repo_path("file1"), first_sha.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_first
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                .collect::<Vec<_>>(),
+            vec![(first_sha.clone(), 0..2)]
         );
     }
 

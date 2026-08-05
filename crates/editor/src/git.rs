@@ -2145,12 +2145,31 @@ impl Editor {
         })
     }
 
+    pub fn set_blame(
+        &mut self,
+        blame: Entity<GitBlame>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.blame_subscription = Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
+        self.blame = Some(blame);
+        self.show_git_blame_gutter = true;
+        cx.notify();
+    }
+
     fn start_git_blame(
         &mut self,
         user_triggered: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .blame
+            .as_ref()
+            .is_some_and(|blame| blame.read(cx).is_static())
+        {
+            return;
+        }
         if let Some(project) = self.project() {
             if let Some(buffer) = self.buffer().read(cx).as_singleton()
                 && buffer.read(cx).file().is_none()

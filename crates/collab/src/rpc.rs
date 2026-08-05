@@ -503,6 +503,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GetTreeDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GetBlobContent>)
+            .add_request_handler(forward_mutating_project_request::<proto::BlameBufferAtRevision>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)

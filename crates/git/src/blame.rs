@@ -27,8 +27,20 @@ impl Blame {
         content: &Rope,
         line_ending: LineEnding,
     ) -> Result<Self> {
-        let mut entries = run_git_blame(git, path, content, line_ending).await?;
+        let entries = run_git_blame(git, path, Some((content, line_ending)), None).await?;
+        Self::with_commit_details(git, entries).await
+    }
 
+    pub(crate) async fn for_path_at_revision(
+        git: &GitBinary,
+        path: &RepoPath,
+        revision: &str,
+    ) -> Result<Self> {
+        let entries = run_git_blame(git, path, None, Some(revision)).await?;
+        Self::with_commit_details(git, entries).await
+    }
+
+    async fn with_commit_details(git: &GitBinary, mut entries: Vec<BlameEntry>) -> Result<Self> {
         let mut unique_shas = HashSet::default();
 
         for entry in entries.iter_mut() {
@@ -66,15 +78,27 @@ const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 async fn run_git_blame(
     git: &GitBinary,
     path: &RepoPath,
-    contents: &Rope,
-    line_ending: LineEnding,
+    contents: Option<(&Rope, LineEnding)>,
+    revision: Option<&str>,
 ) -> Result<Vec<BlameEntry>> {
     let mut child = {
         let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
         let _enter = span.enter();
-        git.build_command(&["blame", "--incremental", "--contents", "-", "--"])
+        let mut args = vec!["blame", "--incremental"];
+        if contents.is_some() {
+            args.extend(["--contents", "-"]);
+        }
+        if let Some(revision) = revision {
+            args.push(revision);
+        }
+        args.push("--");
+        git.build_command(&args)
             .arg(path.as_unix_str())
-            .stdin(Stdio::piped())
+            .stdin(if contents.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -82,10 +106,7 @@ async fn run_git_blame(
             .context("starting git blame process")?
     };
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .context("failed to get pipe to stdin of git blame command")?;
+    let stdin = child.stdin.take();
     let stdout = child
         .stdout
         .take()
@@ -96,10 +117,14 @@ async fn run_git_blame(
         .context("failed to get stderr from git blame command")?;
 
     let write_stdin = async move {
-        for chunk in text::chunks_with_line_ending(contents, line_ending) {
-            stdin.write_all(chunk.as_bytes()).await?;
+        if let Some((contents, line_ending)) = contents {
+            let mut stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
+            for chunk in text::chunks_with_line_ending(contents, line_ending) {
+                stdin.write_all(chunk.as_bytes()).await?;
+            }
+            stdin.flush().await?;
         }
-        stdin.flush().await.map_err(Into::into)
+        anyhow::Ok(())
     };
 
     let read_stdout = async move {

@@ -82,6 +82,7 @@ pub struct GitBlame {
     user_triggered: bool,
     regenerate_on_edit_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
+    static_repository: Option<Entity<Repository>>,
 }
 
 pub trait BlameRenderer {
@@ -268,12 +269,89 @@ impl GitBlame {
                 project_subscription,
                 git_store_subscription,
             ],
+            static_repository: None,
         };
         this.generate(cx);
         this
     }
 
+    pub fn new_static(
+        multi_buffer: Entity<MultiBuffer>,
+        project: Entity<Project>,
+        repository: Entity<Repository>,
+        blame: Blame,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let remote_url = repository.read(cx).default_remote_url();
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
+
+        let commit_details = blame
+            .messages
+            .into_iter()
+            .map(|(oid, message)| {
+                let parsed_commit_message = ParsedCommitMessage::parse(
+                    oid.to_string(),
+                    message,
+                    remote_url.as_deref(),
+                    Some(provider_registry.clone()),
+                );
+                (oid, parsed_commit_message)
+            })
+            .collect::<HashMap<_, _>>();
+        let commit_tag_names = blame
+            .tag_names
+            .into_iter()
+            .map(|(oid, tag_names)| {
+                (
+                    oid,
+                    tag_names
+                        .into_iter()
+                        .map(SharedString::from)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let mut buffers = HashMap::default();
+        for buffer in multi_buffer.read(cx).all_buffers() {
+            let snapshot = buffer.read(cx).snapshot();
+            let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+            let entries =
+                build_blame_entry_sum_tree(blame.entries.clone(), snapshot.max_point().row);
+            buffers.insert(
+                snapshot.remote_id(),
+                GitBlameBuffer {
+                    entries,
+                    buffer_snapshot: snapshot,
+                    buffer_edits,
+                    commit_details: commit_details.clone(),
+                    commit_tag_names: commit_tag_names.clone(),
+                },
+            );
+        }
+
+        Self {
+            project,
+            multi_buffer: multi_buffer.downgrade(),
+            buffers,
+            task: Task::ready(Ok(())),
+            focused: true,
+            changed_while_blurred: false,
+            user_triggered: true,
+            regenerate_on_edit_task: Task::ready(Ok(())),
+            _regenerate_subscriptions: Vec::new(),
+            static_repository: Some(repository),
+        }
+    }
+
+    pub fn is_static(&self) -> bool {
+        self.static_repository.is_some()
+    }
+
     pub fn repository(&self, cx: &App, id: BufferId) -> Option<Entity<Repository>> {
+        if let Some(repository) = &self.static_repository {
+            return Some(repository.clone());
+        }
         self.project
             .read(cx)
             .git_store()
@@ -507,6 +585,9 @@ impl GitBlame {
 
     #[ztracing::instrument(skip_all)]
     fn generate(&mut self, cx: &mut Context<Self>) {
+        if self.static_repository.is_some() {
+            return;
+        }
         if !self.focused {
             self.changed_while_blurred = true;
             return;
