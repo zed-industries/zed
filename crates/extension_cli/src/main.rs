@@ -14,6 +14,7 @@ use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
+use http_client::{AsyncBody, HttpClient, Url};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
 use settings_content::SemanticTokenRules;
@@ -78,7 +79,7 @@ async fn main() -> Result<()> {
     );
     let http_client = Arc::new(ReqwestClient::user_agent(&user_agent)?);
 
-    let builder = ExtensionBuilder::new(http_client, scratch_dir);
+    let builder = ExtensionBuilder::new(http_client.clone(), scratch_dir);
     builder
         .compile_extension(
             &extension_path,
@@ -92,6 +93,7 @@ async fn main() -> Result<()> {
         .await
         .context("failed to compile extension")?;
 
+    validate_extension_manifest(http_client.as_ref(), &manifest).await?;
     let extension_provides = manifest.provides();
     validate_extension_features(&extension_provides)?;
 
@@ -411,6 +413,123 @@ fn validate_extension_features(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum ExtensionManifestValidationError {
+    #[error("extension manifest must specify a name")]
+    MissingName,
+    #[error("extension manifest must specify a description")]
+    MissingDescription,
+    #[error("extension manifest must specify at least one author")]
+    MissingAuthors,
+    #[error("extension manifest must specify a repository")]
+    MissingRepository,
+    #[error("extension manifest repository is not a valid URL: {0}")]
+    InvalidRepository(String),
+    #[error("repository is hosted on an unknown git hosting provider: {host}")]
+    UnknownGitHostingProvider { host: String },
+    #[error(
+        "extension manifest must not provide language model providers, \
+        as these are currently unsupported"
+    )]
+    LanguageModelProvidersUnsupported,
+    #[error("failed to reach repository URL {url}: {message}")]
+    RepositoryUnreachable { url: String, message: String },
+    #[error("repository URL {url} returned an unsuccessful status code: {status}")]
+    RepositoryUnsuccessfulStatus { url: String, status: u16 },
+}
+
+/// The set of git hosting providers whose repositories are accepted for
+/// published extensions.
+const ALLOWED_REPOSITORY_HOSTING_PROVIDERS: &[&str] = &[
+    "codeberg.org",
+    "git.disroot.org",
+    "github.com",
+    "gitlab.com",
+    "tangled.org",
+];
+
+/// Validates the contents of an extension manifest, including verifying that the
+/// repository URL is a valid URL, hosted on a known git hosting provider, and
+/// reachable.
+async fn validate_extension_manifest(
+    http_client: &dyn HttpClient,
+    manifest: &ExtensionManifest,
+) -> Result<(), ExtensionManifestValidationError> {
+    if manifest.name.trim().is_empty() {
+        return Err(ExtensionManifestValidationError::MissingName);
+    }
+
+    let description_is_empty = manifest
+        .description
+        .as_ref()
+        .is_none_or(|description| description.trim().is_empty());
+    if description_is_empty {
+        return Err(ExtensionManifestValidationError::MissingDescription);
+    }
+
+    if manifest
+        .authors
+        .iter()
+        .all(|author| author.trim().is_empty())
+    {
+        return Err(ExtensionManifestValidationError::MissingAuthors);
+    }
+
+    let repository = manifest
+        .repository
+        .as_ref()
+        .map(|repository| repository.trim())
+        .filter(|repository| !repository.is_empty())
+        .ok_or(ExtensionManifestValidationError::MissingRepository)?;
+
+    let repository_url = repository
+        .parse::<Url>()
+        .map_err(|_| ExtensionManifestValidationError::InvalidRepository(repository.to_string()))?;
+    let Some(host) = repository_url.host_str() else {
+        return Err(ExtensionManifestValidationError::InvalidRepository(
+            repository.to_string(),
+        ));
+    };
+    if !ALLOWED_REPOSITORY_HOSTING_PROVIDERS
+        .iter()
+        .any(|allowed_host| allowed_host.eq_ignore_ascii_case(host))
+    {
+        return Err(
+            ExtensionManifestValidationError::UnknownGitHostingProvider {
+                host: host.to_string(),
+            },
+        );
+    }
+
+    if !manifest.language_model_providers.is_empty() {
+        return Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported);
+    }
+
+    let response = http_client
+        .get(repository_url.as_str(), AsyncBody::empty(), true)
+        .await
+        .map_err(
+            |err| ExtensionManifestValidationError::RepositoryUnreachable {
+                url: repository_url.to_string(),
+                message: err.to_string(),
+            },
+        )?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(
+            ExtensionManifestValidationError::RepositoryUnsuccessfulStatus {
+                url: repository_url.to_string(),
+                status: status.as_u16(),
+            },
+        );
+    }
+
+    log::info!("verified repository URL is reachable: {repository_url}");
+
+    Ok(())
+}
+
 fn test_grammars(
     manifest: &ExtensionManifest,
     extension_path: &Path,
@@ -606,9 +725,202 @@ async fn test_debug_adapter_schemas(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use cloud_api_types::ExtensionProvides;
+    use extension::{LanguageModelProviderManifestEntry, SchemaVersion};
+    use http_client::FakeHttpClient;
 
     use super::*;
+
+    fn valid_manifest() -> ExtensionManifest {
+        ExtensionManifest {
+            id: "test".into(),
+            name: "Test Extension".to_string(),
+            version: "1.0.0".into(),
+            schema_version: SchemaVersion::ZERO,
+            description: Some("A test extension".to_string()),
+            repository: Some("https://github.com/zed-industries/zed".to_string()),
+            authors: vec!["Zed".to_string()],
+            lib: Default::default(),
+            themes: Vec::new(),
+            icon_themes: Vec::new(),
+            languages: Vec::new(),
+            grammars: BTreeMap::default(),
+            language_servers: BTreeMap::default(),
+            context_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            snippets: None,
+            capabilities: Vec::new(),
+            debug_adapters: BTreeMap::default(),
+            debug_locators: BTreeMap::default(),
+            language_model_providers: BTreeMap::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_valid() {
+        let http_client = FakeHttpClient::with_200_response();
+        assert!(
+            validate_extension_manifest(http_client.as_ref(), &valid_manifest())
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_missing_name() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            name: "   ".to_string(),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::MissingName),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_missing_description() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            description: None,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_empty_description() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            description: Some("  ".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_missing_authors() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            authors: Vec::new(),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::MissingAuthors),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_blank_authors() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            authors: vec!["   ".to_string()],
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::MissingAuthors),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_missing_repository() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            repository: None,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::MissingRepository),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_invalid_repository() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            repository: Some("not-a-valid-url".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::InvalidRepository(
+                "not-a-valid-url".to_string()
+            )),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_unknown_git_hosting_provider() {
+        let http_client = FakeHttpClient::with_200_response();
+        let manifest = ExtensionManifest {
+            repository: Some("https://example.com/some-org/some-repo".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(
+                ExtensionManifestValidationError::UnknownGitHostingProvider {
+                    host: "example.com".to_string(),
+                }
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_language_model_providers_unsupported() {
+        let http_client = FakeHttpClient::with_200_response();
+        let mut language_model_providers = BTreeMap::new();
+        language_model_providers.insert(
+            "provider".into(),
+            LanguageModelProviderManifestEntry {
+                name: "Provider".to_string(),
+                icon: None,
+            },
+        );
+        let manifest = ExtensionManifest {
+            language_model_providers,
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &manifest).await,
+            Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_repository_unsuccessful_status() {
+        let http_client = FakeHttpClient::with_404_response();
+        assert_eq!(
+            validate_extension_manifest(http_client.as_ref(), &valid_manifest()).await,
+            Err(
+                ExtensionManifestValidationError::RepositoryUnsuccessfulStatus {
+                    url: "https://github.com/zed-industries/zed".to_string(),
+                    status: 404,
+                }
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_manifest_repository_unreachable() {
+        let http_client = FakeHttpClient::create(|_| async { Err(anyhow!("connection refused")) });
+        assert!(matches!(
+            validate_extension_manifest(http_client.as_ref(), &valid_manifest()).await,
+            Err(ExtensionManifestValidationError::RepositoryUnreachable { .. }),
+        ));
+    }
 
     #[test]
     fn test_validate_empty_features() {
