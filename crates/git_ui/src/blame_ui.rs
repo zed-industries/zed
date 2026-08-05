@@ -167,6 +167,10 @@ impl BlameRenderer for GitBlameRenderer {
         let short_commit_id = blame_entry.sha.display_short();
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
+        let is_highlighted = editor
+            .read(cx)
+            .blame()
+            .is_some_and(|blame| blame.read(cx).highlighted_sha() == Some(blame_entry.sha));
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
             let author_email = blame_entry.author_mail.as_ref().map(|email| {
@@ -202,6 +206,9 @@ impl BlameRenderer for GitBlameRenderer {
                         .font(style.font())
                         .line_height(style.line_height)
                         .text_color(cx.theme().status().hint)
+                        .when(is_highlighted, |this| {
+                            this.bg(cx.theme().colors().element_selected)
+                        })
                         .child(
                             h_flex()
                                 .gap_2()
@@ -626,6 +633,7 @@ fn open_buffer_blame_at_revision(
                     .or(first_worktree_id)
                     .context("project has no worktrees")?;
 
+                let highlighted_sha = revision.parse::<git::Oid>().ok();
                 let short_sha = revision.get(..git::SHORT_SHA_LENGTH).unwrap_or(&revision);
                 let file_name = path
                     .file_name()
@@ -668,7 +676,14 @@ fn open_buffer_blame_at_revision(
                         editor
                     });
                     let git_blame = cx.new(|cx| {
-                        GitBlame::new_static(multi_buffer, project, repository, blame, cx)
+                        GitBlame::new_static(
+                            multi_buffer,
+                            project,
+                            repository,
+                            blame,
+                            highlighted_sha,
+                            cx,
+                        )
                     });
                     editor.update(cx, |editor, cx| editor.set_blame(git_blame, window, cx));
                     workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);

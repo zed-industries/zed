@@ -83,6 +83,7 @@ pub struct GitBlame {
     regenerate_on_edit_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
     static_repository: Option<Entity<Repository>>,
+    highlighted_sha: Option<Oid>,
 }
 
 pub trait BlameRenderer {
@@ -270,6 +271,7 @@ impl GitBlame {
                 git_store_subscription,
             ],
             static_repository: None,
+            highlighted_sha: None,
         };
         this.generate(cx);
         this
@@ -280,6 +282,7 @@ impl GitBlame {
         project: Entity<Project>,
         repository: Entity<Repository>,
         blame: Blame,
+        highlighted_sha: Option<Oid>,
         cx: &mut Context<Self>,
     ) -> Self {
         let remote_url = repository.read(cx).default_remote_url();
@@ -341,11 +344,16 @@ impl GitBlame {
             regenerate_on_edit_task: Task::ready(Ok(())),
             _regenerate_subscriptions: Vec::new(),
             static_repository: Some(repository),
+            highlighted_sha,
         }
     }
 
     pub fn is_static(&self) -> bool {
         self.static_repository.is_some()
+    }
+
+    pub fn highlighted_sha(&self) -> Option<Oid> {
+        self.highlighted_sha
     }
 
     pub fn repository(&self, cx: &App, id: BufferId) -> Option<Entity<Repository>> {
