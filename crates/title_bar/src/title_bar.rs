@@ -383,7 +383,8 @@ impl Render for TitleBar {
                                     .repeat()
                                     .with_easing(pulsating_between(0.4, 0.8)),
                                 |label, delta| label.alpha(delta),
-                            ),
+                            )
+                            .with_max_fps(15),
                     )
                 })
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {

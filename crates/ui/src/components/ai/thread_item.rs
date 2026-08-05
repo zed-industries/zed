@@ -367,6 +367,7 @@ impl RenderOnce for ThreadItem {
                         .with_easing(pulsating_between(0.4, 0.8)),
                     |label, delta| label.alpha(delta),
                 )
+                .with_max_fps(15)
                 .into_any_element()
         } else if highlight_positions.is_empty() {
             Label::new(title)

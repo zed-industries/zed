@@ -19912,6 +19912,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui_macros",
+ "unicode-segmentation",
  "web-time",
  "windows 0.61.3",
 ]
