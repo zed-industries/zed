@@ -14,10 +14,7 @@ doctest = false
 
 [features]
 default = []
-test-support = [
-    "gpui/test-support",
-    "settings/test-support",
-]
+test-support = ["gpui/test-support"]
 
 [dependencies]
 anthropic.workspace = true
@@ -31,7 +28,6 @@ language_model.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
 util.workspace = true
 zed_credentials_provider.workspace = true
 
