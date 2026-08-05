@@ -8709,6 +8709,7 @@ fn network_page() -> SettingsPage {
                 title: "Proxy Bypass",
                 description: "Comma-separated hosts and IP ranges to connect to directly.",
                 field: Box::new(SettingField {
+                    organization_override: None,
                     json_path: Some("no_proxy"),
                     pick: |settings_content| settings_content.no_proxy.as_ref(),
                     write: |settings_content, value, _| {

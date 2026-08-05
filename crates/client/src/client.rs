@@ -131,6 +131,8 @@ impl Settings for ClientSettings {
     }
 }
 
+const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1";
+
 #[derive(Deserialize, Default, RegisterSetting)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
@@ -154,11 +156,9 @@ impl ProxySettings {
 
     pub fn no_proxy(&self) -> Option<String> {
         self.no_proxy
-            .as_deref()
-            .map(str::trim)
-            .filter(|input| !input.is_empty())
-            .map(ToOwned::to_owned)
+            .clone()
             .or_else(read_no_proxy_from_env)
+            .or_else(|| Some(DEFAULT_NO_PROXY.to_owned()))
     }
 }
 
@@ -1351,6 +1351,7 @@ impl Client {
 
         let http = self.http.clone();
         let proxy = http.proxy().cloned();
+        let no_proxy = http.no_proxy().map(str::to_owned);
         let user_agent = http.user_agent().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
@@ -1380,7 +1381,7 @@ impl Client {
                         .zip(rpc_url.port_or_known_default())
                         .context("missing host in rpc url")?;
                     Ok(match proxy {
-                        Some(proxy) if !excluded_from_proxy(rpc_host.0) => {
+                        Some(proxy) if !excluded_from_proxy(no_proxy.as_deref(), rpc_host.0) => {
                             connect_proxy_stream(&proxy, rpc_host).await?
                         }
                         _ => Box::new(TcpStream::connect(rpc_host).await?),

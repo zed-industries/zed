@@ -110,10 +110,10 @@ impl dyn AgentServer {
 
 /// Load the default proxy environment variables to pass through to the agent
 pub fn load_proxy_env(cx: &mut App) -> HashMap<String, String> {
-    let proxy_url = cx
-        .read_global(|settings: &SettingsStore, _| settings.get::<ProxySettings>(None).proxy_url());
-    let no_proxy = cx
-        .read_global(|settings: &SettingsStore, _| settings.get::<ProxySettings>(None).no_proxy());
+    let (proxy_url, no_proxy) = cx.read_global(|settings: &SettingsStore, _| {
+        let proxy_settings = settings.get::<ProxySettings>(None);
+        (proxy_settings.proxy_url(), proxy_settings.no_proxy())
+    });
     let mut env = HashMap::default();
 
     if let Some(proxy_url) = &proxy_url {
@@ -127,9 +127,6 @@ pub fn load_proxy_env(cx: &mut App) -> HashMap<String, String> {
 
     if let Some(no_proxy) = no_proxy {
         env.insert("NO_PROXY".to_owned(), no_proxy);
-    } else if proxy_url.is_some() {
-        // We sometimes need local MCP servers that we don't want to proxy
-        env.insert("NO_PROXY".to_owned(), "localhost,127.0.0.1".to_owned());
     }
 
     env

@@ -272,6 +272,10 @@ impl http_client::HttpClient for ReqwestClient {
         self.proxy.as_ref()
     }
 
+    fn no_proxy(&self) -> Option<&str> {
+        self.no_proxy.as_deref()
+    }
+
     fn user_agent(&self) -> Option<&HeaderValue> {
         self.user_agent.as_ref()
     }
@@ -469,6 +473,6 @@ mod tests {
             "test",
         )
         .unwrap();
-        assert_eq!(client.no_proxy.as_deref(), Some("localhost,127.0.0.1"));
+        assert_eq!(client.no_proxy(), Some("localhost,127.0.0.1"));
     }
 }
