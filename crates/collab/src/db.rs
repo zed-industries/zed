@@ -528,6 +528,7 @@ impl RejoinedProject {
                     // todo(collab): Get these fields from database
                     root_repo_is_linked_worktree: false,
                     root_repo_shared_objects_main_path: None,
+                    root_repo_delta_thread_stamp_json: None,
                 })
                 .collect(),
             collaborators: self

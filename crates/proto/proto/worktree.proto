@@ -43,6 +43,7 @@ message AddWorktreeResponse {
   optional string root_repo_common_dir = 3;
   bool root_repo_is_linked_worktree = 4;
   optional string root_repo_shared_objects_main_path = 5;
+  optional string root_repo_delta_thread_stamp_json = 6;
 }
 
 message RemoveWorktree {
@@ -68,6 +69,7 @@ message WorktreeMetadata {
   optional string root_repo_common_dir = 5;
   bool root_repo_is_linked_worktree = 6;
   optional string root_repo_shared_objects_main_path = 7;
+  optional string root_repo_delta_thread_stamp_json = 8;
 }
 
 message ProjectPath {

@@ -187,6 +187,12 @@ fn assert_remote_project_integration_sidebar_state(
                     terminal.metadata.title
                 );
             }
+            ListEntry::DeltaThread(entry) => {
+                panic!(
+                    "unexpected sidebar delta thread while simulating remote project integration flicker: title=`{}`",
+                    entry.title
+                );
+            }
         }
     }
 
@@ -601,6 +607,10 @@ fn visible_entries_as_strings(
                         let title = terminal.metadata.display_title();
                         let worktree = format_linked_worktree_chips(&terminal.worktrees);
                         format!("  {title}{worktree}{selected}")
+                    }
+                    ListEntry::DeltaThread(delta_thread) => {
+                        let worktree = format_linked_worktree_chips(&delta_thread.worktrees);
+                        format!("  {}{} (delta){}", delta_thread.title, worktree, selected)
                     }
                 }
             })
@@ -5078,7 +5088,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
                     thread.metadata.thread_id,
                     thread.metadata.display_title(),
                 )),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_)
+                | ListEntry::DeltaThread(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -5164,7 +5176,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .iter()
             .find_map(|entry| match entry {
                 ListEntry::Thread(thread) => Some(thread),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_)
+                | ListEntry::DeltaThread(_) => None,
             })
             .expect("renamed thread should match the search");
         let title = thread.metadata.display_title();
@@ -5203,7 +5217,9 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .enumerate()
             .find_map(|(ix, entry)| match entry {
                 ListEntry::Thread(thread) => Some((ix, thread.metadata.thread_id)),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_)
+                | ListEntry::DeltaThread(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -7251,6 +7267,12 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     panic!(
                         "unexpected sidebar terminal while opening linked worktree thread: title=`{}`",
                         terminal.metadata.title
+                    );
+                }
+                ListEntry::DeltaThread(entry) => {
+                    panic!(
+                        "unexpected sidebar delta thread while opening linked worktree thread: title=`{}`",
+                        entry.title
                     );
                 }
             }
@@ -11322,6 +11344,76 @@ async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut Tes
     assert!(
         entries.iter().any(|e| e.contains("Worktree Thread")),
         "expected worktree thread to be visible, got: {entries:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_delta_thread_row_for_stamped_agent_checkout(cx: &mut TestAppContext) {
+    let (fs, project_main) = init_multi_project_test(&["/main_repo"], cx).await;
+    fs.insert_tree("/main_repo/.git", serde_json::json!({ "objects": {} }))
+        .await;
+    // An agent checkout of /main_repo: it borrows the main repository's
+    // object store (grouping it under /main_repo's project group) and
+    // carries a Delta thread stamp in its git dir.
+    fs.insert_tree(
+        "/main_repo/.delta/worktrees/thread-ns/main_repo",
+        serde_json::json!({
+            ".git": {
+                "objects": { "info": { "alternates": "/main_repo/.git/objects\n" } },
+                "delta-thread.json": serde_json::json!({
+                    "version": 1,
+                    "thread_id": "thread-42",
+                    "thread_title": "Fix the panic",
+                    "source_repository_path": "/main_repo",
+                })
+                .to_string(),
+            },
+            "src": {},
+        }),
+    )
+    .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_main.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let checkout_workspace = add_test_project(
+        "/main_repo/.delta/worktrees/thread-ns/main_repo",
+        &fs,
+        &multi_workspace,
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert_eq!(
+        entries.iter().filter(|e| e.contains("[main_repo]")).count(),
+        1,
+        "the agent checkout must join the main repository's project group \
+         instead of forming its own; entries: {entries:#?}",
+    );
+    let delta_row = entries
+        .iter()
+        .find(|entry| entry.contains("(delta)"))
+        .unwrap_or_else(|| panic!("expected a delta thread row; entries: {entries:#?}"));
+    assert!(
+        delta_row.contains("Fix the panic"),
+        "the row should carry the stamped thread title: {delta_row}",
+    );
+
+    // The row is derived from the open workspace, so closing the workspace
+    // removes it.
+    multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.remove([checkout_workspace], RemovalIntent::KeepProject, window, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries.iter().any(|entry| entry.contains("(delta)")),
+        "the delta thread row must disappear with its workspace; entries: {entries:#?}",
     );
 }
 

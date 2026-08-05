@@ -4406,6 +4406,13 @@ async fn test_root_repo_shared_objects_main_path(
             "checkout.git": {
                 "HEAD": "ref: refs/heads/main",
                 "config": "[core]\n\tbare = false\n",
+                "delta-thread.json": serde_json::json!({
+                    "version": 1,
+                    "thread_id": "thread-123",
+                    "thread_title": "Fix the bug",
+                    "source_repository_path": path!("/main_repo"),
+                })
+                .to_string(),
                 "objects": {
                     "info": {
                         "alternates": format!("{}\n", path!("/main_repo/.git/objects")),
@@ -4461,6 +4468,11 @@ async fn test_root_repo_shared_objects_main_path(
                 .map(|p| p.as_ref()),
             Some(Path::new(path!("/main_repo"))),
         );
+        assert_eq!(
+            snapshot.root_repo_delta_thread_stamp(),
+            None,
+            "a repository without a stamp file must not report a delta thread"
+        );
         assert!(
             !snapshot.root_repo_is_linked_worktree(),
             "sharing an object store must not make the repository a linked worktree"
@@ -4497,6 +4509,15 @@ async fn test_root_repo_shared_objects_main_path(
             Some(Path::new(path!("/main_repo"))),
         );
         assert!(!snapshot.root_repo_is_linked_worktree());
+        let stamp = snapshot
+            .root_repo_delta_thread_stamp()
+            .expect("the delta-thread.json stamp should be discovered");
+        assert_eq!(stamp.thread_id, "thread-123");
+        assert_eq!(stamp.thread_title.as_deref(), Some("Fix the bug"));
+        assert_eq!(
+            stamp.source_repository_path.as_deref(),
+            Some(Path::new(path!("/main_repo")))
+        );
     });
 
     let bare_backed_tree = Worktree::local(
@@ -5870,6 +5891,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             },
             client,
             PathStyle::Unix,
@@ -5929,6 +5951,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             });
     });
 
@@ -5969,6 +5992,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             },
             client,
             PathStyle::Unix,
@@ -6025,6 +6049,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 root_repo_common_dir: Some("/home/user/project/.git".to_string()),
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             });
     });
 
@@ -6070,6 +6095,7 @@ async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
                 root_repo_common_dir: Some("/home/user/monty/.bare".to_string()),
                 root_repo_is_linked_worktree: true,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             },
             client,
             PathStyle::Unix,
@@ -6101,6 +6127,7 @@ async fn test_remote_worktree_root_repo_metadata_cleared_only_by_completed_scan(
         root_repo_common_dir: None,
         root_repo_is_linked_worktree: false,
         root_repo_shared_objects_main_path: None,
+        root_repo_delta_thread_stamp_json: None,
     };
 
     // A mid-scan update without repo info must not clobber the seeded
@@ -6188,6 +6215,7 @@ async fn test_remote_worktree_update_entries_carry_changed_paths(cx: &mut TestAp
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             },
             AnyProtoClient::new(NoopProtoClient::new()),
             PathStyle::local(),

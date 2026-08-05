@@ -541,6 +541,9 @@ impl HeadlessProject {
                 root_repo_shared_objects_main_path: worktree
                     .root_repo_shared_objects_main_path()
                     .map(|p| p.to_string_lossy().into_owned()),
+                root_repo_delta_thread_stamp_json: worktree
+                    .root_repo_delta_thread_stamp()
+                    .and_then(|stamp| serde_json::to_string(stamp.as_ref()).ok()),
             }
         });
 

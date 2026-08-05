@@ -1139,6 +1139,7 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             });
     });
     cx.run_until_parked();

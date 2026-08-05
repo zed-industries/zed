@@ -2164,6 +2164,7 @@ impl Project {
                 root_repo_common_dir: None,
                 root_repo_is_linked_worktree: false,
                 root_repo_shared_objects_main_path: None,
+                root_repo_delta_thread_stamp_json: None,
             },
             client,
             PathStyle::Unix,

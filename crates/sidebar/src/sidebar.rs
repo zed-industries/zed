@@ -402,6 +402,25 @@ enum ListEntry {
     },
     Thread(Arc<ThreadEntry>),
     Terminal(TerminalEntry),
+    DeltaThread(DeltaThreadEntry),
+}
+
+/// An ephemeral row for a Delta thread whose checkout is open as a workspace
+/// in this window, synthesized from the provenance stamp Delta writes into
+/// its checkouts' git dirs ([`worktree::DeltaThreadStamp`]). Derived from
+/// open workspace state rather than the thread store, so it never persists:
+/// it disappears when the workspace closes and can't leak into the archive,
+/// drafts, or the MRU switcher. It is the "you are here" anchor for windows
+/// opened from Delta.
+#[derive(Clone)]
+struct DeltaThreadEntry {
+    /// Delta's thread id, used for row identity and the
+    /// `delta://thread/<id>` backlink.
+    thread_id: SharedString,
+    title: SharedString,
+    workspace: Entity<Workspace>,
+    worktrees: Vec<ThreadItemWorktreeInfo>,
+    highlight_positions: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -412,6 +431,9 @@ enum ActivatableEntry {
     Terminal {
         metadata: TerminalThreadMetadata,
         workspace: ThreadEntryWorkspace,
+    },
+    DeltaThread {
+        workspace: Entity<Workspace>,
     },
 }
 
@@ -425,6 +447,9 @@ impl ActivatableEntry {
                 metadata: terminal.metadata.clone(),
                 workspace: terminal.workspace.clone(),
             }),
+            ListEntry::DeltaThread(entry) => Some(Self::DeltaThread {
+                workspace: entry.workspace.clone(),
+            }),
             ListEntry::ProjectHeader { .. } => None,
         }
     }
@@ -435,7 +460,9 @@ impl ListEntry {
     fn session_id(&self) -> Option<&acp::SessionId> {
         match self {
             ListEntry::Thread(thread_entry) => thread_entry.metadata.session_id.as_ref(),
-            ListEntry::Terminal(_) | ListEntry::ProjectHeader { .. } => None,
+            ListEntry::Terminal(_)
+            | ListEntry::ProjectHeader { .. }
+            | ListEntry::DeltaThread(_) => None,
         }
     }
 
@@ -456,6 +483,7 @@ impl ListEntry {
             ListEntry::ProjectHeader { key, .. } => {
                 multi_workspace.workspaces_for_project_group(key, cx)
             }
+            ListEntry::DeltaThread(entry) => vec![entry.workspace.clone()],
         }
     }
 }
@@ -496,6 +524,7 @@ enum EntryShape {
     },
     Thread(ThreadId),
     Terminal(TerminalId),
+    DeltaThread(SharedString, gpui::EntityId),
 }
 
 impl SidebarContents {
@@ -1541,6 +1570,44 @@ impl Sidebar {
                     .has_notification
                     .then_some(terminal.metadata.terminal_id)
             }));
+
+            // Ephemeral rows for Delta threads whose checkouts are open in
+            // this group's workspaces, derived from the provenance stamps in
+            // the checkouts' git dirs. One row per (thread, workspace): a
+            // thread with several worktrees open in one workspace still
+            // reads as one location.
+            let mut delta_threads: Vec<DeltaThreadEntry> = Vec::new();
+            for workspace in group_workspaces {
+                let project = workspace.read(cx).project().read(cx);
+                let worktree_paths = project.worktree_paths(cx);
+                for worktree in project.visible_worktrees(cx) {
+                    let snapshot = worktree.read(cx).snapshot();
+                    let Some(stamp) = snapshot.root_repo_delta_thread_stamp() else {
+                        continue;
+                    };
+                    if delta_threads.iter().any(|entry| {
+                        entry.thread_id.as_ref() == stamp.thread_id && entry.workspace == *workspace
+                    }) {
+                        continue;
+                    }
+                    let title = stamp
+                        .thread_title
+                        .clone()
+                        .map(SharedString::from)
+                        .unwrap_or_else(|| SharedString::from("Delta thread"));
+                    delta_threads.push(DeltaThreadEntry {
+                        thread_id: SharedString::from(stamp.thread_id.clone()),
+                        title,
+                        workspace: workspace.clone(),
+                        worktrees: worktree_info_from_thread_paths(
+                            &worktree_paths,
+                            &branch_by_path,
+                        ),
+                        highlight_positions: Vec::new(),
+                    });
+                }
+            }
+
             if group_key.path_list().paths().is_empty() {
                 continue;
             }
@@ -1801,7 +1868,8 @@ impl Sidebar {
                 }
             }
 
-            let has_visible_rows = !threads.is_empty() || !terminals.is_empty();
+            let has_visible_rows =
+                !threads.is_empty() || !terminals.is_empty() || !delta_threads.is_empty();
             let has_stored_thread_rows = !should_load_threads && !has_visible_rows && {
                 let store = ThreadMetadataStore::global(cx).read(cx);
                 store
@@ -1875,7 +1943,34 @@ impl Sidebar {
                     }
                 }
 
-                if matched_threads.is_empty() && matched_terminals.is_empty() && !workspace_matched
+                let mut matched_delta_threads: Vec<DeltaThreadEntry> = Vec::new();
+                for mut delta_thread in delta_threads {
+                    let mut delta_thread_matched = false;
+                    if let Some(positions) =
+                        fuzzy_match_positions(&query, delta_thread.title.as_ref())
+                    {
+                        delta_thread.highlight_positions = positions;
+                        delta_thread_matched = true;
+                    }
+                    let mut worktree_matched = false;
+                    for worktree in &mut delta_thread.worktrees {
+                        let Some(name) = worktree.worktree_name.as_ref() else {
+                            continue;
+                        };
+                        if let Some(positions) = fuzzy_match_positions(&query, name) {
+                            worktree.highlight_positions = positions;
+                            worktree_matched = true;
+                        }
+                    }
+                    if workspace_matched || delta_thread_matched || worktree_matched {
+                        matched_delta_threads.push(delta_thread);
+                    }
+                }
+
+                if matched_threads.is_empty()
+                    && matched_terminals.is_empty()
+                    && matched_delta_threads.is_empty()
+                    && !workspace_matched
                 {
                     continue;
                 }
@@ -1900,6 +1995,11 @@ impl Sidebar {
                     has_threads,
                 });
 
+                entries.extend(
+                    matched_delta_threads
+                        .into_iter()
+                        .map(ListEntry::DeltaThread),
+                );
                 Self::push_entries_by_display_time(
                     &mut entries,
                     matched_terminals,
@@ -1950,6 +2050,7 @@ impl Sidebar {
                     continue;
                 }
 
+                entries.extend(delta_threads.into_iter().map(ListEntry::DeltaThread));
                 Self::push_entries_by_display_time(
                     &mut entries,
                     terminals,
@@ -2074,6 +2175,9 @@ impl Sidebar {
             },
             ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
             ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
+            ListEntry::DeltaThread(entry) => {
+                EntryShape::DeltaThread(entry.thread_id.clone(), entry.workspace.entity_id())
+            }
         })
     }
 
@@ -2158,7 +2262,12 @@ impl Sidebar {
             .contents
             .entries
             .iter()
-            .position(|entry| matches!(entry, ListEntry::Thread(_) | ListEntry::Terminal(_)))
+            .position(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Thread(_) | ListEntry::Terminal(_) | ListEntry::DeltaThread(_)
+                )
+            })
             .or_else(|| {
                 if self.contents.entries.is_empty() {
                     None
@@ -2184,10 +2293,22 @@ impl Sidebar {
         let is_group_header_after_first =
             ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
 
-        let is_active = self
-            .active_entry
-            .as_ref()
-            .is_some_and(|active| active.matches_entry(entry));
+        let is_active = match entry {
+            // Delta thread rows aren't tracked by `active_entry` (they're
+            // derived, not activatable panel state); they're "active" when
+            // theirs is the window's active workspace.
+            ListEntry::DeltaThread(entry) => {
+                self.multi_workspace
+                    .upgrade()
+                    .is_some_and(|multi_workspace| {
+                        multi_workspace.read(cx).workspace() == &entry.workspace
+                    })
+            }
+            _ => self
+                .active_entry
+                .as_ref()
+                .is_some_and(|active| active.matches_entry(entry)),
+        };
 
         let rendered = match entry {
             ListEntry::ProjectHeader {
@@ -2224,6 +2345,9 @@ impl Sidebar {
             ListEntry::Thread(thread) => self.render_thread(ix, thread, is_active, is_selected, cx),
             ListEntry::Terminal(terminal) => {
                 self.render_terminal(ix, terminal, is_active, is_selected, cx)
+            }
+            ListEntry::DeltaThread(entry) => {
+                self.render_delta_thread(ix, &entry.clone(), is_active, is_selected, cx)
             }
         };
 
@@ -3563,7 +3687,28 @@ impl Sidebar {
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, false, window, cx);
             }
+            ListEntry::DeltaThread(entry) => {
+                let workspace = entry.workspace.clone();
+                self.activate_delta_thread_entry(workspace, window, cx);
+            }
         }
+    }
+
+    /// Activates the workspace a Delta thread's checkout is open in. The
+    /// thread itself lives in Delta, so there is nothing to load — the row
+    /// is a location, not a conversation.
+    fn activate_delta_thread_entry(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.activate(workspace, None, window, cx);
+            });
+        }
+        cx.notify();
     }
 
     fn find_workspace_across_windows(
@@ -4292,7 +4437,7 @@ impl Sidebar {
                     self.update_entries(cx);
                 }
             }
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => {
+            Some(ListEntry::Thread(_) | ListEntry::Terminal(_) | ListEntry::DeltaThread(_)) => {
                 for i in (0..ix).rev() {
                     if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
                     {
@@ -4319,12 +4464,14 @@ impl Sidebar {
         // Find the group header for the current selection.
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => (0..ix).rev().find(|&i| {
-                matches!(
-                    self.contents.entries.get(i),
-                    Some(ListEntry::ProjectHeader { .. })
-                )
-            }),
+            Some(ListEntry::Thread(_) | ListEntry::Terminal(_) | ListEntry::DeltaThread(_)) => {
+                (0..ix).rev().find(|&i| {
+                    matches!(
+                        self.contents.entries.get(i),
+                        Some(ListEntry::ProjectHeader { .. })
+                    )
+                })
+            }
             None => None,
         };
 
@@ -4463,6 +4610,10 @@ impl Sidebar {
                     window,
                     cx,
                 );
+                true
+            }
+            ActivatableEntry::DeltaThread { workspace } => {
+                self.activate_delta_thread_entry(workspace.clone(), window, cx);
                 true
             }
         }
@@ -5723,7 +5874,8 @@ impl Sidebar {
                 }
                 ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
                 ListEntry::Terminal(terminal) => terminal.metadata.created_at,
-                ListEntry::ProjectHeader { .. } => unreachable!(),
+                // Delta thread rows are pushed ahead of this time-sorted run.
+                ListEntry::DeltaThread(_) | ListEntry::ProjectHeader { .. } => unreachable!(),
             }
         }
 
@@ -5781,6 +5933,9 @@ impl Sidebar {
                     current_header_key = Some(key.clone());
                     None
                 }
+                // The switcher cycles conversations; a Delta thread row is a
+                // location, not a conversation.
+                ListEntry::DeltaThread(_) => None,
                 ListEntry::Thread(thread) => {
                     if thread.draft == Some(DraftKind::Empty) {
                         return None;
@@ -6555,6 +6710,52 @@ impl Sidebar {
             .into_any_element()
     }
 
+    fn render_delta_thread(
+        &self,
+        ix: usize,
+        entry: &DeltaThreadEntry,
+        is_active: bool,
+        is_focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = ElementId::from(format!("delta-thread-{}-{}", entry.thread_id, ix));
+        let is_hovered = self.hovered_thread_index == Some(ix);
+        let color = cx.theme().colors();
+        let sidebar_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.25));
+        let worktrees = apply_worktree_label_mode(
+            entry.worktrees.clone(),
+            cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
+        );
+        let is_remote = !entry.workspace.read(cx).project().read(cx).is_local();
+
+        ThreadItem::new(id, entry.title.clone())
+            .base_bg(sidebar_bg)
+            .icon(IconName::Delta)
+            .is_remote(is_remote)
+            .worktrees(worktrees)
+            .highlight_positions(entry.highlight_positions.clone())
+            .selected(is_active)
+            .focused(is_focused)
+            .hovered(is_hovered)
+            .on_hover(cx.listener(move |this, is_hovered: &bool, _window, cx| {
+                if *is_hovered {
+                    this.hovered_thread_index = Some(ix);
+                } else if this.hovered_thread_index == Some(ix) {
+                    this.hovered_thread_index = None;
+                }
+                cx.notify();
+            }))
+            .on_click(cx.listener({
+                let workspace = entry.workspace.clone();
+                move |this, _, window, cx| {
+                    this.activate_delta_thread_entry(workspace.clone(), window, cx);
+                }
+            }))
+            .into_any_element()
+    }
+
     fn render_filter_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .min_w_0()
@@ -7135,6 +7336,10 @@ impl Sidebar {
                 let metadata = terminal.metadata.clone();
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, true, window, cx);
+            }
+            ListEntry::DeltaThread(entry) => {
+                let workspace = entry.workspace.clone();
+                self.activate_delta_thread_entry(workspace, window, cx);
             }
             ListEntry::ProjectHeader { .. } => {}
         }

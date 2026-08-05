@@ -188,6 +188,8 @@ pub struct Snapshot {
     /// grouping and labels alongside `root_repo_common_dir`, never in git
     /// operations.
     root_repo_shared_objects_main_path: Option<Arc<SanitizedPath>>,
+    /// See [`DeltaThreadStamp`]. Display-only, like the shared-objects path.
+    root_repo_delta_thread_stamp: Option<Arc<DeltaThreadStamp>>,
     always_included_entries: Vec<Arc<RelPath>>,
 
     /// A number that increases every time the worktree begins scanning
@@ -370,6 +372,8 @@ struct LocalRepositoryEntry {
     repository_dir_abs_path: Arc<Path>,
     /// See [`discover_shared_objects_main_path`].
     shared_objects_main_path: Option<Arc<Path>>,
+    /// See [`DeltaThreadStamp`].
+    delta_thread_stamp: Option<Arc<DeltaThreadStamp>>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -510,6 +514,7 @@ impl Worktree {
                 snapshot.root_repo_shared_objects_main_path = metadata
                     .shared_objects_main_path
                     .map(SanitizedPath::from_arc);
+                snapshot.root_repo_delta_thread_stamp = metadata.delta_thread_stamp;
             }
 
             let worktree_id = snapshot.id();
@@ -604,6 +609,10 @@ impl Worktree {
             snapshot.root_repo_shared_objects_main_path = worktree
                 .root_repo_shared_objects_main_path
                 .map(|p| SanitizedPath::new_arc(Path::new(&p)));
+            snapshot.root_repo_delta_thread_stamp = worktree
+                .root_repo_delta_thread_stamp_json
+                .as_deref()
+                .and_then(parse_delta_thread_stamp_json);
 
             let background_snapshot = Arc::new(Mutex::new((
                 snapshot.clone(),
@@ -670,6 +679,8 @@ impl Worktree {
                             this.snapshot.root_repo_is_linked_worktree;
                         let old_root_repo_shared_objects_main_path =
                             this.snapshot.root_repo_shared_objects_main_path.clone();
+                        let old_root_repo_delta_thread_stamp =
+                            this.snapshot.root_repo_delta_thread_stamp.clone();
                         let mut changed_entries: Vec<(Arc<RelPath>, ProjectEntryId, PathChange)> =
                             Vec::new();
                         {
@@ -718,6 +729,8 @@ impl Worktree {
                                 != old_root_repo_is_linked_worktree
                             || this.snapshot.root_repo_shared_objects_main_path
                                 != old_root_repo_shared_objects_main_path
+                            || this.snapshot.root_repo_delta_thread_stamp
+                                != old_root_repo_delta_thread_stamp
                             || (is_first_update && this.snapshot.root_repo_common_dir.is_none())
                         {
                             cx.emit(Event::UpdatedRootRepoCommonDir {
@@ -817,6 +830,10 @@ impl Worktree {
             root_repo_shared_objects_main_path: self
                 .root_repo_shared_objects_main_path()
                 .map(|p| p.to_string_lossy().into_owned()),
+            root_repo_delta_thread_stamp_json: self
+                .root_repo_delta_thread_stamp
+                .as_deref()
+                .and_then(delta_thread_stamp_to_json),
         }
     }
 
@@ -1424,13 +1441,16 @@ impl LocalWorktree {
                 .shared_objects_main_path
                 .clone()
                 .map(SanitizedPath::from_arc);
+            let delta_thread_stamp = repo.delta_thread_stamp.clone();
             new_snapshot.root_repo_common_dir = Some(common_dir);
             new_snapshot.root_repo_is_linked_worktree = is_linked_worktree;
             new_snapshot.root_repo_shared_objects_main_path = shared_objects_main_path;
+            new_snapshot.root_repo_delta_thread_stamp = delta_thread_stamp;
         } else {
             new_snapshot.root_repo_common_dir = None;
             new_snapshot.root_repo_is_linked_worktree = false;
             new_snapshot.root_repo_shared_objects_main_path = None;
+            new_snapshot.root_repo_delta_thread_stamp = None;
         }
 
         let root_repo_metadata_changed = self.snapshot.root_repo_common_dir
@@ -1438,7 +1458,9 @@ impl LocalWorktree {
             || self.snapshot.root_repo_is_linked_worktree
                 != new_snapshot.root_repo_is_linked_worktree
             || self.snapshot.root_repo_shared_objects_main_path
-                != new_snapshot.root_repo_shared_objects_main_path;
+                != new_snapshot.root_repo_shared_objects_main_path
+            || self.snapshot.root_repo_delta_thread_stamp
+                != new_snapshot.root_repo_delta_thread_stamp;
         let old_root_repo_common_dir =
             root_repo_metadata_changed.then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
@@ -2555,6 +2577,7 @@ impl Snapshot {
             root_repo_common_dir: None,
             root_repo_is_linked_worktree: false,
             root_repo_shared_objects_main_path: None,
+            root_repo_delta_thread_stamp: None,
             scan_id: 1,
             completed_scan_id: 0,
         }
@@ -2597,6 +2620,11 @@ impl Snapshot {
             .map(SanitizedPath::cast_arc_ref)
     }
 
+    /// See [`DeltaThreadStamp`].
+    pub fn root_repo_delta_thread_stamp(&self) -> Option<&Arc<DeltaThreadStamp>> {
+        self.root_repo_delta_thread_stamp.as_ref()
+    }
+
     fn build_initial_update(&self, project_id: u64, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = self
             .entries_by_path
@@ -2617,6 +2645,10 @@ impl Snapshot {
             root_repo_shared_objects_main_path: self
                 .root_repo_shared_objects_main_path()
                 .map(|p| p.to_string_lossy().into_owned()),
+            root_repo_delta_thread_stamp_json: self
+                .root_repo_delta_thread_stamp
+                .as_deref()
+                .and_then(delta_thread_stamp_to_json),
             updated_entries,
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
@@ -2774,11 +2806,16 @@ impl Snapshot {
                 self.root_repo_shared_objects_main_path = update
                     .root_repo_shared_objects_main_path
                     .map(|p| SanitizedPath::new_arc(Path::new(&p)));
+                self.root_repo_delta_thread_stamp = update
+                    .root_repo_delta_thread_stamp_json
+                    .as_deref()
+                    .and_then(parse_delta_thread_stamp_json);
             }
             None if update.is_last_update => {
                 self.root_repo_common_dir = None;
                 self.root_repo_is_linked_worktree = false;
                 self.root_repo_shared_objects_main_path = None;
+                self.root_repo_delta_thread_stamp = None;
             }
             None => {}
         }
@@ -3028,6 +3065,10 @@ impl LocalSnapshot {
             root_repo_shared_objects_main_path: self
                 .root_repo_shared_objects_main_path()
                 .map(|p| p.to_string_lossy().into_owned()),
+            root_repo_delta_thread_stamp_json: self
+                .root_repo_delta_thread_stamp
+                .as_deref()
+                .and_then(delta_thread_stamp_to_json),
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
@@ -3604,11 +3645,15 @@ impl BackgroundScannerState {
 
         let (repository_dir_abs_path, common_dir_abs_path) =
             discover_git_paths(&dot_git_abs_path, fs).await;
-        let shared_objects_main_path = if repository_dir_abs_path == common_dir_abs_path {
-            discover_shared_objects_main_path(&repository_dir_abs_path, fs).await
-        } else {
-            None
-        };
+        let (shared_objects_main_path, delta_thread_stamp) =
+            if repository_dir_abs_path == common_dir_abs_path {
+                (
+                    discover_shared_objects_main_path(&repository_dir_abs_path, fs).await,
+                    discover_delta_thread_stamp(&repository_dir_abs_path, fs).await,
+                )
+            } else {
+                (None, None)
+            };
         watcher
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
@@ -3651,6 +3696,7 @@ impl BackgroundScannerState {
             common_dir_abs_path,
             repository_dir_abs_path,
             shared_objects_main_path,
+            delta_thread_stamp,
         };
 
         self.snapshot
@@ -7080,6 +7126,8 @@ pub struct RootRepoMetadata {
     pub is_linked_worktree: bool,
     /// See [`discover_shared_objects_main_path`].
     pub shared_objects_main_path: Option<Arc<Path>>,
+    /// See [`DeltaThreadStamp`].
+    pub delta_thread_stamp: Option<Arc<DeltaThreadStamp>>,
 }
 
 pub async fn discover_root_repo_metadata(
@@ -7093,16 +7141,70 @@ pub async fn discover_root_repo_metadata(
     let dot_git_path: Arc<Path> = root_dot_git.into();
     let (repository_dir, common_dir) = discover_git_paths(&dot_git_path, fs).await;
     let is_linked_worktree = repository_dir != common_dir;
-    let shared_objects_main_path = if is_linked_worktree {
-        None
+    let (shared_objects_main_path, delta_thread_stamp) = if is_linked_worktree {
+        (None, None)
     } else {
-        discover_shared_objects_main_path(&repository_dir, fs).await
+        (
+            discover_shared_objects_main_path(&repository_dir, fs).await,
+            discover_delta_thread_stamp(&repository_dir, fs).await,
+        )
     };
     Some(RootRepoMetadata {
         common_dir,
         is_linked_worktree,
         shared_objects_main_path,
+        delta_thread_stamp,
     })
+}
+
+/// Name of the provenance stamp file Delta writes into the git dir of the
+/// checkouts it manages (its "worktree mounts"), relating the checkout to the
+/// Delta thread that owns it. Part of Delta's contract with Zed; see
+/// `PROVENANCE_STAMP_FILE_NAME` in Delta's `worktree_mount` crate.
+const DELTA_THREAD_STAMP_FILE_NAME: &str = "delta-thread.json";
+
+/// Provenance stamp parsed from [`DELTA_THREAD_STAMP_FILE_NAME`] in a
+/// repository's git dir: which Delta thread owns the checkout. Delta rewrites
+/// the stamp on every mount, so the title is as fresh as the thread's last
+/// mount, and deletes it with the checkout's git state.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DeltaThreadStamp {
+    #[serde(default)]
+    pub version: u64,
+    /// Thread id, usable in a `delta://thread/<id>` link.
+    pub thread_id: String,
+    #[serde(default)]
+    pub thread_title: Option<String>,
+    #[serde(default)]
+    pub source_repository_path: Option<PathBuf>,
+}
+
+fn parse_delta_thread_stamp_json(json: &str) -> Option<Arc<DeltaThreadStamp>> {
+    serde_json::from_str(json).log_err().map(Arc::new)
+}
+
+fn delta_thread_stamp_to_json(stamp: &DeltaThreadStamp) -> Option<String> {
+    serde_json::to_string(stamp).log_err()
+}
+
+async fn discover_delta_thread_stamp(
+    repository_dir_abs_path: &Path,
+    fs: &dyn Fs,
+) -> Option<Arc<DeltaThreadStamp>> {
+    let contents = fs
+        .load(&repository_dir_abs_path.join(DELTA_THREAD_STAMP_FILE_NAME))
+        .await
+        .ok()?;
+    match serde_json::from_str::<DeltaThreadStamp>(&contents) {
+        Ok(stamp) => Some(Arc::new(stamp)),
+        Err(error) => {
+            log::warn!(
+                "failed to parse {DELTA_THREAD_STAMP_FILE_NAME} in {}: {error}",
+                repository_dir_abs_path.display()
+            );
+            None
+        }
+    }
 }
 
 /// The working directory of the repository whose object store this repository
