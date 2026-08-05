@@ -236,6 +236,22 @@ fn is_unit<T: 'static>(_: &T) -> bool {
     TypeId::of::<T>() == TypeId::of::<()>()
 }
 
+fn deserialize_params<T: DeserializeOwned + 'static>(params: Value) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_value(Value::Null)
+    } else {
+        serde_json::from_value(params)
+    }
+}
+
+fn deserialize_result<T: DeserializeOwned + 'static>(result: &str) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_str("null")
+    } else {
+        serde_json::from_str(result)
+    }
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1209,12 +1225,12 @@ impl LanguageServer {
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
         F: 'static + FnMut(Params, &mut AsyncApp) + Send,
-        Params: DeserializeOwned,
+        Params: DeserializeOwned + 'static,
     {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |_, params, cx| {
-                if let Some(params) = serde_json::from_value(params).log_err() {
+                if let Some(params) = deserialize_params(params).log_err() {
                     f(params, cx);
                 }
             }),
@@ -1243,7 +1259,7 @@ impl LanguageServer {
             method,
             Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    match serde_json::from_value(params) {
+                    match deserialize_params(params) {
                         Ok(params) => {
                             let response = f(params, cx);
                             let task = cx.foreground_executor().spawn({
@@ -1467,7 +1483,7 @@ impl LanguageServer {
                         executor
                             .spawn(async move {
                                 let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
+                                    Ok(response) => match deserialize_result(&response) {
                                         Ok(deserialized) => Ok(deserialized),
                                         Err(error) => {
                                             log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
@@ -2239,6 +2255,86 @@ mod tests {
         drop(subscription);
         assert!(detached_payload_handle.upgrade().is_none());
         assert!(retained_payload_handle.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_unit_params_request_with_empty_object_params(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum DiagnosticRefreshWithRawParams {}
+
+        impl request::Request for DiagnosticRefreshWithRawParams {
+            type Params = Value;
+            type Result = ();
+            const METHOD: &'static str = request::WorkspaceDiagnosticRefresh::METHOD;
+        }
+
+        let (refresh_tx, refresh_rx) = async_channel::unbounded();
+        server
+            .on_request::<request::WorkspaceDiagnosticRefresh, _, _>(move |(), _| {
+                let refresh_tx = refresh_tx.clone();
+                async move {
+                    refresh_tx.try_send(()).unwrap();
+                    Ok(())
+                }
+            })
+            .detach();
+
+        for params in [serde_json::json!({}), Value::Null] {
+            let response = fake
+                .request::<DiagnosticRefreshWithRawParams>(params, DEFAULT_LSP_REQUEST_TIMEOUT)
+                .await;
+            assert_eq!(response.into_response().unwrap(), ());
+            assert_eq!(refresh_rx.recv().await, Ok(()));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unit_result_response_with_empty_object(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum ShutdownWithRawResult {}
+
+        impl request::Request for ShutdownWithRawResult {
+            type Params = Value;
+            type Result = Value;
+            const METHOD: &'static str = request::Shutdown::METHOD;
+        }
+
+        fake.set_request_handler::<ShutdownWithRawResult, _, _>(|_, _| async move {
+            Ok(serde_json::json!({}))
+        });
+
+        let response = server
+            .request::<request::Shutdown>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await;
+        assert_eq!(response.into_response().unwrap(), ());
     }
 
     #[gpui::test]
