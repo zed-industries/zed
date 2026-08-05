@@ -4494,9 +4494,8 @@ impl Workspace {
         }
 
         // A zoomed dock panel stops where the other docks start, so revealing one sits
-        // beside it and the panel keeps full screen. Only focus headed for the center,
-        // which a zoomed panel does cover, dismisses it — and then the whole dock is
-        // hidden, since a panel left alone in a collapsed dock is unreachable.
+        // beside it and the panel keeps full screen. Otherwise focus is headed for the
+        // center, which a zoomed panel does cover, so its dock is hidden entirely.
         let mut focus_center = false;
         if dock_to_reveal.is_none() {
             for dock in self.all_docks() {
@@ -4529,6 +4528,32 @@ impl Workspace {
         }
 
         cx.notify();
+    }
+
+    /// Takes every full screen dock panel back to its normal size, leaving its dock
+    /// open. A full screen panel grows over the center, so this is what has to happen
+    /// before anything opened there — a file from the project or git panel, say — is
+    /// actually visible.
+    fn exit_full_screen_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut exited_full_screen = false;
+        for dock in self.all_docks() {
+            dock.update(cx, |dock, cx| {
+                // Not `Dock::set_panel_zoomed`: that serializes the workspace, which
+                // would re-enter the update we are already inside.
+                if let Some(panel) = dock.active_panel()
+                    && panel.is_zoomed(window, cx)
+                {
+                    panel.set_zoomed(false, window, cx);
+                    exited_full_screen = true;
+                }
+            });
+        }
+
+        if exited_full_screen && self.zoomed_position.is_some() {
+            self.zoomed = None;
+            self.zoomed_position = None;
+            cx.emit(Event::ZoomChanged);
+        }
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
@@ -5643,6 +5668,12 @@ impl Workspace {
         match event {
             pane::Event::AddItem { item } => {
                 item.added_to_pane(self, pane.clone(), window, cx);
+                if self.panes.contains(pane) {
+                    // Opening a file from a dock panel doesn't always move focus out of
+                    // that panel, so the center has to be uncovered here rather than
+                    // waiting on a focus change that may never come.
+                    self.exit_full_screen_docks(window, cx);
+                }
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
@@ -5681,6 +5712,11 @@ impl Workspace {
                 });
                 if *local {
                     self.unfollow_in_pane(pane, window, cx);
+                    if self.panes.contains(pane) {
+                        // Reopening an already-open file activates its tab instead of
+                        // adding one, and it still has to be visible.
+                        self.exit_full_screen_docks(window, cx);
+                    }
                 }
                 serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
@@ -14127,8 +14163,6 @@ mod tests {
 
         // Focusing the center pane still hides a full screen dock entirely, since a
         // zoomed panel covers the center.
-        right_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-        cx.run_until_parked();
         pane.update_in(cx, |pane, window, cx| {
             window.focus(&pane.focus_handle(cx), cx);
         });
@@ -14136,6 +14170,51 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.right_dock().read(cx).is_open());
             assert!(right_panel.is_zoomed(window, cx));
+            assert_eq!(workspace.zoomed_position, None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_opening_a_file_exits_full_screen_docks(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            panel
+        });
+
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(panel.is_zoomed(window, cx));
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
+        });
+
+        // Opening a file into the center pane — as clicking an entry in the project or
+        // git panel does — has to uncover the center, even though the click leaves
+        // focus in the panel it came from.
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(TestItem::new);
+            pane.add_item(Box::new(item), false, false, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                !panel.is_zoomed(window, cx),
+                "Opening a file should take the panel out of full screen"
+            );
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Opening a file should not close the dock"
+            );
             assert_eq!(workspace.zoomed_position, None);
         });
     }
