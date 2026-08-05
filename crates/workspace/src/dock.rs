@@ -423,10 +423,6 @@ impl Dock {
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
                 if matches!(e, Event::ZoomChanged) {
-                    // Only notify on an actual change: the workspace re-emits
-                    // `ZoomChanged` every time a dock with a zoomed panel notifies, so
-                    // notifying unconditionally here feeds that emit right back and the
-                    // two spin forever.
                     let covered = workspace.read(cx).zoom_layer_covers_docks();
                     if dock.covered_by_zoom_layer != covered {
                         dock.covered_by_zoom_layer = covered;
@@ -466,8 +462,6 @@ impl Dock {
                     .zoomed_position
                     .is_none_or(|zoomed| zoomed == position)
                 {
-                    // A panel zoomed in another dock keeps full screen beside this one,
-                    // so only drop the zoom when it belonged to this dock or the center.
                     workspace.zoomed = None;
                     workspace.zoomed_position = None;
                     cx.emit(Event::ZoomChanged);

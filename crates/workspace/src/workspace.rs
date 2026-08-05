@@ -4516,9 +4516,7 @@ impl Workspace {
         }
 
         let keeps_zoom = match self.zoomed_position {
-            // A zoomed dock panel survives any dock being revealed beside it.
             Some(_) => dock_to_reveal.is_some(),
-            // A zoomed center pane covers the docks, so revealing one dismisses it.
             None => dock_to_reveal.is_none(),
         };
         if !keeps_zoom {
@@ -4538,8 +4536,6 @@ impl Workspace {
         let mut exited_full_screen = false;
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
-                // Not `Dock::set_panel_zoomed`: that serializes the workspace, which
-                // would re-enter the update we are already inside.
                 if let Some(panel) = dock.active_panel()
                     && panel.is_zoomed(window, cx)
                 {
@@ -5607,14 +5603,8 @@ impl Workspace {
         }
 
         self.dismiss_zoomed_items_to_reveal(dock_to_preserve, window, cx);
-        // A dock panel that stayed zoomed through the dismissal above still owns the
-        // zoom, so this pane taking focus beside it must not claim it. Anything this
-        // focus change did dismiss has already been cleared.
         if self.zoomed_position.is_none() {
-            self.zoomed = pane
-                .read(cx)
-                .is_zoomed()
-                .then(|| pane.downgrade().into());
+            self.zoomed = pane.read(cx).is_zoomed().then(|| pane.downgrade().into());
             cx.emit(Event::ZoomChanged);
         }
         self.update_active_view_for_followers(window, cx);
@@ -5669,9 +5659,6 @@ impl Workspace {
             pane::Event::AddItem { item } => {
                 item.added_to_pane(self, pane.clone(), window, cx);
                 if self.panes.contains(pane) {
-                    // Opening a file from a dock panel doesn't always move focus out of
-                    // that panel, so the center has to be uncovered here rather than
-                    // waiting on a focus change that may never come.
                     self.exit_full_screen_docks(window, cx);
                 }
                 cx.emit(Event::ItemAdded {
@@ -5713,8 +5700,6 @@ impl Workspace {
                 if *local {
                     self.unfollow_in_pane(pane, window, cx);
                     if self.panes.contains(pane) {
-                        // Reopening an already-open file activates its tab instead of
-                        // adding one, and it still has to be visible.
                         self.exit_full_screen_docks(window, cx);
                     }
                 }
@@ -8224,10 +8209,6 @@ impl Workspace {
                     .and_then(|state| state.size)
                     .unwrap_or_else(|| panel.default_size(window, cx));
                 container = container.w(size);
-                // Allow the fixed-width dock to shrink when there isn't
-                // enough space (e.g. when the sidebar is open). The
-                // stored size is preserved so the dock expands back
-                // when space becomes available.
                 let style = container.style();
                 style.flex_shrink = Some(1.0);
             }
@@ -9254,8 +9235,6 @@ impl Render for Workspace {
                                 .absolute()
                                 .size_full()
                             })
-                            // Docks that sit beside a zoomed dock panel keep their resize
-                            // handles, so the drag they start still has to be handled.
                             .when(!self.zoom_layer_covers_docks(), |this| {
                                 this.on_drag_move(cx.listener(
                                     move |workspace, e: &DragMoveEvent<DraggedDock>, window, cx| {
