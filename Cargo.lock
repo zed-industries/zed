@@ -7897,6 +7897,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
+ "tracing",
  "ttf-parser",
  "unicode-segmentation",
  "url",
@@ -7909,6 +7910,7 @@ dependencies = [
  "windows 0.61.3",
  "zed-font-kit",
  "zed-scap",
+ "ztracing",
 ]
 
 [[package]]
@@ -11069,7 +11071,9 @@ dependencies = [
  "merman",
  "quick-xml 0.38.3",
  "serde_json",
+ "tracing",
  "usvg",
+ "ztracing",
 ]
 
 [[package]]
