@@ -306,9 +306,9 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
         return word_start;
     };
 
-    let punctuation_is_single = chars_before_word
-        .next()
-        .is_none_or(|character| !classifier.is_punctuation(character));
+    let char_before_punctuation = chars_before_word.next();
+    let punctuation_is_single =
+        char_before_punctuation.is_none_or(|character| !classifier.is_punctuation(character));
     let punctuation_prefixes_word = buffer_snapshot
         .chars_at(word_start_offset)
         .next()
@@ -321,7 +321,15 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 
     // Forward movement treats a single punctuation prefix as part of the following word.
     // Include it when moving back from the word's end so `|@word` and `@word|` are symmetric.
-    if cursor_is_at_word_end && punctuation_is_single && punctuation_prefixes_word {
+    // Only do this when the punctuation is a true prefix (not preceded by a word char),
+    // otherwise `a-b-c|` would jump to `a-b|-c` instead of `a-b-|c`.
+    let punctuation_is_prefix =
+        char_before_punctuation.is_none_or(|character| !classifier.is_word(character));
+    if cursor_is_at_word_end
+        && punctuation_is_single
+        && punctuation_prefixes_word
+        && punctuation_is_prefix
+    {
         let mut punctuation_offset = word_start_offset;
         punctuation_offset -= punctuation.len_utf8();
         punctuation_offset.to_display_point(map)
@@ -1125,6 +1133,14 @@ mod tests {
         assert("foo ..ˇbarˇ baz", cx);
         assert("ˇ.helloˇ", cx);
         assert("[2001:4860:4860::8888ˇ] ˇ", cx);
+        // Punctuation between words is a separator, not a prefix.
+        // opt-left should stop to the right of the punctuation, not the left.
+        assert("a-b-ˇcˇ", cx);
+        assert("a.b.ˇcˇ", cx);
+        assert("foo.ˇbarˇ", cx);
+        assert("a@ˇbˇ", cx);
+        // Punctuation at start of buffer (or after whitespace) is a true prefix.
+        assert("ˇ@wordˇ", cx);
     }
 
     #[gpui::test]

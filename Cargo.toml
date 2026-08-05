@@ -86,6 +86,7 @@ members = [
     "crates/git",
     "crates/git_hosting_providers",
     "crates/git_ui",
+    "crates/git_ui_core",
     "crates/go_to_line",
     "crates/google_ai",
     "crates/grammars",
@@ -347,6 +348,7 @@ fuzzy_nucleo = { path = "crates/fuzzy_nucleo" }
 git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
+git_ui_core = { path = "crates/git_ui_core" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 grammars = { path = "crates/grammars" }
@@ -895,6 +897,7 @@ web-time = "1.1.0"
 webrtc-sys = "0.3.23"
 wgpu = "29.0.4"
 windows-core = "0.61"
+windows-registry = "0.6.0"
 yaml-rust2 = "0.8"
 yawc = { git = "https://github.com/zed-industries/yawc", rev = "71a452f551cac178367eaac5d7418a09afa1f3a2", version = "0.3.3" }
 zeroize = "1.8"
