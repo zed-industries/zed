@@ -1057,7 +1057,12 @@ ui_input = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]
-debug = "limited"
+# Dropping debug info also stops rustc from passing /DEBUG to link.exe, which
+# is what disables the MSVC linker's /OPT:REF and /OPT:ICF defaults. With those
+# back on, identical COMDATs get folded instead of being emitted once per
+# instantiation site.
+#debug = "limited"
+debug = false
 lto = "thin"
 codegen-units = 1
 
