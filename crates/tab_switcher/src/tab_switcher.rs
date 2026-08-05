@@ -11,6 +11,7 @@ use gpui::{
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
     Render, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
+use std::time::Duration;
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use schemars::JsonSchema;
@@ -29,6 +30,7 @@ use workspace::{
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
+const POPOVER_DELAY: Duration = Duration::from_millis(300);
 
 /// Toggles the tab switcher interface.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
@@ -54,6 +56,8 @@ actions!(
 pub struct TabSwitcher {
     picker: Entity<Picker<TabSwitcherDelegate>>,
     init_modifiers: Option<Modifiers>,
+    visible: bool,
+    _show_task: Option<Task<()>>,
 }
 
 impl ModalView for TabSwitcher {}
@@ -169,6 +173,19 @@ impl TabSwitcher {
         } else {
             window.modifiers().modified().then_some(window.modifiers())
         };
+        let has_modifiers = init_modifiers.is_some();
+        let _show_task = if has_modifiers {
+            Some(cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(POPOVER_DELAY).await;
+                this.update_in(cx, |this, _window, cx| {
+                    this.visible = true;
+                    cx.notify();
+                })
+                .ok();
+            }))
+        } else {
+            None
+        };
         Self {
             picker: cx.new(|cx| {
                 if is_global {
@@ -179,6 +196,8 @@ impl TabSwitcher {
                 .initial_width(rems(PANEL_WIDTH_REMS))
             }),
             init_modifiers,
+            visible: !has_modifiers,
+            _show_task,
         }
     }
 
@@ -195,8 +214,12 @@ impl TabSwitcher {
             self.init_modifiers = None;
             if self.picker.read(cx).delegate.matches.is_empty() {
                 cx.emit(DismissEvent)
-            } else {
+            } else if self.visible {
                 window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+            } else {
+                self.picker.update(cx, |picker, cx| {
+                    picker.delegate.confirm(false, window, cx);
+                });
             }
         }
     }
@@ -225,12 +248,21 @@ impl Focusable for TabSwitcher {
 
 impl Render for TabSwitcher {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let picker = self.picker.clone();
         v_flex()
             .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_close_selected_item))
-            .child(self.picker.clone())
+            .when(self.visible, |el| el.child(picker.clone()))
+            .when(!self.visible, |el| {
+                el.child(
+                    div()
+                        .size_0()
+                        .overflow_hidden()
+                        .child(picker.clone()),
+                )
+            })
     }
 }
 
