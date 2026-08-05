@@ -3897,7 +3897,6 @@ dependencies = [
  "serde",
  "serde_json",
  "util",
- "zed_credentials_provider",
 ]
 
 [[package]]
@@ -23432,6 +23431,7 @@ dependencies = [
  "workspace",
  "zed-reqwest",
  "zed_actions",
+ "zed_credentials_provider",
  "zed_env_vars",
  "zlog",
  "zlog_settings",
