@@ -461,11 +461,17 @@ impl Dock {
                 if panel.is_zoomed(window, cx) {
                     workspace.zoomed = Some(panel.to_any().downgrade());
                     workspace.zoomed_position = Some(position);
-                } else {
+                    cx.emit(Event::ZoomChanged);
+                } else if workspace
+                    .zoomed_position
+                    .is_none_or(|zoomed| zoomed == position)
+                {
+                    // A panel zoomed in another dock keeps full screen beside this one,
+                    // so only drop the zoom when it belonged to this dock or the center.
                     workspace.zoomed = None;
                     workspace.zoomed_position = None;
+                    cx.emit(Event::ZoomChanged);
                 }
-                cx.emit(Event::ZoomChanged);
                 workspace.dismiss_zoomed_items_to_reveal(Some(position), window, cx);
                 workspace.update_active_view_for_followers(window, cx)
             }

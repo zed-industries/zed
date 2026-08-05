@@ -4493,26 +4493,22 @@ impl Workspace {
             }
         }
 
-        // If another dock is zoomed, dismiss it. When a dock is being revealed the
-        // two can sit side by side, so the zoomed panel only leaves full screen and
-        // its dock stays open; closing it would hide a panel the user never asked to
-        // dismiss. Otherwise focus is headed for the center, which a zoomed panel
-        // covers, so its dock is hidden entirely.
+        // A zoomed dock panel stops where the other docks start, so revealing one sits
+        // beside it and the panel keeps full screen. Only focus headed for the center,
+        // which a zoomed panel does cover, dismisses it — and then the whole dock is
+        // hidden, since a panel left alone in a collapsed dock is unreachable.
         let mut focus_center = false;
-        for dock in self.all_docks() {
-            dock.update(cx, |dock, cx| {
-                if Some(dock.position()) != dock_to_reveal
-                    && let Some(panel) = dock.active_panel()
-                    && panel.is_zoomed(window, cx)
-                {
-                    if dock_to_reveal.is_some() {
-                        panel.set_zoomed(false, window, cx);
-                    } else {
+        if dock_to_reveal.is_none() {
+            for dock in self.all_docks() {
+                dock.update(cx, |dock, cx| {
+                    if let Some(panel) = dock.active_panel()
+                        && panel.is_zoomed(window, cx)
+                    {
                         focus_center |= panel.panel_focus_handle(cx).contains_focused(window, cx);
                         dock.set_open(false, window, cx);
                     }
-                }
-            });
+                });
+            }
         }
 
         if focus_center {
@@ -4520,7 +4516,13 @@ impl Workspace {
                 .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx))
         }
 
-        if self.zoomed_position != dock_to_reveal {
+        let keeps_zoom = match self.zoomed_position {
+            // A zoomed dock panel survives any dock being revealed beside it.
+            Some(_) => dock_to_reveal.is_some(),
+            // A zoomed center pane covers the docks, so revealing one dismisses it.
+            None => dock_to_reveal.is_none(),
+        };
+        if !keeps_zoom {
             self.zoomed = None;
             self.zoomed_position = None;
             cx.emit(Event::ZoomChanged);
@@ -5580,13 +5582,16 @@ impl Workspace {
         }
 
         self.dismiss_zoomed_items_to_reveal(dock_to_preserve, window, cx);
-        if pane.read(cx).is_zoomed() {
-            self.zoomed = Some(pane.downgrade().into());
-        } else {
-            self.zoomed = None;
+        // A dock panel that stayed zoomed through the dismissal above still owns the
+        // zoom, so this pane taking focus beside it must not claim it. Anything this
+        // focus change did dismiss has already been cleared.
+        if self.zoomed_position.is_none() {
+            self.zoomed = pane
+                .read(cx)
+                .is_zoomed()
+                .then(|| pane.downgrade().into());
+            cx.emit(Event::ZoomChanged);
         }
-        self.zoomed_position = None;
-        cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(window, cx);
         pane.update(cx, |pane, _| {
             pane.track_alternate_file_items();
@@ -14060,9 +14065,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_revealing_a_dock_unzooms_other_docks_without_closing_them(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_revealing_a_dock_keeps_other_docks_full_screen(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
@@ -14097,8 +14100,8 @@ mod tests {
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
         });
 
-        // Opening the left dock leaves full screen on the right, but keeps that dock
-        // open so both panels stay visible.
+        // Opening the left dock sits it beside the full screen panel on the right,
+        // which keeps full screen rather than being dropped out of it.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.toggle_dock(DockPosition::Left, window, cx);
         });
@@ -14115,8 +14118,11 @@ mod tests {
                 workspace.right_dock().read(cx).is_open(),
                 "Revealing the left dock should not close the right dock"
             );
-            assert!(!right_panel.is_zoomed(window, cx));
-            assert_eq!(workspace.zoomed_position, None);
+            assert!(
+                right_panel.is_zoomed(window, cx),
+                "Revealing the left dock should not drop the right panel out of full screen"
+            );
+            assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
         });
 
         // Focusing the center pane still hides a full screen dock entirely, since a
