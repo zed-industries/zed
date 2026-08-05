@@ -1,4 +1,4 @@
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{App, FrameDurationSnapshot, Global, InputLatencySnapshot, Window, WindowId, actions};
 use hdrhistogram::Histogram;
 use std::time::Instant;
@@ -102,7 +102,11 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     let current = window.input_latency_snapshot();
     let window_id = window.window_handle().window_id();
 
+    let open_window_ids = open_window_ids(cx);
     let state = cx.default_global::<TelemetryReporterState>();
+    state
+        .previous
+        .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
     let (delta_latency, delta_coalesce, report_window_seconds) =
@@ -197,7 +201,11 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let current = window.frame_duration_snapshot();
     let window_id = window.window_handle().window_id();
 
+    let open_window_ids = open_window_ids(cx);
     let state = cx.default_global::<FrameDurationTelemetryState>();
+    state
+        .previous
+        .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
     let (delta_draws, delta_intervals, report_window_seconds) =
@@ -258,6 +266,13 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         total_intervals = total_intervals,
         report_window_seconds = report_window_seconds,
     );
+}
+
+fn open_window_ids(cx: &App) -> HashSet<WindowId> {
+    cx.windows()
+        .into_iter()
+        .map(|window| window.window_id())
+        .collect()
 }
 
 fn count_frames_in_range(histogram: &Histogram<u64>, low_ns: u64, high_ns: u64) -> u64 {
