@@ -272,9 +272,9 @@ where
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
     id: RequestId,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<Error>,
-    #[serde(borrow)]
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
     result: Option<&'a RawValue>,
 }
 
@@ -2362,6 +2362,24 @@ mod tests {
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[test]
+    fn test_serialize_error_response_has_no_result() {
+        let response = AnyResponse {
+            jsonrpc: JSON_RPC_VERSION,
+            id: RequestId::Int(0),
+            error: Some(Error {
+                code: -32601,
+                message: "Unrecognized method".to_string(),
+                data: None,
+            }),
+            result: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            "{\"jsonrpc\":\"2.0\",\"id\":0,\"error\":{\"code\":-32601,\"message\":\"Unrecognized method\",\"data\":null}}"
+        );
     }
 
     #[test]
