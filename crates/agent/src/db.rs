@@ -86,6 +86,11 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    /// Tool allowlist the spawner restricted this subagent thread to via the
+    /// `spawn_agent` tool's `tools` parameter. Persisted so a restored
+    /// subagent session keeps its original filter.
+    #[serde(default)]
+    pub tool_filter: Option<Vec<SharedString>>,
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -169,6 +174,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tool_filter: None,
         }
     }
 
@@ -355,6 +361,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tool_filter: None,
         })
     }
 }
@@ -806,6 +813,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            tool_filter: None,
         }
     }
 
