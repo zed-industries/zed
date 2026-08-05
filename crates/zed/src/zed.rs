@@ -85,7 +85,8 @@ use std::{
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, deserialize_icon_theme};
-use theme_settings::{ThemeSettings, load_user_theme};
+use theme_schema::load_user_theme;
+use theme_settings::ThemeSettings;
 use ui::{Navigable, NavigableEntry, PopoverMenuHandle, TintColor, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;

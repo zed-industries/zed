@@ -17,20 +17,15 @@ path = "src/theme_settings.rs"
 doctest = false
 
 [dependencies]
-anyhow.workspace = true
 collections.workspace = true
 gpui.workspace = true
-gpui_util.workspace = true
 log.workspace = true
-palette = { workspace = true, default-features = false, features = ["std"] }
 refineable.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-serde_json_lenient.workspace = true
 settings.workspace = true
 theme.workspace = true
-uuid.workspace = true
+theme_schema.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

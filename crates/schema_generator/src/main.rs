@@ -7,7 +7,7 @@ use clap::{Parser, ValueEnum};
 use schemars::schema_for;
 use settings::ProjectSettingsContent;
 use theme::IconThemeFamilyContent;
-use theme_settings::ThemeFamilyContent;
+use theme_schema::ThemeFamilyContent;
 
 #[derive(Parser, Debug)]
 pub struct Args {

@@ -6,6 +6,7 @@ use extension::{ExtensionHostProxy, ExtensionThemeProxy};
 use fs::Fs;
 use gpui::{App, BackgroundExecutor, SharedString, Task};
 use theme::{ThemeRegistry, deserialize_icon_theme};
+use theme_schema::{deserialize_user_theme, load_user_theme};
 use theme_settings;
 
 pub fn init(
@@ -31,8 +32,7 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
 
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
-            let themes =
-                theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
+            let themes = deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
             Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
         })
     }
@@ -44,7 +44,7 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
     fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
         let theme_registry = self.theme_registry.clone();
         self.executor.spawn(async move {
-            theme_settings::load_user_theme(&theme_registry, &fs.load_bytes(&theme_path).await?)
+            load_user_theme(&theme_registry, &fs.load_bytes(&theme_path).await?)
         })
     }
 

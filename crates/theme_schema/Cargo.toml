@@ -1,5 +1,5 @@
 [package]
-name = "theme_importer"
+name = "theme_schema"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -8,19 +8,20 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/theme_schema.rs"
+doctest = false
+
 [dependencies]
 anyhow.workspace = true
-clap = { workspace = true, features = ["derive"] }
-collections.workspace = true
 gpui.workspace = true
-indexmap.workspace = true
+gpui_util.workspace = true
 log.workspace = true
-palette.workspace = true
+palette = { workspace = true, default-features = false, features = ["std"] }
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
-simplelog.workspace= true
-strum = { workspace = true, features = ["derive"] }
+settings_content.workspace = true
 theme.workspace = true
-theme_schema.workspace = true
-vscode_theme = "0.2.0"
+uuid.workspace = true

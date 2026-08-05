@@ -4,12 +4,11 @@ use gpui::{HighlightStyle, Hsla};
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::IntoGpui;
-pub use settings::{
+pub use settings_content::{
     FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
     ThemeStyleContent,
 };
-pub use settings::{FontWeightContent, WindowBackgroundContent};
+pub use settings_content::{FontWeightContent, WindowBackgroundContent};
 
 use theme::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -33,11 +32,13 @@ pub struct ThemeFamilyContent {
 pub struct ThemeContent {
     pub name: String,
     pub appearance: theme::AppearanceContent,
-    pub style: settings::ThemeStyleContent,
+    pub style: settings_content::ThemeStyleContent,
 }
 
 /// Returns the syntax style overrides in the [`ThemeContent`].
-pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, HighlightStyle)> {
+pub fn syntax_overrides(
+    this: &settings_content::ThemeStyleContent,
+) -> Vec<(String, HighlightStyle)> {
     this.syntax
         .iter()
         .map(|(key, style)| {
@@ -52,8 +53,14 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
                         .background_color
                         .as_ref()
                         .and_then(|color| theme::try_parse_color(color).ok()),
-                    font_style: style.font_style.map(|s| s.into_gpui()),
-                    font_weight: style.font_weight.map(|w| w.into_gpui()),
+                    font_style: style.font_style.map(|style| match style {
+                        FontStyleContent::Normal => gpui::FontStyle::Normal,
+                        FontStyleContent::Italic => gpui::FontStyle::Italic,
+                        FontStyleContent::Oblique => gpui::FontStyle::Oblique,
+                    }),
+                    font_weight: style
+                        .font_weight
+                        .map(|weight| gpui::FontWeight(weight.0.clamp(100., 950.))),
                     ..Default::default()
                 },
             )
@@ -61,7 +68,9 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
         .collect()
 }
 
-pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> StatusColorsRefinement {
+pub fn status_colors_refinement(
+    colors: &settings_content::StatusColorsContent,
+) -> StatusColorsRefinement {
     StatusColorsRefinement {
         conflict: colors
             .conflict
@@ -235,7 +244,7 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
 }
 
 pub fn theme_colors_refinement(
-    this: &settings::ThemeColorsContent,
+    this: &settings_content::ThemeColorsContent,
     status_colors: &StatusColorsRefinement,
     is_light: bool,
 ) -> ThemeColorsRefinement {

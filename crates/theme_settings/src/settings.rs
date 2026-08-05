@@ -1,7 +1,5 @@
 #![allow(missing_docs)]
 
-use crate::schema::{status_colors_refinement, syntax_overrides, theme_colors_refinement};
-use crate::{merge_accent_colors, merge_player_colors};
 use collections::HashMap;
 use gpui::{
     App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, SharedString, Subscription,
@@ -14,6 +12,10 @@ pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName
 use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 use theme::{Appearance, DEFAULT_ICON_THEME_NAME, SyntaxTheme, Theme, UiDensity};
+use theme_schema::{
+    merge_accent_colors, merge_player_colors, status_colors_refinement, syntax_overrides,
+    theme_colors_refinement,
+};
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);

@@ -6362,7 +6362,7 @@ dependencies = [
  "settings_content",
  "snippet_provider",
  "task",
- "theme_settings",
+ "theme_schema",
  "thiserror 2.0.17",
  "tokio",
  "toml 0.8.23",
@@ -16248,7 +16248,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "theme_settings",
+ "theme_schema",
 ]
 
 [[package]]
@@ -18737,6 +18737,7 @@ dependencies = [
  "fs",
  "gpui",
  "theme",
+ "theme_schema",
  "theme_settings",
 ]
 
@@ -18757,8 +18758,26 @@ dependencies = [
  "simplelog",
  "strum 0.27.2",
  "theme",
- "theme_settings",
+ "theme_schema",
  "vscode_theme",
+]
+
+[[package]]
+name = "theme_schema"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "gpui_util",
+ "log",
+ "palette",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings_content",
+ "theme",
+ "uuid",
 ]
 
 [[package]]
@@ -18788,20 +18807,15 @@ dependencies = [
 name = "theme_settings"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "collections",
  "gpui",
- "gpui_util",
  "log",
- "palette",
  "refineable",
  "schemars 1.0.4",
  "serde",
- "serde_json",
- "serde_json_lenient",
  "settings",
  "theme",
- "uuid",
+ "theme_schema",
 ]
 
 [[package]]
@@ -23408,6 +23422,7 @@ dependencies = [
  "terminal_view",
  "theme",
  "theme_extension",
+ "theme_schema",
  "theme_selector",
  "theme_settings",
  "time",

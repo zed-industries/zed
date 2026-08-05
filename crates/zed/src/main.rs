@@ -62,7 +62,7 @@ use std::{
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
-use theme_settings::load_user_theme;
+use theme_schema::load_user_theme;
 use util::{ResultExt, maybe};
 use uuid::Uuid;
 use workspace::{

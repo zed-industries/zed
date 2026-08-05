@@ -513,7 +513,7 @@ async fn test_themes(
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
         let theme_family =
-            theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
+            theme_schema::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
         log::info!("loaded theme family {}", theme_family.name);
 
         for theme in &theme_family.themes {
