@@ -130,6 +130,7 @@ members = [
     "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
+    "crates/latex_preview",
     "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
@@ -250,6 +251,7 @@ members = [
 
     "extensions/glsl",
     "extensions/html",
+    "extensions/latex",
     "extensions/proto",
     "extensions/test-extension",
 
@@ -758,6 +760,13 @@ pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
+ratex-render = { version = "0.1.13", features = ["embed-fonts"] }
+ratex-layout = "0.1.13"
+ratex-parser = "0.1.13"
+ratex-font = "0.1.13"
+ratex-font-loader = "0.1.13"
+ratex-types = "0.1.13"
+ab_glyph = "0.2"
 rayon = "1.8"
 raw-window-handle = "0.6"
 regex = "1.5"
