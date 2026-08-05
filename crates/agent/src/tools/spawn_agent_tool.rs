@@ -320,4 +320,43 @@ mod tests {
         .unwrap();
         assert_eq!(input.session_id.unwrap().to_string(), "existing-session");
     }
+
+    #[test]
+    fn deserializes_tools_allowlist() {
+        // Absent or explicit null means no restriction.
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+        }))
+        .unwrap();
+        assert!(input.tools.is_none());
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "tools": null,
+        }))
+        .unwrap();
+        assert!(input.tools.is_none());
+
+        // An empty list means the subagent gets no tools at all.
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "tools": [],
+        }))
+        .unwrap();
+        assert_eq!(input.tools, Some(Vec::new()));
+
+        let input: SpawnAgentToolInput = serde_json::from_value(json!({
+            "label": "label",
+            "message": "message",
+            "tools": ["read_file", "grep"],
+        }))
+        .unwrap();
+        assert_eq!(
+            input.tools,
+            Some(vec!["read_file".to_string(), "grep".to_string()])
+        );
+    }
 }
