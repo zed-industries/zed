@@ -3621,34 +3621,37 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     init_test(cx);
 
     let home = paths::home_dir();
+    let project_path = home.join("example.com").join("project");
     let fs = FakeFs::new(executor);
     fs.insert_tree(
         home,
         json!({
             ".config": {
                 "git": {
-                    "ignore": "foo\n/bar\nbaz\n"
+                    "ignore": "foo\n/bar\nbaz\n*.com\n"
                 }
             },
-            "project": {
-                ".git": {},
-                ".gitignore": "!baz",
-                "foo": "",
-                "bar": "",
-                "sub": {
-                    "bar": "",
-                },
-                "subrepo": {
+            "example.com": {
+                "project": {
                     ".git": {},
-                    "bar": ""
-                },
-                "baz": ""
+                    ".gitignore": "!baz",
+                    "foo": "",
+                    "bar": "",
+                    "sub": {
+                        "bar": "",
+                    },
+                    "subrepo": {
+                        ".git": {},
+                        "bar": ""
+                    },
+                    "baz": ""
+                }
             }
         }),
     )
     .await;
     let worktree = Worktree::local(
-        home.join("project"),
+        project_path.clone(),
         true,
         fs.clone(),
         Arc::default(),
@@ -3681,7 +3684,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     // Ignore statuses are updated when excludesFile changes
     fs.write(
         &home.join(".config").join("git").join("ignore"),
-        "/bar\nbaz\n".as_bytes(),
+        "/bar\nbaz\n*.com\n".as_bytes(),
     )
     .await
     .unwrap();
@@ -3705,7 +3708,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 
     // Statuses are updated when .git added/removed
     fs.remove_dir(
-        &home.join("project").join("subrepo").join(".git"),
+        &project_path.join("subrepo").join(".git"),
         RemoveOptions {
             recursive: true,
             ..Default::default()

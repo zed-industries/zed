@@ -87,6 +87,25 @@ impl Editor {
         result
     }
 
+    /// Re-resolves selection anchors so they reference live buffer fragments.
+    ///
+    /// Deleted CRDT fragments remain as tombstones. An anchor associated with a
+    /// tombstone can resolve to the correct visible offset while causing later
+    /// insertions to be ordered on the wrong side of the cursor. Round-tripping
+    /// selections through their offsets creates fresh anchors associated with
+    /// live fragments.
+    ///
+    /// This does not emit selection effects, but it replaces pending selection
+    /// state with the resolved selections.
+    pub fn refresh_selection_anchors(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all::<MultiBufferOffset>(&snapshot);
+        self.selections
+            .change_with(&snapshot, |selection_collection| {
+                selection_collection.select(selections);
+            });
+    }
+
     /// Defers the effects of selection change, so that the effects of multiple calls to
     /// `change_selections` are applied at the end. This way these intermediate states aren't added
     /// to selection history and the state of popovers based on selection position aren't
@@ -1809,12 +1828,19 @@ impl Editor {
         let end_x = tail_x.max(head_x);
         let reversed = head_x < tail_x;
 
+        let mut last_buffer_row = None;
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
                 if display_map.is_block_line(row) {
                     return None;
                 }
+
+                let buffer_row = row.as_display_point().to_point(display_map).row;
+                if last_buffer_row == Some(buffer_row) {
+                    return None;
+                }
+                last_buffer_row = Some(buffer_row);
 
                 let layout = display_map.layout_row(row, &text_layout_details);
                 if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })

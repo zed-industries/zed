@@ -16,7 +16,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs as _;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
@@ -10774,7 +10774,6 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
         );
 }
 
-#[gpui::test]
 /// A different number of tabs can align the same column on each row, so a cursor has to
 /// be placed by the column the tabs expand to. Counting a tab as a single column lands it
 /// wherever that many characters happen to reach on the next row.
@@ -10806,6 +10805,115 @@ async fn test_add_selection_below_with_tab_aligned_columns(cx: &mut TestAppConte
     cx.assert_editor_state(
         "\t\t\t\t\t\tcurrent.rgb.r\t\t\tˇ= p[0] >> 8;\n\t\t\t\t\t\tresiduals[run].rgb.r\tˇ= p[0] & 0xff;\n",
     );
+}
+
+#[gpui::test]
+/// Regression test for a panic ("display point out of range"): with a multi-line fold,
+/// buffer rows below the fold exceed the fold map's max row, so they must be converted
+/// to tab map rows instead of being used directly.
+async fn test_add_selection_above_below_with_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        one
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn foo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn ˇfoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        twoˇ"#
+    ));
+
+    cx.set_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        one
+        two"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(0, 10)..Point::new(3, 0),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"fn fˇoo() {
+            aaaa
+            bbbb
+        }
+        oneˇ
+        two"#
+    ));
 }
 
 #[gpui::test]
@@ -26692,6 +26800,91 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "worktree\n",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "head\n".to_string())],
+    );
+    fs.set_merge_base_content_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", "base\n".to_string())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    cx.update(|_window, cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().diff_base =
+                    Some(settings::GitDiffBaseSetting::DefaultBranch);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    editor.read_with(cx, |editor, cx| {
+        let diff = editor
+            .buffer()
+            .read(cx)
+            .diff_for(buffer_id)
+            .expect("buffer should have a display diff");
+        assert!(!diff.read(cx).is_stageable());
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "worktree\n"
+    );
+    let index_contents = fs
+        .with_git_state(
+            std::path::Path::new(path!("/project/.git")),
+            false,
+            |state| state.index_contents.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        index_contents,
+        [(
+            ::git::repository::repo_path("file.rs"),
+            "head\n".to_string(),
+        )]
+        .into_iter()
+        .collect::<HashMap<_, _>>()
+    );
+}
+
+#[gpui::test]
 async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -28926,7 +29119,7 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
     cx.set_state("ˇnew\nsecond\nthird\n");
     cx.set_head_text("old\nsecond\nthird\n");
     cx.update_editor(|editor, window, cx| {
-        editor.scroll(gpui::Point { x: 0., y: 0. }, None, window, cx);
+        editor.scroll(gpui::Point { x: 0., y: 0. }, window, cx);
     });
     executor.run_until_parked();
     assert_eq!(cx.update_editor(|e, _, cx| e.scroll_position(cx)).y, 0.0);
@@ -34060,6 +34253,69 @@ async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_linked_edits_on_typing_dash_in_custom_element_name(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TSX".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..LanguageMatcher::default()
+            })
+            .into(),
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            // Mirrors crates/grammars/src/{tsx,javascript}/config.toml: a dash is a valid
+            // JSXIdentifier character, so custom element names like `<custom-el>` must keep
+            // the closing tag linked past the dash. Regression test for #43060 / #58553.
+            linked_edit_characters: HashSet::from_iter(['.', '-']),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Typing the dash while renaming a tag must extend the linked pair rather than
+    // dropping it (the bug produced `<custom-el></custom>`).
+    cx.set_state("<customˇ></custom>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 7)),
+            (Point::new(0, 10), Point::new(0, 16)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state("<custom-ˇ></custom->");
+
+    // Characters typed after the dash continue to mirror into the closing tag.
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 8)),
+            (Point::new(0, 11), Point::new(0, 18)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("el", window, cx);
+    });
+    cx.assert_editor_state("<custom-elˇ></custom-el>");
+}
+
+#[gpui::test]
 async fn test_linked_edits_on_typing_dot_without_language_override(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -37483,7 +37739,7 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -37572,7 +37828,7 @@ async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppConte
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -37635,7 +37891,7 @@ async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut T
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|editor, window, cx| {
-            editor.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            editor.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
@@ -37718,7 +37974,7 @@ async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -37774,7 +38030,7 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(gpui::Point { x: 0., y: offset }, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -38070,7 +38326,6 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                     x: 0.,
                     y: scroll_offset,
                 },
-                None,
                 window,
                 cx,
             );
@@ -38162,7 +38417,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
     // The text "impl Bar {" starts at column 0, so column 5 = 'B'.
     let click_x = text_origin_x + em_width * 5.5;
     cx.update_editor(|e, window, cx| {
-        e.scroll(gpui::Point { x: 0., y: 4.5 }, None, window, cx);
+        e.scroll(gpui::Point { x: 0., y: 4.5 }, window, cx);
     });
     cx.run_until_parked();
     cx.simulate_click(
@@ -38236,7 +38491,7 @@ async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestApp
         editor.end_selection(window, cx);
 
         // Scroll down one row to make `fn foo() {` a sticky header
-        editor.scroll(gpui::Point { x: 0., y: 1. }, None, window, cx);
+        editor.scroll(gpui::Point { x: 0., y: 1. }, window, cx);
     });
     cx.run_until_parked();
 
@@ -42105,6 +42360,87 @@ async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
         aaaaaaaaaa
         bb
         cccc«ˇcccc»cc
+    "});
+}
+
+#[gpui::test]
+async fn test_columnar_selection_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇ1. Very long line to show how a wrapped line would look
+        2. Very long line to show how a wrapped line would look
+    "});
+
+    let soft_wrap_second_line_row = |editor: &mut Editor, cx: &mut Context<Editor>| {
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        let snapshot = editor.display_snapshot(cx);
+        let second_line_row = Point::new(1, 0).to_display_point(&snapshot).row();
+        assert!(
+            second_line_row.0 > 1,
+            "expected the first line to be soft wrapped"
+        );
+        second_line_row
+    };
+
+    // Dragging a columnar selection across the soft-wrapped rows of the first
+    // line must produce one selection per buffer line, not one per display row.
+    cx.update_editor(|editor, window, cx| {
+        let second_line_row = soft_wrap_second_line_row(editor, cx);
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(second_line_row, 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «1ˇ». Very long line to show how a wrapped line would look
+        «2ˇ». Very long line to show how a wrapped line would look
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        let second_line_row = soft_wrap_second_line_row(editor, cx);
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(second_line_row, 0),
+                goal_column: 0,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.assert_editor_state(indoc! {"
+        ˇ1. Very long line to show how a wrapped line would look
+        ˇ2. Very long line to show how a wrapped line would look
     "});
 }
 
