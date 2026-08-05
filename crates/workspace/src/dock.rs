@@ -289,7 +289,7 @@ pub struct Dock {
     focus_handle: FocusHandle,
     focus_follows_mouse: FocusFollowsMouse,
     pub(crate) serialized_dock: Option<DockData>,
-    zoom_layer_open: bool,
+    covered_by_zoom_layer: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
 }
@@ -423,8 +423,15 @@ impl Dock {
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
                 if matches!(e, Event::ZoomChanged) {
-                    let is_zoomed = workspace.read(cx).zoomed.is_some();
-                    dock.zoom_layer_open = is_zoomed;
+                    // Only notify on an actual change: the workspace re-emits
+                    // `ZoomChanged` every time a dock with a zoomed panel notifies, so
+                    // notifying unconditionally here feeds that emit right back and the
+                    // two spin forever.
+                    let covered = workspace.read(cx).zoom_layer_covers_docks();
+                    if dock.covered_by_zoom_layer != covered {
+                        dock.covered_by_zoom_layer = covered;
+                        cx.notify();
+                    }
                 }
             });
             Self {
@@ -437,7 +444,7 @@ impl Dock {
                 focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
-                zoom_layer_open: false,
+                covered_by_zoom_layer: false,
                 modal_layer,
             }
         });
@@ -494,8 +501,8 @@ impl Dock {
         self.is_open
     }
 
-    fn resizable(&self, cx: &App) -> bool {
-        !(self.zoom_layer_open || self.modal_layer.read(cx).has_active_modal())
+    pub(crate) fn resizable(&self, cx: &App) -> bool {
+        !(self.covered_by_zoom_layer || self.modal_layer.read(cx).has_active_modal())
     }
 
     pub fn panel<T: Panel>(&self) -> Option<Entity<T>> {

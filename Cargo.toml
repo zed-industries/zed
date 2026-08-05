@@ -1017,6 +1017,9 @@ wasmtime-environ = { opt-level = 3 }
 wasmtime-internal-cranelift = { opt-level = 3 }
 minidumper = { opt-level = 3 }
 serde_json = { opt-level = 3 }
+# Unoptimized, its nested `ChainedHandler` futures are large enough that polling one
+# overflows the 512 KiB stack of a libdispatch worker thread, crashing on connect.
+agent-client-protocol = { opt-level = 2 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }
