@@ -50,7 +50,7 @@ pub struct WorktreePaths {
 
 impl PartialEq for WorktreePaths {
     fn eq(&self, other: &Self) -> bool {
-        self.paths == other.paths && self.main_paths == other.main_paths
+        self.ordered_pairs().eq(other.ordered_pairs())
     }
 }
 

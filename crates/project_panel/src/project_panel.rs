@@ -12,7 +12,6 @@ use editor::{
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
 };
-use feature_flags::{FeatureFlagAppExt, ProjectPanelUndoRedoFeatureFlag};
 use file_icons::FileIcons;
 use fs::TrashId;
 use git;
@@ -1111,7 +1110,7 @@ impl ProjectPanel {
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
-            let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
+            let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_markdown, |menu| {
@@ -1156,16 +1155,13 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             .action_disabled_when(!has_pasteable_content, "Paste", Box::new(Paste))
-                            .when(
-                                !is_collab && cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(),
-                                |menu| {
-                                    let can_undo = self.undo_manager.can_undo();
-                                    let can_redo = self.undo_manager.can_redo();
+                            .when(!is_collab, |menu| {
+                                let can_undo = self.undo_manager.can_undo();
+                                let can_redo = self.undo_manager.can_redo();
 
-                                    menu.action_disabled_when(!can_undo, "Undo", Box::new(Undo))
-                                        .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
-                                },
-                            )
+                                menu.action_disabled_when(!can_undo, "Undo", Box::new(Undo))
+                                    .action_disabled_when(!can_redo, "Redo", Box::new(Redo))
+                            })
                             .when(is_remote, |menu| {
                                 menu.separator()
                                     .action("Download...", Box::new(DownloadFromRemote))
@@ -6932,7 +6928,6 @@ impl Render for ProjectPanel {
         // version that understands these messages.
         let is_collab = project.is_via_collab();
         let is_local = project.is_local();
-        let supports_undo = cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>();
 
         if has_worktree {
             let item_count = self
@@ -7077,7 +7072,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::add_to_gitignore))
                         .on_action(cx.listener(Self::add_to_git_info_exclude))
                         .when(!is_collab, |el| el.on_action(cx.listener(Self::trash)))
-                        .when(!is_collab && supports_undo, |el| {
+                        .when(!is_collab, |el| {
                             el.on_action(cx.listener(Self::undo))
                                 .on_action(cx.listener(Self::redo))
                         })
