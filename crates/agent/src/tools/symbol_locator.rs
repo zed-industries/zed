@@ -3,6 +3,8 @@ use std::fmt;
 
 use gpui::{App, AsyncApp, Entity};
 use language::{Buffer, Location};
+
+use crate::tool_output::truncate_line;
 use project::{CodeAction, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -64,14 +66,14 @@ impl LocationDisplay {
         let end_line = range.end.row + 1;
 
         let line_len = snapshot.line_len(range.start.row);
-        let truncated = line_len as usize > MAX_LINE_DISPLAY_LEN;
         let snippet: String = snapshot
             .text_for_range(Point::new(range.start.row, 0)..Point::new(range.start.row, line_len))
             .flat_map(|chunk| chunk.chars())
             .skip_while(|c| c.is_whitespace())
-            .take(MAX_LINE_DISPLAY_LEN)
+            .take(MAX_LINE_DISPLAY_LEN + 1)
             .collect::<String>();
-        let snippet = snippet.trim_end().to_string();
+        let (snippet, truncated) = truncate_line(snippet.trim_end(), MAX_LINE_DISPLAY_LEN);
+        let snippet = snippet.to_string();
 
         Self {
             path,
@@ -177,7 +179,6 @@ impl SymbolLocator {
             }
 
             let line_len = snapshot.line_len(row);
-            let truncated = line_len as usize > MAX_LINE_DISPLAY_LEN;
             let line_start = Point::new(row, 0);
             let line_end = Point::new(row, line_len);
             let line_chars = || {
@@ -185,25 +186,25 @@ impl SymbolLocator {
                     .text_for_range(line_start..line_end)
                     .flat_map(|chunk| chunk.chars())
             };
+            let display_line = || {
+                let text: String = line_chars()
+                    .skip_while(|c| c.is_whitespace())
+                    .take(MAX_LINE_DISPLAY_LEN + 1)
+                    .collect();
+                let (capped, truncated) = truncate_line(text.trim_end(), MAX_LINE_DISPLAY_LEN);
+                (capped.to_string(), truncated)
+            };
 
             let byte_offset = find_in_char_iter(line_chars(), symbol_name).ok_or_else(|| {
-                let preview: String = line_chars()
-                    .skip_while(|c| c.is_whitespace())
-                    .take(MAX_LINE_DISPLAY_LEN)
-                    .collect();
+                let (preview, _) = display_line();
                 format!(
                     "Symbol '{symbol_name}' not found on line {line} of '{file_path}'. \
-                     Line content: '{}'",
-                    preview.trim_end()
+                     Line content: '{preview}'"
                 )
             })?;
 
             let position = snapshot.anchor_before(Point::new(row, byte_offset as u32));
-            let display_text: String = line_chars()
-                .skip_while(|c| c.is_whitespace())
-                .take(MAX_LINE_DISPLAY_LEN)
-                .collect::<String>();
-            let display_text = display_text.trim_end().to_string();
+            let (display_text, truncated) = display_line();
 
             Ok((position, display_text, truncated))
         })?;

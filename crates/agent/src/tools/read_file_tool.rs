@@ -14,6 +14,8 @@ use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
+use crate::tool_output::{MAX_TOOL_OUTPUT_BYTES, MAX_TOOL_OUTPUT_LINES};
+
 fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent {
     LanguageModelToolResultContent::from(e.to_string())
 }
@@ -92,6 +94,36 @@ fn write_lines_numbered<'a>(
     }
 }
 
+/// Applies the ranged-read byte budget to numbered output, appending
+/// continuation guidance when the read stops short of the requested range.
+fn cap_ranged_output(
+    output: String,
+    start: u32,
+    capped_end: u32,
+    requested_end: u32,
+    total_lines: u32,
+) -> String {
+    use std::fmt::Write as _;
+
+    let byte_capped = util::truncate_lines_to_byte_limit(&output, MAX_TOOL_OUTPUT_BYTES);
+    if byte_capped.len() == output.len() && capped_end >= requested_end {
+        return output;
+    }
+
+    let last_line = if byte_capped.len() < output.len() {
+        start.saturating_add((byte_capped.matches('\n').count() as u32).saturating_sub(1))
+    } else {
+        capped_end
+    };
+    let mut result = byte_capped.to_string();
+    let _ = write!(
+        result,
+        "\nShowing lines {start}-{last_line} of {total_lines}. Continue with start_line: {}.",
+        last_line.saturating_add(1)
+    );
+    result
+}
+
 /// Read a file under the global skills directory directly via the filesystem,
 /// bypassing project/worktree resolution. Used for skill resources that live
 /// outside any worktree.
@@ -114,20 +146,26 @@ async fn read_global_skill_file(
             .line(start_line.map(|line| line.saturating_sub(1))),
     ]));
 
-    let (raw_text, first_line_number) = if start_line.is_some() || end_line.is_some() {
+    let result_text = if start_line.is_some() || end_line.is_some() {
         // `split_inclusive` keeps each line's terminator attached, so CRLF stays
         // CRLF and the trailing newline of the last returned line is preserved —
         // matching `Buffer::text_for_range` in the buffer-backed path.
         let (start, end) = resolve_line_range(start_line, end_line);
         let lines: Vec<&str> = content.split_inclusive('\n').collect();
         let start_idx = (start as usize).saturating_sub(1).min(lines.len());
-        let end_idx = (end as usize).min(lines.len()).max(start_idx);
-        (lines[start_idx..end_idx].concat(), start)
+        let requested_end_idx = (end as usize).min(lines.len()).max(start_idx);
+        let end_idx = requested_end_idx.min(start_idx.saturating_add(MAX_TOOL_OUTPUT_LINES));
+        let numbered = format_with_line_numbers(&lines[start_idx..end_idx].concat(), start);
+        cap_ranged_output(
+            numbered,
+            start,
+            end_idx as u32,
+            requested_end_idx as u32,
+            lines.len() as u32,
+        )
     } else {
-        (content, 1)
+        format_with_line_numbers(&content, 1)
     };
-
-    let result_text = format_with_line_numbers(&raw_text, first_line_number);
 
     let markdown = MarkdownCodeBlock {
         tag: requested_path,
@@ -425,13 +463,17 @@ impl AgentTool for ReadFileTool {
                         anchor = Some(buffer.anchor_before(Point::new(start_row, column)));
                     }
 
-                    // `end` is 1-indexed inclusive; `Point` rows are 0-indexed.
-                    // Using `end` directly as the (exclusive) end row is the
+                    let total_lines = buffer.max_point().row + 1;
+                    let requested_end = end.min(total_lines);
+                    let capped_end = requested_end
+                        .min(start.saturating_add(MAX_TOOL_OUTPUT_LINES as u32 - 1));
+                    // `capped_end` is 1-indexed inclusive; `Point` rows are 0-indexed.
+                    // Using it directly as the (exclusive) end row is the
                     // standard inclusive→exclusive translation, and since
                     // `resolve_line_range` guarantees `end >= start`, we always
                     // read at least one line.
                     let start_anchor = buffer.anchor_before(Point::new(start_row, 0));
-                    let end_anchor = buffer.anchor_before(Point::new(end, 0));
+                    let end_anchor = buffer.anchor_before(Point::new(capped_end, 0));
                     // Stream the numbered output directly from the buffer's
                     // chunk iterator so the unnumbered range is never
                     // materialized as its own `String`.
@@ -441,7 +483,7 @@ impl AgentTool for ReadFileTool {
                         buffer.text_for_range(start_anchor..end_anchor),
                         start,
                     );
-                    output
+                    cap_ranged_output(output, start, capped_end, requested_end, total_lines)
                 });
 
                 action_log.update(cx, |log, cx| {
@@ -991,6 +1033,52 @@ mod test {
             })
             .await;
         assert_eq!(result.unwrap(), "     3\tLine 3\n".into());
+    }
+
+    #[gpui::test]
+    async fn test_read_file_line_range_is_capped(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let total_lines = MAX_TOOL_OUTPUT_LINES + 500;
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "big.txt": (1..=total_lines).map(|i| format!("Line {i}")).collect::<Vec<_>>().join("\n")
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/big.txt".to_string(),
+                    start_line: Some(1),
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let content = result.to_str().unwrap();
+
+        assert!(content.contains(&format!(
+            "{:>6}\tLine {}\n",
+            MAX_TOOL_OUTPUT_LINES, MAX_TOOL_OUTPUT_LINES
+        )));
+        assert!(content.ends_with(&format!(
+            "Showing lines 1-{} of {}. Continue with start_line: {}.",
+            MAX_TOOL_OUTPUT_LINES,
+            total_lines,
+            MAX_TOOL_OUTPUT_LINES + 1
+        )));
     }
 
     fn error_text(content: LanguageModelToolResultContent) -> String {
