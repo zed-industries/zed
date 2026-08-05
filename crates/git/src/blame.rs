@@ -13,7 +13,7 @@ use time::UtcOffset;
 use time::macros::format_description;
 use util::command::Stdio;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
@@ -27,16 +27,16 @@ impl Blame {
         content: &Rope,
         line_ending: LineEnding,
     ) -> Result<Self> {
-        let entries = run_git_blame(git, path, Some((content, line_ending)), None).await?;
+        let entries = run_git_blame(git, path, BlameSource::Contents(content, line_ending)).await?;
         Self::with_commit_details(git, entries).await
     }
 
     pub(crate) async fn for_path_at_revision(
         git: &GitBinary,
         path: &RepoPath,
-        revision: &str,
+        revision: Oid,
     ) -> Result<Self> {
-        let entries = run_git_blame(git, path, None, Some(revision)).await?;
+        let entries = run_git_blame(git, path, BlameSource::Revision(revision)).await?;
         Self::with_commit_details(git, entries).await
     }
 
@@ -75,26 +75,33 @@ const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 const BLAME_PARSE_YIELD_INTERVAL: usize = 512;
 
+#[derive(Clone, Copy)]
+enum BlameSource<'a> {
+    Contents(&'a Rope, LineEnding),
+    Revision(Oid),
+}
+
 async fn run_git_blame(
     git: &GitBinary,
     path: &RepoPath,
-    contents: Option<(&Rope, LineEnding)>,
-    revision: Option<&str>,
+    source: BlameSource<'_>,
 ) -> Result<Vec<BlameEntry>> {
     let mut child = {
         let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
         let _enter = span.enter();
         let mut args = vec!["blame", "--incremental"];
-        if contents.is_some() {
-            args.extend(["--contents", "-"]);
-        }
-        if let Some(revision) = revision {
-            args.push(revision);
+        let revision_string;
+        match source {
+            BlameSource::Contents(..) => args.extend(["--contents", "-"]),
+            BlameSource::Revision(revision) => {
+                revision_string = revision.to_string();
+                args.push(&revision_string);
+            }
         }
         args.push("--");
         git.build_command(&args)
             .arg(path.as_unix_str())
-            .stdin(if contents.is_some() {
+            .stdin(if matches!(source, BlameSource::Contents(..)) {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -117,7 +124,7 @@ async fn run_git_blame(
         .context("failed to get stderr from git blame command")?;
 
     let write_stdin = async move {
-        if let Some((contents, line_ending)) = contents {
+        if let BlameSource::Contents(contents, line_ending) = source {
             let mut stdin = stdin.context("failed to get pipe to stdin of git blame command")?;
             for chunk in text::chunks_with_line_ending(contents, line_ending) {
                 stdin.write_all(chunk.as_bytes()).await?;
@@ -258,6 +265,11 @@ impl BlameEntry {
         })
     }
 
+    pub fn previous_sha_and_filename(&self) -> Option<(Oid, &str)> {
+        let (sha, filename) = self.previous.as_deref()?.split_once(' ')?;
+        Some((sha.parse().ok()?, filename))
+    }
+
     pub fn author_offset_date_time(&self) -> Result<time::OffsetDateTime> {
         if let (Some(author_time), Some(author_tz)) = (self.author_time, &self.author_tz) {
             let format = format_description!("[offset_hour][offset_minute]");
@@ -363,10 +375,17 @@ impl GitBlameParser {
                 let is_committed = !entry.sha.is_zero();
                 match key {
                     "filename" => {
-                        entry.filename = value.into();
+                        entry.filename = unquote_git_path(value);
                         done = true;
                     }
-                    "previous" => entry.previous = Some(value.into()),
+                    "previous" => {
+                        entry.previous = Some(match value.split_once(' ') {
+                            Some((sha, filename)) => {
+                                format!("{sha} {}", unquote_git_path(filename))
+                            }
+                            None => value.into(),
+                        })
+                    }
 
                     "summary" if is_committed => entry.summary = Some(value.into()),
                     "author" if is_committed => entry.author = Some(value.into()),
@@ -408,13 +427,55 @@ impl GitBlameParser {
     }
 }
 
+fn unquote_git_path(value: &str) -> String {
+    let Some(quoted) = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    else {
+        return value.to_owned();
+    };
+    let mut bytes = Vec::with_capacity(quoted.len());
+    let mut input = quoted.bytes().peekable();
+    while let Some(byte) = input.next() {
+        if byte != b'\\' {
+            bytes.push(byte);
+            continue;
+        }
+        match input.next() {
+            Some(b'a') => bytes.push(0x07),
+            Some(b'b') => bytes.push(0x08),
+            Some(b'f') => bytes.push(0x0c),
+            Some(b'n') => bytes.push(b'\n'),
+            Some(b'r') => bytes.push(b'\r'),
+            Some(b't') => bytes.push(b'\t'),
+            Some(b'v') => bytes.push(0x0b),
+            Some(digit @ b'0'..=b'7') => {
+                let mut octal = u32::from(digit - b'0');
+                for _ in 0..2 {
+                    match input.peek() {
+                        Some(&next @ b'0'..=b'7') if octal * 8 + u32::from(next - b'0') <= 0xff => {
+                            octal = octal * 8 + u32::from(next - b'0');
+                            input.next();
+                        }
+                        _ => break,
+                    }
+                }
+                bytes.push(octal as u8);
+            }
+            Some(other) => bytes.push(other),
+            None => {}
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use crate::blame::GitBlameParser;
 
-    use super::BlameEntry;
+    use super::{BlameEntry, unquote_git_path};
 
     fn parse_git_blame(output: &str) -> anyhow::Result<Vec<BlameEntry>> {
         let mut parser = GitBlameParser::new();
@@ -483,5 +544,44 @@ mod tests {
         let output = read_test_data("blame_incremental_complex");
         let entries = parse_git_blame(&output).unwrap();
         assert_eq_golden(&entries, "blame_incremental_complex");
+    }
+
+    #[test]
+    fn test_parse_git_blame_quoted_filename() {
+        let output = r#"6ad46b5257ba16d12c5ca9f0d4900320959df7f4 2 2 1
+author Joe Schmoe
+author-mail <joe.schmoe@example.com>
+author-time 1709741400
+author-tz +0100
+committer Joe Schmoe
+committer-mail <joe.schmoe@example.com>
+committer-time 1709741400
+committer-tz +0100
+summary Joe's cool commit
+previous 486c2409237a2c627230589e567024a96751d475 "\303\274rlich \"file\".txt"
+filename "\303\274rlich \"file\".txt"
+"#;
+        let entries = parse_git_blame(output).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].filename, "ürlich \"file\".txt");
+        assert_eq!(
+            entries[0].previous.as_deref(),
+            Some("486c2409237a2c627230589e567024a96751d475 ürlich \"file\".txt")
+        );
+        assert_eq!(
+            entries[0].previous_sha_and_filename(),
+            Some((
+                "486c2409237a2c627230589e567024a96751d475".parse().unwrap(),
+                "ürlich \"file\".txt"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_unquote_git_path() {
+        assert_eq!(unquote_git_path("plain file.txt"), "plain file.txt");
+        assert_eq!(unquote_git_path(r#""a\\b\"c\td""#), "a\\b\"c\td");
+        assert_eq!(unquote_git_path(r#""\1\12\123""#), "\u{1}\nS");
+        assert_eq!(unquote_git_path(r#""\777""#), "?7");
     }
 }

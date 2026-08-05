@@ -3330,7 +3330,12 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.show_git_blame_gutter {
+        if self.show_git_blame_gutter
+            && !self
+                .blame
+                .as_ref()
+                .is_some_and(|blame| blame.read(cx).is_static())
+        {
             self.show_git_blame_gutter = false;
             cx.notify();
             return;

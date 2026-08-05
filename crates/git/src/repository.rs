@@ -892,7 +892,7 @@ pub trait GitRepository: Send + Sync {
     fn blame_at_revision(
         &self,
         path: RepoPath,
-        revision: String,
+        revision: Oid,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -1729,6 +1729,11 @@ impl GitRepository for RealGitRepository {
                 if revisions.is_empty() {
                     return Ok(Vec::new());
                 }
+                if let Some(revision) = revisions.iter().find(|revision| revision.contains('\n')) {
+                    anyhow::bail!(
+                        "revision spec {revision:?} contains a newline and cannot be passed to git cat-file --batch"
+                    );
+                }
 
                 let mut process = git
                     .build_command(&["cat-file", "--batch"])
@@ -2382,14 +2387,14 @@ impl GitRepository for RealGitRepository {
     fn blame_at_revision(
         &self,
         path: RepoPath,
-        revision: String,
+        revision: Oid,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git = git?;
-                crate::blame::Blame::for_path_at_revision(&git, &path, &revision).await
+                crate::blame::Blame::for_path_at_revision(&git, &path, revision).await
             })
             .boxed()
     }
@@ -5477,8 +5482,6 @@ mod tests {
 
         let repo_dir = tempfile::tempdir().unwrap();
         git_init_repo(repo_dir.path());
-
-        let file_path = repo_dir.path().join("file1");
         let repo = RealGitRepository::new(
             &repo_dir.path().join(".git"),
             None,
@@ -5487,59 +5490,47 @@ mod tests {
         )
         .unwrap();
 
-        smol::fs::write(&file_path, "line one\nline two\n")
-            .await
-            .unwrap();
-        repo.stage_paths(vec![repo_path("file1")], Arc::new(HashMap::default()))
-            .await
-            .unwrap();
-        repo.commit(
-            "First commit".into(),
-            None,
-            CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(test_commit_envs()),
-        )
-        .await
-        .unwrap();
-        let first_sha = repo.head_sha().await.unwrap();
+        let file_name = "ürlich file1";
+        fs::write(repo_dir.path().join(file_name), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let first_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
 
-        smol::fs::write(&file_path, "line one\nline two changed\n")
-            .await
-            .unwrap();
-        repo.stage_paths(vec![repo_path("file1")], Arc::new(HashMap::default()))
-            .await
-            .unwrap();
-        repo.commit(
-            "Second commit".into(),
-            None,
-            CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(test_commit_envs()),
-        )
-        .await
-        .unwrap();
-        let second_sha = repo.head_sha().await.unwrap();
+        fs::write(repo_dir.path().join(file_name), "line one\nline two\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Second commit"]);
+        let second_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
 
         let blame_at_head = repo
-            .blame_at_revision(repo_path("file1"), second_sha.clone())
+            .blame_at_revision(repo_path(file_name), second_sha.parse().unwrap())
             .await
             .unwrap();
         assert_eq!(
             blame_at_head
                 .entries
                 .iter()
-                .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                .map(|entry| {
+                    (
+                        entry.sha.to_string(),
+                        entry.range.clone(),
+                        entry.filename.clone(),
+                        entry.previous.clone(),
+                    )
+                })
                 .collect::<Vec<_>>(),
-            vec![(first_sha.clone(), 0..1), (second_sha.clone(), 1..2)]
-        );
-        assert_eq!(
-            blame_at_head.entries[1].previous,
-            Some(format!("{first_sha} file1"))
+            vec![
+                (first_sha.clone(), 0..1, file_name.to_owned(), None),
+                (
+                    second_sha.clone(),
+                    1..2,
+                    file_name.to_owned(),
+                    Some(format!("{first_sha} {file_name}"))
+                ),
+            ]
         );
 
         let blame_at_first = repo
-            .blame_at_revision(repo_path("file1"), first_sha.clone())
+            .blame_at_revision(repo_path(file_name), first_sha.parse().unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -5548,7 +5539,7 @@ mod tests {
                 .iter()
                 .map(|entry| (entry.sha.to_string(), entry.range.clone()))
                 .collect::<Vec<_>>(),
-            vec![(first_sha.clone(), 0..2)]
+            vec![(first_sha.clone(), 0..1)]
         );
     }
 

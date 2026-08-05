@@ -39,7 +39,7 @@ use git::{
         FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
         InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
         RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
-        delete_branch_flag,
+        delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -4636,7 +4636,11 @@ impl GitStore {
     ) -> Result<proto::BlameBufferAtRevisionResponse> {
         let repository_id = RepositoryId(envelope.payload.repository_id);
         let path = RepoPath::from_proto(&envelope.payload.path)?;
-        let revision = envelope.payload.revision;
+        let revision = envelope
+            .payload
+            .revision
+            .parse::<git::Oid>()
+            .with_context(|| format!("invalid revision {:?}", envelope.payload.revision))?;
         let (content, blame) = this
             .update(&mut cx, |this, cx| {
                 let repository = this.repositories().get(&repository_id)?;
@@ -4654,6 +4658,7 @@ impl GitStore {
                 .map(serialize_blame_entry)
                 .collect(),
             messages: serialize_commit_messages(blame.messages),
+            tag_names: serialize_commit_tag_names(blame.tag_names),
         })
     }
 
@@ -9842,26 +9847,26 @@ impl Repository {
     pub fn blame_buffer_at_revision(
         &mut self,
         path: RepoPath,
-        revision: String,
+        revision: Oid,
         cx: &App,
     ) -> Task<Result<(String, git::blame::Blame)>> {
         let repository_id = self.snapshot.id;
-        let rx = self.send_job(
-            "blame_buffer_at_revision",
-            None,
+        let rx = self.send_job("blame_buffer_at_revision", None, {
+            let path = path.clone();
             move |state, _| async move {
                 match state {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        let content = backend
-                            .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())])
-                            .await?
-                            .pop()
-                            .flatten()
-                            .with_context(|| {
-                                format!("loading {:?} at revision {revision}", path.as_ref())
-                            })?;
-                        let blame = backend.blame_at_revision(path, revision).await?;
-                        Ok((content, blame))
+                        let content_task = backend
+                            .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())]);
+                        let blame_task = backend.blame_at_revision(path.clone(), revision);
+                        let (mut contents, blame) = futures::try_join!(content_task, blame_task)?;
+                        let content = contents.pop().flatten().with_context(|| {
+                            format!(
+                                "cannot load {:?} at revision {revision}: the file is missing or binary",
+                                path.as_ref()
+                            )
+                        })?;
+                        anyhow::Ok((content, blame))
                     }
                     RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
                         let response = client
@@ -9869,28 +9874,28 @@ impl Repository {
                                 project_id: project_id.to_proto(),
                                 repository_id: repository_id.0,
                                 path: path.as_unix_str().to_owned(),
-                                revision,
+                                revision: revision.to_string(),
                             })
                             .await?;
-                        let blame = git::blame::Blame {
-                            entries: response
-                                .entries
-                                .into_iter()
-                                .filter_map(deserialize_blame_entry)
-                                .collect(),
-                            messages: response
-                                .messages
-                                .into_iter()
-                                .filter_map(deserialize_commit_message)
-                                .collect(),
-                            tag_names: Default::default(),
-                        };
+                        let blame = blame_from_proto(
+                            response.entries,
+                            response.messages,
+                            response.tag_names,
+                        );
                         Ok((response.content, blame))
                     }
                 }
-            },
-        );
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+            }
+        });
+        cx.spawn(move |_: &mut AsyncApp| async move {
+            let (content, blame) = rx.await??;
+            anyhow::ensure!(
+                !is_binary_content(content.as_bytes()),
+                "cannot blame binary file {:?} at revision {revision}",
+                path.as_ref()
+            );
+            Ok((content, blame))
+        })
     }
 
     fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
@@ -10459,9 +10464,14 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
         .map(serialize_blame_entry)
         .collect::<Vec<_>>();
     let messages = serialize_commit_messages(blame.messages);
+    let tag_names = serialize_commit_tag_names(blame.tag_names);
 
     proto::BlameBufferResponse {
-        blame_response: Some(proto::blame_buffer_response::BlameResponse { entries, messages }),
+        blame_response: Some(proto::blame_buffer_response::BlameResponse {
+            entries,
+            messages,
+            tag_names,
+        }),
     }
 }
 
@@ -10518,27 +10528,57 @@ fn deserialize_commit_message(message: proto::CommitMessage) -> Option<(git::Oid
     Some((git::Oid::from_bytes(&message.oid).ok()?, message.message))
 }
 
+fn serialize_commit_tag_names(
+    tag_names: HashMap<git::Oid, Vec<String>>,
+) -> Vec<proto::CommitTagNames> {
+    tag_names
+        .into_iter()
+        .map(|(oid, tag_names)| proto::CommitTagNames {
+            oid: oid.as_bytes().into(),
+            tag_names,
+        })
+        .collect()
+}
+
+fn deserialize_commit_tag_names(
+    tag_names: proto::CommitTagNames,
+) -> Option<(git::Oid, Vec<String>)> {
+    Some((
+        git::Oid::from_bytes(&tag_names.oid).ok()?,
+        tag_names.tag_names,
+    ))
+}
+
+fn blame_from_proto(
+    entries: Vec<proto::BlameEntry>,
+    messages: Vec<proto::CommitMessage>,
+    tag_names: Vec<proto::CommitTagNames>,
+) -> git::blame::Blame {
+    git::blame::Blame {
+        entries: entries
+            .into_iter()
+            .filter_map(deserialize_blame_entry)
+            .collect(),
+        messages: messages
+            .into_iter()
+            .filter_map(deserialize_commit_message)
+            .collect(),
+        tag_names: tag_names
+            .into_iter()
+            .filter_map(deserialize_commit_tag_names)
+            .collect(),
+    }
+}
+
 fn deserialize_blame_buffer_response(
     response: proto::BlameBufferResponse,
 ) -> Option<git::blame::Blame> {
     let response = response.blame_response?;
-    let entries = response
-        .entries
-        .into_iter()
-        .filter_map(deserialize_blame_entry)
-        .collect::<Vec<_>>();
-
-    let messages = response
-        .messages
-        .into_iter()
-        .filter_map(deserialize_commit_message)
-        .collect::<HashMap<_, _>>();
-
-    Some(Blame {
-        entries,
-        messages,
-        tag_names: Default::default(),
-    })
+    Some(blame_from_proto(
+        response.entries,
+        response.messages,
+        response.tag_names,
+    ))
 }
 
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
