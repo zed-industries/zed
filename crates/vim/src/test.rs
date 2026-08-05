@@ -395,7 +395,11 @@ async fn test_insert_line_with_multi_keybinding_to_normal(cx: &mut gpui::TestApp
     let mut cx = VimTestContext::new(cx, true).await;
 
     cx.update(|_, cx| {
-        cx.bind_keys([KeyBinding::new("j j", SwitchToNormalMode, None)]);
+        cx.bind_keys([KeyBinding::new(
+            "j j",
+            SwitchToNormalMode,
+            Some("vim_mode == insert"),
+        )]);
     });
 
     cx.set_state("hello worldˇ\n", Mode::Insert);

@@ -1881,9 +1881,8 @@ mod test {
     use workspace::{DeploySearch, MultiWorkspace};
 
     use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
-    use crate::SwitchToHelixNormalMode;
     use crate::{
-        HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
+        HELIX_JUMP_OVERLAY_KEY, SwitchToHelixNormalMode, Vim, VimAddon,
         state::{Mode, Operator},
         test::VimTestContext,
     };
@@ -4674,12 +4673,16 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_insert_line_with_multi_keybinding(cx: &mut gpui::TestAppContext) {
+    async fn test_insert_line_with_multi_keybinding_to_helix_normal(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
         cx.update(|_, cx| {
-            cx.bind_keys([KeyBinding::new("j j", SwitchToHelixNormalMode, None)]);
+            cx.bind_keys([KeyBinding::new(
+                "j j",
+                SwitchToHelixNormalMode,
+                Some("vim_mode == insert"),
+            )]);
         });
 
         cx.set_state("hello worldˇ\n", Mode::Insert);
