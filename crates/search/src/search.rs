@@ -84,6 +84,7 @@ pub enum SearchOption {
 const REPLACE_PLACEHOLDER: &str = "Replace in project…";
 const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
 const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
+const METADATA_PLACEHOLDER: &str = "Metadata: e.g. -iname *.rs -size 9 -mtime -7";
 
 pub enum SearchSource<'a, 'b> {
     Buffer,

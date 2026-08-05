@@ -61,7 +61,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use project::{
     Event, TaskContexts,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry, pending_op},
-    search::{SearchQuery, SearchResult},
+    search::{MetadataFilters, SearchQuery, SearchResult},
     task_store::{TaskSettingsLocation, TaskStore},
     *,
 };
@@ -83,7 +83,7 @@ use std::{
     str::FromStr,
     sync::{Arc, OnceLock, atomic},
     task::Poll,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
@@ -8353,6 +8353,91 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
             (path!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_metadata_filters(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    // FakeFs hands out mtimes starting at the epoch, so these two count as very
+    // old regardless of when the test runs.
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "small.rs": "needle",
+            "large.rs": format!("needle{}", "x".repeat(2000)),
+        }),
+    )
+    .await;
+    fs.set_next_mtime(SystemTime::now());
+    fs.insert_file(path!("/dir/fresh.rs"), "needle".into())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let query = |metadata_filters: &str| {
+        SearchQuery::text(
+            "needle",
+            false,
+            true,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .unwrap()
+        .with_metadata_filters(MetadataFilters::new(metadata_filters).unwrap())
+    };
+
+    assert_eq!(
+        search(&project, query(""), cx).await.unwrap(),
+        HashMap::from_iter([
+            (path!("dir/fresh.rs").to_string(), vec![0..6]),
+            (path!("dir/large.rs").to_string(), vec![0..6]),
+            (path!("dir/small.rs").to_string(), vec![0..6]),
+        ]),
+        "An empty filter should not exclude anything"
+    );
+
+    assert_eq!(
+        search(&project, query("-size +1k"), cx).await.unwrap(),
+        HashMap::from_iter([(path!("dir/large.rs").to_string(), vec![0..6])]),
+        "`-size +1k` should only match the file larger than 1 KiB"
+    );
+
+    assert_eq!(
+        search(&project, query("-size -1k"), cx).await.unwrap(),
+        HashMap::from_iter([
+            (path!("dir/fresh.rs").to_string(), vec![0..6]),
+            (path!("dir/small.rs").to_string(), vec![0..6]),
+        ]),
+        "`-size -1k` should only match the files smaller than 1 KiB"
+    );
+
+    assert_eq!(
+        search(&project, query("-mtime -1"), cx).await.unwrap(),
+        HashMap::from_iter([(path!("dir/fresh.rs").to_string(), vec![0..6])]),
+        "`-mtime -1` should only match the file written just now"
+    );
+
+    assert_eq!(
+        search(&project, query("-mmin +60"), cx).await.unwrap(),
+        HashMap::from_iter([
+            (path!("dir/large.rs").to_string(), vec![0..6]),
+            (path!("dir/small.rs").to_string(), vec![0..6]),
+        ]),
+        "`-mmin +60` should only match the files left at their epoch mtimes"
+    );
+
+    assert_eq!(
+        search(&project, query("-size -1k -mtime -1"), cx)
+            .await
+            .unwrap(),
+        HashMap::from_iter([(path!("dir/fresh.rs").to_string(), vec![0..6])]),
+        "Predicates should combine with AND"
     );
 }
 

@@ -307,6 +307,9 @@ message SearchQuery {
   bool include_ignored = 8;
   string files_to_include_legacy = 6;
   string files_to_exclude_legacy = 7;
+  // `find(1)`-style file metadata predicates (-size/-mtime/-mmin), sent
+  // verbatim and re-parsed by the host.
+  string metadata_filters = 12;
 }
 
 message FindSearchCandidates {

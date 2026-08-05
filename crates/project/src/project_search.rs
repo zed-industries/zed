@@ -639,6 +639,26 @@ impl Search {
                     {
                         return false;
                     }
+                    // Metadata predicates describe the file on disk, so in
+                    // opened-only mode they are matched against the worktree
+                    // entry rather than the (possibly unsaved) buffer. A buffer
+                    // with no entry has no metadata to test, so it cannot
+                    // satisfy the filter.
+                    if search_query.filters_metadata() {
+                        let Some(entry) = b
+                            .entry_id(cx)
+                            .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                        else {
+                            return false;
+                        };
+                        if !search_query.metadata_filters().matches(
+                            entry.path.file_name().unwrap_or_default(),
+                            entry.size,
+                            entry.mtime,
+                        ) {
+                            return false;
+                        }
+                    }
                 }
                 true
             })
@@ -823,6 +843,19 @@ impl RequestHandler<'_> {
             } = req;
 
             if entry.is_fifo || !entry.is_file() {
+                return Ok(());
+            }
+
+            // Metadata predicates are checked before the path globs because they
+            // read fields the worktree scan already populated, so they prune
+            // candidates without touching the filesystem.
+            if self.query.filters_metadata()
+                && !self.query.metadata_filters().matches(
+                    entry.path.file_name().unwrap_or_default(),
+                    entry.size,
+                    entry.mtime,
+                )
+            {
                 return Ok(());
             }
 

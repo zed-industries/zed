@@ -1,7 +1,7 @@
 use crate::{
     BufferSearchBar, EXCLUDE_PLACEHOLDER, FocusSearch, HighlightKey, INCLUDE_PLACEHOLDER,
-    NextHistoryQuery, PreviousHistoryQuery, REPLACE_PLACEHOLDER, ReplaceAll, ReplaceNext,
-    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    METADATA_PLACEHOLDER, NextHistoryQuery, PreviousHistoryQuery, REPLACE_PLACEHOLDER, ReplaceAll,
+    ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{
@@ -33,7 +33,7 @@ use menu::Confirm;
 use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
-    search::{SearchInputKind, SearchQuery, SearchResult},
+    search::{MetadataFilters, SearchInputKind, SearchQuery, SearchResult},
     search_history::SearchHistoryCursor,
 };
 use settings::Settings;
@@ -299,6 +299,7 @@ enum InputPanel {
     Replacement,
     Exclude,
     Include,
+    Metadata,
 }
 
 pub struct ProjectSearchView {
@@ -314,6 +315,7 @@ pub struct ProjectSearchView {
     search_id: usize,
     included_files_editor: Entity<Editor>,
     excluded_files_editor: Entity<Editor>,
+    metadata_filters_editor: Entity<Editor>,
     filters_enabled: bool,
     replace_enabled: bool,
     pending_replace_all: bool,
@@ -1149,6 +1151,19 @@ impl ProjectSearchView {
             }),
         );
 
+        let metadata_filters_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text(METADATA_PLACEHOLDER, window, cx);
+
+            editor
+        });
+        // Subscribe to metadata_filters_editor in order to reraise editor events for workspace item activation purposes
+        subscriptions.push(
+            cx.subscribe(&metadata_filters_editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(ViewEvent::EditorEvent(event.clone()))
+            }),
+        );
+
         let focus_handle = cx.focus_handle();
         subscriptions.push(cx.on_focus(&focus_handle, window, |_, window, cx| {
             cx.on_next_frame(window, |this, window, cx| {
@@ -1192,6 +1207,7 @@ impl ProjectSearchView {
             active_match_index: None,
             included_files_editor,
             excluded_files_editor,
+            metadata_filters_editor,
             filters_enabled,
             replace_enabled: false,
             pending_replace_all: false,
@@ -1550,6 +1566,31 @@ impl ProjectSearchView {
             })
             .unwrap_or(PathMatcher::default());
 
+        let metadata_filters = self
+            .filters_enabled
+            .then(
+                || match MetadataFilters::new(&self.metadata_filters_editor.read(cx).text(cx)) {
+                    Ok(metadata_filters) => {
+                        let should_unmark_error =
+                            self.panels_with_errors.remove(&InputPanel::Metadata);
+                        if should_unmark_error.is_some() {
+                            cx.notify();
+                        }
+                        metadata_filters
+                    }
+                    Err(e) => {
+                        let should_mark_error = self
+                            .panels_with_errors
+                            .insert(InputPanel::Metadata, e.to_string());
+                        if should_mark_error.is_none() {
+                            cx.notify();
+                        }
+                        MetadataFilters::default()
+                    }
+                },
+            )
+            .unwrap_or_default();
+
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
         // disambiguated. For single worktree projects we use worktree relative
@@ -1576,7 +1617,7 @@ impl ProjectSearchView {
                     cx.notify();
                 }
 
-                Some(query)
+                Some(query.with_metadata_filters(metadata_filters))
             }
             Err(e) => {
                 let should_mark_error = self
@@ -1624,6 +1665,18 @@ impl ProjectSearchView {
             .parse_path_matches(self.excluded_files_editor.read(cx).text(cx), cx)
             .unwrap_or_default();
         (included, excluded)
+    }
+
+    /// The `find(1)`-style metadata filters currently configured on this view,
+    /// honoring `filters_enabled`. Read-only counterpart to the parsing done in
+    /// `build_search_query`: it records no errors, and unparseable input falls
+    /// back to no filtering. Shared with the text finder, which is backed by the
+    /// same view.
+    pub(crate) fn metadata_filters(&self, cx: &App) -> MetadataFilters {
+        if !self.filters_enabled {
+            return MetadataFilters::default();
+        }
+        MetadataFilters::new(&self.metadata_filters_editor.read(cx).text(cx)).unwrap_or_default()
     }
 
     fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
@@ -2031,6 +2084,7 @@ impl ProjectSearchBar {
                 views.extend([
                     project_view.included_files_editor.focus_handle(cx),
                     project_view.excluded_files_editor.focus_handle(cx),
+                    project_view.metadata_filters_editor.focus_handle(cx),
                 ]);
             }
             let current_index = match views.iter().position(|focus| focus.is_focused(window)) {
@@ -2108,6 +2162,9 @@ impl ProjectSearchBar {
                     .update(cx, |_, cx| cx.notify());
                 search_view
                     .excluded_files_editor
+                    .update(cx, |_, cx| cx.notify());
+                search_view
+                    .metadata_filters_editor
                     .update(cx, |_, cx| cx.notify());
                 window.refresh();
                 cx.notify();
@@ -2330,7 +2387,9 @@ impl Render for ProjectSearchBar {
         let input_base_styles = |panel: InputPanel| {
             input_base_styles(search.border_color_for(panel, cx), |div| match panel {
                 InputPanel::Query | InputPanel::Replacement => div.w(input_width),
-                InputPanel::Include | InputPanel::Exclude => div.flex_grow_1(),
+                InputPanel::Include | InputPanel::Exclude | InputPanel::Metadata => {
+                    div.flex_grow_1()
+                }
             })
         };
         let theme_colors = cx.theme().colors();
@@ -2627,6 +2686,23 @@ impl Render for ProjectSearchBar {
                 .child(mode_column)
         });
 
+        // The metadata predicates get their own row rather than a third slot in
+        // the filter line: they are free-form `find`-style text, so squeezing
+        // them next to the two glob inputs would leave none of the three legible.
+        let metadata_line = search.filters_enabled.then(|| {
+            let metadata = input_base_styles(InputPanel::Metadata).child(render_text_input(
+                &search.metadata_filters_editor,
+                None,
+                cx,
+            ));
+
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(alignment_element())
+                .child(h_flex().w(input_width).gap_2().child(metadata))
+        });
+
         let mut key_context = KeyContext::default();
         key_context.add("ProjectSearchBar");
         if search
@@ -2652,6 +2728,7 @@ impl Render for ProjectSearchBar {
             .panels_with_errors
             .get(&InputPanel::Include)
             .or_else(|| search.panels_with_errors.get(&InputPanel::Exclude))
+            .or_else(|| search.panels_with_errors.get(&InputPanel::Metadata))
             .map(|error| {
                 Label::new(error)
                     .size(LabelSize::Small)
@@ -2708,6 +2785,7 @@ impl Render for ProjectSearchBar {
             .children(query_error_line)
             .children(replace_line)
             .children(filter_line)
+            .children(metadata_line)
             .children(filter_error_line)
             .into_any_element()
     }

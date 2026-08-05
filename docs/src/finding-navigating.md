@@ -33,6 +33,42 @@ Search across all files with {#kb pane::DeploySearch}. Type the query in the sea
 
 Results appear in a [multibuffer](./multibuffers.md), letting you edit matches in place.
 
+### File Metadata Filters
+
+Alongside the "Include" / "Exclude" [glob](./globs.md) filters, the filter row has a
+metadata field that narrows the search by file size and modification time using
+predicates borrowed from `find(1)`:
+
+| Predicate | Meaning                                | Example                             |
+| --------- | -------------------------------------- | ----------------------------------- |
+| `-name`   | Case-sensitive glob on the file name   | `-name *.rs`                        |
+| `-iname`  | Case-insensitive glob on the file name | `-iname *.RS`                       |
+| `-size`   | File size                              | `-size 9` (larger than 9 KiB)       |
+| `-mtime`  | Age in whole days                      | `-mtime -7` (modified in last week) |
+| `-mmin`   | Age in whole minutes                   | `-mmin +30` (untouched for 30 min)  |
+
+`+N` means "greater than N" and `-N` means "less than N". Predicates combine with
+AND, so `-size 1 -mtime -7` matches files that are both larger than 1 KiB and
+modified within the last week. Because predicates are whitespace-separated, a
+glob cannot contain spaces.
+
+`-size` departs from `find` twice, in favour of the common "show me the big
+files" case: its default unit is **KiB**, and an unsigned value means **greater
+than** rather than "equal to". So `-size 9` is the same as `-size +9k`, and
+`-size +1` matches files over 1024 bytes. An explicit unit suffix still wins —
+`c` (bytes), `b` (512-byte blocks), `k`, `M`, `G`. For `-mtime`/`-mmin` an
+unsigned value keeps `find`'s "equal to" meaning.
+
+`-name`/`-iname` overlap the "Include" glob field: they match the file name only,
+where "Include" matches the whole path. The same syntax also drives the
+[project panel's file filter](./project-panel.md#file-filter).
+
+These are matched against metadata Zed's worktree scan already holds, so they
+narrow the candidate set before any file is read.
+
+> Note: the syntax is `find`-inspired, not `find`-compatible. `-size` counts
+> bytes rather than 512-byte blocks by default and rounds down rather than up.
+
 ## Go to Definition
 
 Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Click` / `Ctrl+Click`). If there are multiple definitions, they open in a multibuffer.
