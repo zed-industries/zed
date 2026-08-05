@@ -312,14 +312,32 @@ impl ThreadedDispatcher {
         }
     }
 
-    /// Runs all main-thread tasks that are queued right now, without waiting for
-    /// background work or timers to finish.
+    /// Runs the main-thread tasks that were queued when the call began,
+    /// returning whether any ran. Tasks dispatched while running (e.g. a task
+    /// re-queuing itself after yielding) are left for the next call, as on
+    /// the platform run loops.
     pub fn run_ready_main_tasks(&self) -> bool {
         assert!(
             self.is_main_thread(),
             "run_ready_main_tasks must be called on the threaded dispatcher's main thread"
         );
-        self.drain_main_queue()
+        let pending = self.main_receiver.lock().len();
+        let mut ran_any = false;
+        for _ in 0..pending {
+            let runnable = self.main_receiver.lock().try_pop();
+            match runnable {
+                Ok(Some(runnable)) => {
+                    let location = runnable.metadata().location;
+                    let spawned = runnable.metadata().spawned;
+                    profiler::update_running_task(spawned, location);
+                    runnable.run();
+                    profiler::save_task_timing();
+                    ran_any = true;
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+        ran_any
     }
 
     /// Cancels all pending timers so timers armed by one workload can't fire
@@ -589,6 +607,32 @@ mod tests {
                 std::task::Poll::Pending
             }
         })
+    }
+
+    #[test]
+    fn run_ready_main_tasks_advances_requeuing_work_one_batch_per_call() {
+        const REQUEUE_LIMIT: usize = 10_000;
+
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        let iterations = Arc::new(AtomicUsize::new(0));
+        foreground
+            .spawn({
+                let iterations = iterations.clone();
+                async move {
+                    for _ in 0..REQUEUE_LIMIT {
+                        iterations.fetch_add(1, Ordering::SeqCst);
+                        yield_once().await;
+                    }
+                }
+            })
+            .detach();
+
+        assert!(dispatcher.run_ready_main_tasks());
+        assert_eq!(iterations.load(Ordering::SeqCst), 1);
+        assert!(dispatcher.run_ready_main_tasks());
+        assert_eq!(iterations.load(Ordering::SeqCst), 2);
     }
 
     #[test]
