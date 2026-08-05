@@ -232,7 +232,12 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
-    fn create_subagent(&self, _label: String, _cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
+    fn create_subagent(
+        &self,
+        _label: String,
+        _tool_filter: Option<Vec<SharedString>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
         Ok(self
             .subagent_handle
             .clone()
@@ -273,7 +278,12 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
-    fn create_subagent(&self, _label: String, _cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
+    fn create_subagent(
+        &self,
+        _label: String,
+        _tool_filter: Option<Vec<SharedString>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
         unimplemented!()
     }
 }
@@ -5567,6 +5577,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
         label: "label".to_string(),
         message: "subagent task prompt".to_string(),
         session_id: None,
+        tools: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -5704,6 +5715,7 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
         label: "label".to_string(),
         message: "subagent task prompt".to_string(),
         session_id: None,
+        tools: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -5854,6 +5866,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
         label: "label".to_string(),
         message: "subagent task prompt".to_string(),
         session_id: None,
+        tools: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -5986,6 +5999,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         label: "initial task".to_string(),
         message: "do the first task".to_string(),
         session_id: None,
+        tools: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -6050,6 +6064,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         label: "follow-up task".to_string(),
         message: "do the follow-up task".to_string(),
         session_id: Some(subagent_session_id.clone()),
+        tools: None,
     };
     let resume_tool_use = LanguageModelToolUse {
         id: "subagent_2".into(),
@@ -6999,6 +7014,7 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
         label: "label".to_string(),
         message: "subagent task prompt".to_string(),
         session_id: None,
+        tools: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -8873,7 +8889,7 @@ impl SubagentCompactionTest {
             acp_thread: acp_thread.downgrade(),
         };
         let handle = cx
-            .update(|cx| environment.create_subagent_thread("subagent".to_string(), cx))
+            .update(|cx| environment.create_subagent_thread("subagent".to_string(), None, cx))
             .unwrap();
         let thread = agent.read_with(cx, |agent, _| {
             agent.sessions.get(&handle.id()).unwrap().thread.clone()
