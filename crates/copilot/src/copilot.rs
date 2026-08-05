@@ -833,10 +833,7 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
-            CopilotServer::Disabled => cx.background_spawn(async {
-                clear_copilot_config_dir().await;
-                anyhow::Ok(())
-            }),
+            CopilotServer::Disabled => cx.background_spawn(async { anyhow::Ok(()) }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -1355,10 +1352,6 @@ fn notify_did_change_config_to_server(
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
-}
-
-async fn clear_copilot_config_dir() {
-    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
