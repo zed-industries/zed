@@ -919,8 +919,8 @@ fn build_conflict_resolution_prompt(conflicts: &[ConflictContent]) -> Vec<acp::C
 
 fn diagnostic_fix_prompt(action: &FixDiagnosticWithAgent) -> String {
     format!(
-        "Fix the following diagnostic in `{}` at line {}, column {}:\n\n{}",
-        action.path, action.line, action.column, action.message
+        "Fix the following diagnostic in `{}` at line {}:\n\n{}",
+        action.path, action.line, action.message
     )
 }
 
@@ -6883,13 +6883,12 @@ mod tests {
         let action = FixDiagnosticWithAgent {
             path: "/project/src/main.rs".into(),
             line: 12,
-            column: 7,
             message: "mismatched types".into(),
         };
 
         assert_eq!(
             diagnostic_fix_prompt(&action),
-            "Fix the following diagnostic in `/project/src/main.rs` at line 12, column 7:\n\nmismatched types"
+            "Fix the following diagnostic in `/project/src/main.rs` at line 12:\n\nmismatched types"
         );
     }
 

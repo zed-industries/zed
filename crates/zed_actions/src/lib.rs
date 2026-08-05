@@ -627,8 +627,6 @@ pub mod agent {
         pub path: SharedString,
         /// The one-based line containing the diagnostic.
         pub line: u32,
-        /// The one-based column containing the diagnostic.
-        pub column: u32,
         pub message: SharedString,
     }
 

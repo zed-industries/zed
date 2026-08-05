@@ -435,7 +435,6 @@ fn show_hover(
                     Some(FixDiagnosticWithAgent {
                         path: path.clone().into(),
                         line: point.row + 1,
-                        column: point.column + 1,
                         message: local_diagnostic.diagnostic.message.clone().into(),
                     })
                 });
