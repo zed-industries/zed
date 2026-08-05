@@ -990,6 +990,48 @@ mod tests {
         assert_eq!(loaded.sandbox_grants, grants);
     }
 
+    #[test]
+    fn test_tool_filter_default_when_absent() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.tool_filter.is_none(),
+            "Legacy threads without tool_filter should default to unrestricted"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_filter_roundtrip_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("tool-filter-thread");
+        let mut thread = make_thread(
+            "Tool Filter Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.tool_filter = Some(vec!["grep".into(), "read_file".into()]);
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(
+            loaded.tool_filter,
+            Some(vec!["grep".into(), "read_file".into()])
+        );
+    }
+
     #[gpui::test]
     async fn test_sandboxed_terminal_temp_dir_roundtrips_through_save_load(
         cx: &mut TestAppContext,
