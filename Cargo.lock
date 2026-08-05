@@ -3896,7 +3896,6 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
- "settings",
  "util",
  "zed_credentials_provider",
 ]
