@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.compute.outputs.version }}
+      skip: ${{ steps.compute.outputs.skip }}
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -38,6 +39,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Skip the build when the source commit already has a release (e.g. a
+          # no-op sync where upstream did not change), instead of publishing an
+          # identical binary under a bumped version every day.
+          if gh release list --limit 50 --json body --jq \
+            'any(.[]; .body | contains("commit: '"$GITHUB_SHA"'"))' | grep -q true; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Source commit $GITHUB_SHA already built; skipping."
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           upstream_version=$(grep '^version' crates/zed/Cargo.toml | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
           latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
           version=$(python3 - "$upstream_version" "$latest_tag" <<'EOF'
@@ -63,6 +74,7 @@ jobs:
 
   build-macos:
     needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: macos-14
     timeout-minutes: 360
     steps:
@@ -91,6 +103,7 @@ jobs:
 
   build-windows:
     needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: windows-2022
     timeout-minutes: 360
     env:
@@ -124,6 +137,7 @@ jobs:
 
   release:
     needs: [prepare, build-macos, build-windows]
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -140,11 +154,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release delete "$VERSION" --yes --cleanup-tag
           fi
           gh release create "$VERSION" \
             --title "Zed $VERSION" \
-            --notes "Auto-built from hee10k/zed. Install and run 'zed update' to receive future builds." \
+            --notes "Auto-built from hee10k/zed. Install and run 'zed update' to receive future builds.
+commit: $COMMIT_SHA" \
             assets/*

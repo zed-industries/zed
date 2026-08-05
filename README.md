@@ -33,6 +33,10 @@ GitHub releases** instead of `zed.dev`:
   `zed update` polls for updates and installs them in place.
 - To point the update at a different fork, set `ZED_FORK_REPO` (e.g. `owner/repo`) at
   build time.
+- Only macOS (aarch64) and Windows (x86_64) assets are published. Remote-server
+  downloads (SSH remotes) resolve against this fork's releases too, so remote
+  development on hosts of other platforms (e.g. Linux) is not supported by these
+  builds.
 
 If `sync-fork` hits a merge conflict (e.g. upstream changed `crates/auto_update`),
 resolve it locally and push, then re-run the workflow.
