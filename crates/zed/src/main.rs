@@ -374,6 +374,9 @@ fn main() {
         #[cfg(target_os = "macos")]
         {
             use zed::mac_only_instance::*;
+            // Also listen on a Unix socket so the CLI can connect to a running
+            // LocalPath instance (not just .app bundles via LSOpenFromURLSpec).
+            let _ = crate::zed::listen_for_cli_connections(open_listener.clone());
             ensure_only_instance() != IsOnlyInstance::Yes
         }
     };
