@@ -120,6 +120,7 @@ impl TextDiffView {
             BufferDiff::new_with_base_text_buffer(
                 &source_buffer_snapshot.text,
                 clipboard_buffer.clone(),
+                buffer_diff::DiffBaseKind::Custom,
                 cx,
             )
         });
