@@ -29,7 +29,6 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 util.workspace = true
-zed_credentials_provider.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
