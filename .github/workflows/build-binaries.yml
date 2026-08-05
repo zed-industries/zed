@@ -156,8 +156,10 @@ jobs:
           merge-multiple: true
       - name: Rename assets to update-schema names
         run: |
-          mv assets/Zed-aarch64.dmg assets/zed-macos-aarch64.dmg
-          mv assets/Zed-x86_64.exe assets/zed-windows-x86_64.exe
+          dmg=$(find assets -name 'Zed-*.dmg' | head -1)
+          exe=$(find assets -name 'Zed-*.exe' | head -1)
+          mv "$dmg" assets/zed-macos-aarch64.dmg
+          mv "$exe" assets/zed-windows-x86_64.exe
           ls -la assets/
       - name: Create or update release
         env:
@@ -172,4 +174,4 @@ jobs:
             --title "Zed $VERSION" \
             --notes "Auto-built from hee10k/zed. Install and run 'zed update' to receive future builds.
             commit: $COMMIT_SHA" \
-            assets/*
+            $(find assets -type f)
