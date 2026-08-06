@@ -25,12 +25,6 @@ impl ContactFinder {
 
         Self { picker }
     }
-
-    pub fn set_query(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            picker.set_query(&query, window, cx);
-        });
-    }
 }
 
 impl Render for ContactFinder {
@@ -167,7 +161,7 @@ impl PickerDelegate for ContactFinderDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
-                .child(Label::new(user.github_login.clone()))
+                .child(Label::new(user.username.clone()))
                 .end_slot::<Icon>(icon_path.map(Icon::from_path)),
         )
     }

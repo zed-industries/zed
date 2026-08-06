@@ -1,9 +1,10 @@
-use agent_skills::{Skill, SkillIndex, encode_skill_share_link};
+use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{App, ClipboardItem, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, PromptLevel, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
+use util::paths::PathExt as _;
 
 use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
@@ -115,6 +116,12 @@ fn render_skill_row(
 ) -> AnyElement {
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
+    let skill_name = skill.name.clone();
+
+    let (skill_scope, shared_scope) = match &skill.source {
+        SkillSource::ProjectLocal { .. } => ("project", "used in this project"),
+        _ => ("global", "on this machine"),
+    };
 
     let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
         == Some(skill.directory_path.as_path());
@@ -214,21 +221,55 @@ fn render_skill_row(
                     .icon_size(IconSize::Small)
                     .tooltip(Tooltip::text("Delete Skill"))
                     .on_click(cx.listener(
-                        move |settings_window, _event, _window, cx| {
+                        move |settings_window, _event, window, cx| {
                             let directory_path = directory_path.clone();
-                            if !settings_window
+                            if settings_window
                                 .hidden_deleted_skill_directory_paths
-                                .insert(directory_path.clone())
+                                .contains(&directory_path)
                             {
                                 return;
                             }
-                            cx.notify();
+
+                            let prompt_message =
+                                format!("Delete the {skill_scope} skill \"{skill_name}\"?");
+                            let prompt_detail = format!(
+                                "This will move {} to the trash. This skill is shared with other \
+                                 agent tools {shared_scope}, so it will no longer be available to \
+                                 them either.",
+                                directory_path.compact().display(),
+                            );
+                            let answer = window.prompt(
+                                PromptLevel::Info,
+                                &prompt_message,
+                                Some(&prompt_detail),
+                                &["Delete", "Cancel"],
+                                cx,
+                            );
 
                             let app_state = workspace::AppState::global(cx);
                             let fs = app_state.fs.clone();
                             cx.spawn(async move |settings_window, cx| {
-                                let remove_result = fs
-                                    .remove_dir(
+                                if answer.await != Ok(0) {
+                                    return;
+                                }
+
+                                let confirmed = settings_window
+                                    .update(cx, |settings_window, cx| {
+                                        let inserted = settings_window
+                                            .hidden_deleted_skill_directory_paths
+                                            .insert(directory_path.clone());
+                                        if inserted {
+                                            cx.notify();
+                                        }
+                                        inserted
+                                    })
+                                    .unwrap_or(false);
+                                if !confirmed {
+                                    return;
+                                }
+
+                                let trash_result = fs
+                                    .trash(
                                         &directory_path,
                                         RemoveOptions {
                                             recursive: true,
@@ -236,9 +277,9 @@ fn render_skill_row(
                                         },
                                     )
                                     .await;
-                                if let Err(error) = remove_result {
+                                if let Err(error) = trash_result {
                                     log::error!(
-                                        "failed to delete skill directory {}: {error:#}",
+                                        "failed to move skill directory {} to trash: {error:#}",
                                         directory_path.display()
                                     );
                                     settings_window

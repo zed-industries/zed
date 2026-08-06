@@ -99,8 +99,17 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish | ShellKind::Posix => {
-                        combined_command.insert_str(0, "exec </dev/null; ");
+                    ShellKind::Posix => {
+                        // Perform the STDIN redirection prior to the actual
+                        // command on a separate line, so that it is already
+                        // active if the command contains a syntax error.
+                        // Otherwise, with -i, dash will fall back to an
+                        // interactive shell in this case.
+                        combined_command.insert_str(0, "exec </dev/null\n");
+                    }
+                    ShellKind::Fish => {
+                        combined_command.insert_str(0, "begin; ");
+                        combined_command.push_str("; end </dev/null");
                     }
                     ShellKind::Nushell
                     | ShellKind::Csh
@@ -143,8 +152,12 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Fish | ShellKind::Posix => {
-                        combined_command.insert_str(0, "exec </dev/null; ");
+                    ShellKind::Posix => {
+                        combined_command.insert_str(0, "exec </dev/null\n");
+                    }
+                    ShellKind::Fish => {
+                        combined_command.insert_str(0, "begin; ");
+                        combined_command.push_str("; end </dev/null");
                     }
                     ShellKind::Nushell
                     | ShellKind::Csh
@@ -282,7 +295,7 @@ mod test {
             .build(Some("echo".into()), &["test".to_string()]);
 
         assert_eq!(program, "fish");
-        assert_eq!(args, vec!["-i", "-c", "exec </dev/null; echo test"]);
+        assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
     }
 
     #[test]
@@ -298,7 +311,24 @@ mod test {
         assert_eq!(program, "sh");
         assert_eq!(
             args,
-            vec!["-i", "-c", "exec </dev/null; cat <<EOF\nhello\nEOF"]
+            vec!["-i", "-c", "exec </dev/null\ncat <<EOF\nhello\nEOF"]
+        );
+    }
+
+    #[test]
+    fn non_interactive_omits_interactive_flag() {
+        // Headless hosts (e.g. the eval CLI) build the agent's shell command
+        // non-interactively so it works without a controlling TTY.
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false).non_interactive();
+
+        let (program, args) = shell_builder.build(Some("echo hello".into()), &[]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(args, vec!["-c", "echo hello"]);
+        assert!(
+            !args.iter().any(|arg| arg == "-i"),
+            "non-interactive shell command must not include `-i`"
         );
     }
 

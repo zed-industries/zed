@@ -4,7 +4,9 @@ use crate::tasks::workflows::{
     deploy_docs::deploy_docs_workflow_call,
     release::{self, notify_on_failure},
     runners,
-    steps::{CommonJobConditions, NamedJob, checkout_repo, dependant_job, named},
+    steps::{
+        CommonJobConditions, CommonPermissionSets, NamedJob, checkout_repo, dependant_job, named,
+    },
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -39,6 +41,7 @@ pub fn after_release() -> Workflow {
     };
 
     named::workflow()
+        .with_minimal_permissions()
         .add_env(("TAG_NAME", TAG_NAME_ENV))
         .add_env(("IS_PRERELEASE", IS_PRERELEASE_ENV))
         .on(Event::default()
