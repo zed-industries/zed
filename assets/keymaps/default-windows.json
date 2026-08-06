@@ -956,6 +956,13 @@
     },
   },
   {
+    "context": "ProjectPanelFilter",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "project_panel::CancelFilter",
+    },
+  },
+  {
     "context": "ProjectPanel",
     "use_key_equivalents": true,
     "bindings": {

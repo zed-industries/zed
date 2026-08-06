@@ -10462,6 +10462,280 @@ async fn test_filter_entries(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_filter_collapse_does_not_touch_real_expansion_state(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "top.rs": "x",
+            "nested": {
+                "deep": {
+                    "inner.rs": "x",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let nested = find_project_entry(&panel, "root/nested", cx).unwrap();
+
+    set_filter(&panel, "-iname *.rs", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v nested",
+            "        v deep",
+            "              inner.rs",
+            "      top.rs",
+        ],
+        "the filter reaches into directories the user never expanded"
+    );
+
+    // Collapsing while filtering must fold the directory, not unfold it. Before
+    // the filter-local set existed this took the `Err` arm of `toggle_expanded`
+    // and expanded `nested` instead, invisibly, because the chevron was forced
+    // open regardless.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_expanded(nested, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > nested  <== selected", "      top.rs"],
+        "collapsing a directory during a filter hides its matches but keeps the directory"
+    );
+
+    panel.update(cx, |panel, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .id();
+        assert!(
+            !panel.state.expanded_dir_ids[&worktree_id].contains(&nested),
+            "collapsing during a filter must not write the persistent expansion state"
+        );
+    });
+
+    // ...and clicking it again re-expands, within the filtered tree.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_expanded(nested, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v nested  <== selected",
+            "        v deep",
+            "              inner.rs",
+            "      top.rs",
+        ]
+    );
+
+    // Collapse again, then drop the filter: the collapse was filter-local, so
+    // the tree returns to the user's own state rather than remembering it.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_expanded(nested, window, cx);
+    });
+    cx.run_until_parked();
+    set_filter(&panel, "", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > nested  <== selected", "      top.rs",],
+        "clearing the filter restores the original collapsed tree"
+    );
+    panel.update(cx, |panel, _| {
+        assert!(
+            panel.filter_collapsed_dir_ids.is_empty(),
+            "filter-local collapses are dropped once the filter stops applying"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_cancel_filter_clears_then_hides(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({ "a.rs": "x", "b.md": "x" }))
+        .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_filter(&panel, "-iname *.rs", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "      a.rs"]
+    );
+    // Note: the focus half of this behaviour is not asserted here. The panel is
+    // never drawn in these tests, so its focus handles are not in the dispatch
+    // tree and `window.focus` does not stick -- even via `toggle_filter`, which
+    // is what the app itself uses. What matters and is *not* covered: the first
+    // press must leave the cursor in the input, or the `ProjectPanelFilter` key
+    // context goes with it and the second press could never reach this handler.
+    // That is why `clear_filter` no longer touches focus and `cancel_filter`
+    // moves it only when the bar is actually hiding.
+
+    // First Escape empties the input but leaves the bar open.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel_filter(&CancelFilter, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update(cx, |panel, cx| {
+        assert!(
+            panel.filter_enabled,
+            "the bar stays open on the first press"
+        );
+        assert!(panel.filter_editor.read(cx).text(cx).is_empty());
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "      a.rs", "      b.md"],
+        "clearing the input unfilters the tree"
+    );
+
+    // Second Escape, with the input already empty, dismisses the bar.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel_filter(&CancelFilter, window, cx);
+    });
+    cx.run_until_parked();
+    panel.update(cx, |panel, _| {
+        assert!(
+            !panel.filter_enabled,
+            "a second press on an empty input hides the bar"
+        );
+    });
+}
+
+/// The keyboard path must edit the same state the chevron does. `left`/`right`
+/// and expand-all go through their own functions, so fixing only the chevron
+/// would leave them writing `expanded_dir_ids` behind a filtered tree.
+#[gpui::test]
+async fn test_filter_collapse_via_keyboard(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "top.rs": "x",
+            "nested": { "deep": { "inner.rs": "x" } },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let nested = find_project_entry(&panel, "root/nested", cx).unwrap();
+    let worktree_id = panel.update(cx, |panel, cx| {
+        panel
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .id()
+    });
+
+    set_filter(&panel, "-iname *.rs", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.selection = Some(SelectedEntry {
+            worktree_id,
+            entry_id: nested,
+        });
+        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > nested  <== selected", "      top.rs"],
+        "`left` collapses within the filtered tree"
+    );
+    panel.update(cx, |panel, _| {
+        assert!(
+            !panel.state.expanded_dir_ids[&worktree_id].contains(&nested),
+            "`left` must not write the persistent expansion state while filtering"
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.selection = Some(SelectedEntry {
+            worktree_id,
+            entry_id: nested,
+        });
+        panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v nested  <== selected",
+            "        v deep",
+            "              inner.rs",
+            "      top.rs",
+        ],
+        "`right` re-expands within the filtered tree"
+    );
+    panel.update(cx, |panel, _| {
+        assert!(
+            !panel.state.expanded_dir_ids[&worktree_id].contains(&nested),
+            "`right` must not write the persistent expansion state while filtering"
+        );
+    });
+
+    // Collapse-all folds the filtered tree instead of wiping expansion state
+    // the user cannot see.
+    let before = panel.update(cx, |panel, _| panel.state.expanded_dir_ids.clone());
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &["v root", "    > nested  <== selected", "      top.rs"],
+        "collapse-all folds the filtered tree"
+    );
+    panel.update(cx, |panel, _| {
+        assert_eq!(
+            panel.state.expanded_dir_ids, before,
+            "collapse-all must leave the persistent expansion state untouched while filtering"
+        );
+    });
+}
+
 fn set_filter(panel: &Entity<ProjectPanel>, text: &str, cx: &mut VisualTestContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.filter_enabled = true;
@@ -10469,6 +10743,9 @@ fn set_filter(panel: &Entity<ProjectPanel>, text: &str, cx: &mut VisualTestConte
             .filter_editor
             .update(cx, |editor, cx| editor.set_text(text, window, cx));
     });
+    // Typing is debounced, so the tree is only rebuilt once the timer fires.
+    cx.executor()
+        .advance_clock(FILTER_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 }
 

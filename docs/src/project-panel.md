@@ -158,13 +158,16 @@ A filter input sits above the tree and narrows it down using predicates borrowed
 from `find(1)`. It is shown by default; {#action project_panel::ToggleFilter}
 hides it (and clears whatever was typed).
 
+With the cursor in the input, `escape` clears it; a second `escape` on an
+already-empty input hides the bar.
+
 | Predicate | Meaning                                | Example                             |
 | --------- | -------------------------------------- | ----------------------------------- |
-| `-name`   | Case-sensitive glob on the file name    | `-name *.rs`                        |
-| `-iname`  | Case-insensitive glob on the file name  | `-iname *.RS`                       |
-| `-size`   | File size                               | `-size 9` (larger than 9 KiB)       |
-| `-mtime`  | Age in whole days                       | `-mtime -7` (modified in last week) |
-| `-mmin`   | Age in whole minutes                    | `-mmin +30` (untouched for 30 min)  |
+| `-name`   | Case-sensitive glob on the file name   | `-name *.rs`                        |
+| `-iname`  | Case-insensitive glob on the file name | `-iname *.RS`                       |
+| `-size`   | File size                              | `-size 9` (larger than 9 KiB)       |
+| `-mtime`  | Age in whole days                      | `-mtime -7` (modified in last week) |
+| `-mmin`   | Age in whole minutes                   | `-mmin +30` (untouched for 30 min)  |
 
 `+N` means "greater than N" and `-N` means "less than N". Predicates combine
 with AND, and because they are whitespace-separated a glob cannot contain
@@ -183,6 +186,11 @@ The predicates apply to **files**. Directories are shown only when they lead to
 a matching file, so `-iname src` matches nothing on its own. While a filter is
 active the tree is searched in full, including directories you have not
 expanded; clearing the filter restores your own expansion state untouched.
+
+You can still collapse a directory while a filter is active, to fold away a
+group of matches. Those collapses last only as long as the filter — they are
+kept separate from your own expansion state and are forgotten when the filter
+is cleared.
 
 The same syntax works in the [project search](./finding-navigating.md#file-metadata-filters)
 filter row.
