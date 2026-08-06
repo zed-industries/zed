@@ -2554,33 +2554,38 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
+
                             let column_count = alignments.len();
-
-                            let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
-                                .id(("markdown-table-scrollbar", range.start))
-                                .notify_content();
-
-                            let table_div = div()
-                                .id(("table", range.start))
-                                .grid()
-                                .grid_cols(column_count as u16)
-                                .when(self.style.table_columns_min_size, |this| {
-                                    this.grid_cols_min_content(column_count as u16)
-                                })
-                                .when(!self.style.table_columns_min_size, |this| {
-                                    this.grid_cols(column_count as u16)
-                                })
-                                .w_full()
-                                .mb_2()
-                                .border(px(1.5))
-                                .border_color(cx.theme().colors().border)
-                                .rounded_sm()
-                                .map(|mut div| {
-                                    div.style().restrict_scroll_to_axis = Some(true);
-                                    div
-                                })
-                                .custom_scrollbars(scrollbars, window, cx);
-                            builder.push_div(table_div, range, markdown_end);
+                            builder.push_div(
+                                div()
+                                    .id(("table", range.start))
+                                    .grid()
+                                    .grid_cols(column_count as u16)
+                                    .when(self.style.table_columns_min_size, |this| {
+                                        this.grid_cols_min_content(column_count as u16)
+                                    })
+                                    .when(!self.style.table_columns_min_size, |this| {
+                                        this.grid_cols(column_count as u16)
+                                    })
+                                    .w_full()
+                                    .mb_2()
+                                    .border(px(1.5))
+                                    .border_color(cx.theme().colors().border)
+                                    .rounded_sm()
+                                    .map(|mut div| {
+                                        div.style().restrict_scroll_to_axis = Some(true);
+                                        div
+                                    })
+                                    .custom_scrollbars(
+                                        Scrollbars::new(ScrollAxes::Horizontal)
+                                            .id(("markdown-table-scrollbar", range.start))
+                                            .notify_content(),
+                                        window,
+                                        cx,
+                                    ),
+                                range,
+                                markdown_end,
+                            );
                         }
                         MarkdownTag::TableHead => {
                             builder.table.start_head();
@@ -5948,9 +5953,11 @@ mod tests {
     #[gpui::test]
     fn test_wide_table_scrolls_horizontally(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
-        let source = "| left | right |\n\
-                      | --- | --- |\n\
-                      | value | far_right_cell_content_that_is_much_wider_than_the_viewport |";
+        let source = indoc::indoc! {r#"
+            | left | right |
+            | --- | --- |
+            | value | far_right_cell_content_that_is_much_wider_than_the_viewport |
+        "#};
         let left_cell_start = source.find("left").expect("left cell should be present");
         let left_cell_range = left_cell_start..left_cell_start + "left".len();
         let right_cell = "far_right_cell_content_that_is_much_wider_than_the_viewport";
