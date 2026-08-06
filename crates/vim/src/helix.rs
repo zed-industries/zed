@@ -1882,7 +1882,7 @@ mod test {
 
     use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
     use crate::{
-        HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
+        HELIX_JUMP_OVERLAY_KEY, SwitchToHelixNormalMode, Vim, VimAddon,
         state::{Mode, Operator},
         test::VimTestContext,
     };
@@ -4035,7 +4035,7 @@ mod test {
                 store.update_user_settings(cx, |settings| {
                     settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
                         colors: ThemeColorsContent {
-                            vim_helix_jump_label_foreground: Some("#00ff00".to_string()),
+                            vim_helix_jump_label_foreground: Some("#00ff00".into()),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -4670,5 +4670,25 @@ mod test {
         cx.assert_state("  «aaˇ»  \nbbb\nccc\n", Mode::HelixNormal);
         cx.simulate_keystrokes("x");
         cx.assert_state("«  aa  \nˇ»bbb\nccc\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_with_multi_keybinding_to_helix_normal(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "j j",
+                SwitchToHelixNormalMode,
+                Some("vim_mode == insert"),
+            )]);
+        });
+
+        cx.set_state("hello worldˇ\n", Mode::Insert);
+        cx.simulate_keystrokes("j j");
+        cx.assert_state("hello worldˇ\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("hello world\nˇ\n", Mode::Insert);
     }
 }
