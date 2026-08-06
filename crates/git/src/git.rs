@@ -67,6 +67,11 @@ actions!(
         StageFile,
         /// Unstages the current file.
         UnstageFile,
+        // per-section
+        /// Stages every entry in the section containing the selected entry.
+        StageSection,
+        /// Unstages every entry in the section containing the selected entry.
+        UnstageSection,
         // repo-wide
         /// Stages all changes in the repository.
         StageAll,
