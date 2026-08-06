@@ -4067,7 +4067,7 @@ impl ThreadView {
                 .read(cx)
                 .is_compaction_expanded(entry_ix)
         {
-            self.list_state.anchor_scroll_position();
+            self.list_state.pause_following_tail();
         }
 
         self.entry_view_state.update(cx, |state, _cx| {

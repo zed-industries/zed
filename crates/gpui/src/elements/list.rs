@@ -839,16 +839,6 @@ impl ListState {
         let item_bounds = self.bounds_for_item(ix)?;
         Some(item_bounds.top() >= viewport_bounds.bottom())
     }
-
-    /// Anchors the list at its current viewport position.
-    ///
-    /// If tail following is active, it is suspended without changing the
-    /// visible position. Tail following can re-activate when the user scrolls
-    /// to the end.
-    pub fn anchor_scroll_position(&self) {
-        let scroll_top = self.logical_scroll_top();
-        self.scroll_to(scroll_top);
-    }
 }
 
 impl StateInner {
@@ -2412,75 +2402,6 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 7);
         assert_eq!(offset.offset_in_item, px(40.));
-        assert!(state.is_following_tail());
-    }
-
-    #[gpui::test]
-    fn test_anchor_scroll_position(cx: &mut TestAppContext) {
-        let cx = cx.add_empty_window();
-        let expanded_item_height = Rc::new(Cell::new(50usize));
-        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
-
-        struct TestView {
-            state: ListState,
-            expanded_item_height: Rc<Cell<usize>>,
-        }
-
-        impl Render for TestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                let expanded_item_height = self.expanded_item_height.get();
-
-                list(self.state.clone(), move |index, _, _| {
-                    let height = match index {
-                        8 => expanded_item_height,
-                        _ => 50,
-                    };
-
-                    div().h(px(height as f32)).w_full().into_any()
-                })
-                .w_full()
-                .h_full()
-            }
-        }
-
-        let view = cx.update(|_, cx| {
-            cx.new(|_| TestView {
-                state: state.clone(),
-                expanded_item_height: expanded_item_height.clone(),
-            })
-        });
-
-        state.set_follow_mode(FollowMode::Tail);
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-        assert!(state.is_following_tail());
-
-        // Keep track of the scroll offset before anchoring to ensure that,
-        // after resizing the items, it is kept seeing as tail following is not
-        // active.
-        let offset_before = state.logical_scroll_top();
-        state.anchor_scroll_position();
-        let offset_after = state.logical_scroll_top();
-        assert_eq!(offset_after.item_ix, offset_before.item_ix);
-        assert_eq!(offset_after.offset_in_item, offset_before.offset_in_item);
-        assert!(!state.is_following_tail());
-
-        expanded_item_height.set(200);
-        state.remeasure_items(8..9);
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-
-        let offset_after = state.logical_scroll_top();
-        assert_eq!(offset_after.item_ix, offset_before.item_ix);
-        assert_eq!(offset_after.offset_in_item, offset_before.offset_in_item);
-        assert!(!state.is_following_tail());
-
-        state.scroll_to_end();
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.into_any_element()
-        });
         assert!(state.is_following_tail());
     }
 
