@@ -789,12 +789,19 @@ message GetCommitDataResponse {
 
 message GitLogSourceAll {}
 
+message GitLogSourceSelection {
+  string path = 1;
+  uint32 start_line = 2;
+  uint32 end_line = 3;
+}
+
 message GitLogSource {
   oneof source {
     GitLogSourceAll all = 1;
     string branch = 2;
     string sha = 3;
     string path = 4;
+    GitLogSourceSelection selection = 5;
   }
 }
 

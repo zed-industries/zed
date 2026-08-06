@@ -734,9 +734,28 @@ pub enum LogSource {
     Branch(SharedString),
     Sha(Oid),
     Path(RepoPath),
+    /// History for a line range within a file. Uses
+    /// `git log -L <start>,<end>:<path> --no-patch`. Git tracks the selected
+    /// lines across commit history.
+    Selection {
+        path: RepoPath,
+        start_line: u32,
+        end_line: u32,
+    },
 }
 
 impl LogSource {
+    pub fn is_path_history(&self) -> bool {
+        self.path().is_some()
+    }
+
+    pub fn path(&self) -> Option<&RepoPath> {
+        match self {
+            LogSource::Path(path) | LogSource::Selection { path, .. } => Some(path),
+            LogSource::All | LogSource::Branch(_) | LogSource::Sha(_) => None,
+        }
+    }
+
     fn get_args(&self) -> Vec<Cow<'_, str>> {
         match self {
             LogSource::All => vec![
@@ -752,6 +771,19 @@ impl LogSource {
                 Cow::Borrowed("--follow"),
                 Cow::Borrowed("--"),
                 Cow::Borrowed(path.as_unix_str()),
+            ],
+            LogSource::Selection {
+                path,
+                start_line,
+                end_line,
+            } => vec![
+                Cow::Owned(format!(
+                    "-L {},{}:{}",
+                    start_line,
+                    end_line,
+                    path.as_unix_str()
+                )),
+                Cow::Borrowed("--no-patch"),
             ],
         }
     }
@@ -5290,6 +5322,124 @@ mod tests {
         let graph_data = request_rx.recv().await.unwrap();
         assert_eq!(graph_data.len(), 1);
         assert_eq!(graph_data[0].sha, commit_sha);
+    }
+
+    #[test]
+    fn test_log_source_selection_get_args() {
+        let path = RepoPath::new("src/main.rs").unwrap();
+        let source = LogSource::Selection {
+            path: path.clone(),
+            start_line: 3,
+            end_line: 5,
+        };
+        let args: Vec<String> = source.get_args().iter().map(|s| s.to_string()).collect();
+        assert_eq!(args, vec!["-L 3,5:src/main.rs", "--no-patch"]);
+        assert!(source.is_path_history());
+        assert_eq!(source.path(), Some(&path));
+        assert!(!LogSource::All.is_path_history());
+        assert_eq!(LogSource::All.path(), None);
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_accepts_selection_log_source(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        // Commit 1: add file with 5 lines.
+        fs::write(
+            repo_dir.path().join("file.txt"),
+            "line1\nline2\nline3\nline4\nline5\n",
+        )
+        .unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "add file"]);
+
+        // Commit 2: modify line 3.
+        fs::write(
+            repo_dir.path().join("file.txt"),
+            "line1\nline2\nline3 changed\nline4\nline5\n",
+        )
+        .unwrap();
+        git_command(repo_dir.path(), ["commit", "-am", "edit line 3"]);
+
+        // Commit 3: modify line 1 (does not touch lines 2-4).
+        fs::write(
+            repo_dir.path().join("file.txt"),
+            "line1 changed\nline2\nline3 changed\nline4\nline5\n",
+        )
+        .unwrap();
+        git_command(repo_dir.path(), ["commit", "-am", "edit line 1"]);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let (request_tx, request_rx) = async_channel::unbounded();
+
+        repo.initial_graph_data(
+            LogSource::Selection {
+                path: RepoPath::new("file.txt").unwrap(),
+                start_line: 3,
+                end_line: 3,
+            },
+            LogOrder::DateOrder,
+            request_tx,
+        )
+        .await
+        .unwrap();
+
+        let graph_data = request_rx.recv().await.unwrap();
+        // Line 3 was touched by commit 1 (added) and commit 2 (edited). Commit 3
+        // only touched line 1, so it must be filtered out by `git log -L`.
+        assert_eq!(graph_data.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_selection_preserves_git_error(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file.txt"), "line1\nline2\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "add"]);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let (request_tx, _request_rx) = async_channel::unbounded();
+
+        let err = repo
+            .initial_graph_data(
+                LogSource::Selection {
+                    path: RepoPath::new("file.txt").unwrap(),
+                    start_line: 99,
+                    end_line: 100,
+                },
+                LogOrder::DateOrder,
+                request_tx,
+            )
+            .await
+            .expect_err("should error on untouched range");
+
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("has only 2 lines"),
+            "expected git's line range error, got: {msg}"
+        );
     }
 
     #[gpui::test]
