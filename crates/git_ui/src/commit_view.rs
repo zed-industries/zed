@@ -32,6 +32,7 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use theme::ActiveTheme;
 use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
@@ -526,18 +527,82 @@ impl CommitView {
                                         // to the file start falls above the file's first line and
                                         // gets clipped to the previous file's content, causing the
                                         // anchor to drift as later files are inserted above.
+                                        //
+                                        // The visible line count is only known once the editor has
+                                        // been laid out at least once, so on the first frame it may
+                                        // still be None. In that case pin the anchor (keeping the
+                                        // mapping correct) and recenter once the first layout
+                                        // provides a line count. Nothing has been rendered yet at
+                                        // that point, so this does not flash.
                                         let margin = editor
                                             .visible_line_count()
-                                            .map(|lines| ((lines - 1.0) / 2.0).floor())
-                                            .unwrap_or(0.0);
-                                        editor.set_scroll_anchor(
-                                            ScrollAnchor {
-                                                anchor,
-                                                offset: gpui::point(0.0, -margin),
-                                            },
-                                            window,
-                                            cx,
-                                        );
+                                            .map(|lines| ((lines - 1.0) / 2.0).floor().max(0.0));
+                                        if let Some(margin) = margin {
+                                            editor.set_scroll_anchor(
+                                                ScrollAnchor {
+                                                    anchor,
+                                                    offset: gpui::point(0.0, -margin),
+                                                },
+                                                window,
+                                                cx,
+                                            );
+                                        } else {
+                                            editor.set_scroll_anchor(
+                                                ScrollAnchor {
+                                                    anchor,
+                                                    offset: gpui::point(0.0, 0.0),
+                                                },
+                                                window,
+                                                cx,
+                                            );
+                                            // Recenter once the editor's first layout makes the
+                                            // visible line count known.
+                                            let editor: WeakEntity<Editor> =
+                                                cx.entity().downgrade();
+                                            let anchor = anchor;
+                                            cx.spawn_in(window, async move |_, cx| {
+                                                for _ in 0..120 {
+                                                    let done = match editor.update_in(
+                                                        cx,
+                                                        |editor, window, cx| {
+                                                            let margin = editor
+                                                                .visible_line_count()
+                                                                .map(|lines| {
+                                                                    ((lines - 1.0) / 2.0)
+                                                                        .floor()
+                                                                        .max(0.0)
+                                                                });
+                                                            if let Some(margin) = margin {
+                                                                editor.set_scroll_anchor(
+                                                                    ScrollAnchor {
+                                                                        anchor,
+                                                                        offset: gpui::point(
+                                                                            0.0,
+                                                                            -margin,
+                                                                        ),
+                                                                    },
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                                true
+                                                            } else {
+                                                                false
+                                                            }
+                                                        },
+                                                    ) {
+                                                        Ok(done) => done,
+                                                        Err(_) => break,
+                                                    };
+                                                    if done {
+                                                        break;
+                                                    }
+                                                    cx.background_executor()
+                                                        .timer(Duration::from_millis(16))
+                                                        .await;
+                                                }
+                                            })
+                                            .detach();
+                                        }
                                     });
                                 });
                             })?;
