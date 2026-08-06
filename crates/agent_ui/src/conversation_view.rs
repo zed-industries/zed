@@ -1855,8 +1855,26 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::PromptUpdated => {
-                if !is_subagent && thread.read(cx).is_draft_thread() {
-                    self.schedule_draft_prompt_persist(cx);
+                if !is_subagent {
+                    let is_draft_thread = ThreadMetadataStore::try_global(cx)
+                        .and_then(|store| {
+                            store
+                                .read(cx)
+                                .entry(self.thread_id)
+                                .map(|metadata| metadata.is_draft())
+                        })
+                        .unwrap_or_else(|| thread.read(cx).is_draft_thread());
+                    let is_native_thread = thread
+                        .read(cx)
+                        .connection()
+                        .clone()
+                        .downcast::<agent::NativeAgentConnection>()
+                        .is_some();
+                    if is_draft_thread {
+                        self.schedule_draft_prompt_persist(cx);
+                    } else if !is_native_thread {
+                        self.schedule_acp_session_client_state_persist(cx);
+                    }
                 }
                 cx.notify();
             }
@@ -1885,6 +1903,42 @@ impl ConversationView {
                 } else {
                     crate::draft_prompt_store::write(thread_id, &snapshot, cx)
                 })
+            });
+            if let Ok(Some(persist)) = persist {
+                persist.await.log_err();
+            }
+        }));
+    }
+
+    fn schedule_acp_session_client_state_persist(&mut self, cx: &mut Context<Self>) {
+        let agent_id = self.connection_key.id();
+        let thread_id = self.thread_id;
+        self.draft_prompt_persist_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(DRAFT_PROMPT_PERSIST_DEBOUNCE)
+                .await;
+            let persist = this.update(cx, |this, cx| {
+                let thread = this.root_thread(cx)?;
+                let thread = thread.read(cx);
+                let is_draft_thread = ThreadMetadataStore::try_global(cx)
+                    .and_then(|store| {
+                        store
+                            .read(cx)
+                            .entry(thread_id)
+                            .map(|metadata| metadata.is_draft())
+                    })
+                    .unwrap_or_else(|| thread.is_draft_thread());
+                if is_draft_thread
+                    || thread
+                        .connection()
+                        .clone()
+                        .downcast::<agent::NativeAgentConnection>()
+                        .is_some()
+                {
+                    return None;
+                }
+
+                Some(thread.persist_client_state_draft_prompt(agent_id.clone(), cx))
             });
             if let Ok(Some(persist)) = persist {
                 persist.await.log_err();
