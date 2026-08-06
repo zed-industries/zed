@@ -61,6 +61,9 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Shows the git history for the selected line range in the active editor.
+        /// If no selection is active, falls back to the current line.
+        FileHistoryForSelection,
         /// Opens the selected file in the editor without a diff view.
         ViewFile,
         /// Stages the current file.
