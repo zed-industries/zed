@@ -8,6 +8,7 @@ use crate::{
     command_json::{evaluate_json_command, evaluate_yaml_command},
     devcontainer_api::DevContainerError,
     devcontainer_json::MountDefinition,
+    devcontainer_manifest::command_to_shell_string,
 };
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -376,14 +377,19 @@ impl DockerClient for Docker {
 
         command.arg("sh");
 
-        let mut inner_program_script: Vec<String> =
-            vec![inner_command.get_program().display().to_string()];
-        let mut args: Vec<String> = inner_command
-            .get_args()
-            .map(|arg| arg.display().to_string())
-            .collect();
-        inner_program_script.append(&mut args);
-        command.args(&["-c", &inner_program_script.join(" ")]);
+        // The inner command is either a plain program with arguments, a
+        // string-form lifecycle command wrapped as `/bin/sh -c <script>`, or
+        // (for the postStartCommand marker) a multi-line script passed as the
+        // program with no arguments. `command_to_shell_string` single-quotes
+        // each argument so the outer shell hands them to the inner command
+        // verbatim instead of re-interpreting shell metacharacters; a bare
+        // program is passed through unquoted so it runs as a script.
+        let inner_program_script = if inner_command.get_args().next().is_none() {
+            inner_command.get_program().display().to_string()
+        } else {
+            command_to_shell_string(&inner_command)
+        };
+        command.args(&["-c", &inner_program_script]);
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error running command {e} in container exec");
