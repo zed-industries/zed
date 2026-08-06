@@ -896,6 +896,92 @@ fn test_combined_injections_inside_injections(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_injection_content_clipped_to_parent_gaps(cx: &mut App) {
+    // ERB -> HTML -> Ruby: the ERB `<%= %>` directive is excluded from the combined HTML
+    // layer, so the injected Ruby layer must not re-introduce those excluded bytes.
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    registry.add(Arc::new(erb_lang()));
+    registry.add(Arc::new(ruby_lang()));
+    // A variant of HTML that injects Ruby into `<script>` bodies.
+    let html = Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_html::LANGUAGE.into()),
+    )
+    .with_highlights_query("(tag_name) @tag")
+    .unwrap()
+    .with_injection_query(
+        r#"
+            (script_element
+              (raw_text) @injection.content
+              (#set! injection.language "ruby"))
+        "#,
+    )
+    .unwrap();
+    registry.add(Arc::new(html));
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+            <script>
+            a.first
+            <%= b.second %>
+            c.third
+            </script>
+        "#
+        .unindent(),
+    );
+
+    let erb = registry
+        .language_for_name("ERB")
+        .now_or_never()
+        .unwrap()
+        .unwrap();
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(erb, &buffer);
+
+    // Ruby should see only "a.first" and "c.third", not the excluded `<%= b.second %>` directive.
+    let ruby_layers: Vec<String> = syntax_map
+        .layers(&buffer.snapshot())
+        .into_iter()
+        .filter(|layer| layer.language.name().as_ref() == "Ruby")
+        .map(|layer| layer.node().to_sexp())
+        .collect();
+    assert!(
+        ruby_layers.iter().any(|sexp| sexp
+            == "(program (call receiver: (identifier) method: (identifier)) \
+                (call receiver: (identifier) method: (identifier)))"),
+        "expected a clean two-call Ruby layer for the script body, got: {ruby_layers:#?}"
+    );
+    assert!(
+        ruby_layers.iter().all(|sexp| !sexp.contains("ERROR")),
+        "injected Ruby layer should not span the excluded `<%= %>` directive, got: {ruby_layers:#?}"
+    );
+
+    // Highlighting still lands on each method call, including `third` after the gap.
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["method"],
+        "
+            <script>
+            a.«first»
+            <%= b.«second» %>
+            c.«third»
+            </script>
+        ",
+    );
+}
+
+#[gpui::test]
 fn test_empty_combined_injections_inside_injections(cx: &mut App) {
     let (buffer, syntax_map) = test_edit_sequence(
         "Markdown",
