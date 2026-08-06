@@ -4111,7 +4111,7 @@ dependencies = [
 [[package]]
 name = "cosmic-text"
 version = "0.19.0"
-source = "git+https://github.com/jotuel/cosmic-text.git?branch=test-in-zed#f9c8a8a35736163273f83aacfd11e5835841b532"
+source = "git+https://github.com/jotuel/cosmic-text.git?branch=test-in-zed-2#4a9a418b9463ca182e4d7ae279ee72e4244b6175"
 dependencies = [
  "bitflags 2.13.1",
  "fontdb",
@@ -4122,6 +4122,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "self_cell",
  "skrifa 0.40.0",
+ "smallvec",
  "smol_str",
  "swash",
  "sys-locale",
