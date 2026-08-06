@@ -2210,7 +2210,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2230,7 +2230,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -3887,17 +3887,16 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "collections",
  "credentials_provider",
- "dirs",
  "futures 0.3.32",
  "gpui",
  "http_client",
+ "language_model",
  "log",
- "paths",
  "serde",
  "serde_json",
- "settings",
- "zed_credentials_provider",
+ "util",
 ]
 
 [[package]]
@@ -5450,22 +5449,25 @@ dependencies = [
 
 [[package]]
 name = "dugong"
-version = "0.6.2"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+version = "0.7.0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
+ "web-time",
 ]
 
 [[package]]
 name = "dugong-graphlib"
-version = "0.6.2"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+version = "0.7.0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6115,7 +6117,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7336,7 +7338,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7898,6 +7900,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
+ "tracing",
  "ttf-parser",
  "unicode-segmentation",
  "url",
@@ -7910,6 +7913,7 @@ dependencies = [
  "windows 0.61.3",
  "zed-font-kit",
  "zed-scap",
+ "ztracing",
 ]
 
 [[package]]
@@ -8845,7 +8849,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.56.0",
 ]
 
 [[package]]
@@ -10775,13 +10779,14 @@ dependencies = [
 
 [[package]]
 name = "manatee"
-version = "0.6.2"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+version = "0.7.0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "indexmap 2.14.0",
  "nalgebra",
  "rustc-hash 2.1.1",
  "thiserror 2.0.17",
+ "web-time",
 ]
 
 [[package]]
@@ -11070,14 +11075,17 @@ dependencies = [
  "merman",
  "quick-xml 0.38.3",
  "serde_json",
+ "tracing",
  "usvg",
+ "ztracing",
 ]
 
 [[package]]
 name = "merman"
-version = "0.6.2"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+version = "0.7.0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
+ "chrono",
  "merman-core",
  "merman-render",
  "thiserror 2.0.17",
@@ -11085,8 +11093,8 @@ dependencies = [
 
 [[package]]
 name = "merman-core"
-version = "0.6.2"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+version = "0.7.0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "chrono",
  "euclid",
@@ -11107,12 +11115,13 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
 name = "merman-render"
-version = "0.6.2"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+version = "0.7.0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -11121,7 +11130,6 @@ dependencies = [
  "manatee",
  "merman-core",
  "pulldown-cmark 0.12.2",
- "regex",
  "roughr-merman",
  "rustc-hash 2.1.1",
  "ryu-js",
@@ -11131,6 +11139,7 @@ dependencies = [
  "thiserror 2.0.17",
  "unicode-width",
  "url",
+ "web-time",
 ]
 
 [[package]]
@@ -14473,7 +14482,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.11.1",
  "heck 0.5.0",
- "itertools 0.11.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "once_cell",
@@ -14506,7 +14515,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -15734,10 +15743,11 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
+source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "derive_builder",
  "euclid",
+ "getrandom 0.2.16",
  "num-traits",
  "palette",
  "points_on_curve",
@@ -15959,7 +15969,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -18568,7 +18578,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -19495,7 +19505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -21600,7 +21610,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -23263,7 +23273,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.15.0"
+version = "1.16.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -23432,6 +23442,7 @@ dependencies = [
  "workspace",
  "zed-reqwest",
  "zed_actions",
+ "zed_credentials_provider",
  "zed_env_vars",
  "zlog",
  "zlog_settings",
