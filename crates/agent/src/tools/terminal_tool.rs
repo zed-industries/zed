@@ -1358,9 +1358,11 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
         let path_style = project.path_style(cx);
         let worktree_roots = project
             .worktrees(cx)
-            .map(|worktree| {
+            .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
-                (worktree.root_name_str(), worktree.abs_path().to_path_buf())
+                // Skip single-file worktrees: a file can't be a working directory.
+                let root_dir = worktree.root_dir()?;
+                Some((worktree.root_name_str(), root_dir.to_path_buf()))
             })
             .collect::<Vec<_>>();
 
