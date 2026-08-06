@@ -54,6 +54,12 @@ use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
 
+const MERMAID_MAX_ZOOM: f32 = 2.0;
+/// Zoom levels within this distance of 1.0 snap back to exactly 1.0 so users
+/// can easily return to the default size.
+const MERMAID_ZOOM_SNAP_TOLERANCE: f32 = 0.05;
+const MERMAID_ZOOM_DEBOUNCE: Duration = Duration::from_millis(300);
+
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
@@ -61,6 +67,9 @@ pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> +
 type UrlHoverCallback = Rc<dyn Fn(Option<SharedString>, &mut Window, &mut App)>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
+/// Invoked when a mermaid diagram's zoom level changes (via scroll gesture or
+/// the reset button), so a scroll container can keep the diagram anchored.
+pub type MermaidZoomCallback = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -389,6 +398,53 @@ impl MarkdownStyle {
     }
 }
 
+/// Per-diagram view state, keyed by source offset in [`Markdown::mermaid_views`].
+struct MermaidViewState {
+    /// Whether the source code is shown instead of the rendered diagram.
+    showing_code: bool,
+    /// The display scale relative to the diagram's natural size; 1.0 is 1:1.
+    zoom: f32,
+    /// Whether the user zoomed out to the fit-to-width floor. While set, the
+    /// zoom tracks the container width so the diagram stays fully visible
+    /// when the container is resized, instead of keeping a stale absolute
+    /// zoom computed against the old width.
+    zoomed_to_fit: bool,
+    /// Horizontal scroll position, used when the diagram overflows.
+    scroll_handle: ScrollHandle,
+    /// The pending debounced re-raster scheduled by the last zoom change.
+    debounce_task: Option<Task<()>>,
+    /// Overrides the scroll container width, which tests can't obtain from
+    /// the scroll handle since its bounds are only set during layout.
+    #[cfg(test)]
+    container_width_for_test: Option<Pixels>,
+}
+
+impl MermaidViewState {
+    /// The width of the diagram's scroll container as of the last layout,
+    /// if it has been laid out.
+    fn container_width(&self) -> Option<Pixels> {
+        #[cfg(test)]
+        if let Some(width) = self.container_width_for_test {
+            return Some(width);
+        }
+        Some(self.scroll_handle.bounds().size.width).filter(|width| *width > px(0.))
+    }
+}
+
+impl Default for MermaidViewState {
+    fn default() -> Self {
+        Self {
+            showing_code: false,
+            zoom: 1.0,
+            zoomed_to_fit: false,
+            scroll_handle: ScrollHandle::new(),
+            debounce_task: None,
+            #[cfg(test)]
+            container_width_for_test: None,
+        }
+    }
+}
+
 pub struct Markdown {
     source: SharedString,
     selection: Selection,
@@ -408,7 +464,12 @@ pub struct Markdown {
     options: MarkdownOptions,
     mermaid_state: MermaidState,
     _mermaid_theme_subscription: Option<Subscription>,
-    mermaid_showing_code: HashSet<usize>,
+    /// Per-diagram view state (current tab, zoom, scroll position, and pending
+    /// debounced re-raster) keyed by source offset. Distinct from
+    /// [`MermaidState`], which caches the rendered diagrams themselves keyed by
+    /// contents. All entries are retained against the parsed diagrams on each
+    /// reparse, so a single map keeps that bookkeeping in one place.
+    mermaid_views: HashMap<usize, MermaidViewState>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -603,7 +664,7 @@ impl Markdown {
             options,
             mermaid_state: MermaidState::default(),
             _mermaid_theme_subscription: theme_subscription,
-            mermaid_showing_code: HashSet::default(),
+            mermaid_views: HashMap::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -660,19 +721,159 @@ impl Markdown {
             return;
         }
 
-        self.mermaid_state.clear();
-        self.mermaid_state.update(&self.parsed_markdown, cx);
+        self.mermaid_state.clear(cx);
+        let mermaid_views = &self.mermaid_views;
+        self.mermaid_state.update(
+            &self.parsed_markdown,
+            |source_offset| {
+                mermaid_views
+                    .get(&source_offset)
+                    .map_or(1.0, |view| view.zoom)
+            },
+            cx,
+        );
         cx.notify();
     }
 
     pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
-        self.mermaid_showing_code.contains(&source_offset)
+        self.mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.showing_code)
     }
 
     pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
-        if !self.mermaid_showing_code.remove(&source_offset) {
-            self.mermaid_showing_code.insert(source_offset);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.showing_code = !view.showing_code;
+    }
+
+    pub(crate) fn mermaid_zoom_level(&self, source_offset: usize) -> f32 {
+        self.mermaid_views
+            .get(&source_offset)
+            .map_or(1.0, |view| view.zoom)
+    }
+
+    /// The smallest zoom level for a diagram: the scale that makes it span
+    /// the content width, capped at 1.0 so diagrams that already fit are
+    /// never zoomed out below their natural size. Falls back to 1.0 when the
+    /// diagram has no raster yet or the container hasn't been laid out.
+    fn mermaid_min_zoom_level(&self, source_offset: usize) -> f32 {
+        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+            return 1.0;
+        };
+        let Some(natural_size) = self.mermaid_state.natural_size(&diagram.contents) else {
+            return 1.0;
+        };
+        let Some(container_width) = self
+            .mermaid_views
+            .get(&source_offset)
+            .and_then(|view| view.container_width())
+        else {
+            return 1.0;
+        };
+        if natural_size.width <= container_width {
+            return 1.0;
         }
+        container_width / natural_size.width
+    }
+
+    pub(crate) fn set_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        zoom: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        let requested_zoom = zoom;
+        let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
+        if (zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE {
+            zoom = 1.0;
+        }
+        // The user zoomed out to (or past) the fit-to-width floor. From here
+        // on the zoom tracks the container width (see
+        // `effective_mermaid_zoom_level`), until the user zooms back in. A
+        // zoom landing exactly at 1.0 only sticks when it was clamped, so
+        // resetting to the natural size never turns tracking on.
+        let zoomed_to_fit = requested_zoom < min_zoom || (zoom <= min_zoom && zoom < 1.0);
+
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.zoom = zoom;
+        view.zoomed_to_fit = zoomed_to_fit;
+        view.debounce_task = Some(debounce_task);
+        cx.notify();
+    }
+
+    /// The zoom level to display a diagram at, syncing a fit-to-width zoom
+    /// with the current container width. Called at render time so that a
+    /// fully zoomed-out diagram stays stuck to the container width when the
+    /// container is resized, rather than keeping a stale absolute zoom.
+    pub(crate) fn effective_mermaid_zoom_level(
+        &mut self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> f32 {
+        let zoom = self.mermaid_zoom_level(source_offset);
+        let zoomed_to_fit = self
+            .mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.zoomed_to_fit);
+        if !zoomed_to_fit {
+            return zoom;
+        }
+        let min_zoom = self.mermaid_min_zoom_level(source_offset);
+        if (min_zoom - zoom).abs() < 0.001 {
+            return zoom;
+        }
+        let debounce_task = self.schedule_mermaid_rerasterize(source_offset, cx);
+        if let Some(view) = self.mermaid_views.get_mut(&source_offset) {
+            view.zoom = min_zoom;
+            view.debounce_task = Some(debounce_task);
+        }
+        min_zoom
+    }
+
+    /// Schedules a debounced re-raster of a diagram at its current zoom.
+    /// Storing the returned task in `MermaidViewState::debounce_task`
+    /// replaces (and thereby cancels) the previous timer, debouncing the
+    /// expensive re-raster until zoom changes settle. Until then, the
+    /// existing raster is displayed scaled to the new zoom.
+    fn schedule_mermaid_rerasterize(
+        &self,
+        source_offset: usize,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(MERMAID_ZOOM_DEBOUNCE).await;
+            this.update(cx, |this, cx| {
+                if let Some(view) = this.mermaid_views.get_mut(&source_offset) {
+                    view.debounce_task = None;
+                }
+                this.rerasterize_mermaid_diagram(source_offset, cx);
+            })
+            .ok();
+        })
+    }
+
+    pub(crate) fn mermaid_scroll_handle(&mut self, source_offset: usize) -> ScrollHandle {
+        self.mermaid_views
+            .entry(source_offset)
+            .or_default()
+            .scroll_handle
+            .clone()
+    }
+
+    /// Re-rasterizes a single mermaid diagram at exactly the scale it is
+    /// displayed at, reusing the cached parsed SVG so that neither mermaid
+    /// layout nor SVG parsing is re-run. While the new raster is pending, the
+    /// previous image keeps being displayed.
+    fn rerasterize_mermaid_diagram(&mut self, source_offset: usize, cx: &mut Context<Self>) {
+        let Some(diagram) = self.parsed_markdown.mermaid_diagrams.get(&source_offset) else {
+            return;
+        };
+        let contents = diagram.contents.clone();
+        let zoom = self.mermaid_zoom_level(source_offset);
+        self.mermaid_state.rerasterize_diagram(&contents, zoom, cx);
+        cx.notify();
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -977,7 +1178,7 @@ impl Markdown {
             };
             self.active_root_block = None;
             self.images_by_source_offset.clear();
-            self.mermaid_state.clear();
+            self.mermaid_state.clear(cx);
             cx.notify();
             cx.refresh_windows();
             return;
@@ -1121,12 +1322,21 @@ impl Markdown {
                 }
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
-                    this.mermaid_state.update(&parsed_markdown, cx);
-                    this.mermaid_showing_code
-                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    this.mermaid_views
+                        .retain(|offset, _| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    let mermaid_views = &this.mermaid_views;
+                    this.mermaid_state.update(
+                        &parsed_markdown,
+                        |source_offset| {
+                            mermaid_views
+                                .get(&source_offset)
+                                .map_or(1.0, |view| view.zoom)
+                        },
+                        cx,
+                    );
                 } else {
-                    this.mermaid_state.clear();
-                    this.mermaid_showing_code.clear();
+                    this.mermaid_state.clear(cx);
+                    this.mermaid_views.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1300,9 +1510,15 @@ pub struct MarkdownElement {
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
+    on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
+    /// Test-only hook to observe the laid-out text when this element is
+    /// rendered beneath a view, where the layout state isn't otherwise
+    /// reachable.
+    #[cfg(test)]
+    on_render: Option<Box<dyn Fn(RenderedText)>>,
 }
 
 impl MarkdownElement {
@@ -1320,9 +1536,12 @@ impl MarkdownElement {
             code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
+            on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
+            #[cfg(test)]
+            on_render: None,
         }
     }
 
@@ -1349,6 +1568,14 @@ impl MarkdownElement {
 
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
         self.code_block_renderer = variant;
+        self
+    }
+
+    /// Registers a test-only callback invoked with the laid-out text each
+    /// time this element runs layout.
+    #[cfg(test)]
+    pub(crate) fn on_render(mut self, callback: impl Fn(RenderedText) + 'static) -> Self {
+        self.on_render = Some(Box::new(callback));
         self
     }
 
@@ -1389,6 +1616,14 @@ impl MarkdownElement {
         handler: impl Fn(Range<usize>, bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_checkbox_toggle = Some(Rc::new(handler));
+        self
+    }
+
+    /// Registers a callback invoked when a mermaid diagram's zoom level changes.
+    /// Consumers that scroll the markdown can use this to keep the diagram's
+    /// position anchored while it grows or shrinks.
+    pub fn on_mermaid_zoom(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_mermaid_zoom = Some(Rc::new(handler));
         self
     }
 
@@ -2316,8 +2551,13 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
-                                let showing_code =
-                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let (showing_code, zoom) =
+                                    self.markdown.update(cx, |markdown, cx| {
+                                        (
+                                            markdown.is_mermaid_showing_code(range.start),
+                                            markdown.effective_mermaid_zoom_level(range.start, cx),
+                                        )
+                                    });
                                 let copy_button_visibility = match &self.code_block_renderer {
                                     CodeBlockRenderer::Default {
                                         copy_button_visibility,
@@ -2334,7 +2574,11 @@ impl Element for MarkdownElement {
                                         self.markdown.clone(),
                                         range.start,
                                         showing_code,
+                                        zoom,
                                         copy_button_visibility,
+                                        self.on_mermaid_zoom.clone(),
+                                        window,
+                                        cx,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -2867,6 +3111,10 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
+        #[cfg(test)]
+        if let Some(on_render) = self.on_render.as_ref() {
+            on_render(rendered_markdown.text.clone());
+        }
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
