@@ -136,7 +136,7 @@ use crate::{
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
 use fold_map::{FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
-use tab_map::{TabPointCursor, TabSnapshot};
+use tab_map::{TabPoint, TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -162,7 +162,7 @@ pub enum HighlightKey {
     // Note we want semantic tokens > colorized brackets
     // to allow language server highlights to work over brackets.
     ColorizeBracket(usize),
-    SemanticToken,
+    SemanticToken(u32),
     // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
     BufferSearchHighlights,
     ConsoleAnsiHighlight(usize),
@@ -360,6 +360,7 @@ pub struct SemanticTokenHighlight {
     pub token_type: TokenType,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
+    pub precedence: u32,
 }
 
 impl DisplayMap {
@@ -1544,6 +1545,34 @@ impl DisplaySnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
     }
 
+    /// The column `point` sits at once tabs are expanded, which is where it appears
+    /// on screen when the line isn't soft-wrapped. Unlike a display column this is
+    /// counted from the start of the buffer row rather than the wrapped segment.
+    pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
+        self.tab_snapshot()
+            .point_to_tab_point(point, Bias::Left)
+            .0
+            .column
+    }
+
+    /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
+    pub(crate) fn point_for_tab_expanded_column(
+        &self,
+        buffer_row: MultiBufferRow,
+        column: u32,
+    ) -> Point {
+        let tab_snapshot = self.tab_snapshot();
+        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
+        let column = column.min(tab_snapshot.line_len(tab_row));
+        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
+    }
+
+    /// The length of `buffer_row` once tabs are expanded.
+    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
+        let tab_snapshot = self.tab_snapshot();
+        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
+    }
+
     pub fn fold_snapshot(&self) -> &FoldSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
@@ -1678,6 +1707,36 @@ impl DisplaySnapshot {
         range: Range<MultiBufferOffset>,
     ) -> SmallVec<[Range<DisplayPoint>; 1]> {
         self.display_point_converter().map(range)
+    }
+
+    /// Converts a non-empty buffer range into one contiguous display range.
+    /// Inlays at either boundary are excluded, while inlays between selected
+    /// buffer characters are included.
+    pub fn contiguous_display_point_range_for_buffer_range(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> Option<Range<DisplayPoint>> {
+        if range.is_empty() {
+            return None;
+        }
+
+        let buffer = self.buffer_snapshot();
+        let first_character_end =
+            buffer.clip_offset((range.start + 1usize).min(range.end), Bias::Right);
+        let last_character_start = buffer.clip_offset(
+            range.end.saturating_sub_usize(1).max(range.start),
+            Bias::Left,
+        );
+
+        let mut converter = self.display_point_converter();
+        let first_ranges = converter.map(range.start..first_character_end);
+        let start = first_ranges.first()?.start;
+        if first_character_end == range.end {
+            return Some(start..first_ranges.last()?.end);
+        }
+
+        let last_ranges = converter.map(last_character_start..range.end);
+        Some(start..last_ranges.last()?.end)
     }
 
     /// Returns a converter that maps buffer offset ranges to `DisplayPoint`
@@ -3217,10 +3276,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3665,10 +3725,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3752,10 +3813,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4175,6 +4237,62 @@ pub mod tests {
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
         assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
+
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[InlayId::Hint(0)],
+                vec![
+                    Inlay::mock_hint(1, buffer_snapshot.anchor_after(MultiBufferOffset(5)), "L"),
+                    Inlay::mock_hint(2, buffer_snapshot.anchor_before(MultiBufferOffset(5)), "R"),
+                    Inlay::mock_hint(3, buffer_snapshot.anchor_after(MultiBufferOffset(7)), "I"),
+                ],
+                cx,
+            );
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(4)..MultiBufferOffset(5),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 5)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(5)..MultiBufferOffset(6),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 8)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(4)..MultiBufferOffset(6),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 8)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(6)..MultiBufferOffset(7),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 8)..DisplayPoint::new(DisplayRow(0), 9)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(7)..MultiBufferOffset(8),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 11)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(4)..MultiBufferOffset(9),
+            ),
+            Some(DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 12)),
+        );
+        assert_eq!(
+            snapshot.contiguous_display_point_range_for_buffer_range(
+                MultiBufferOffset(5)..MultiBufferOffset(5),
+            ),
+            None,
+        );
     }
 
     #[test]

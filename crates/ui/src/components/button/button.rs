@@ -130,6 +130,21 @@ impl Button {
         self
     }
 
+    /// Sets the supplementary description announced by assistive technology
+    /// after the button's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_description(description);
+        self
+    }
+
+    /// Sets the current value reported to assistive technology. Use this when
+    /// the button represents a control with a value, such as a combobox
+    /// trigger whose value is the current selection.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.base = self.base.aria_value(value);
+        self
+    }
+
     /// Overrides the role reported to assistive technology.
     /// Defaults to [`gpui::Role::Button`].
     pub fn aria_role(mut self, role: gpui::Role) -> Self {
@@ -401,7 +416,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(mut self, _window: &mut Window, cx: &mut App) -> ButtonLike {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -412,6 +427,27 @@ impl RenderOnce for Button {
 
         if self.base.aria_label.is_none() {
             self.base.aria_label = Some(label.clone());
+        }
+
+        // Announce the displayed keybinding to assistive technology via
+        // `aria-keyshortcuts` so screen-reader users hear the same shortcut
+        // sighted users see next to the button.
+        if self.base.aria_keyshortcuts.is_none()
+            && let Some(keyshortcuts) = self
+                .key_binding
+                .as_ref()
+                .and_then(|key_binding| key_binding.keyboard_shortcut_text(window, cx))
+        {
+            self.base.aria_keyshortcuts = Some(keyshortcuts);
+        }
+
+        // A combobox's value is its visible text, so expose it as the
+        // accessible value by default. This lets combobox triggers announce
+        // their current selection without each caller wiring it up.
+        if matches!(self.base.aria_role, Some(gpui::Role::ComboBox))
+            && self.base.aria_value.is_none()
+        {
+            self.base.aria_value = Some(label.clone());
         }
 
         let label_color = if is_disabled {

@@ -23,6 +23,7 @@ file_icons.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
+menu.workspace = true
 project.workspace = true
 serde.workspace = true
 settings.workspace = true
@@ -33,3 +34,5 @@ workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+fs.workspace = true
+theme.workspace = true

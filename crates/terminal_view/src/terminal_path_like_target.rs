@@ -1,17 +1,17 @@
 use super::{HoverTarget, HoveredWord, TerminalView};
-use anyhow::{Context as _, Result};
-use editor::Editor;
+use anyhow::Result;
+use editor::items::open_resolved_target;
 use gpui::{Context, Task, TaskExt, WeakEntity, Window};
 use std::path::PathBuf;
 use terminal::PathLikeTarget;
-use util::{ResultExt, debug_panic};
+use workspace::path_link::PathMatching;
 #[cfg(not(test))]
-use workspace::path_link::possible_open_target;
+use workspace::path_link::resolve_open_target;
 #[cfg(test)]
 use workspace::path_link::{
-    BackgroundPathChecks, OpenTargetFoundBy, possible_open_target_with_fs_checks,
+    BackgroundPathChecks, OpenTargetFoundBy, resolve_open_target_with_fs_checks,
 };
-use workspace::{OpenOptions, OpenVisible, Workspace, path_link::OpenTarget};
+use workspace::{Workspace, path_link::OpenTarget};
 
 pub(super) fn hover_path_like_target(
     workspace: &WeakEntity<Workspace>,
@@ -43,17 +43,19 @@ fn possible_hover_target(
     #[cfg(test)] background_path_checks: BackgroundPathChecks,
 ) -> Task<()> {
     #[cfg(not(test))]
-    let file_to_open_task = possible_open_target(
+    let file_to_open_task = resolve_open_target(
         workspace,
+        PathMatching::Heuristic,
         &path_like_target.maybe_path,
-        path_like_target.terminal_dir.as_deref(),
+        path_like_target.working_directory.as_deref(),
         cx,
     );
     #[cfg(test)]
-    let file_to_open_task = possible_open_target_with_fs_checks(
+    let file_to_open_task = resolve_open_target_with_fs_checks(
         workspace,
+        PathMatching::Heuristic,
         &path_like_target.maybe_path,
-        path_like_target.terminal_dir.as_deref(),
+        path_like_target.working_directory.as_deref(),
         cx,
         background_path_checks,
     );
@@ -120,19 +122,21 @@ fn possibly_open_target(
             .update(cx, |_, cx| {
                 #[cfg(not(test))]
                 {
-                    possible_open_target(
+                    resolve_open_target(
                         &workspace,
+                        PathMatching::Heuristic,
                         &path_like_target.maybe_path,
-                        path_like_target.terminal_dir.as_deref(),
+                        path_like_target.working_directory.as_deref(),
                         cx,
                     )
                 }
                 #[cfg(test)]
                 {
-                    possible_open_target_with_fs_checks(
+                    resolve_open_target_with_fs_checks(
                         &workspace,
+                        PathMatching::Heuristic,
                         &path_like_target.maybe_path,
-                        path_like_target.terminal_dir.as_deref(),
+                        path_like_target.working_directory.as_deref(),
                         cx,
                         background_path_checks,
                     )
@@ -143,62 +147,8 @@ fn possibly_open_target(
             return Ok(None);
         };
 
-        let path_to_open = open_target.path();
-        let opened_items = workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path_to_open.path.clone()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::OnlyDirectories),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
-            })
-            .context("workspace update")?
-            .await;
-        if opened_items.len() != 1 {
-            debug_panic!(
-                "Received {} items for one path {path_to_open:?}",
-                opened_items.len(),
-            );
-        }
-
-        if let Some(opened_item) = opened_items.first() {
-            if open_target.is_file() {
-                if let Some(Ok(opened_item)) = opened_item {
-                    if let Some(row) = path_to_open.row {
-                        let col = path_to_open.column.unwrap_or(0);
-                        if let Some(active_editor) = opened_item.downcast::<Editor>() {
-                            active_editor
-                                .downgrade()
-                                .update_in(cx, |editor, window, cx| {
-                                    editor.go_to_singleton_buffer_point(
-                                        language::Point::new(
-                                            row.saturating_sub(1),
-                                            col.saturating_sub(1),
-                                        ),
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .log_err();
-                        }
-                    }
-                    return Ok(Some(open_target));
-                }
-            } else if open_target.is_dir() {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.project().update(cx, |_, cx| {
-                        cx.emit(project::Event::ActivateProjectPanel);
-                    })
-                })?;
-                return Ok(Some(open_target));
-            }
-        }
-        Ok(None)
+        let opened = open_resolved_target(&workspace, &open_target, cx).await?;
+        Ok(opened.then_some(open_target))
     })
 }
 
@@ -318,7 +268,7 @@ mod tests {
         ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
-        terminal_dir: Option<PathBuf>,
+        working_directory: Option<PathBuf>,
         background_path_checks: BackgroundPathChecks,
         open_target_found_by: OpenTargetFoundBy,
         file: &str,
@@ -332,7 +282,7 @@ mod tests {
             },
             PathLikeTarget {
                 maybe_path: maybe_path.to_string(),
-                terminal_dir,
+                working_directory,
             },
             background_path_checks,
         )

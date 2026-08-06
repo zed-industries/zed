@@ -34,7 +34,7 @@ Common External Agents include:
 
 This list is curated, not exhaustive. Open the ACP Registry in Zed for the current list of available agents.
 
-For company-specific setup paths, including Claude, Codex, Gemini, OpenCode, Copilot, Cursor, and Pi, see [AI by Company](./by-company.md).
+For company-specific setup paths, including Claude, Codex, Gemini, OpenCode, Copilot, Cursor, Pi, and Poolside, see [AI by Company](./by-company.md).
 
 ## Claude Agent {#claude-agent}
 
@@ -83,6 +83,36 @@ Cursor subscriptions do not configure Zed's LLM provider settings. Use Cursor's 
 Use Pi Coding Agent when you want Pi running as an ACP-integrated External Agent in Zed.
 
 Pi is an agent harness, not a Zed LLM subscription. Configure any provider auth, subscriptions, tools, or model choices in Pi.
+
+## Poolside {#poolside}
+
+Use Poolside when you want Poolside running as an ACP-integrated External Agent in Zed.
+
+Install Poolside from the [ACP Registry](#registry), then start a Poolside thread from the Agent Panel or Threads Sidebar. If you haven't authenticated yet, the thread offers `Log in to Poolside`, which runs `pool login` in a terminal. Authentication and model selection are configured through Poolside, not Zed.
+
+To configure Poolside from the terminal instead, install the [Poolside Agent CLI](https://github.com/poolsideai/pool), then run:
+
+```sh
+pool acp setup --editor zed
+```
+
+This command always writes to `~/.config/zed/settings.json`, which is Zed's settings file on macOS and on Linux without a custom `XDG_CONFIG_HOME`. On Windows, or with a custom config directory, install from the registry or use the manual configuration below instead. You do not need to restart Zed. It detects the settings change automatically. Select `Poolside` from the new-thread menu.
+
+To configure it manually, install the [Poolside Agent CLI](https://github.com/poolsideai/pool), make sure `pool` is on your `PATH`, then add it as a [Custom Agent](#custom-agents):
+
+```json [settings]
+{
+  "agent_servers": {
+    "Poolside": {
+      "command": "pool",
+      "args": ["acp"],
+      "type": "custom"
+    }
+  }
+}
+```
+
+See [Poolside's Zed documentation](https://docs.poolside.ai/tools/zed) for more setup details.
 
 ## Start an External Agent Thread {#start-thread}
 

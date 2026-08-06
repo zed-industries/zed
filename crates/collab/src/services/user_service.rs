@@ -1,10 +1,9 @@
 use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
 use cloud_api_types::internal_api::{
-    self, FuzzySearchChannelMembersByGithubLoginBody,
-    FuzzySearchChannelMembersByGithubLoginResponse, FuzzySearchUsersBody, FuzzySearchUsersResponse,
-    LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
-    LookUpUsersByLegacyIdResponse,
+    self, FuzzySearchChannelMembersBody, FuzzySearchChannelMembersResponse, FuzzySearchUsersBody,
+    FuzzySearchUsersResponse, LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse,
+    LookUpUsersByLegacyIdBody, LookUpUsersByLegacyIdResponse,
 };
 use reqwest::RequestBuilder;
 use rpc::proto;
@@ -157,14 +156,14 @@ impl UserService for CloudUserService {
         query: &str,
         limit: u32,
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        let response_body: FuzzySearchChannelMembersByGithubLoginResponse = self
+        let response_body: FuzzySearchChannelMembersResponse = self
             .send_request(
                 self.http_client
                     .post(format!(
-                        "{}/internal/channel_members/fuzzy_search_by_github_login",
+                        "{}/internal/channel_members/fuzzy_search",
                         &self.zed_cloud_url
                     ))
-                    .json(&FuzzySearchChannelMembersByGithubLoginBody {
+                    .json(&FuzzySearchChannelMembersBody {
                         channel_id: channel.root_id().0,
                         query: query.to_string(),
                         limit,

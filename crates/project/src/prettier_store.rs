@@ -460,7 +460,7 @@ impl PrettierStore {
     ) {
         let prettier_config_files = Prettier::CONFIG_FILE_NAMES
             .iter()
-            .map(|name| RelPath::unix(name).unwrap())
+            .map(|name| RelPath::from_unix_str(name).unwrap())
             .collect::<HashSet<_>>();
 
         let prettier_config_file_changed = changes
