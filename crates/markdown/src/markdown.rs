@@ -2572,10 +2572,7 @@ impl Element for MarkdownElement {
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
                                     .rounded_sm()
-                                    .map(|mut div| {
-                                        div.style().restrict_scroll_to_axis = Some(true);
-                                        div
-                                    })
+                                    .restrict_scroll_to_axis()
                                     .custom_scrollbars(
                                         Scrollbars::new(ScrollAxes::Horizontal)
                                             .id(("markdown-table-scrollbar", range.start))
