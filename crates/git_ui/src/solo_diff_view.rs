@@ -1,19 +1,26 @@
-use crate::{git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon};
+use crate::{
+    commit_view::{GitBlob, build_buffer, build_buffer_diff},
+    git_panel::GitStatusEntry,
+    git_panel_settings::GitPanelSettings,
+    git_status_icon,
+};
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
-    DiffStyleControls, Direction, Editor, EditorEvent, EditorSettings, SplittableEditor,
-    ToggleSplitDiff,
+    DiffStyleControls, Direction, Editor, EditorEvent, EditorSettings, RestoreOnlyDiffHunkDelegate,
+    SplittableEditor, ToggleSplitDiff,
     actions::{GoToHunk, GoToPreviousHunk},
     file_status_label_color,
 };
 use git::{
     Commit, Restore, StageAndNext, StageFile, ToggleStaged, UnstageAndNext, UnstageFile,
-    repository::RepoPath, status::StageStatus,
+    repository::{RepoPath, is_binary_content},
+    status::StageStatus,
 };
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Context, Empty, Entity,
+    EventEmitter, FocusHandle, Focusable, HighlightStyle, IntoElement, Render, Subscription, Task,
+    WeakEntity, Window,
 };
 use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
@@ -37,6 +44,11 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+enum DiffSource {
+    Uncommitted,
+    Commit { sha: Arc<str> },
+}
+
 pub struct SoloDiffView {
     repository: Entity<Repository>,
     repository_id: RepositoryId,
@@ -46,6 +58,7 @@ pub struct SoloDiffView {
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
+    diff_source: DiffSource,
     _settings_subscription: Subscription,
 }
 
@@ -109,6 +122,140 @@ impl SoloDiffView {
                         workspace_handle,
                         window,
                         cx,
+                        DiffSource::Uncommitted,
+                    )
+                });
+
+                workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
+                view
+            })
+        })
+    }
+
+    pub fn open_or_focus_commit(
+        commit_sha: Arc<str>,
+        repo_path: RepoPath,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let Some(workspace_entity) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
+        };
+
+        let existing = workspace_entity
+            .read(cx)
+            .items_of_type::<SoloDiffView>(cx)
+            .find(|item| {
+                item.read(cx)
+                    .matches_commit(&repository, &repo_path, &commit_sha, cx)
+            });
+        if let Some(existing) = existing {
+            workspace_entity.update(cx, |workspace, cx| {
+                workspace.activate_item(&existing, true, true, window, cx);
+            });
+            existing.focus_handle(cx).focus(window, cx);
+            return Task::ready(Ok(existing));
+        }
+
+        let project = workspace_entity.read(cx).project().clone();
+        let language_registry = project.read(cx).languages().clone();
+        let first_worktree_id = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id());
+
+        window.spawn(cx, async move |cx| {
+            let short_sha = commit_sha
+                .get(0..git::SHORT_SHA_LENGTH)
+                .unwrap_or(&commit_sha);
+            let commit_diff = repository
+                .update(cx, |repo, _| repo.load_commit_diff(commit_sha.to_string()))
+                .await??;
+
+            let file = commit_diff
+                .files
+                .into_iter()
+                .find(|f| f.path == repo_path)
+                .ok_or_else(|| anyhow::anyhow!("file not found in commit diff"))?;
+
+            let is_deleted = file.new_text.is_none();
+            let raw_new_text = file.new_text.unwrap_or_default();
+            let raw_old_text = file.old_text;
+
+            let is_binary = file.is_binary
+                || is_binary_content(raw_new_text.as_bytes())
+                || raw_old_text
+                    .as_ref()
+                    .is_some_and(|text| is_binary_content(text.as_bytes()));
+
+            let new_text = if is_binary {
+                "(binary file not shown)".to_string()
+            } else {
+                raw_new_text
+            };
+            let old_text = if is_binary { None } else { raw_old_text };
+
+            let worktree_id = repository
+                .update(cx, |repository, cx| {
+                    repository
+                        .repo_path_to_project_path(&file.path, cx)
+                        .map(|path| path.worktree_id)
+                        .or(first_worktree_id)
+                })
+                .context("project has no worktrees")?;
+
+            let file_name = file
+                .path
+                .file_name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| file.path.display(util::paths::PathStyle::local()).to_string());
+            let display_name = format!("{short_sha} - {file_name}");
+
+            let blob = Arc::new(GitBlob {
+                path: file.path.clone(),
+                is_deleted,
+                is_binary,
+                worktree_id,
+                display_name,
+            }) as Arc<dyn language::File>;
+
+            let buffer = build_buffer(new_text, blob, &language_registry, cx).await?;
+
+            let diff = if is_binary {
+                cx.update(|_, cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    cx.new(|cx| {
+                        buffer_diff::BufferDiff::new_unchanged(
+                            &snapshot,
+                            snapshot.language().cloned(),
+                            Some(language_registry.clone()),
+                            buffer_diff::DiffBaseKind::Oid,
+                            cx,
+                        )
+                    })
+                })?
+            } else {
+                build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
+            };
+
+            workspace_entity.update_in(cx, |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                let view = cx.new(|cx| {
+                    Self::new(
+                        project.clone(),
+                        repository.clone(),
+                        repo_path.clone(),
+                        buffer,
+                        diff,
+                        workspace_handle,
+                        window,
+                        cx,
+                        DiffSource::Commit {
+                            sha: commit_sha.clone(),
+                        },
                     )
                 });
 
@@ -127,6 +274,7 @@ impl SoloDiffView {
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
+        diff_source: DiffSource,
     ) -> Self {
         let repository_id = repository.read(cx).id;
         let showing_full_file = EditorSettings::get_global(cx).file_diff.show_full_file;
@@ -141,6 +289,9 @@ impl SoloDiffView {
                 window,
                 cx,
             );
+            if matches!(diff_source, DiffSource::Commit { .. }) {
+                editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+            }
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_should_serialize(false, cx);
                 editor.set_allow_git_diff_scrollbar_markers(showing_full_file, cx);
@@ -181,6 +332,7 @@ impl SoloDiffView {
             editor,
             workspace: workspace.downgrade(),
             showing_full_file,
+            diff_source,
             _settings_subscription: settings_subscription,
         }
     }
@@ -262,7 +414,26 @@ impl SoloDiffView {
     }
 
     fn matches(&self, repository: &Entity<Repository>, repo_path: &RepoPath, cx: &App) -> bool {
-        self.repository_id == repository.read(cx).id && &self.repo_path == repo_path
+        matches!(self.diff_source, DiffSource::Uncommitted)
+            && self.repository_id == repository.read(cx).id
+            && &self.repo_path == repo_path
+    }
+
+    fn matches_commit(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        commit_sha: &str,
+        cx: &App,
+    ) -> bool {
+        match &self.diff_source {
+            DiffSource::Commit { sha } => {
+                self.repository_id == repository.read(cx).id
+                    && &self.repo_path == repo_path
+                    && sha.as_ref() == commit_sha
+            }
+            DiffSource::Uncommitted => false,
+        }
     }
 
     fn button_states(&self, cx: &App) -> SoloDiffButtonStates {
@@ -289,6 +460,18 @@ impl SoloDiffView {
             } else {
                 ranges = Vec::new();
             }
+        }
+
+        if matches!(self.diff_source, DiffSource::Commit { .. }) {
+            return SoloDiffButtonStates {
+                stage: false,
+                unstage: false,
+                restore: false,
+                prev_next,
+                selection,
+                stage_file: false,
+                unstage_file: false,
+            };
         }
 
         let mut stage = false;
@@ -388,7 +571,8 @@ impl Item for SoloDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.buffer
+        let file_name = self
+            .buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -404,24 +588,34 @@ impl Item for SoloDiffView {
                     .as_ref()
                     .display(PathStyle::local())
                     .into_owned()
-            })
-            .into()
+            });
+
+        match &self.diff_source {
+            DiffSource::Commit { sha } => {
+                let short_sha = sha.get(0..git::SHORT_SHA_LENGTH).unwrap_or(sha);
+                format!("{short_sha} — {file_name}").into()
+            }
+            DiffSource::Uncommitted => file_name.into(),
+        }
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        Some(
-            self.buffer
-                .read(cx)
-                .file()
-                .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
-                .unwrap_or_else(|| {
-                    self.repo_path
-                        .as_ref()
-                        .display(PathStyle::local())
-                        .into_owned()
-                })
-                .into(),
-        )
+        let file_path = self
+            .buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                self.repo_path
+                    .as_ref()
+                    .display(PathStyle::local())
+                    .into_owned()
+            });
+
+        match &self.diff_source {
+            DiffSource::Commit { sha } => Some(format!("{sha} — {file_path}").into()),
+            DiffSource::Uncommitted => Some(file_path.into()),
+        }
     }
 
     fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
@@ -504,7 +698,8 @@ impl Item for SoloDiffView {
         // When the git panel is set to convey status via label color rather
         // than an icon, tint the whole path like multibuffer headers do.
         let mut highlights = Vec::new();
-        if GitPanelSettings::get_global(cx).status_style == StatusStyle::LabelColor
+        if matches!(self.diff_source, DiffSource::Uncommitted)
+            && GitPanelSettings::get_global(cx).status_style == StatusStyle::LabelColor
             && let Some(status) = self
                 .repository
                 .read(cx)
@@ -613,21 +808,27 @@ impl Render for SoloDiffStyleToolbar {
             return Empty.into_any_element();
         };
 
-        let (editor_entity, showing_full_file, status) = {
+        let (editor_entity, showing_full_file, status, is_commit_diff) = {
             let solo_diff = solo_diff.read(cx);
-            (
-                solo_diff.editor.clone(),
-                solo_diff.showing_full_file,
+            let status = if matches!(solo_diff.diff_source, DiffSource::Uncommitted) {
                 solo_diff
                     .repository
                     .read(cx)
                     .status_for_path(&solo_diff.repo_path)
-                    .map(|entry| entry.status),
+                    .map(|entry| entry.status)
+            } else {
+                None
+            };
+            (
+                solo_diff.editor.clone(),
+                solo_diff.showing_full_file,
+                status,
+                matches!(solo_diff.diff_source, DiffSource::Commit { .. }),
             )
         };
 
-        let show_status_icon =
-            GitPanelSettings::get_global(cx).status_style != StatusStyle::LabelColor;
+        let show_status_icon = !is_commit_diff
+            && GitPanelSettings::get_global(cx).status_style != StatusStyle::LabelColor;
 
         let (expand_icon, expand_tooltip) = if showing_full_file {
             (IconName::ChevronDownUp, "Show Changes Only")
@@ -770,10 +971,16 @@ impl Render for SoloDiffGitToolbar {
         let focus_handle = solo_diff.focus_handle(cx);
         let solo_diff = solo_diff.read(cx);
         let button_states = solo_diff.button_states(cx);
-        let status_entry = solo_diff
-            .repository
-            .read(cx)
-            .status_for_path(&solo_diff.repo_path);
+        let is_commit_diff = matches!(solo_diff.diff_source, DiffSource::Commit { .. });
+
+        let status_entry = if is_commit_diff {
+            None
+        } else {
+            solo_diff
+                .repository
+                .read(cx)
+                .status_for_path(&solo_diff.repo_path)
+        };
         let diff_stat = status_entry.and_then(|entry| entry.diff_stat);
 
         h_flex()
@@ -815,96 +1022,102 @@ impl Render for SoloDiffGitToolbar {
                             })),
                     ),
             )
-            .child(Divider::vertical())
-            .child(
-                h_group_sm()
-                    .when(button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Toggle Staged")
-                                .disabled(!button_states.stage && !button_states.unstage)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Toggle Staged",
-                                    &ToggleStaged,
-                                    &focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&ToggleStaged, window, cx)
-                                })),
-                        )
-                    })
-                    .when(!button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Stage")
-                                .disabled(!button_states.stage)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and Go to Next Hunk",
-                                    &StageAndNext,
-                                    &focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("unstage", "Unstage")
-                                .disabled(!button_states.unstage)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and Go to Next Hunk",
-                                    &UnstageAndNext,
-                                    &focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
-                                })),
-                        )
-                    })
+            .when(!is_commit_diff, |el| {
+                el.child(Divider::vertical())
                     .child(
-                        Button::new("restore", "Restore")
+                        h_group_sm()
+                            .when(button_states.selection, |el| {
+                                el.child(
+                                    Button::new("stage", "Toggle Staged")
+                                        .disabled(!button_states.stage && !button_states.unstage)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Toggle Staged",
+                                            &ToggleStaged,
+                                            &focus_handle,
+                                        ))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&ToggleStaged, window, cx)
+                                        })),
+                                )
+                            })
+                            .when(!button_states.selection, |el| {
+                                el.child(
+                                    Button::new("stage", "Stage")
+                                        .disabled(!button_states.stage)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Stage and Go to Next Hunk",
+                                            &StageAndNext,
+                                            &focus_handle,
+                                        ))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&StageAndNext, window, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("unstage", "Unstage")
+                                        .disabled(!button_states.unstage)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Unstage and Go to Next Hunk",
+                                            &UnstageAndNext,
+                                            &focus_handle,
+                                        ))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&UnstageAndNext, window, cx)
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new("restore", "Restore")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Restore selected hunk",
+                                        &Restore,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(!button_states.restore)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&Restore, window, cx)
+                                    })),
+                            ),
+                    )
+                    .child(Divider::vertical())
+                    .child(h_group_sm().child(if button_states.stage_file {
+                        Button::new("stage-file", "Stage All")
+                            .width(rems_from_px(80.))
+                            .disabled(!button_states.stage_file)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Restore selected hunk",
-                                &Restore,
+                                "Stage All",
+                                &StageFile,
                                 &focus_handle,
                             ))
-                            .disabled(!button_states.restore)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Restore, window, cx)
+                                this.stage_file(window, cx)
+                            }))
+                    } else {
+                        Button::new("unstage-file", "Unstage All")
+                            .width(rems_from_px(80.))
+                            .disabled(!button_states.unstage_file)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Unstage All",
+                                &UnstageFile,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.unstage_file(window, cx)
+                            }))
+                    }))
+                    .child(Divider::vertical())
+                    .child(
+                        Button::new("commit", "Commit")
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Commit",
+                                &Commit,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&Commit, window, cx);
                             })),
-                    ),
-            )
-            .child(Divider::vertical())
-            .child(h_group_sm().child(if button_states.stage_file {
-                Button::new("stage-file", "Stage All")
-                    .width(rems_from_px(80.))
-                    .disabled(!button_states.stage_file)
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Stage All",
-                        &StageFile,
-                        &focus_handle,
-                    ))
-                    .on_click(cx.listener(|this, _, window, cx| this.stage_file(window, cx)))
-            } else {
-                Button::new("unstage-file", "Unstage All")
-                    .width(rems_from_px(80.))
-                    .disabled(!button_states.unstage_file)
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Unstage All",
-                        &UnstageFile,
-                        &focus_handle,
-                    ))
-                    .on_click(cx.listener(|this, _, window, cx| this.unstage_file(window, cx)))
-            }))
-            .child(Divider::vertical())
-            .child(
-                Button::new("commit", "Commit")
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Commit",
-                        &Commit,
-                        &focus_handle,
-                    ))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.dispatch_action(&Commit, window, cx);
-                    })),
-            )
+                    )
+            })
             .into_any_element()
     }
 }

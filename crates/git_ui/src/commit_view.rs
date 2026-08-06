@@ -15,8 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Subscription,
+    Task, WeakEntity, Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -47,6 +47,7 @@ use workspace::{
 
 use crate::commit_tooltip::CommitAvatar;
 use crate::git_panel::GitPanel;
+use crate::solo_diff_view::SoloDiffView;
 
 actions!(
     git,
@@ -85,14 +86,15 @@ pub struct CommitView {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    _subscriptions: Vec<Subscription>,
 }
 
-struct GitBlob {
-    path: RepoPath,
-    worktree_id: WorktreeId,
-    is_deleted: bool,
-    is_binary: bool,
-    display_name: String,
+pub(crate) struct GitBlob {
+    pub(crate) path: RepoPath,
+    pub(crate) worktree_id: WorktreeId,
+    pub(crate) is_deleted: bool,
+    pub(crate) is_binary: bool,
+    pub(crate) display_name: String,
 }
 
 struct CommitDiffAddon {
@@ -120,36 +122,35 @@ impl Addon for CommitDiffAddon {
         _window: &mut Window,
         cx: &mut App,
     ) -> ContextMenu {
-        let file_to_open = buffer.file().and_then(|file| {
-            let commit_view = self.commit_view.upgrade()?;
-            let commit_view = commit_view.read(cx);
-            let project_path = commit_view
-                .repository
-                .read(cx)
-                .repo_path_to_project_path(&RepoPath::from_rel_path(file.path()), cx)?;
-            let exists_at_head = commit_view
-                .workspace
-                .upgrade()?
-                .read(cx)
-                .project()
-                .read(cx)
-                .entry_for_path(&project_path, cx)
-                .is_some();
-            exists_at_head.then(|| file.clone())
-        });
+        let Some(file) = buffer.file() else {
+            return menu;
+        };
+        if !file.can_open() {
+            return menu;
+        }
+        let Some(commit_view) = self.commit_view.upgrade() else {
+            return menu;
+        };
+        let repo_path = RepoPath::from_rel_path(file.path());
+        let sha = commit_view.read(cx).commit.sha.clone();
+        let repository = commit_view.read(cx).repository.clone();
+        let workspace = commit_view.read(cx).workspace.clone();
 
-        menu.when_some(file_to_open, |menu, file| {
-            let commit_view = self.commit_view.clone();
-            menu.entry(
-                "Open File in Project",
-                Some(Box::new(OpenFileAtHead)),
-                move |window, cx| {
-                    commit_view
-                        .update(cx, |view, cx| view.open_file_at_head(&file, window, cx))
-                        .log_err();
-                },
-            )
-        })
+        menu.entry(
+            "Open File Diff",
+            Some(Box::new(OpenFileAtHead)),
+            move |window, cx| {
+                SoloDiffView::open_or_focus_commit(
+                    Arc::<str>::from(sha.as_ref()),
+                    repo_path.clone(),
+                    repository.clone(),
+                    workspace.clone(),
+                    window,
+                    cx,
+                )
+                .detach_and_notify_err(workspace.clone(), window, cx);
+            },
+        )
     }
 }
 
@@ -239,6 +240,46 @@ impl CommitView {
             .detach();
     }
 
+    fn handle_editor_event(
+        &mut self,
+        _editor: &Entity<SplittableEditor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let EditorEvent::OpenExcerptsRequested {
+            selections_by_buffer,
+            ..
+        } = event
+        {
+            for buffer_id in selections_by_buffer.keys() {
+                if let Some(buffer) = self.multibuffer.read(cx).buffer(*buffer_id)
+                    && let Some(file) = buffer.read(cx).file()
+                {
+                    self.open_file_diff(RepoPath::from_rel_path(file.path()), window, cx);
+                }
+            }
+        }
+    }
+
+    fn open_file_diff(
+        &self,
+        repo_path: RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sha = Arc::<str>::from(self.commit.sha.as_ref());
+        SoloDiffView::open_or_focus_commit(
+            sha,
+            repo_path,
+            self.repository.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        )
+        .detach_and_notify_err(self.workspace.clone(), window, cx);
+    }
+
     fn new(
         commit: CommitDetails,
         commit_diff: CommitDiff,
@@ -281,10 +322,17 @@ impl CommitView {
                 editor.set_show_bookmarks(false, cx);
                 editor.set_show_breakpoints(false, cx);
                 editor.set_show_diff_review_button(true, cx);
+                editor.set_delegate_open_excerpts(true);
             });
 
             editor
         });
+
+        let editor_subscription = cx.subscribe_in(
+            &editor,
+            window,
+            Self::handle_editor_event,
+        );
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let first_worktree_id = project
@@ -483,6 +531,7 @@ impl CommitView {
             project,
             workspace,
             remote,
+            _subscriptions: vec![editor_subscription],
         }
     }
 
@@ -506,33 +555,6 @@ impl CommitView {
         self.multibuffer.read(cx).snapshot(cx).total_changed_lines()
     }
 
-    fn open_file_at_head(
-        &mut self,
-        file: &Arc<dyn language::File>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let rel_path = file.path().clone();
-        let worktree_id = file.worktree_id(cx);
-        let repo_path = RepoPath::from_rel_path(&rel_path);
-        let project_path = self
-            .repository
-            .read(cx)
-            .repo_path_to_project_path(&repo_path, cx)
-            .unwrap_or(project::ProjectPath {
-                worktree_id,
-                path: rel_path,
-            });
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace
-                    .open_path_preview(project_path, None, false, false, true, window, cx)
-                    .detach_and_log_err(cx);
-            })
-            .log_err();
-    }
-
     fn open_file_at_head_action(
         &mut self,
         _: &OpenFileAtHead,
@@ -549,7 +571,8 @@ impl CommitView {
         else {
             return;
         };
-        self.open_file_at_head(&file, window, cx);
+        let repo_path = RepoPath::from_rel_path(file.path());
+        self.open_file_diff(repo_path, window, cx);
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -957,7 +980,7 @@ impl language::File for GitBlob {
     }
 }
 
-async fn build_buffer(
+pub(crate) async fn build_buffer(
     mut text: String,
     blob: Arc<dyn File>,
     language_registry: &Arc<language::LanguageRegistry>,
@@ -991,7 +1014,7 @@ async fn build_buffer(
     Ok(buffer)
 }
 
-async fn build_buffer_diff(
+pub(crate) async fn build_buffer_diff(
     mut old_text: Option<String>,
     buffer: &Entity<Buffer>,
     language_registry: &Arc<LanguageRegistry>,
@@ -1185,35 +1208,34 @@ impl Item for CommitView {
         let project = self.project.clone();
         let diff_view_style = self.editor.read(cx).diff_view_style();
         let multibuffer = self.multibuffer.clone();
-        Task::ready(Some(cx.new(|cx| {
+        let view = cx.new(|cx| {
             let commit_view = cx.weak_entity();
-            let editor = cx.new({
-                let file_statuses = file_statuses.clone();
-                let project = project.clone();
-                let workspace_entity = workspace_entity.clone();
-                let multibuffer = multibuffer.clone();
-                move |cx| {
-                    let editor = SplittableEditor::new(
-                        diff_view_style,
-                        multibuffer.clone(),
-                        project.clone(),
-                        workspace_entity.clone(),
-                        window,
-                        cx,
-                    );
-                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
-                    editor.rhs_editor().update(cx, |editor, cx| {
-                        editor.set_show_bookmarks(false, cx);
-                        editor.set_show_breakpoints(false, cx);
-                        editor.set_show_diff_review_button(true, cx);
-                        editor.register_addon(CommitDiffAddon {
-                            file_statuses,
-                            commit_view,
-                        });
+            let editor = cx.new(|cx| {
+                let editor = SplittableEditor::new(
+                    diff_view_style,
+                    multibuffer.clone(),
+                    project.clone(),
+                    workspace_entity.clone(),
+                    window,
+                    cx,
+                );
+                editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                editor.rhs_editor().update(cx, |editor, cx| {
+                    editor.set_show_bookmarks(false, cx);
+                    editor.set_show_breakpoints(false, cx);
+                    editor.set_show_diff_review_button(true, cx);
+                    editor.set_delegate_open_excerpts(true);
+                    editor.register_addon(CommitDiffAddon {
+                        file_statuses: file_statuses.clone(),
+                        commit_view,
                     });
-                    editor
-                }
+                });
+                editor
             });
+
+            let editor_subscription =
+                cx.subscribe_in(&editor, window, Self::handle_editor_event);
+
             let language_registry = project.read(cx).languages().clone();
             let message = cx.new(|cx| {
                 Markdown::new(
@@ -1235,8 +1257,10 @@ impl Item for CommitView {
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                _subscriptions: vec![editor_subscription],
             }
-        })))
+        });
+        Task::ready(Some(view))
     }
 }
 
