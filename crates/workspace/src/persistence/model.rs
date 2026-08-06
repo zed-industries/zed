@@ -408,8 +408,17 @@ impl SerializedPane {
                 }
             })?;
         }
+
+        // `items` contains `None` for each item that failed to deserialize.
+        // Only `Some` entries are added to the pane above, so the pinned
+        // count must only count those — not the total serialized count.
+        let pinned_count = items
+            .iter()
+            .take(self.pinned_count)
+            .filter(|item| item.is_some())
+            .count();
         pane.update(cx, |pane, _| {
-            pane.set_pinned_count(self.pinned_count.min(items.len()));
+            pane.set_pinned_count(pinned_count);
         })?;
 
         anyhow::Ok(items)
