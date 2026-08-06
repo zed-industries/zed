@@ -8417,6 +8417,26 @@ async fn test_search_with_metadata_filters(cx: &mut gpui::TestAppContext) {
         "`-size -1k` should only match the files smaller than 1 KiB"
     );
 
+    // Project search and the project panel share one parser, so the unsigned
+    // defaults have to hold here too: no sign means "greater than", and the
+    // unit is KiB. `-size 1` is therefore the same query as `-size +1k`.
+    assert_eq!(
+        search(&project, query("-size 1"), cx).await.unwrap(),
+        HashMap::from_iter([(path!("dir/large.rs").to_string(), vec![0..6])]),
+        "an unsigned `-size` should mean `+`, counted in KiB"
+    );
+    assert_eq!(
+        search(&project, query("-size 1"), cx).await.unwrap(),
+        search(&project, query("-size +1k"), cx).await.unwrap(),
+        "`-size 1` and `-size +1k` should be the same query"
+    );
+
+    assert_eq!(
+        search(&project, query("-mmin -1"), cx).await.unwrap(),
+        HashMap::from_iter([(path!("dir/fresh.rs").to_string(), vec![0..6])]),
+        "`-mmin -1` should only match the file written just now"
+    );
+
     assert_eq!(
         search(&project, query("-mtime -1"), cx).await.unwrap(),
         HashMap::from_iter([(path!("dir/fresh.rs").to_string(), vec![0..6])]),

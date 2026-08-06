@@ -91,7 +91,7 @@ use crate::{
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
-const FILTER_PLACEHOLDER: &str = "Filter: e.g. -iname *.rs -size 9 -mtime -7";
+const FILTER_PLACEHOLDER: &str = "Filter: e.g. -iname *.rs -size 9 -mtime -7 -mmin +30";
 /// How long the filter input stays quiet before the tree is rebuilt. Long enough
 /// to swallow a burst of typing, short enough not to read as lag.
 const FILTER_DEBOUNCE: Duration = Duration::from_millis(150);
