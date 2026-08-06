@@ -222,6 +222,57 @@ async fn test_project_group_keys_add_workspace(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_move_project_group_to(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_c", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs.clone(), ["/root_b".as_ref()], cx).await;
+    let project_c = Project::test(fs, ["/root_c".as_ref()], cx).await;
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        multi_workspace.open_sidebar(cx);
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: key_b.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: key_c.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        assert!(multi_workspace.move_project_group_to(&key_a, &key_c, cx));
+        assert_eq!(
+            multi_workspace.project_group_keys(),
+            vec![key_b.clone(), key_c.clone(), key_a.clone()]
+        );
+
+        assert!(multi_workspace.move_project_group_to(&key_a, &key_b, cx));
+        assert_eq!(
+            multi_workspace.project_group_keys(),
+            vec![key_a.clone(), key_b.clone(), key_c.clone()]
+        );
+
+        assert!(!multi_workspace.move_project_group_to(&key_a, &key_a, cx));
+        let missing_key = ProjectGroupKey::new(None, PathList::new(&[path!("/missing_project")]));
+        assert!(!multi_workspace.move_project_group_to(&missing_key, &key_a, cx));
+        assert!(!multi_workspace.move_project_group_to(&key_a, &missing_key, cx));
+    });
+}
+
+#[gpui::test]
 async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut TestAppContext) {
     init_test(cx);
 
