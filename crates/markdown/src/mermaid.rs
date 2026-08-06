@@ -1,8 +1,8 @@
 use collections::HashMap;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, ImageSource,
-    ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StyledText, Task, Window, img, pulsating_between, size,
+    ParsedSvg, PinchEvent, Pixels, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle,
+    ScrollWheelEvent, Size, Stateful, StyledText, Task, Window, img, pulsating_between, size,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -15,7 +15,10 @@ use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
-use super::{CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, ParsedMarkdown};
+use super::{
+    CopyButtonVisibility, Markdown, MarkdownStyle, MermaidZoomCallback, MermaidZoomSnapping,
+    ParsedMarkdown,
+};
 
 type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, Arc<CachedMermaidDiagram>>;
 
@@ -551,12 +554,14 @@ fn on_mermaid_zoom_scroll(
         }
         let scroll_ticks = mermaid_zoom_ticks(event.delta);
         if scroll_ticks != 0.0 {
-            let zoom_changed = markdown.update(cx, |markdown, cx| {
-                let current_zoom = markdown.mermaid_zoom_level(source_offset);
-                let new_zoom = current_zoom + scroll_ticks * MERMAID_ZOOM_STEP;
-                markdown.set_mermaid_zoom_level(source_offset, new_zoom, cx);
-                markdown.mermaid_zoom_level(source_offset) != current_zoom
-            });
+            let zoom_changed = change_mermaid_zoom_around(
+                &markdown,
+                source_offset,
+                event.position.x,
+                |current_zoom| current_zoom + scroll_ticks * MERMAID_ZOOM_STEP,
+                MermaidZoomSnapping::Enabled,
+                cx,
+            );
             // Only notify when the zoom actually changed. A no-op zoom (e.g.
             // clamped at the min/max) must not pause tail-following, since that
             // would disable following while still at the bottom.
@@ -566,6 +571,53 @@ fn on_mermaid_zoom_scroll(
         }
         cx.stop_propagation();
     }
+}
+
+fn on_mermaid_zoom_pinch(
+    markdown: Entity<Markdown>,
+    source_offset: usize,
+    on_zoom: Option<MermaidZoomCallback>,
+) -> impl Fn(&PinchEvent, &mut Window, &mut App) + 'static {
+    move |event, window, cx| {
+        if event.delta != 0.0 {
+            let zoom_factor = (1.0 + event.delta).max(f32::EPSILON);
+            let zoom_changed = change_mermaid_zoom_around(
+                &markdown,
+                source_offset,
+                event.position.x,
+                |current_zoom| current_zoom * zoom_factor,
+                MermaidZoomSnapping::Disabled,
+                cx,
+            );
+            if zoom_changed && let Some(on_zoom) = &on_zoom {
+                on_zoom(window, cx);
+            }
+        }
+        cx.stop_propagation();
+    }
+}
+
+fn change_mermaid_zoom_around(
+    markdown: &Entity<Markdown>,
+    source_offset: usize,
+    anchor_position_x: Pixels,
+    next_zoom: impl FnOnce(f32) -> f32,
+    snapping: MermaidZoomSnapping,
+    cx: &mut App,
+) -> bool {
+    markdown.update(cx, |markdown, cx| {
+        let current_zoom = markdown.mermaid_zoom_level(source_offset);
+        let scroll_handle = markdown.mermaid_scroll_handle(source_offset);
+        let bounds = scroll_handle.bounds();
+        let anchor_x = (anchor_position_x - bounds.left()).clamp(Pixels::ZERO, bounds.size.width);
+        markdown.set_mermaid_zoom_level_around(
+            source_offset,
+            next_zoom(current_zoom),
+            anchor_x,
+            snapping,
+            cx,
+        )
+    })
 }
 
 pub(crate) fn render_mermaid_diagram(
@@ -760,7 +812,12 @@ fn mermaid_scroll_container(
         .w_full()
         .overflow_x_scroll()
         .track_scroll(scroll_handle)
-        .on_scroll_wheel(on_mermaid_zoom_scroll(markdown, source_offset, on_zoom));
+        .on_scroll_wheel(on_mermaid_zoom_scroll(
+            markdown.clone(),
+            source_offset,
+            on_zoom.clone(),
+        ))
+        .on_pinch(on_mermaid_zoom_pinch(markdown, source_offset, on_zoom));
     // Without this, gpui maps vertical wheel deltas onto the x axis for
     // x-only scroll containers (see `paint_scroll_listener` in gpui's div),
     // hijacking plain vertical scrolls. Restricting to the actual axis lets
@@ -959,8 +1016,9 @@ fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::{
-        CachedMermaidDiagram, MermaidDiagramCache, MermaidState, ParsedMarkdownMermaidDiagram,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        CachedMermaidDiagram, MermaidDiagramCache, MermaidState, MermaidZoomSnapping,
+        ParsedMarkdownMermaidDiagram, ParsedMarkdownMermaidDiagramContents,
+        extract_mermaid_diagrams, mermaid_scroll_container, parse_mermaid_info,
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown, MarkdownElement,
@@ -968,9 +1026,10 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{
-        Context, Entity, IntoElement, Render, RenderImage, TestAppContext, Window, point, size,
+        Context, Entity, IntoElement, PinchEvent, Render, RenderImage, ScrollHandle,
+        TestAppContext, TouchPhase, Window, point, size,
     };
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::sync::Arc;
     use std::time::Duration;
@@ -1519,6 +1578,103 @@ mod tests {
             markdown.set_mermaid_zoom_level(0, 1.06, cx);
             assert_eq!(markdown.mermaid_zoom_level(0), 1.06);
         });
+    }
+
+    #[gpui::test]
+    fn test_mermaid_zoom_preserves_horizontal_anchor(cx: &mut TestAppContext) {
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+        let source_offset = 0;
+        let scroll_handle = markdown.update(cx, |markdown, _| {
+            markdown.mermaid_scroll_handle(source_offset)
+        });
+        scroll_handle.set_offset(point(px(-50.0), px(0.0)));
+
+        let zoom_changed = markdown.update(cx, |markdown, cx| {
+            markdown.set_mermaid_zoom_level_around(
+                source_offset,
+                2.0,
+                px(25.0),
+                MermaidZoomSnapping::Enabled,
+                cx,
+            )
+        });
+
+        assert!(zoom_changed);
+        assert_eq!(
+            scroll_handle.offset(),
+            point(px(-125.0), px(0.0)),
+            "the content beneath the anchor should remain beneath it after zooming"
+        );
+    }
+
+    #[gpui::test]
+    fn test_pinch_zooms_mermaid_diagram_without_propagating(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+        let source_offset = 0;
+        let scroll_handle = markdown.update(cx, |markdown, _| {
+            markdown.mermaid_scroll_handle(source_offset)
+        });
+        let parent_received_pinch = Rc::new(Cell::new(false));
+
+        struct TestView {
+            markdown: Entity<Markdown>,
+            source_offset: usize,
+            scroll_handle: ScrollHandle,
+            parent_received_pinch: Rc<Cell<bool>>,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let parent_received_pinch = self.parent_received_pinch.clone();
+                div()
+                    .size_full()
+                    .on_pinch(move |_, _, _| {
+                        parent_received_pinch.set(true);
+                    })
+                    .child(
+                        mermaid_scroll_container(
+                            self.markdown.clone(),
+                            self.source_offset,
+                            &self.scroll_handle,
+                            None,
+                        )
+                        .size_full()
+                        .child(div().w(px(200.0)).h(px(100.0))),
+                    )
+            }
+        }
+
+        cx.draw(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)), {
+            let markdown = markdown.clone();
+            let parent_received_pinch = parent_received_pinch.clone();
+            move |_, cx| {
+                cx.new(|_| TestView {
+                    markdown,
+                    source_offset,
+                    scroll_handle,
+                    parent_received_pinch,
+                })
+                .into_any_element()
+            }
+        });
+
+        for _ in 0..2 {
+            cx.simulate_event(PinchEvent {
+                position: point(px(25.0), px(25.0)),
+                delta: 0.01,
+                phase: TouchPhase::Moved,
+                ..Default::default()
+            });
+        }
+
+        assert!(
+            (markdown.read_with(cx, |markdown, _| markdown.mermaid_zoom_level(source_offset))
+                - 1.0201)
+                .abs()
+                < f32::EPSILON
+        );
+        assert!(!parent_received_pinch.get());
     }
 
     #[gpui::test]
