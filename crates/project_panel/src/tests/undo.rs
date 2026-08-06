@@ -2,6 +2,7 @@
 
 use client::proto;
 use collections::HashSet;
+use editor::Editor;
 use fs::{FakeFs, Fs};
 use gpui::{App, BorrowAppContext, Entity, VisualTestContext};
 use project::Project;
@@ -9,7 +10,7 @@ use serde_json::{Value, json};
 use settings::SettingsStore;
 use std::path::Path;
 use std::sync::Arc;
-use workspace::{MultiWorkspace, register_project_item};
+use workspace::{Item, MultiWorkspace, register_project_item};
 
 use crate::project_panel_tests::{self, TestProjectItemView, find_project_entry, select_path};
 use crate::{NewDirectory, NewFile, ProjectPanel, Redo, Rename, Trash, Undo};
@@ -292,6 +293,44 @@ async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.redo().await;
     cx.assert_exists("c.txt");
     assert_eq!(cx.fs.load(Path::new(&path)).await.unwrap(), "Hello!");
+}
+
+#[gpui::test]
+async fn undo_create_prompts_before_trashing_dirty_file(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+    cx.update_app(|cx| register_project_item::<Editor>(cx));
+
+    cx.create_file("c.txt").await;
+    let workspace = cx
+        .panel
+        .read_with(&cx.cx, |panel, _| panel.workspace.upgrade())
+        .expect("workspace should still exist");
+    let editor = workspace
+        .read_with(&cx.cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx)
+        })
+        .expect("created file should be open in an editor");
+    editor.update_in(&mut cx.cx, |editor, window, cx| {
+        editor.handle_input("unsaved changes", window, cx);
+    });
+    assert!(editor.read_with(&cx.cx, |editor, cx| editor.is_dirty(cx)));
+
+    cx.panel.update_in(&mut cx.cx, |panel, window, cx| {
+        panel.undo(&Undo, window, cx);
+    });
+    cx.cx.run_until_parked();
+    cx.cx.simulate_prompt_answer("Cancel");
+    cx.cx.run_until_parked();
+    cx.assert_exists("c.txt");
+    assert!(editor.read_with(&cx.cx, |editor, cx| editor.is_dirty(cx)));
+
+    cx.panel.update_in(&mut cx.cx, |panel, window, cx| {
+        panel.undo(&Undo, window, cx);
+    });
+    cx.cx.run_until_parked();
+    cx.cx.simulate_prompt_answer("Don't Save");
+    cx.cx.run_until_parked();
+    cx.assert_not_exists("c.txt");
 }
 
 #[gpui::test]

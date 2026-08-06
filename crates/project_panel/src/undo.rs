@@ -143,7 +143,7 @@ use std::{collections::VecDeque, sync::Arc};
 use ui::{App, TextSize};
 use util::{paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    Workspace,
+    Pane, SaveIntent, Workspace,
     notifications::{
         NotificationId, markdown_style, simple_message_notification::MessageNotification,
     },
@@ -157,11 +157,18 @@ enum Operation {
     Batch(Vec<Operation>),
 }
 
+enum OperationOutcome {
+    Changed(Change),
+    Cancelled(Operation),
+}
+
 impl Operation {
-    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Change> {
-        Ok(match self {
+    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<OperationOutcome> {
+        Ok(OperationOutcome::Changed(match self {
             Operation::Trash(project_path) => {
-                let trash_id = undo_manager.trash(&project_path, cx).await?;
+                let Some(trash_id) = undo_manager.trash(&project_path, cx).await? else {
+                    return Ok(OperationOutcome::Cancelled(Operation::Trash(project_path)));
+                };
                 Change::Trashed(project_path.worktree_id, trash_id)
             }
             Operation::Rename(from, to) => {
@@ -174,12 +181,20 @@ impl Operation {
             }
             Operation::Batch(operations) => {
                 let mut res = Vec::new();
-                for op in operations {
-                    res.push(Box::pin(op.execute(undo_manager, cx)).await?);
+                let mut operations = operations.into_iter();
+                while let Some(operation) = operations.next() {
+                    match Box::pin(operation.execute(undo_manager, cx)).await? {
+                        OperationOutcome::Changed(change) => res.push(change),
+                        OperationOutcome::Cancelled(operation) => {
+                            return Ok(OperationOutcome::Cancelled(Operation::Batch(
+                                std::iter::once(operation).chain(operations).collect(),
+                            )));
+                        }
+                    }
                 }
                 Change::Batched(res)
             }
-        })
+        }))
     }
 }
 
@@ -449,14 +464,20 @@ impl Inner {
         // manual intervention would likely be needed in order to undo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let undo_change = self
+        let change = self
             .history
             .remove(before_cursor)
-            .expect("we can undo")
-            .to_inverse()
-            .execute(self, cx)
-            .await?;
-        self.history.insert(before_cursor, undo_change);
+            .expect("we can undo");
+        let operation = change.clone().to_inverse();
+        match operation.execute(self, cx).await? {
+            OperationOutcome::Changed(undo_change) => {
+                self.history.insert(before_cursor, undo_change);
+            }
+            OperationOutcome::Cancelled(_) => {
+                self.history.insert(before_cursor, change);
+                self.cursor += 1;
+            }
+        }
         Ok(())
     }
 
@@ -469,15 +490,20 @@ impl Inner {
         // manual intervention would likely be needed in order to redo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let redo_change = self
+        let change = self
             .history
             .remove(self.cursor)
-            .expect("we can redo")
-            .to_inverse()
-            .execute(self, cx)
-            .await?;
-        self.history.insert(self.cursor, redo_change);
-        self.cursor += 1;
+            .expect("we can redo");
+        let operation = change.clone().to_inverse();
+        match operation.execute(self, cx).await? {
+            OperationOutcome::Changed(redo_change) => {
+                self.history.insert(self.cursor, redo_change);
+                self.cursor += 1;
+            }
+            OperationOutcome::Cancelled(_) => {
+                self.history.insert(self.cursor, change);
+            }
+        }
         Ok(())
     }
 
@@ -569,17 +595,58 @@ impl Inner {
         })
     }
 
-    async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashId> {
+    async fn trash(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<TrashId>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        let name = workspace.update(cx, |workspace, cx| {
+        let (name, open_item) = workspace.update(cx, |workspace, cx| {
             let project = workspace.project().read(cx);
             let path_style = project.path_style(cx);
 
-            project_path_display(project, project_path, path_style, cx)
+            let open_item = workspace.panes().iter().find_map(|pane| {
+                pane.read(cx).items().find_map(|item| {
+                    (item.is_dirty(cx)
+                        && item
+                            .project_path(cx)
+                            .iter()
+                            .any(|item_path| item_path == project_path))
+                    .then(|| (pane.clone(), item.boxed_clone()))
+                })
+            });
+
+            (
+                project_path_display(project, project_path, path_style, cx),
+                open_item,
+            )
         });
+
+        if let Some((pane, item)) = open_item {
+            let window_handles = cx.update(|cx| cx.windows());
+            let mut async_window_cx = window_handles
+                .into_iter()
+                .find_map(|window_handle| {
+                    cx.update_window(window_handle, |_, window, cx| window.to_async(cx))
+                        .ok()
+                })
+                .with_context(|| format!("Failed to prompt before trashing `{name}`."))?;
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+            if !Pane::save_item(
+                project,
+                pane,
+                item.as_ref(),
+                SaveIntent::Close,
+                &mut async_window_cx,
+            )
+            .await?
+            {
+                return Ok(None);
+            }
+        }
 
         let task = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
@@ -595,7 +662,7 @@ impl Inner {
         })?;
 
         match task.await {
-            Ok(trash_id) => Ok(trash_id),
+            Ok(trash_id) => Ok(Some(trash_id)),
             Err(err) => Err(err).context(format!("Failed to trash `{name}`.")),
         }
     }
