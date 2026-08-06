@@ -142,6 +142,8 @@ From the panel, you can simply type a commit message and hit the commit button, 
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
+Entries are grouped into sections (**Tracked** and **Untracked** by default), and each section can be staged on its own without touching the others. Click the checkbox on a section header, or use {#action git::StageSection} / {#action git::UnstageSection}, which act on the section containing the selected entry. These are also available by right-clicking an entry. Neither is bound by default; bind them in your keymap under the `GitPanel` context if you use them often.
+
 To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
 
 <!-- Add media -->
@@ -370,6 +372,8 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Add}                        | {#kb git::Add}                        |
 | {#action git::StageAll}                   | {#kb git::StageAll}                   |
 | {#action git::UnstageAll}                 | {#kb git::UnstageAll}                 |
+| {#action git::StageSection}               | {#kb git::StageSection}               |
+| {#action git::UnstageSection}             | {#kb git::UnstageSection}             |
 | {#action git::ToggleStaged}               | {#kb git::ToggleStaged}               |
 | {#action git::StageAndNext}               | {#kb git::StageAndNext}               |
 | {#action git::UnstageAndNext}             | {#kb git::UnstageAndNext}             |
