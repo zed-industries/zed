@@ -262,6 +262,12 @@ impl ThreadedDispatcher {
     /// Unlike [`Self::run_until_idle`], this waits across temporary quiescence.
     /// This is required when completion can arrive from an external worker that
     /// is not represented in the dispatcher's in-flight count.
+    ///
+    /// Readiness is checked before every main-thread runnable, so this returns
+    /// as soon as `ready` observes completion rather than after the queue
+    /// drains — deferred work that re-queues itself (idle sweeps, pollers)
+    /// must not extend a benchmark's measured interval past the completion it
+    /// awaits.
     #[cfg(any(test, feature = "bench"))]
     pub(crate) fn run_until<R>(&self, mut ready: impl FnMut() -> Option<R>) -> R {
         assert!(
@@ -269,9 +275,11 @@ impl ThreadedDispatcher {
             "run_until must be called on the threaded dispatcher's main thread"
         );
         loop {
-            self.drain_main_queue();
             if let Some(result) = ready() {
                 return result;
+            }
+            if self.run_one_main_task() {
+                continue;
             }
 
             let mut inflight = self.idle.inflight.lock();
@@ -282,14 +290,54 @@ impl ThreadedDispatcher {
         }
     }
 
-    /// Runs all main-thread tasks that are queued right now, without waiting for
-    /// background work or timers to finish.
+    /// Runs at most one queued main-thread task, returning whether one ran.
+    ///
+    /// [`Self::run_until`] steps tasks one at a time so it can observe
+    /// readiness between them: a task that perpetually re-queues itself (like
+    /// an idle-time sweep) would otherwise keep [`Self::drain_main_queue`]
+    /// looping past the completion the caller is waiting for.
+    #[cfg(any(test, feature = "bench"))]
+    fn run_one_main_task(&self) -> bool {
+        let runnable = self.main_receiver.lock().try_pop();
+        match runnable {
+            Ok(Some(runnable)) => {
+                let location = runnable.metadata().location;
+                let spawned = runnable.metadata().spawned;
+                profiler::update_running_task(spawned, location);
+                runnable.run();
+                profiler::save_task_timing();
+                true
+            }
+            Ok(None) | Err(_) => false,
+        }
+    }
+
+    /// Runs the main-thread tasks that were queued when the call began,
+    /// returning whether any ran. Tasks dispatched while running (e.g. a task
+    /// re-queuing itself after yielding) are left for the next call, as on
+    /// the platform run loops.
     pub fn run_ready_main_tasks(&self) -> bool {
         assert!(
             self.is_main_thread(),
             "run_ready_main_tasks must be called on the threaded dispatcher's main thread"
         );
-        self.drain_main_queue()
+        let pending = self.main_receiver.lock().len();
+        let mut ran_any = false;
+        for _ in 0..pending {
+            let runnable = self.main_receiver.lock().try_pop();
+            match runnable {
+                Ok(Some(runnable)) => {
+                    let location = runnable.metadata().location;
+                    let spawned = runnable.metadata().spawned;
+                    profiler::update_running_task(spawned, location);
+                    runnable.run();
+                    profiler::save_task_timing();
+                    ran_any = true;
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+        ran_any
     }
 
     /// Cancels all pending timers so timers armed by one workload can't fire
@@ -408,7 +456,8 @@ impl PlatformDispatcher for ThreadedDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::future::Future;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
     use crate::{BackgroundExecutor, ForegroundExecutor};
@@ -502,6 +551,88 @@ mod tests {
         dispatcher.run_until(|| completed.load(Ordering::SeqCst).then_some(()));
         sender_thread.join().expect("sender thread should finish");
         assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn run_until_returns_at_readiness_despite_requeuing_main_work() {
+        const REQUEUE_LIMIT: usize = 10_000;
+
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        // Mirrors main-thread work that yields and immediately re-queues
+        // itself (e.g. an idle-time sweep): the main queue never drains until
+        // such work finishes every iteration, so readiness must be observed
+        // between runnables rather than only at quiescence.
+        let iterations = Arc::new(AtomicUsize::new(0));
+        foreground
+            .spawn({
+                let iterations = iterations.clone();
+                async move {
+                    for _ in 0..REQUEUE_LIMIT {
+                        iterations.fetch_add(1, Ordering::SeqCst);
+                        yield_once().await;
+                    }
+                }
+            })
+            .detach();
+
+        let completed = Arc::new(AtomicBool::new(false));
+        foreground
+            .spawn({
+                let completed = completed.clone();
+                async move {
+                    completed.store(true, Ordering::SeqCst);
+                }
+            })
+            .detach();
+
+        dispatcher.run_until(|| completed.load(Ordering::SeqCst).then_some(()));
+        assert!(
+            iterations.load(Ordering::SeqCst) < REQUEUE_LIMIT,
+            "run_until should return at readiness instead of draining re-queued main work"
+        );
+    }
+
+    /// Completes after one re-schedule: the poll returns `Pending` and wakes
+    /// immediately, so the runnable re-enters the main queue.
+    fn yield_once() -> impl Future<Output = ()> {
+        let mut yielded = false;
+        std::future::poll_fn(move |poll_context| {
+            if yielded {
+                std::task::Poll::Ready(())
+            } else {
+                yielded = true;
+                poll_context.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        })
+    }
+
+    #[test]
+    fn run_ready_main_tasks_advances_requeuing_work_one_batch_per_call() {
+        const REQUEUE_LIMIT: usize = 10_000;
+
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+
+        let iterations = Arc::new(AtomicUsize::new(0));
+        foreground
+            .spawn({
+                let iterations = iterations.clone();
+                async move {
+                    for _ in 0..REQUEUE_LIMIT {
+                        iterations.fetch_add(1, Ordering::SeqCst);
+                        yield_once().await;
+                    }
+                }
+            })
+            .detach();
+
+        assert!(dispatcher.run_ready_main_tasks());
+        assert_eq!(iterations.load(Ordering::SeqCst), 1);
+        assert!(dispatcher.run_ready_main_tasks());
+        assert_eq!(iterations.load(Ordering::SeqCst), 2);
     }
 
     #[test]

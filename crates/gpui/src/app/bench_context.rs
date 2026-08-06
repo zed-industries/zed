@@ -415,6 +415,18 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             .run_until_idle();
     }
 
+    /// Runs main-thread tasks until `ready` returns a value.
+    ///
+    /// Unlike [`Self::run_until_idle`], this returns as soon as `ready`
+    /// reports completion, leaving any remaining queued work pending.
+    pub fn run_until<R>(&self, ready: impl FnMut() -> Option<R>) -> R {
+        self.background_executor
+            .dispatcher()
+            .as_threaded()
+            .expect("validated in BenchAppContext::build")
+            .run_until(ready)
+    }
+
     /// Measures a generic benchmark workload using Criterion's iteration loop.
     ///
     /// The closure is invoked once per Criterion iteration with this
@@ -527,6 +539,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         let collector = FrameTraceScope::start();
 
         let mut benchmark = || {
+            // Work already queued at frame start delays the frame in
+            // production too, so run it inside the measured interval.
             dispatcher
                 .as_threaded()
                 .expect("validated in BenchAppContext::build")
