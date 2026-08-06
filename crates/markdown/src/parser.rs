@@ -348,7 +348,9 @@ pub(crate) fn parse_markdown_with_options(
                                 .last()
                                 .is_some_and(|line| {
                                     let trimmed = line.trim_start();
-                                    trimmed.len() >= 3 && trimmed.chars().all(|c| c == '`')
+                                    trimmed.len() >= 3
+                                        && (trimmed.chars().all(|c| c == '`')
+                                            || trimmed.chars().all(|c| c == '~'))
                                 })
                         };
 
@@ -920,16 +922,24 @@ fn extract_code_content_range(text: &str) -> Range<usize> {
 
 pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     let mut range = 0..text.len();
-    if text.starts_with("```") {
-        range.start += 3;
+    let fence = if text.starts_with("```") {
+        Some("```")
+    } else if text.starts_with("~~~") {
+        Some("~~~")
+    } else {
+        None
+    };
+
+    if let Some(fence) = fence {
+        range.start += fence.len();
 
         if let Some(newline_ix) = text[range.clone()].find('\n') {
             range.start += newline_ix + 1;
         }
-    }
 
-    if !range.is_empty() && text.ends_with("```") {
-        range.end -= 3;
+        if !range.is_empty() && text.ends_with(fence) {
+            range.end -= fence.len();
+        }
     }
     if range.start > range.end {
         range.end = range.start;
