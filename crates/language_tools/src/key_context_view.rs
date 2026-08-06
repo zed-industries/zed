@@ -42,7 +42,7 @@ struct KeyContextView {
     last_possibilities: Vec<(SharedString, SharedString, Option<bool>)>,
     context_stack: Vec<KeyContext>,
     focus_handle: FocusHandle,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 impl KeyContextView {
@@ -102,6 +102,9 @@ impl KeyContextView {
             }
             cx.notify();
         });
+        let sub3 = cx.on_focus_changed(window, |this, window, cx| {
+            this.set_context_stack(window.context_stack(), cx);
+        });
 
         Self {
             context_stack: Vec::new(),
@@ -109,7 +112,7 @@ impl KeyContextView {
             last_keystrokes: None,
             last_possibilities: Vec::new(),
             focus_handle: cx.focus_handle(),
-            _subscriptions: [sub1, sub2],
+            _subscriptions: [sub1, sub2, sub3],
         }
     }
 }
