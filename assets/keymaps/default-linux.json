@@ -955,6 +955,12 @@
     },
   },
   {
+    "context": "ProjectPanelFilter",
+    "bindings": {
+      "escape": "project_panel::CancelFilter",
+    },
+  },
+  {
     "context": "ProjectPanel",
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",

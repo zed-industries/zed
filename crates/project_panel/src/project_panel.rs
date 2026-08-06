@@ -92,6 +92,13 @@ use crate::{
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const FILTER_PLACEHOLDER: &str = "Filter: e.g. -iname *.rs -size 9 -mtime -7";
+/// How long the filter input stays quiet before the tree is rebuilt. Long enough
+/// to swallow a burst of typing, short enough not to read as lag.
+const FILTER_DEBOUNCE: Duration = Duration::from_millis(150);
+/// Entries traversed between yields while filtering. The filtered walk visits the
+/// whole worktree, so it must hand control back periodically for a dropped task
+/// to actually stop rather than run to completion.
+const FILTER_ENTRIES_PER_YIELD: usize = 2048;
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 struct VisibleEntriesForWorktree {
@@ -158,6 +165,13 @@ pub struct ProjectPanel {
     /// the same as `filter_enabled`: an empty or unparseable input leaves the
     /// box open but the tree unfiltered, and the chevrons must follow the tree.
     filter_is_applied: bool,
+    /// Directories the user collapsed *while a filter was applied*. Kept apart
+    /// from `expanded_dir_ids` so a filtered session never rewrites the real
+    /// expansion state; dropped as soon as the filter stops applying.
+    filter_collapsed_dir_ids: HashSet<ProjectEntryId>,
+    /// Debounces the whole-tree walk that filtering requires, so a burst of
+    /// keystrokes costs one traversal rather than one per character.
+    filter_update_task: Option<Task<()>>,
     /// Parse error for the current filter text, shown under the input.
     filter_error: Option<String>,
     clipboard: Option<ClipboardEntry>,
@@ -390,6 +404,8 @@ actions!(
         ToggleHideHidden,
         /// Toggles the `find(1)`-style file filter input.
         ToggleFilter,
+        /// Clears the file filter input, then hides it if already empty.
+        CancelFilter,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
         /// Unfolds the selected directory.
@@ -491,7 +507,12 @@ pub fn init(cx: &mut App) {
             let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
                 return;
             };
-            workspace.open_panel::<ProjectPanel>(window, cx);
+            // Only reveal the panel when the filter is being turned *on*.
+            // Opening it unconditionally would mean the same keystroke that
+            // hides the filter also forces the panel open.
+            if !panel.read(cx).filter_enabled {
+                workspace.open_panel::<ProjectPanel>(window, cx);
+            }
             panel.update(cx, |panel, cx| {
                 panel.toggle_filter(&ToggleFilter, window, cx);
             });
@@ -791,10 +812,7 @@ impl ProjectPanel {
                 window,
                 |project_panel, _, editor_event, window, cx| {
                     if matches!(editor_event, EditorEvent::BufferEdited) {
-                        // Assigning `update_visible_entries_task` drops the
-                        // previous task, so an in-flight traversal for older
-                        // filter text is cancelled rather than racing this one.
-                        project_panel.update_visible_entries(None, false, false, window, cx);
+                        project_panel.schedule_filter_update(window, cx);
                     }
                 },
             )
@@ -890,6 +908,8 @@ impl ProjectPanel {
                 // is visible, and an empty input filters nothing.
                 filter_enabled: true,
                 filter_is_applied: false,
+                filter_collapsed_dir_ids: HashSet::default(),
+                filter_update_task: None,
                 filter_error: None,
                 clipboard: None,
                 _dragged_entry_destination: None,
@@ -1346,6 +1366,14 @@ impl ProjectPanel {
             if entry.is_dir() {
                 let worktree_id = worktree.id();
                 let entry_id = entry.id;
+                if self.filter_owns_expansion(entry_id, cx).is_some() {
+                    if self.filter_collapsed_dir_ids.contains(&entry_id) {
+                        self.set_filter_collapsed(worktree_id, entry_id, false, window, cx);
+                    } else {
+                        self.select_next(&SelectNext, window, cx);
+                    }
+                    return;
+                }
                 let expanded_dir_ids = if let Some(expanded_dir_ids) =
                     self.state.expanded_dir_ids.get_mut(&worktree_id)
                 {
@@ -1398,6 +1426,26 @@ impl ProjectPanel {
             return;
         }
         let worktree_id = worktree.id();
+        if self.filter_is_applied {
+            // Mirror of the unfiltered loop below: collapse this directory, or
+            // walk up to the nearest ancestor that is still expanded.
+            let mut candidate = &entry;
+            loop {
+                if candidate.is_dir() && !self.filter_collapsed_dir_ids.contains(&candidate.id) {
+                    let entry_id = candidate.id;
+                    self.set_filter_collapsed(worktree_id, entry_id, true, window, cx);
+                    return;
+                }
+                let Some(parent) = candidate
+                    .path
+                    .parent()
+                    .and_then(|parent| worktree.entry_for_path(parent))
+                else {
+                    return;
+                };
+                candidate = parent;
+            }
+        }
         let expanded_dir_ids =
             if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
                 expanded_dir_ids
@@ -1513,6 +1561,22 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Wiping `expanded_dir_ids` here would destroy expansion state the user
+        // cannot even see while filtering. Collapse the filtered tree instead.
+        if self.filter_is_applied {
+            let visible_dirs: Vec<ProjectEntryId> = self
+                .state
+                .visible_entries
+                .iter()
+                .flat_map(|worktree| worktree.entries.iter())
+                .filter(|entry| entry.is_dir() && !entry.path.as_unix_str().is_empty())
+                .map(|entry| entry.id)
+                .collect();
+            self.filter_collapsed_dir_ids.extend(visible_dirs);
+            self.update_visible_entries(None, false, false, window, cx);
+            cx.notify();
+            return;
+        }
         let roots = self.all_worktree_roots(cx);
         self.collapse_worktree_roots(roots, window, cx);
     }
@@ -1613,6 +1677,18 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // While a filter is applied every listed directory renders expanded
+        // without being in `expanded_dir_ids`. Toggling the real set here would
+        // invert the click -- "collapse" would take the `Err` arm and expand --
+        // and would rewrite the expansion state the filter promises to leave
+        // alone. Collapsing is recorded in a filter-local set instead.
+        if let Some(worktree_id) = self.filter_owns_expansion(entry_id, cx) {
+            let collapsed = !self.filter_collapsed_dir_ids.contains(&entry_id);
+            self.set_filter_collapsed(worktree_id, entry_id, collapsed, window, cx);
+            window.focus(&self.focus_handle, cx);
+            return;
+        }
+
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx)
             && let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id)
         {
@@ -1639,6 +1715,16 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Expand/collapse-all has no filtered meaning: the filter already
+        // decides what is shown beneath a directory. Fall back to toggling just
+        // this one, against the filter-local state.
+        if let Some(worktree_id) = self.filter_owns_expansion(entry_id, cx) {
+            let collapsed = !self.filter_collapsed_dir_ids.contains(&entry_id);
+            self.set_filter_collapsed(worktree_id, entry_id, collapsed, window, cx);
+            window.focus(&self.focus_handle, cx);
+            return;
+        }
+
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx)
             && let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id)
         {
@@ -4286,11 +4372,16 @@ impl ProjectPanel {
             )
     }
 
-    /// Keeps matching files plus every directory on the path to one.
+    /// Keeps matching files plus every directory on the path to one, minus
+    /// anything the user collapsed while the filter was applied.
     ///
     /// Expects `entries` in traversal order; the ancestor set is built from the
     /// kept files, so ordering only affects the early-exit optimisation below.
-    fn retain_filtered_entries(entries: &mut Vec<GitEntry>, filter: &MetadataFilters) {
+    fn retain_filtered_entries(
+        entries: &mut Vec<GitEntry>,
+        filter: &MetadataFilters,
+        collapsed_dir_ids: &HashSet<ProjectEntryId>,
+    ) {
         // The placeholder for an in-progress create/rename has no real name or
         // metadata, so any filter would drop it and the inline input would
         // vanish mid-typing. It and its ancestors are always kept.
@@ -4312,9 +4403,33 @@ impl ProjectPanel {
             }
         }
 
+        // A directory collapsed during filtering stays on screen -- it still
+        // leads to a match -- but its descendants are hidden. The traversal
+        // cannot skip them, because whether the directory itself survives is
+        // only known once its descendants have been tested.
+        let collapsed_paths: HashSet<String> = if collapsed_dir_ids.is_empty() {
+            HashSet::default()
+        } else {
+            entries
+                .iter()
+                .filter(|entry| !entry.is_file() && collapsed_dir_ids.contains(&entry.id))
+                .map(|entry| entry.path.as_unix_str().to_owned())
+                .collect()
+        };
+        let is_under_collapsed = |entry: &GitEntry| {
+            !collapsed_paths.is_empty()
+                && entry
+                    .path
+                    .ancestors()
+                    .skip(1)
+                    .any(|ancestor| collapsed_paths.contains(ancestor.as_unix_str()))
+        };
+
         entries.retain(|entry| {
             if is_pending_edit(entry) {
                 true
+            } else if is_under_collapsed(entry) {
+                false
             } else if entry.is_file() {
                 Self::entry_matches_filter(entry, filter)
             } else {
@@ -4333,6 +4448,11 @@ impl ProjectPanel {
         let colors = cx.theme().colors();
         Some(
             v_flex()
+                // The bar sits outside the element carrying the panel's own key
+                // context, so it declares one of its own -- otherwise nothing
+                // dispatched from the focused input would reach a handler here.
+                .key_context("ProjectPanelFilter")
+                .on_action(cx.listener(Self::cancel_filter))
                 .w_full()
                 .flex_none()
                 .p_1p5()
@@ -4366,15 +4486,86 @@ impl ProjectPanel {
         if self.filter_enabled {
             window.focus(&self.filter_editor.focus_handle(cx), cx);
         } else {
-            // Clear rather than merely hide: a filter that keeps pruning the
-            // tree while its input is invisible is indistinguishable from a bug.
-            self.filter_editor
-                .update(cx, |editor, cx| editor.set_text("", window, cx));
-            self.filter_error = None;
+            self.clear_filter(window, cx);
             window.focus(&self.focus_handle, cx);
         }
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
+    }
+
+    /// Empties the filter input and everything derived from it. Clearing rather
+    /// than merely hiding: a filter that keeps pruning the tree while its input
+    /// is invisible is indistinguishable from a bug.
+    ///
+    /// Focus is left alone -- moving it belongs to the callers that actually
+    /// hide the bar.
+    fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.filter_error = None;
+        self.filter_collapsed_dir_ids.clear();
+    }
+
+    /// Escape, in two stages: the first press empties a non-empty input, the
+    /// second hides the bar. Matching the input first means a mistyped filter
+    /// costs one keystroke to undo rather than reopening the bar afterwards.
+    fn cancel_filter(&mut self, _: &CancelFilter, window: &mut Window, cx: &mut Context<Self>) {
+        // The first press must leave the cursor in the input: focus moving to
+        // the tree would take the `ProjectPanelFilter` key context with it, and
+        // the second press could never reach this handler.
+        let hide = self.filter_editor.read(cx).text(cx).is_empty();
+        self.clear_filter(window, cx);
+        if hide {
+            self.filter_enabled = false;
+            window.focus(&self.focus_handle, cx);
+        }
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    /// While a filter is applied, expansion belongs to `filter_collapsed_dir_ids`
+    /// rather than `expanded_dir_ids` -- see [`Self::toggle_expanded`]. Every
+    /// expand/collapse gesture asks this first, so the keyboard, the chevron and
+    /// the context menu all agree on which state they are editing.
+    fn filter_owns_expansion(&self, entry_id: ProjectEntryId, cx: &App) -> Option<WorktreeId> {
+        if !self.filter_is_applied {
+            return None;
+        }
+        self.project.read(cx).worktree_id_for_entry(entry_id, cx)
+    }
+
+    /// Records an expand/collapse against the filtered tree and rebuilds it.
+    fn set_filter_collapsed(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        collapsed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if collapsed {
+            self.filter_collapsed_dir_ids.insert(entry_id);
+        } else {
+            self.filter_collapsed_dir_ids.remove(&entry_id);
+        }
+        self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
+        cx.notify();
+    }
+
+    /// Coalesces filter keystrokes. With a filter active `update_visible_entries`
+    /// walks and materialises every entry in the worktree, including collapsed
+    /// directories, so running it per character is what makes a large project
+    /// feel slow. Assigning the task drops the previous one, so only the last
+    /// keystroke of a burst survives the wait.
+    fn schedule_filter_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_update_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(FILTER_DEBOUNCE).await;
+            this.update_in(cx, |this, window, cx| {
+                this.filter_update_task = None;
+                this.update_visible_entries(None, false, false, window, cx);
+            })
+            .ok();
+        }));
     }
 
     /// Parses the filter input, recording any error for display. Returns `None`
@@ -4413,6 +4604,12 @@ impl ProjectPanel {
         let now = Instant::now();
         let filter = self.active_filter(cx);
         let filter_is_applied = filter.is_some();
+        if !filter_is_applied {
+            // Collapses only mean anything relative to a filtered tree; keeping
+            // them would silently prune the next filter the user types.
+            self.filter_collapsed_dir_ids.clear();
+        }
+        let filter_collapsed_dir_ids = self.filter_collapsed_dir_ids.clone();
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
@@ -4467,7 +4664,21 @@ impl ProjectPanel {
                             GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
                         let mut auto_folded_ancestors = vec![];
                         let worktree_abs_path = worktree_snapshot.abs_path();
+                        let mut entries_since_yield = 0usize;
                         while let Some(entry) = entry_iter.entry() {
+                            // Only the filtered walk needs this: it visits the
+                            // whole worktree, so without an await point a task
+                            // dropped for newer filter text would still run to
+                            // completion. The unfiltered walk stays allocation-
+                            // and yield-free.
+                            if filter.is_some() {
+                                entries_since_yield += 1;
+                                if entries_since_yield >= FILTER_ENTRIES_PER_YIELD {
+                                    entries_since_yield = 0;
+                                    smol::future::yield_now().await;
+                                }
+                            }
+
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
                                 if new_entry_parent_id == Some(entry.id) {
                                     visible_worktree_entries.push(Self::create_new_git_entry(
@@ -4675,7 +4886,11 @@ impl ProjectPanel {
                         }
 
                         if let Some(filter) = &filter {
-                            Self::retain_filtered_entries(&mut visible_worktree_entries, filter);
+                            Self::retain_filtered_entries(
+                                &mut visible_worktree_entries,
+                                filter,
+                                &filter_collapsed_dir_ids,
+                            );
 
                             for entry in &visible_worktree_entries {
                                 let Some(width_estimate) = entry_widths.get(&entry.id).copied()
@@ -6766,9 +6981,15 @@ impl ProjectPanel {
         // A filter traverses into collapsed directories without recording them
         // as expanded, so every directory it lists is showing its (filtered)
         // children. Rendering a collapsed chevron above visible children would
-        // contradict what the user sees.
-        let is_expanded =
-            self.filter_is_applied || expanded_entry_ids.binary_search(&entry.id).is_ok();
+        // contradict what the user sees. While filtering, the only directories
+        // drawn collapsed are the ones collapsed *during* the filter, which is
+        // also the set `toggle_expanded` writes -- so the chevron and the click
+        // agree on which state they are toggling.
+        let is_expanded = if self.filter_is_applied {
+            !self.filter_collapsed_dir_ids.contains(&entry.id)
+        } else {
+            expanded_entry_ids.binary_search(&entry.id).is_ok()
+        };
 
         let icon = match entry.kind {
             EntryKind::File => {

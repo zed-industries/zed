@@ -14314,6 +14314,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "telemetry",
  "tempfile",
  "theme",
