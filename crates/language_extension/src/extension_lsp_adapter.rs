@@ -55,6 +55,12 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 
 impl LanguageServerStatusDelegate for WorktreeDelegateAdapter {
     fn update_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        log::debug!(
+            "Updating binary status for {} to {:?}",
+            server_name,
+            status
+        );
+
         self.0.update_status(server_name, status);
     }
 }
