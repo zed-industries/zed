@@ -1380,24 +1380,28 @@ fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Opti
 /// the host's, so an absolute POSIX path resolves correctly on a Windows host
 /// driving a WSL/SSH project (#60040).
 ///
-/// Paths are validated with [`RelPath`] via [`PathStyle::strip_prefix`], to
-/// ensure that `cd` cannot escape the worktree root with a `..` sequence
-/// (#60014).
+/// Both `cd` and the worktree roots are lexically normalized before prefix
+/// matching. This resolves `.` and `..` components up front, so a path that
+/// escapes a worktree does not have that worktree's root as a prefix and is
+/// rejected (#60014). On Windows-style projects it also unifies `/` and `\`
+/// separators, since models frequently write `C:/foo/bar` for a root stored
+/// as `C:\foo\bar`.
 fn resolve_cd_in_worktrees(
     cd: &str,
     path_style: util::paths::PathStyle,
     worktree_roots: &[(&str, PathBuf)],
 ) -> Option<PathBuf> {
-    let cd_path = Path::new(cd);
-    let is_absolute = path_style.is_absolute(cd);
+    let cd = path_style.normalize(cd);
+    let cd_path = Path::new(&cd);
+    let is_absolute = path_style.is_absolute(&cd);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
-        let prefix: &Path = if is_absolute {
-            abs_path
+        let prefix = if is_absolute {
+            path_style.normalize(abs_path.to_str()?)
         } else {
-            root_name.as_ref()
+            (*root_name).to_string()
         };
-        let subpath = path_style.strip_prefix(cd_path, prefix)?;
+        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix))?;
         if subpath.is_empty() {
             Some(abs_path.clone())
         } else {
@@ -1421,7 +1425,9 @@ mod tests {
             ("worktree", PathBuf::from("/a/worktree")),
             ("worktree", PathBuf::from("/b/worktree")),
         ];
-        let windows_roots = vec![("worktree", PathBuf::from("C:/work/worktree"))];
+        // Worktree roots are stored with backslash separators on Windows, but
+        // models frequently write paths with forward slashes; both must match.
+        let windows_roots = vec![("worktree", PathBuf::from("C:\\work\\worktree"))];
 
         // absolute paths
         assert_eq!(
@@ -1451,8 +1457,13 @@ mod tests {
         );
         assert_eq!(
             resolve_cd_in_worktrees("/a/worktree/../../b/worktree", Unix, &unix_roots),
-            None,
-            "a `..` escape is rejected even when the final path lands in a different valid worktree"
+            Some(PathBuf::from("/b/worktree")),
+            "a path whose `..` components lexically resolve into a valid worktree is accepted"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("/a/worktree//src/", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree/src")),
+            "doubled and trailing separators are normalized away"
         );
 
         // relative root names
@@ -1481,22 +1492,47 @@ mod tests {
             None,
             "a root-relative path that is not any of the worktree roots is rejected"
         );
+        assert_eq!(
+            resolve_cd_in_worktrees("./worktree", Unix, &unix_roots),
+            Some(PathBuf::from("/a/worktree")),
+            "a leading `./` is normalized away"
+        );
 
         // Windows paths
         assert_eq!(
-            resolve_cd_in_worktrees("C:/work/worktree", Windows, &windows_roots),
-            Some(PathBuf::from("C:/work/worktree")),
+            resolve_cd_in_worktrees("C:\\work\\worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree")),
             "Windows-absolute paths to root directories resolve"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("C:/work/worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree")),
+            "forward-slash separators match a backslash-stored root"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("c:\\work\\worktree", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree")),
+            "drive letters match case-insensitively"
         );
         assert_eq!(
             resolve_cd_in_worktrees("C:/work/worktree/src", Windows, &windows_roots),
             Some(PathBuf::from("C:\\work\\worktree\\src")),
-            "Windows-absolute paths to subdirectories resolve to the same path, with Windows path style"
+            "Windows-absolute paths to subdirectories resolve regardless of separator style"
         );
         assert_eq!(
             resolve_cd_in_worktrees("worktree\\src", Windows, &windows_roots),
             Some(PathBuf::from("C:\\work\\worktree\\src")),
-            "Windows-relative paths to subdirectories resolve to the same path, with Windows path style"
+            "Windows-relative paths to subdirectories resolve to the absolute path"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("worktree/src", Windows, &windows_roots),
+            Some(PathBuf::from("C:\\work\\worktree\\src")),
+            "forward-slash relative paths resolve under a Windows path style"
+        );
+        assert_eq!(
+            resolve_cd_in_worktrees("C:\\work\\worktree\\..\\escape", Windows, &windows_roots),
+            None,
+            "a Windows-absolute path that escapes its worktree via `..` is rejected"
         );
     }
 
