@@ -377,13 +377,6 @@ impl DockerClient for Docker {
 
         command.arg("sh");
 
-        // The inner command is either a plain program with arguments, a
-        // string-form lifecycle command wrapped as `/bin/sh -c <script>`, or
-        // (for the postStartCommand marker) a multi-line script passed as the
-        // program with no arguments. `command_to_shell_string` single-quotes
-        // each argument so the outer shell hands them to the inner command
-        // verbatim instead of re-interpreting shell metacharacters; a bare
-        // program is passed through unquoted so it runs as a script.
         let inner_program_script = if inner_command.get_args().next().is_none() {
             inner_command.get_program().display().to_string()
         } else {

@@ -3361,9 +3361,6 @@ fn shell_single_quote(value: &str) -> String {
 
 pub(crate) fn command_to_shell_string(command: &Command) -> String {
     // Single-quote each token so the embedded command keeps its original argv
-    // boundaries when the marker script's shell parses it. String-form
-    // commands arrive as `/bin/sh -c <script>`, and the script may contain
-    // shell metacharacters that must not be re-interpreted here.
     std::iter::once(command.get_program())
         .chain(command.get_args())
         .map(|arg| shell_single_quote(&arg.to_string_lossy()))
