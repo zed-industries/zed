@@ -803,11 +803,14 @@ impl Markdown {
         snapping: MermaidZoomSnapping,
         cx: &mut Context<Self>,
     ) {
+        let current_zoom = self.mermaid_zoom_level(source_offset);
         let min_zoom = self.mermaid_min_zoom_level(source_offset);
         let requested_zoom = zoom;
         let mut zoom = zoom.clamp(min_zoom, MERMAID_MAX_ZOOM);
+        let crossed_default_zoom =
+            (current_zoom < 1.0 && zoom > 1.0) || (current_zoom > 1.0 && zoom < 1.0);
         if matches!(snapping, MermaidZoomSnapping::Enabled)
-            && (zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE
+            && ((zoom - 1.0).abs() <= MERMAID_ZOOM_SNAP_TOLERANCE || crossed_default_zoom)
         {
             zoom = 1.0;
         }

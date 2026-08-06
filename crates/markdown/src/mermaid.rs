@@ -1026,8 +1026,8 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{
-        Context, Entity, IntoElement, PinchEvent, Render, RenderImage, ScrollHandle,
-        TestAppContext, TouchPhase, Window, point, size,
+        Context, Entity, IntoElement, Modifiers, PinchEvent, Render, RenderImage, ScrollDelta,
+        ScrollHandle, ScrollWheelEvent, TestAppContext, TouchPhase, Window, point, size,
     };
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
@@ -1130,6 +1130,51 @@ mod tests {
             contents: contents.to_string().into(),
             scale: 100,
         }
+    }
+
+    fn markdown_with_wide_mermaid(cx: &mut TestAppContext) -> (Entity<Markdown>, usize) {
+        ensure_theme_initialized(cx);
+
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+        let (parsed_svg, image) = markdown.update(cx, |_, cx| {
+            let svg_renderer = cx.svg_renderer();
+            let parsed_svg = Arc::new(
+                svg_renderer
+                    .parse_svg(
+                        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"></svg>"#,
+                    )
+                    .unwrap(),
+            );
+            let image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
+            (parsed_svg, image)
+        });
+
+        let contents = mermaid_contents("graph A");
+        let source_offset = 0;
+        markdown.update(cx, |markdown, _| {
+            markdown.parsed_markdown.mermaid_diagrams.insert(
+                source_offset,
+                ParsedMarkdownMermaidDiagram {
+                    content_range: 0..contents.contents.len(),
+                    contents: contents.clone(),
+                },
+            );
+            markdown.mermaid_state.cache.insert(
+                contents,
+                Arc::new(CachedMermaidDiagram::new_for_test(
+                    Some(image),
+                    None,
+                    Some(parsed_svg),
+                )),
+            );
+            markdown
+                .mermaid_views
+                .entry(source_offset)
+                .or_default()
+                .container_width_for_test = Some(px(100.));
+        });
+
+        (markdown, source_offset)
     }
 
     fn mermaid_sequence(diagrams: &[&str]) -> Vec<ParsedMarkdownMermaidDiagramContents> {
@@ -1609,9 +1654,8 @@ mod tests {
 
     #[gpui::test]
     fn test_pinch_zooms_mermaid_diagram_without_propagating(cx: &mut TestAppContext) {
+        let (markdown, source_offset) = markdown_with_wide_mermaid(cx);
         let cx = cx.add_empty_window();
-        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
-        let source_offset = 0;
         let scroll_handle = markdown.update(cx, |markdown, _| {
             markdown.mermaid_scroll_handle(source_offset)
         });
@@ -1675,52 +1719,66 @@ mod tests {
                 < f32::EPSILON
         );
         assert!(!parent_received_pinch.get());
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.set_mermaid_zoom_level(source_offset, 1.0, cx);
+        });
+        cx.simulate_event(PinchEvent {
+            position: point(px(25.0), px(25.0)),
+            delta: -0.04,
+            phase: TouchPhase::Moved,
+            ..Default::default()
+        });
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.mermaid_zoom_level(source_offset)),
+            0.96
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(25.0), px(25.0)),
+            delta: ScrollDelta::Lines(point(0.0, 1.0)),
+            modifiers: Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            touch_phase: TouchPhase::Moved,
+        });
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.mermaid_zoom_level(source_offset)),
+            1.0,
+            "modifier-wheel zoom should snap when crossing 100%"
+        );
+
+        cx.simulate_event(PinchEvent {
+            position: point(px(25.0), px(25.0)),
+            delta: 0.04,
+            phase: TouchPhase::Moved,
+            ..Default::default()
+        });
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.mermaid_zoom_level(source_offset)),
+            1.04
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(25.0), px(25.0)),
+            delta: ScrollDelta::Lines(point(0.0, -1.0)),
+            modifiers: Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            touch_phase: TouchPhase::Moved,
+        });
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.mermaid_zoom_level(source_offset)),
+            1.0,
+            "modifier-wheel zoom should snap when crossing 100%"
+        );
     }
 
     #[gpui::test]
     fn test_mermaid_zoom_to_fit_tracks_container_width(cx: &mut TestAppContext) {
-        ensure_theme_initialized(cx);
-
-        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
-
-        // A raster whose natural (zoom 1.0) width is 200px.
-        let (parsed_svg, image) = markdown.update(cx, |_, cx| {
-            let svg_renderer = cx.svg_renderer();
-            let parsed_svg = Arc::new(
-                svg_renderer
-                    .parse_svg(
-                        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"></svg>"#,
-                    )
-                    .unwrap(),
-            );
-            let image = svg_renderer.render_parsed(&parsed_svg, 1.0).unwrap();
-            (parsed_svg, image)
-        });
-
-        let contents = mermaid_contents("graph A");
-        let source_offset = 0;
-        markdown.update(cx, |markdown, _| {
-            markdown.parsed_markdown.mermaid_diagrams.insert(
-                source_offset,
-                ParsedMarkdownMermaidDiagram {
-                    content_range: 0..contents.contents.len(),
-                    contents: contents.clone(),
-                },
-            );
-            markdown.mermaid_state.cache.insert(
-                contents.clone(),
-                Arc::new(CachedMermaidDiagram::new_for_test(
-                    Some(image),
-                    None,
-                    Some(parsed_svg),
-                )),
-            );
-            markdown
-                .mermaid_views
-                .entry(source_offset)
-                .or_default()
-                .container_width_for_test = Some(px(100.));
-        });
+        let (markdown, source_offset) = markdown_with_wide_mermaid(cx);
 
         // Zooming out past the floor clamps to fit-to-width (100 / 200).
         markdown.update(cx, |markdown, cx| {
