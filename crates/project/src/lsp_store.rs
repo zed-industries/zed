@@ -8229,7 +8229,7 @@ impl LspStore {
                 .into_iter()
                 .flatten()
                 .collect();
-                Some(hovers)
+                Some(deduplicate_hovers(hovers))
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
@@ -8239,13 +8239,13 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Some(
+                Some(deduplicate_hovers(
                     all_actions_task
                         .await
                         .into_iter()
                         .filter_map(|(_, hover)| remove_empty_hover_blocks(hover?))
                         .collect::<Vec<Hover>>(),
-                )
+                ))
             })
         }
     }
@@ -13896,6 +13896,19 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
     } else {
         Some(hover)
     }
+}
+
+fn deduplicate_hovers(hovers: Vec<Hover>) -> Vec<Hover> {
+    let mut unique_hovers = Vec::with_capacity(hovers.len());
+    for hover in hovers {
+        if !unique_hovers
+            .iter()
+            .any(|unique: &Hover| unique.contents == hover.contents)
+        {
+            unique_hovers.push(hover);
+        }
+    }
+    unique_hovers
 }
 
 async fn populate_labels_for_completions(
