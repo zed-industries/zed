@@ -5182,7 +5182,7 @@ impl GitPanel {
             vec![active_repository.clone()]
         };
         let root_repositories = if show_all_repositories {
-            crate::worktree_service::classify_worktrees(self.project.read(cx), cx).0
+            git_ui_core::worktree_service::classify_worktrees(self.project.read(cx), cx).0
         } else {
             Vec::new()
         };
