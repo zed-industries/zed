@@ -61,6 +61,9 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Shows the git history for the selected line range in the active editor.
+        /// If no selection is active, falls back to the current line.
+        FileHistoryForSelection,
         /// Opens a permalink for the selected file on its Git hosting provider.
         OpenFilePermalink,
         /// Copies a permalink for the selected file on its Git hosting provider.
