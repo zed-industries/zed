@@ -610,11 +610,18 @@ impl DeepSeekEventMapper {
         }
 
         if let Some(usage) = event.usage {
+            // DeepSeek's prompt_tokens is the total, with cache hit/miss as
+            // sub-components. Subtract them to avoid double-counting vs.
+            // total_input_tokens() which adds all three together.
+            let input_tokens = usage
+                .prompt_tokens
+                .saturating_sub(usage.prompt_cache_hit_tokens)
+                .saturating_sub(usage.prompt_cache_miss_tokens);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
+                input_tokens: input_tokens,
                 output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: usage.prompt_cache_miss_tokens,
+                cache_read_input_tokens: usage.prompt_cache_hit_tokens,
             })));
         }
 
