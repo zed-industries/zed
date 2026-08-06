@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod recent_files_tests;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use collections::HashSet;
 use futures::future::join_all;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
@@ -13,7 +15,7 @@ use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, OpenOptions, Workspace, WorkspaceDb};
 
 use crate::FoundPath;
 
@@ -30,6 +32,49 @@ actions!(
 
 pub fn init(cx: &mut App) {
     cx.observe_new(RecentFiles::register).detach();
+    cx.observe_new(watch_active_item).detach();
+}
+
+/// Persists the active file to the `recently_opened_files` table on every
+/// active-item change, for the lifetime of the workspace, so the palette's
+/// history survives a restart. This runs independently of whether the
+/// palette itself is ever opened.
+fn watch_active_item(
+    _workspace: &mut Workspace,
+    _window: Option<&mut Window>,
+    cx: &mut Context<Workspace>,
+) {
+    cx.subscribe_self::<workspace::Event>(|workspace, event, cx| {
+        if !matches!(event, workspace::Event::ActiveItemChanged) {
+            return;
+        }
+        let Some(workspace_id) = workspace.database_id() else {
+            return;
+        };
+        let Some(project_path) = workspace
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+        else {
+            return;
+        };
+        let Some(abs_path) = workspace
+            .project()
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+            .map(|worktree| worktree.read(cx).absolutize(&project_path.path))
+        else {
+            return;
+        };
+
+        let db = WorkspaceDb::global(cx);
+        cx.background_spawn(async move {
+            db.record_recently_opened_file(workspace_id, abs_path)
+                .await
+                .log_err();
+        })
+        .detach();
+    })
+    .detach();
 }
 
 pub struct RecentFiles {
@@ -98,12 +143,34 @@ impl RecentFiles {
             })
             .collect::<Vec<_>>();
 
+        // Files opened in a previous session, kept around so the palette
+        // survives a restart. Filtered through the same existence check as
+        // live history above, since these can be arbitrarily stale.
+        let persisted_paths = workspace.database_id().map(|workspace_id| {
+            let db = WorkspaceDb::global(cx);
+            let fs = fs.clone();
+            cx.background_spawn(async move {
+                let paths = db.recently_opened_files(workspace_id).log_err()?;
+                let mut existing = Vec::with_capacity(paths.len());
+                for path in paths {
+                    if fs.is_file(&path).await {
+                        existing.push(path);
+                    }
+                }
+                Some(existing)
+            })
+        });
+
         cx.spawn_in(window, async move |workspace, cx| {
             let history_items: Vec<FoundPath> = join_all(history_items)
                 .await
                 .into_iter()
                 .flatten()
                 .collect();
+            let persisted_paths = match persisted_paths {
+                Some(task) => task.await.unwrap_or_default(),
+                None => Vec::new(),
+            };
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -114,6 +181,7 @@ impl RecentFiles {
                             weak_workspace,
                             currently_opened_project_path,
                             history_items,
+                            persisted_paths,
                         );
                         RecentFiles::new(delegate, window, cx)
                     });
@@ -172,28 +240,38 @@ impl Render for RecentFiles {
 /// A single candidate in the recent-files list: a resolved path plus the
 /// pre-split display strings so matching only needs to run against the file
 /// name, not the whole absolute path.
+///
+/// `project_path` is `Some` for files opened this session (from live
+/// navigation history) and `None` for files only known from a previous
+/// session's persisted history; opening always goes through `absolute_path`
+/// (see `confirm`), so a missing `project_path` doesn't block opening the
+/// file, it's only used to detect "this entry is the currently open file".
 #[derive(Clone)]
 struct RecentFileEntry {
-    path: FoundPath,
+    absolute_path: PathBuf,
+    project_path: Option<ProjectPath>,
     file_name: SharedString,
     parent_path: SharedString,
 }
 
 impl RecentFileEntry {
-    fn new(path: FoundPath) -> Self {
-        let file_name = path
-            .absolute
+    fn new(absolute_path: PathBuf, project_path: Option<ProjectPath>) -> Self {
+        let file_name = absolute_path
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-        let parent_path = path
-            .absolute
+        let parent_path = absolute_path
             .parent()
             .map_or_else(String::new, |parent| parent.to_string_lossy().into_owned());
         Self {
-            path,
+            absolute_path,
+            project_path,
             file_name: file_name.into(),
             parent_path: parent_path.into(),
         }
+    }
+
+    fn from_found_path(found_path: FoundPath) -> Self {
+        Self::new(found_path.absolute, Some(found_path.project))
     }
 }
 
@@ -217,14 +295,27 @@ impl RecentFilesDelegate {
         workspace: WeakEntity<Workspace>,
         currently_opened_project_path: Option<ProjectPath>,
         history_items: Vec<FoundPath>,
+        persisted_paths: Vec<PathBuf>,
     ) -> Self {
         // Most-recent-first order comes from `recent_navigation_history`; the
         // currently open file (if present in history) stays in the list so the
-        // palette reads the same as the editor's tab order.
-        let entries = history_items
+        // palette reads the same as the editor's tab order. Persisted paths
+        // from previous sessions are appended after, deduplicated against the
+        // live entries, so files touched this session still take priority.
+        let mut entries: Vec<RecentFileEntry> = history_items
             .into_iter()
-            .map(RecentFileEntry::new)
+            .map(RecentFileEntry::from_found_path)
             .collect();
+        let seen_paths: HashSet<PathBuf> = entries
+            .iter()
+            .map(|entry| entry.absolute_path.clone())
+            .collect();
+        entries.extend(
+            persisted_paths
+                .into_iter()
+                .filter(|path| !seen_paths.contains(path))
+                .map(|path| RecentFileEntry::new(path, None)),
+        );
 
         Self {
             recent_files,
@@ -251,10 +342,9 @@ impl RecentFilesDelegate {
     fn default_selected_index(&self) -> usize {
         if self.matches.len() > 1
             && let Some(currently_opened_project_path) = &self.currently_opened_project_path
-            && self
-                .entries
-                .first()
-                .is_some_and(|entry| &entry.path.project == currently_opened_project_path)
+            && self.entries.first().is_some_and(|entry| {
+                entry.project_path.as_ref() == Some(currently_opened_project_path)
+            })
         {
             1
         } else {
@@ -347,10 +437,18 @@ impl PickerDelegate for RecentFilesDelegate {
             return;
         };
 
-        let project_path = entry.path.project.clone();
+        let absolute_path = entry.absolute_path.clone();
         workspace.update(cx, |workspace, cx| {
             workspace
-                .open_path(project_path, None, true, window, cx)
+                .open_abs_path(
+                    absolute_path,
+                    OpenOptions {
+                        focus: Some(true),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
                 .detach_and_log_err(cx);
         });
 
