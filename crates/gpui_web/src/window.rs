@@ -353,7 +353,7 @@ impl WebWindowInner {
                 |callbacks| &mut callbacks.request_frame,
                 |callback| {
                     callback(RequestFrameOptions {
-                        require_presentation: true,
+                        require_presentation: false,
                         force_render: false,
                     })
                 },
