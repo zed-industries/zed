@@ -428,16 +428,23 @@ async fn test_open_breadcrumb_navigation_via_keystroke(cx: &mut TestAppContext) 
 async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppContext) {
     use project::{FakeFs, Project};
     use serde_json::json;
+    use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use util::path;
     use workspace::Workspace;
 
-    static OUTLINE_TOGGLED: AtomicBool = AtomicBool::new(false);
+    // Process-global callback, but each test installs its own flag so concurrent tests do not race.
+    static OUTLINE_TOGGLE_FLAG: OnceLock<parking_lot::Mutex<Arc<AtomicBool>>> = OnceLock::new();
     fn outline_toggle_for_test(_: gpui::AnyView, _: &mut gpui::Window, _: &mut gpui::App) {
-        OUTLINE_TOGGLED.store(true, Ordering::SeqCst);
+        if let Some(flag) = OUTLINE_TOGGLE_FLAG.get() {
+            flag.lock().store(true, Ordering::SeqCst);
+        }
     }
+    let outline_toggled = Arc::new(AtomicBool::new(false));
+    *OUTLINE_TOGGLE_FLAG
+        .get_or_init(|| parking_lot::Mutex::new(Arc::new(AtomicBool::new(false))))
+        .lock() = outline_toggled.clone();
     let _ = zed_actions::outline::TOGGLE_OUTLINE.set(outline_toggle_for_test);
-    OUTLINE_TOGGLED.store(false, Ordering::SeqCst);
 
     init_test(cx, |_| {});
 
@@ -503,12 +510,12 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
         );
     });
     assert!(
-        OUTLINE_TOGGLED.load(Ordering::SeqCst),
+        outline_toggled.load(Ordering::SeqCst),
         "empty outline must invoke the outline picker fallthrough"
     );
 
     // Action path: same Symbols listing for non-navigable singleton.
-    OUTLINE_TOGGLED.store(false, Ordering::SeqCst);
+    outline_toggled.store(false, Ordering::SeqCst);
     editor.update_in(cx, |editor, window, cx| {
         editor.open_breadcrumb_navigation_action(&OpenBreadcrumbNavigation, window, cx);
     });
@@ -517,13 +524,11 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
         let menu = editor
             .breadcrumb_navigation_menu()
             .expect("single-file OpenBreadcrumbNavigation opens symbols listing");
-        assert!(
-            matches!(
-                menu.read(cx).listing(),
-                BreadcrumbListing::Symbols { parent: None, .. }
-            ),
-            "single-file action opens top-level symbols listing"
-        );
+        let listing = menu.read(cx).listing().clone();
+        match listing {
+            BreadcrumbListing::Symbols { parent: None, .. } => {}
+            other => panic!("single-file action opens top-level symbols listing, got {other:?}"),
+        }
     });
     cx.run_until_parked();
     editor.read_with(cx, |editor, _| {
@@ -532,7 +537,7 @@ async fn test_open_breadcrumb_navigation_single_file_worktree(cx: &mut TestAppCo
             "still falls through once empty outline resolves"
         );
     });
-    assert!(OUTLINE_TOGGLED.load(Ordering::SeqCst));
+    assert!(outline_toggled.load(Ordering::SeqCst));
 }
 
 /// Symbols listing waits for a delayed LSP document-symbol response (no-cache async load).

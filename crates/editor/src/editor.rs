@@ -1129,10 +1129,6 @@ pub struct Editor {
     /// Open breadcrumb navigation session (one async-populating menu entity).
     breadcrumb_navigation_menu: Option<Entity<BreadcrumbNavigationMenu>>,
     _breadcrumb_navigation_menu_subscription: Option<Subscription>,
-    /// Listing dismissed by the current mouse gesture: the menu's mouse-down-out fires before
-    /// the anchor segment's click, so without this the click would instantly reopen the menu
-    /// it just closed and a segment re-click could never toggle it shut.
-    breadcrumb_listing_dismissed_by_gesture: Option<BreadcrumbListing>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
@@ -2455,7 +2451,6 @@ impl Editor {
             breadcrumb_header: None,
             breadcrumb_navigation_menu: None,
             _breadcrumb_navigation_menu_subscription: None,
-            breadcrumb_listing_dismissed_by_gesture: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
@@ -9886,6 +9881,10 @@ impl Editor {
         }
 
         if old_breadcrumbs_visible != self.breadcrumbs_visible() {
+            // Menu anchors to a painted strip segment; hide it when the strip goes away.
+            if !self.breadcrumbs_visible() {
+                self.dismiss_breadcrumb_navigation(window, cx);
+            }
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
@@ -11010,6 +11009,8 @@ impl Editor {
         };
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone() {
+            // set_listing must not call editor.update (would double-lease when this is
+            // already under editor.update from a segment click).
             menu.update(cx, |menu, cx| {
                 menu.set_listing(listing, false, window, cx);
             });
@@ -11035,13 +11036,6 @@ impl Editor {
                 // Restore editor focus only when the menu owned it; a dismissal caused by
                 // clicking into another pane must not steal that pane's focus back.
                 let menu_had_focus = menu.focus_handle(cx).contains_focused(window, cx);
-                // Armed only for mouse-down dismissals so Escape/confirm/blur never eat a
-                // later click. Cleared by the next open_or_toggle (take); effects run before
-                // the gesture's mouse-up, so a frame-scoped clear would fire too early.
-                this.breadcrumb_listing_dismissed_by_gesture = menu
-                    .read(cx)
-                    .dismissed_by_mouse_down()
-                    .then(|| menu.read(cx).listing().clone());
                 this.breadcrumb_navigation_menu = None;
                 this._breadcrumb_navigation_menu_subscription = None;
                 if menu_had_focus {
@@ -11075,10 +11069,6 @@ impl Editor {
                 }
             }
         };
-
-        if self.breadcrumb_listing_dismissed_by_gesture.take() == Some(listing.clone()) {
-            return;
-        }
 
         if let Some(menu) = self.breadcrumb_navigation_menu.clone()
             && menu.read(cx).listing() == &listing
@@ -11166,7 +11156,8 @@ impl Editor {
         };
 
         // No breadcrumb strip → nothing to anchor the menu on; use the outline picker.
-        if !EditorSettings::get_global(cx).toolbar.breadcrumbs {
+        // Use effective visibility (setting XOR ToggleBreadcrumb), not the raw setting.
+        if !self.breadcrumbs_visible() {
             toggle_outline(window, cx);
             return;
         }

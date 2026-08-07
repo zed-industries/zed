@@ -112,7 +112,6 @@
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-alt-shift-o": "editor::OpenBreadcrumbNavigation",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
@@ -144,6 +143,7 @@
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
       "ctrl-alt-f": "text_finder::Toggle",
+      "ctrl-alt-shift-p": "editor::OpenBreadcrumbNavigation",
     },
   },
   {

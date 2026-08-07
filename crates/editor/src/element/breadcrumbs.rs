@@ -17,22 +17,18 @@ pub(crate) use outline::{
 };
 use path::{breadcrumb_file_icon, breadcrumb_path_segments};
 
-/// Dropdown target for one breadcrumb segment (built in [`render_breadcrumb_text`]).
 #[derive(Clone, Debug)]
 pub enum BreadcrumbSegmentTarget {
-    /// Symbol menu: `item` is `None` for the file segment (top-level), else that ancestor.
     Symbol {
         buffer_id: BufferId,
         item: Option<OutlineItem<Anchor>>,
     },
-    /// Directory children of `path`.
     Directory {
         worktree_id: WorktreeId,
         path: Arc<RelPath>,
     },
 }
 
-/// Whether `target` anchors the given open menu listing.
 fn target_matches_listing(
     target: Option<&BreadcrumbSegmentTarget>,
     listing: &BreadcrumbListing,
@@ -84,14 +80,12 @@ pub fn render_breadcrumb_text(
     let mut has_root_segment = false;
     let mut file_icon: Option<SharedString> = None;
     let mut file_git_status_color: Option<Color> = None;
-    let mut is_singleton = false;
 
     if !multibuffer_header
         && let Some(editor_entity) = editor.as_ref().and_then(WeakEntity::upgrade)
     {
         let editor_ref = editor_entity.read(cx);
         if let Some(buffer) = editor_ref.buffer().read(cx).as_singleton() {
-            is_singleton = true;
             let buffer_id = buffer.read(cx).remote_id();
             let mut path_split = false;
 
@@ -102,13 +96,15 @@ pub fn render_breadcrumb_text(
                     .map(|project_path| project_path.path.as_ref()),
                 cx,
             );
-            file_git_status_color = editor_ref
-                .project()
-                .zip(real_project_path.as_ref())
-                .and_then(|(project, project_path)| {
-                    project.read(cx).project_path_git_status(project_path, cx)
-                })
-                .map(|status| file_status_label_color(Some(status)));
+            file_git_status_color = breadcrumb_file_git_status_color(
+                editor_ref
+                    .project()
+                    .zip(real_project_path.as_ref())
+                    .and_then(|(project, project_path)| {
+                        project.read(cx).project_path_git_status(project_path, cx)
+                    }),
+                cx,
+            );
             let menu = editor_ref.breadcrumb_navigation_menu().cloned();
             let (navigated, navigated_path) = menu.as_ref().map_or((false, None), |menu| {
                 let menu = menu.read(cx);
@@ -230,6 +226,8 @@ pub fn render_breadcrumb_text(
 
     let apply_dirty_filename_style =
         !workspace::TabBarSettings::get_global(cx).show && active_item.is_dirty(cx);
+    // Tab-bar-hidden toolbar already paints a file icon via `prefix`; suppress the segment's own.
+    let show_file_segment_icon = prefix.is_none();
 
     let prepared_segments = segments
         .into_iter()
@@ -249,7 +247,9 @@ pub fn render_breadcrumb_text(
                 label,
                 target,
                 dirty_filename_style: apply_dirty_filename_style && is_file_segment,
-                icon: is_file_segment.then(|| file_icon.clone()).flatten(),
+                icon: (is_file_segment && show_file_segment_icon)
+                    .then(|| file_icon.clone())
+                    .flatten(),
                 git_status_color: is_file_segment.then_some(file_git_status_color).flatten(),
             }
         })
@@ -298,55 +298,20 @@ pub fn render_breadcrumb_text(
                     .child(breadcrumbs)
                     // Transparent so nested segment hover isn't drowned out by bar Subtle tint.
                     .style(ButtonStyle::Transparent)
-                    .when(!multibuffer_header && !is_singleton, |this| {
-                        let focus_handle = editor
-                            .upgrade()
-                            .map(|editor_entity| editor_entity.focus_handle(cx));
-                        this.when_some(focus_handle, |this, focus_handle| {
-                            this.tooltip(Tooltip::element(move |_window, cx| {
-                                h_flex()
-                                    .gap_1()
-                                    .justify_between()
-                                    .child(Label::new("Show Symbol Outline"))
-                                    .child(ui::KeyBinding::for_action_in(
-                                        &zed_actions::outline::ToggleOutline,
-                                        &focus_handle,
-                                        cx,
-                                    ))
-                                    .into_any_element()
-                            }))
-                        })
-                        .on_click({
+                    .when(!multibuffer_header && has_project_path, |this| {
+                        this.on_right_click({
                             let editor = editor.clone();
-                            move |_, window, cx| {
-                                if let Some((editor_entity, callback)) = editor
-                                    .upgrade()
-                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                                {
-                                    callback(editor_entity.to_any_view(), window, cx);
-                                }
-                            }
-                        })
-                    })
-                    .when(!multibuffer_header, |this| {
-                        // No whole-bar tooltip on singleton bars: it painted over open segment dropdowns.
-                        this.when(has_project_path, |this| {
-                            this.on_right_click({
-                                let editor = editor.clone();
-                                move |_, _, cx| {
-                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.target_file_abs_path(cx)
-                                        })
-                                    }) {
-                                        if let Some(path_str) = abs_path.to_str() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                path_str.to_string(),
-                                            ));
-                                        }
+                            move |_, _, cx| {
+                                if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                    editor.update(cx, |editor, cx| editor.target_file_abs_path(cx))
+                                }) {
+                                    if let Some(path_str) = abs_path.to_str() {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            path_str.to_string(),
+                                        ));
                                     }
                                 }
-                            })
+                            }
                         })
                     }),
             )
@@ -357,6 +322,17 @@ pub fn render_breadcrumb_text(
             .child(breadcrumbs)
             .into_any_element(),
     }
+}
+
+/// File-segment git color, gated like tabs: `ItemSettings.git_status` (includes `git.enabled`).
+pub(crate) fn breadcrumb_file_git_status_color(
+    status: Option<git::status::FileStatus>,
+    cx: &App,
+) -> Option<Color> {
+    if !workspace::ItemSettings::get_global(cx).git_status {
+        return None;
+    }
+    status.map(|status| file_status_label_color(Some(status)))
 }
 
 #[cfg(test)]
@@ -637,14 +613,14 @@ mod tests {
             labels.iter().map(|l| l.text.as_ref()).collect::<Vec<_>>(),
             vec!["my-project", "Foo.kt"]
         );
-        assert!(matches!(
-            targets[0].as_ref().unwrap(),
-            BreadcrumbSegmentTarget::Directory { .. }
-        ));
-        assert!(matches!(
-            targets[1].as_ref().unwrap(),
-            BreadcrumbSegmentTarget::Symbol { item: None, .. }
-        ));
+        match targets[0].as_ref().unwrap() {
+            BreadcrumbSegmentTarget::Directory { .. } => {}
+            other => panic!("root target should be Directory, got {other:?}"),
+        }
+        match targets[1].as_ref().unwrap() {
+            BreadcrumbSegmentTarget::Symbol { item: None, .. } => {}
+            other => panic!("file target should be Symbol(None), got {other:?}"),
+        }
     }
 
     #[test]
@@ -777,10 +753,167 @@ mod tests {
         assert_eq!(texts(&resolved), vec!["item-2"]);
     }
 
-    /// Only mouse-down dismissals may arm the same-gesture toggle marker; Escape and
-    /// confirm-style dismissals must not eat the next click on the segment.
+    /// Segment re-click toggles closed; Escape then re-click reopens; different segment switches listing.
     #[gpui::test]
-    async fn test_segment_reclick_marker_only_arms_for_mouse_dismissals(cx: &mut TestAppContext) {
+    async fn test_segment_toggle_and_switch_listing(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use util::path;
+        use util::rel_path::rel_path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "src": { "a.txt": "", "b.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let (editor, editor_cx) = {
+            let buffer = cx.new(|cx| language::Buffer::local("", cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let window = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+            let editor = window.root(cx).unwrap();
+            (editor, VisualTestContext::from_window(*window, cx))
+        };
+        let cx = &mut { editor_cx };
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_for_test(workspace.downgrade(), cx);
+        });
+
+        let root_listing = BreadcrumbListing::Directory {
+            worktree_id,
+            path: RelPath::empty().into(),
+        };
+        let src_listing = BreadcrumbListing::Directory {
+            worktree_id,
+            path: rel_path("src").into_arc(),
+        };
+
+        // Open, re-click same listing → toggle closed.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_or_toggle_breadcrumb_listing_for_test(root_listing.clone(), window, cx);
+            assert!(editor.breadcrumb_navigation_menu().is_some());
+            editor.open_or_toggle_breadcrumb_listing_for_test(root_listing.clone(), window, cx);
+            assert!(
+                editor.breadcrumb_navigation_menu().is_none(),
+                "same-listing re-click toggles closed"
+            );
+        });
+        cx.run_until_parked();
+
+        // Escape-style dismiss then re-click reopens immediately.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_or_toggle_breadcrumb_listing_for_test(root_listing.clone(), window, cx);
+            assert!(editor.breadcrumb_navigation_menu().is_some());
+            let menu = editor.breadcrumb_navigation_menu().unwrap().clone();
+            menu.update(cx, |_, cx| cx.emit(gpui::DismissEvent));
+        });
+        cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.breadcrumb_navigation_menu().is_none());
+            editor.open_or_toggle_breadcrumb_listing_for_test(root_listing.clone(), window, cx);
+            assert!(
+                editor.breadcrumb_navigation_menu().is_some(),
+                "after Escape-style dismiss, re-click opens immediately"
+            );
+        });
+        cx.run_until_parked();
+
+        // Different segment switches listing in place (menu stays open).
+        editor.update_in(cx, |editor, window, cx| {
+            let menu_before = editor.breadcrumb_navigation_menu().unwrap().entity_id();
+            editor.open_or_toggle_breadcrumb_listing_for_test(src_listing.clone(), window, cx);
+            let menu = editor
+                .breadcrumb_navigation_menu()
+                .expect("menu stays open when switching listings");
+            assert_eq!(menu.entity_id(), menu_before, "same menu entity");
+            let listing = menu.read(cx).listing().clone();
+            assert_eq!(
+                listing, src_listing,
+                "listing switches to the other segment"
+            );
+        });
+    }
+
+    /// set_listing under an editor.update lease must not double-lease panic.
+    #[gpui::test]
+    async fn test_switch_listing_under_editor_update_does_not_panic(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use util::path;
+        use util::rel_path::rel_path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            serde_json::json!({
+                "src": { "a.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let (editor, editor_cx) = {
+            let buffer = cx.new(|cx| language::Buffer::local("", cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let window = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+            let editor = window.root(cx).unwrap();
+            (editor, VisualTestContext::from_window(*window, cx))
+        };
+        let cx = &mut { editor_cx };
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_for_test(workspace.downgrade(), cx);
+        });
+
+        let root_listing = BreadcrumbListing::Directory {
+            worktree_id,
+            path: RelPath::empty().into(),
+        };
+        let src_listing = BreadcrumbListing::Directory {
+            worktree_id,
+            path: rel_path("src").into_arc(),
+        };
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_or_toggle_breadcrumb_listing_for_test(root_listing, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Nested open_or_toggle (menu reuse → set_listing) while already under editor.update.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_or_toggle_breadcrumb_listing_for_test(src_listing.clone(), window, cx);
+            let menu = editor
+                .breadcrumb_navigation_menu()
+                .expect("menu remains after switch");
+            assert_eq!(menu.read(cx).listing(), &src_listing);
+        });
+    }
+
+    /// Toggling breadcrumbs off while a menu is open dismisses the menu.
+    #[gpui::test]
+    async fn test_toggle_breadcrumbs_off_dismisses_open_menu(cx: &mut TestAppContext) {
+        use crate::ToggleBreadcrumb;
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
         use project::{FakeFs, Project};
@@ -815,53 +948,61 @@ mod tests {
             worktree_id,
             path: RelPath::empty().into(),
         };
-
-        // Escape-style dismissal: no marker, re-click opens again immediately.
         editor.update_in(cx, |editor, window, cx| {
-            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
+            editor.open_or_toggle_breadcrumb_listing_for_test(listing, window, cx);
             assert!(editor.breadcrumb_navigation_menu().is_some());
-        });
-        cx.run_until_parked();
-        editor.update_in(cx, |editor, window, cx| {
-            let menu = editor.breadcrumb_navigation_menu().unwrap().clone();
-            menu.update(cx, |_, cx| cx.emit(gpui::DismissEvent));
-            let _ = window;
-        });
-        cx.run_until_parked();
-        editor.update_in(cx, |editor, window, cx| {
-            assert!(editor.breadcrumb_navigation_menu().is_none());
-            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
-            assert!(
-                editor.breadcrumb_navigation_menu().is_some(),
-                "an Escape-style dismissal must not eat the next open"
-            );
-        });
-        cx.run_until_parked();
-
-        // Mouse-down dismissal: marker arms, the same gesture's click is swallowed once,
-        // and the following click opens again.
-        editor.update_in(cx, |editor, window, cx| {
-            let menu = editor.breadcrumb_navigation_menu().unwrap().clone();
-            menu.update(cx, |menu, cx| {
-                menu.set_dismissed_by_mouse_down_for_test();
-                cx.emit(gpui::DismissEvent);
-            });
-            let _ = window;
-        });
-        cx.run_until_parked();
-        editor.update_in(cx, |editor, window, cx| {
-            assert!(editor.breadcrumb_navigation_menu().is_none());
-            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
+            assert!(editor.breadcrumbs_visible());
+            editor.toggle_breadcrumb(&ToggleBreadcrumb, window, cx);
+            assert!(!editor.breadcrumbs_visible());
             assert!(
                 editor.breadcrumb_navigation_menu().is_none(),
-                "the click that dismissed the menu must not reopen it"
-            );
-            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
-            assert!(
-                editor.breadcrumb_navigation_menu().is_some(),
-                "the marker is one-shot"
+                "menu entity cleared when breadcrumbs are toggled off"
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_breadcrumb_file_git_status_color_respects_tabs_git_status(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use git::status::{FileStatus, StatusCode};
+        use gpui::UpdateGlobal;
+        use settings::SettingsStore;
+
+        init_test(cx, |_| {});
+
+        let status = FileStatus::worktree(StatusCode::Modified);
+
+        // Force the enabled path, then the disabled path (mirrors menu-row gating tests).
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.tabs.get_or_insert_default().git_status = Some(true);
+                });
+            });
+        });
+        assert!(
+            cx.update(|cx| workspace::ItemSettings::get_global(cx).git_status),
+            "tabs.git_status=true should enable ItemSettings.git_status"
+        );
+        let color_on = cx.update(|cx| breadcrumb_file_git_status_color(Some(status), cx));
+        assert_eq!(
+            color_on,
+            Some(file_status_label_color(Some(status))),
+            "enabled path mirrors file_status_label_color"
+        );
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.tabs.get_or_insert_default().git_status = Some(false);
+                });
+            });
+        });
+        let color_off = cx.update(|cx| breadcrumb_file_git_status_color(Some(status), cx));
+        assert_eq!(
+            color_off, None,
+            "tabs.git_status=false must suppress file segment git color"
+        );
     }
 
     /// The production drill must cap runaway single-child chains (symlink cycles).
@@ -1243,14 +1384,13 @@ mod tests {
         cx.run_until_parked();
 
         menu.read_with(cx, |menu, _| {
-            assert!(
-                matches!(
-                    menu.listing(),
-                    BreadcrumbListing::Directory { path, .. }
-                        if path.as_unix_str() == "dir_a"
-                ),
-                "listing stays on the same entity and moves to dir_a"
-            );
+            let path = match menu.listing() {
+                BreadcrumbListing::Directory { path, .. } => path.as_unix_str().to_string(),
+                other => {
+                    panic!("listing stays on the same entity and moves to dir_a, got {other:?}")
+                }
+            };
+            assert_eq!(path, "dir_a");
             assert!(menu.is_navigated());
             assert_eq!(
                 menu.entry_names()
@@ -1335,11 +1475,11 @@ mod tests {
         });
         cx.run_until_parked();
         menu.read_with(cx, |menu, _| {
-            assert!(matches!(
-                menu.listing(),
-                BreadcrumbListing::Directory { path, .. }
-                    if path.as_unix_str() == "a/b"
-            ));
+            let path = match menu.listing() {
+                BreadcrumbListing::Directory { path, .. } => path.as_unix_str().to_string(),
+                other => panic!("expected directory listing, got {other:?}"),
+            };
+            assert_eq!(path, "a/b");
         });
     }
 
@@ -1425,11 +1565,11 @@ mod tests {
         });
         cx.run_until_parked();
         menu.read_with(cx, |menu, _| {
-            assert!(matches!(
-                menu.listing(),
-                BreadcrumbListing::Directory { path, .. }
-                    if path.as_unix_str() == "a"
-            ));
+            let path = match menu.listing() {
+                BreadcrumbListing::Directory { path, .. } => path.as_unix_str().to_string(),
+                other => panic!("expected directory listing, got {other:?}"),
+            };
+            assert_eq!(path, "a");
         });
     }
 
@@ -1623,11 +1763,11 @@ mod tests {
         cx.run_until_parked();
 
         menu.read_with(cx, |menu, _| {
-            assert!(matches!(
-                menu.listing(),
-                BreadcrumbListing::Directory { path, .. }
-                    if path.as_unix_str() == "ignored_dir/nested"
-            ));
+            let path = match menu.listing() {
+                BreadcrumbListing::Directory { path, .. } => path.as_unix_str().to_string(),
+                other => panic!("expected directory listing, got {other:?}"),
+            };
+            assert_eq!(path, "ignored_dir/nested");
         });
 
         let after = cx.update(|_window, cx| {
@@ -1818,6 +1958,185 @@ mod tests {
     }
 
     /// Filter ranks the full directory set, not just the display-capped prefix.
+    #[gpui::test]
+    async fn test_breadcrumb_menu_zero_match_filter_settles(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "alpha.txt": "", "beta.txt": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+
+        menu.update_in(cx, |menu, window, cx| {
+            window.focus(&menu.focus_handle(cx), cx);
+        });
+        cx.simulate_keystrokes("z z");
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(menu.filter(), "zz");
+            assert_eq!(menu.filtered_entry_names(), Vec::<SharedString>::new());
+            assert!(
+                !menu.rank_pending(),
+                "a completed zero-match rank must settle out of the searching state"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_menu_reloads_when_sort_settings_change(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use settings::SettingsStore;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "Apple": { "leaf.txt": "" }, "banana.txt": "", "Cherry.txt": "" }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.entry_names(),
+                vec![
+                    SharedString::from("Apple"),
+                    SharedString::from("banana.txt"),
+                    SharedString::from("Cherry.txt"),
+                ],
+            );
+        });
+
+        // Flipping the panel's sort settings must re-derive the open listing.
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let project_panel = settings.project_panel.get_or_insert_default();
+                    project_panel.sort_mode = Some(settings::ProjectPanelSortMode::FilesFirst);
+                    project_panel.sort_order = Some(settings::ProjectPanelSortOrder::Unicode);
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        menu.read_with(cx, |menu, _| {
+            assert_eq!(
+                menu.entry_names(),
+                vec![
+                    SharedString::from("Cherry.txt"),
+                    SharedString::from("banana.txt"),
+                    SharedString::from("Apple"),
+                ],
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_breadcrumb_menu_filter_finds_entry_past_display_cap(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
@@ -2239,10 +2558,17 @@ mod tests {
     async fn test_symbol_nav_menu_preselect_and_left_right(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
+        use gpui::KeyBinding;
         use language::OutlineItem;
         use multi_buffer::MultiBufferOffset;
 
         init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([
+                KeyBinding::new("right", SelectChild, Some("menu")),
+                KeyBinding::new("left", SelectParent, Some("menu")),
+            ]);
+        });
 
         let buffer = cx.new(|cx| {
             language::Buffer::local(
@@ -2251,10 +2577,6 @@ mod tests {
             )
         });
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let editor_window =
-            cx.add_window(|window, cx| build_editor(multi_buffer.clone(), window, cx));
-        let editor = editor_window.root(cx).unwrap();
-        let cx = &mut VisualTestContext::from_window(*editor_window, cx);
 
         let snapshot = multi_buffer.read_with(cx, |mb, cx| mb.snapshot(cx));
         let anchor_at = |offset: usize| {
@@ -2289,8 +2611,23 @@ mod tests {
         let buffer_id =
             multi_buffer.read_with(cx, |mb, cx| mb.as_singleton().unwrap().read(cx).remote_id());
 
-        let menu = cx.update(|window, cx| {
-            BreadcrumbNavigationMenu::new_with_symbols_for_test(
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        // Preselect on a nested listing.
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let menu = BreadcrumbNavigationMenu::new_with_symbols_for_test(
                 editor.downgrade(),
                 buffer_id,
                 all_items.clone(),
@@ -2298,29 +2635,39 @@ mod tests {
                 vec![child_b_range.clone()],
                 window,
                 cx,
-            )
-        });
-        menu.update(cx, |menu, cx| {
-            menu.apply_initial_selection_for_test(cx);
-        });
-        menu.read_with(cx, |menu, _| {
-            assert_eq!(
-                menu.selected_index(),
-                Some(1),
-                "preselects the current (checkmarked) symbol"
             );
-            assert_eq!(
-                menu.listed_labels()
-                    .iter()
-                    .map(|s| s.as_ref())
-                    .collect::<Vec<_>>(),
-                vec!["child_a", "child_b"],
-            );
+            MenuHost { menu }
         });
-        drop(menu);
+        let mut visual_cx = VisualTestContext::from_window(*host_window, cx);
+        host_window
+            .update(&mut visual_cx, |host, window, cx| {
+                window.focus(&host.menu.focus_handle(cx), cx);
+                host.menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                });
+            })
+            .unwrap();
+        host_window
+            .read_with(&visual_cx, |host, cx| {
+                let menu = host.menu.read(cx);
+                assert_eq!(
+                    menu.selected_index(),
+                    Some(1),
+                    "preselects the current (checkmarked) symbol"
+                );
+                assert_eq!(
+                    menu.entry_names()
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>(),
+                    vec!["child_a", "child_b"],
+                );
+            })
+            .unwrap();
 
-        let menu = cx.update(|window, cx| {
-            BreadcrumbNavigationMenu::new_with_symbols_for_test(
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let menu = BreadcrumbNavigationMenu::new_with_symbols_for_test(
                 editor.downgrade(),
                 buffer_id,
                 all_items,
@@ -2328,46 +2675,268 @@ mod tests {
                 vec![child_b_range],
                 window,
                 cx,
-            )
+            );
+            MenuHost { menu }
         });
-        menu.update_in(cx, |menu, window, cx| {
-            menu.apply_initial_selection_for_test(cx);
-            assert_eq!(menu.selected_index(), Some(0));
-            assert_eq!(
-                menu.listed_labels()
-                    .iter()
-                    .map(|s| s.as_ref())
-                    .collect::<Vec<_>>(),
-                vec!["Outer", "Peer"],
-            );
-
-            menu.select_child(&SelectChild, window, cx);
-            menu.apply_initial_selection_for_test(cx);
-            assert_eq!(
-                menu.listed_labels()
-                    .iter()
-                    .map(|s| s.as_ref())
-                    .collect::<Vec<_>>(),
-                vec!["child_a", "child_b"],
-                "Right enters the selected row's children"
-            );
-            assert_eq!(
-                menu.selected_index(),
-                Some(1),
-                "preselects current symbol after drilling in"
-            );
-
-            menu.select_parent(&SelectParent, window, cx);
-            menu.apply_initial_selection_for_test(cx);
-            assert_eq!(
-                menu.listed_labels()
-                    .iter()
-                    .map(|s| s.as_ref())
-                    .collect::<Vec<_>>(),
-                vec!["Outer", "Peer"],
-                "Left returns to the parent symbol's sibling listing"
-            );
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        host_window
+            .update(cx, |host, window, cx| {
+                window.focus(&host.menu.focus_handle(cx), cx);
+                host.menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                });
+            })
+            .unwrap();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
         });
-        drop(menu);
+
+        host_window
+            .read_with(cx, |host, cx| {
+                let menu = host.menu.read(cx);
+                assert_eq!(menu.selected_index(), Some(0));
+                assert_eq!(
+                    menu.entry_names()
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>(),
+                    vec!["Outer", "Peer"],
+                );
+            })
+            .unwrap();
+
+        cx.simulate_keystrokes("right");
+        cx.run_until_parked();
+        host_window
+            .update(cx, |host, _window, cx| {
+                host.menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                });
+            })
+            .unwrap();
+        host_window
+            .read_with(cx, |host, cx| {
+                let menu = host.menu.read(cx);
+                assert_eq!(
+                    menu.entry_names()
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>(),
+                    vec!["child_a", "child_b"],
+                    "Right enters the selected row's children"
+                );
+                assert_eq!(
+                    menu.selected_index(),
+                    Some(1),
+                    "preselects current symbol after drilling in"
+                );
+            })
+            .unwrap();
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        cx.simulate_keystrokes("left");
+        cx.run_until_parked();
+        host_window
+            .update(cx, |host, _window, cx| {
+                host.menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                });
+            })
+            .unwrap();
+        host_window
+            .read_with(cx, |host, cx| {
+                let menu = host.menu.read(cx);
+                assert_eq!(
+                    menu.entry_names()
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>(),
+                    vec!["Outer", "Peer"],
+                    "Left returns to the parent symbol's sibling listing"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Right on the open file's row in a directory listing crosses into Symbols for that buffer.
+    #[gpui::test]
+    async fn test_select_child_on_open_file_row_opens_symbols(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor_with_project;
+        use gpui::KeyBinding;
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("right", SelectChild, Some("menu"))]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "main.rs": "fn main() {}",
+                "lib.rs": "fn lib() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            // Keep the editor alive for the menu's WeakEntity.
+            _editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multi_buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                Some(rel_path("main.rs").into_arc()),
+                false,
+                window,
+                cx,
+            );
+            MenuHost {
+                menu,
+                _editor: editor,
+            }
+        });
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+        host_window
+            .update(cx, |host, window, cx| {
+                window.focus(&host.menu.focus_handle(cx), cx);
+                host.menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                });
+            })
+            .unwrap();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        host_window
+            .read_with(cx, |host, cx| {
+                let menu = host.menu.read(cx);
+                let selected = menu.selected_index().expect("selection");
+                assert_eq!(
+                    menu.entry_names().get(selected).map(|n| n.as_ref()),
+                    Some("main.rs"),
+                );
+            })
+            .unwrap();
+
+        // Bound Right → SelectChild (also exercised via direct action; keystroke path is the same handler).
+        host_window
+            .update(cx, |host, window, cx| {
+                host.menu.update(cx, |menu, cx| {
+                    menu.select_child(&SelectChild, window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        host_window
+            .read_with(cx, |host, cx| {
+                let listing = host.menu.read(cx).listing().clone();
+                match listing {
+                    BreadcrumbListing::Symbols {
+                        buffer_id: id,
+                        parent: None,
+                    } => assert_eq!(id, buffer_id),
+                    other => {
+                        panic!("Right on open file row opens top-level Symbols, got {other:?}")
+                    }
+                }
+            })
+            .unwrap();
+
+        // Other file rows stay no-ops for Right.
+        host_window
+            .update(cx, |host, window, cx| {
+                host.menu.update(cx, |menu, cx| {
+                    menu.set_listing(
+                        BreadcrumbListing::Directory {
+                            worktree_id,
+                            path: RelPath::empty().into_arc(),
+                        },
+                        false,
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        host_window
+            .update(cx, |host, window, cx| {
+                host.menu.update(cx, |menu, cx| {
+                    menu.apply_initial_selection_for_test(cx);
+                    for _ in 0..4 {
+                        let selected = menu.selected_index().unwrap_or(0);
+                        if menu
+                            .entry_names()
+                            .get(selected)
+                            .is_some_and(|n| n.as_ref() == "lib.rs")
+                        {
+                            break;
+                        }
+                        menu.select_next(&SelectNext, window, cx);
+                    }
+                    // Drive SelectChild via the same bound path after selection lands on lib.rs.
+                    menu.select_child(&SelectChild, window, cx);
+                });
+            })
+            .unwrap();
+        host_window
+            .read_with(cx, |host, cx| {
+                let listing = host.menu.read(cx).listing().clone();
+                match listing {
+                    BreadcrumbListing::Directory { path, .. } => {
+                        assert_eq!(path.as_unix_str(), "");
+                    }
+                    other => {
+                        panic!("Right on non-open file stays directory listing, got {other:?}")
+                    }
+                }
+            })
+            .unwrap();
     }
 }

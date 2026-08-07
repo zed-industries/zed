@@ -140,7 +140,6 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-shift-o": "editor::OpenBreadcrumbNavigation",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "git::Blame",
@@ -170,6 +169,7 @@
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
       "alt-cmd-f": "text_finder::Toggle",
+      "cmd-alt-shift-p": "editor::OpenBreadcrumbNavigation",
     },
   },
   {

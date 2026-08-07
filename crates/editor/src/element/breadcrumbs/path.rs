@@ -64,8 +64,12 @@ pub(crate) fn breadcrumb_path_segments(
 /// Max rows in a breadcrumb directory/symbol dropdown (layout cost, not I/O).
 pub(crate) const MAX_BREADCRUMB_MENU_ROWS: usize = 200;
 
-pub(super) fn breadcrumb_menu_truncated_label() -> String {
-    format!("Showing first {MAX_BREADCRUMB_MENU_ROWS} entries")
+pub(super) fn breadcrumb_menu_truncated_label(filter_active: bool) -> String {
+    if filter_active {
+        format!("Showing first {MAX_BREADCRUMB_MENU_ROWS} matches")
+    } else {
+        format!("Showing first {MAX_BREADCRUMB_MENU_ROWS} entries")
+    }
 }
 
 /// Cap for single-child directory walks (pathological depth / symlink cycles).
@@ -142,10 +146,8 @@ pub(super) struct BreadcrumbListingSettings {
     pub(super) hide_hidden: bool,
     pub(super) file_icons: bool,
     pub(super) folder_icons: bool,
-    /// `project_panel.git_status` combined with the global `git.enabled` status gate
-    /// (mirrors `ProjectPanelSettings::from_settings` / `is_git_status_enabled()`).
+    // project_panel.git_status AND global git.enabled status gate.
     pub(super) git_status: bool,
-    /// When true, directory drill skips single-child chains (project panel `auto_fold_dirs`).
     pub(super) auto_fold_dirs: bool,
 }
 

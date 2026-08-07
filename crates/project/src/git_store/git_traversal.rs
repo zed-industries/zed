@@ -253,16 +253,13 @@ impl AsRef<Entry> for GitEntry {
 }
 
 /// Options for [`worktree_child_listing`].
-///
-/// Options for [`worktree_child_listing`].
 #[derive(Clone, Copy, Debug)]
 pub struct WorktreeChildListingOptions {
     pub sort_mode: SortMode,
     pub sort_order: SortOrder,
     pub hide_gitignore: bool,
     pub hide_hidden: bool,
-    /// When false, git status colors are omitted (summaries are zeroed) but ignored-dimming
-    /// still works via [`WorktreeChildListingEntry::is_ignored`].
+    /// When false, summaries are zeroed; ignored-dimming still uses `is_ignored`.
     pub git_status_enabled: bool,
 }
 
@@ -311,4 +308,180 @@ pub fn worktree_child_listing(
             },
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Project;
+    use fs::FakeFs;
+    use git::status::{FileStatus, StatusCode};
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use util::rel_path::RelPath;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn listing_options(
+        hide_gitignore: bool,
+        git_status_enabled: bool,
+    ) -> WorktreeChildListingOptions {
+        WorktreeChildListingOptions {
+            sort_mode: SortMode::DirectoriesFirst,
+            sort_order: SortOrder::Default,
+            hide_gitignore,
+            hide_hidden: false,
+            git_status_enabled,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_worktree_child_listing_sorts_and_hides_gitignore(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".gitignore": "ignored.txt\n",
+                "z_file.txt": "",
+                "a_dir": { "nested.txt": "" },
+                "m_file.txt": "",
+                "ignored.txt": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        let (snapshot, repos) = cx.update(|cx| {
+            let snapshot = worktree.read(cx).snapshot();
+            let repos = project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .display_repo_snapshots(cx);
+            (snapshot, repos)
+        });
+
+        let shown = worktree_child_listing(
+            &snapshot,
+            &repos,
+            RelPath::empty(),
+            listing_options(true, true),
+        );
+        let names: Vec<_> = shown
+            .iter()
+            .map(|entry| entry.path.as_unix_str().to_string())
+            .collect();
+        assert!(
+            !names.iter().any(|name| name == "ignored.txt"),
+            "hide_gitignore drops ignored entries; got {names:?}"
+        );
+        assert_eq!(
+            names.iter().position(|name| name == "a_dir"),
+            Some(0),
+            "directories-first puts a_dir first; got {names:?}"
+        );
+        let m_pos = names.iter().position(|name| name == "m_file.txt");
+        let z_pos = names.iter().position(|name| name == "z_file.txt");
+        assert!(
+            m_pos.is_some_and(|m| z_pos.is_some_and(|z| m < z)),
+            "files sorted by name; got {names:?}"
+        );
+        assert!(shown[0].is_dir);
+
+        let with_ignored = worktree_child_listing(
+            &snapshot,
+            &repos,
+            RelPath::empty(),
+            listing_options(false, true),
+        );
+        assert!(
+            with_ignored
+                .iter()
+                .any(|entry| entry.path.as_unix_str() == "ignored.txt"),
+            "hide_gitignore=false keeps ignored entries"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_worktree_child_listing_git_status_disabled_yields_unchanged(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".git": {},
+                "modified.txt": "new\n",
+                "clean.txt": "clean\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new("/root/.git"),
+            &[("modified.txt", FileStatus::worktree(StatusCode::Modified))],
+        );
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        let (snapshot, repos) = cx.update(|cx| {
+            let snapshot = worktree.read(cx).snapshot();
+            let repos = project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .display_repo_snapshots(cx);
+            (snapshot, repos)
+        });
+
+        let with_status = worktree_child_listing(
+            &snapshot,
+            &repos,
+            RelPath::empty(),
+            listing_options(false, true),
+        );
+        let modified = with_status
+            .iter()
+            .find(|entry| entry.path.as_unix_str() == "modified.txt")
+            .expect("modified.txt listed");
+        assert_ne!(
+            modified.git_summary,
+            GitSummary::UNCHANGED,
+            "git_status_enabled=true carries status"
+        );
+
+        let without_status = worktree_child_listing(
+            &snapshot,
+            &repos,
+            RelPath::empty(),
+            listing_options(false, false),
+        );
+        for entry in &without_status {
+            assert_eq!(
+                entry.git_summary,
+                GitSummary::UNCHANGED,
+                "git_status_enabled=false zeros all summaries ({})",
+                entry.path.as_unix_str()
+            );
+        }
+    }
 }
