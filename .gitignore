@@ -63,3 +63,7 @@ crates/docs_preprocessor/actions.json
 
 # graphify knowledge-graph output/cache (generated, not source)
 graphify-out/
+
+# Citadel RFC prototype build artifacts (regenerate via build.sh)
+/prototypes/*/build/
+/prototypes/*/rust/target/
