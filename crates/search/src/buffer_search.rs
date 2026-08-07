@@ -951,7 +951,7 @@ impl BufferSearchBar {
     }
 
     fn deployed_toolbar_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.needs_expand_collapse_option(cx) && !self.uses_hidden_splittable_editor(cx) {
+        if self.needs_expand_collapse_option(cx) {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Secondary
@@ -976,10 +976,11 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        self.active_searchable_item.as_ref().is_some_and(|item| {
-            item.buffer_kind(cx) == ItemBufferKind::Multibuffer
-                && !item.supported_options(cx).find_in_results
-        })
+        !self.uses_hidden_splittable_editor(cx)
+            && self.active_searchable_item.as_ref().is_some_and(|item| {
+                item.buffer_kind(cx) == ItemBufferKind::Multibuffer
+                    && !item.supported_options(cx).find_in_results
+            })
     }
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {

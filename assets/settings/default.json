@@ -695,6 +695,9 @@
     "folds": true,
     // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4,
+    // The width, in pixels, of the git diff hunk indicators in the gutter.
+    // When set to null, the width scales with the buffer font size.
+    "git_gutter_width": null,
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.
@@ -1712,6 +1715,8 @@
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
     "hunk_style": "staged_hollow",
+    // Whether git features diff against HEAD ("head") or the default branch ("default_branch").
+    "diff_base": "head",
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
