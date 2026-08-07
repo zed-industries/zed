@@ -39,6 +39,8 @@ impl ProcessIdGetter {
         // is dropped, allowing a newer terminal to reuse the same descriptor.
         // A foreground group belongs to this PTY only when it is in the
         // session led by the child that was originally spawned for it.
+        // `tcgetsid` returns -1 on a stale descriptor (EBADF/ENOTTY), which
+        // also fails this check.
         let session_id = unsafe { libc::tcgetsid(self.handle) };
         if pid > 0 && session_id == self.fallback_pid as libc::pid_t {
             return Some(Pid::from_u32(pid as u32));

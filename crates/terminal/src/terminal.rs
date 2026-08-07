@@ -5043,6 +5043,18 @@ mod tests {
             TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
         });
 
+        let (completed_child_pid, completed_foreground_pid) =
+            completed_terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+                TerminalType::Pty { info, .. } => (info.pid_getter().fallback_pid(), info.pid()),
+                TerminalType::DisplayOnly => panic!("expected a PTY-backed terminal"),
+            });
+        assert_eq!(
+            completed_foreground_pid,
+            Some(completed_child_pid),
+            "a completed terminal whose PTY descriptor may have been reused must \
+             report its own child, not another terminal's foreground group"
+        );
+
         drop(completed_terminal);
         cx.update(|_| {});
         cx.background_executor
