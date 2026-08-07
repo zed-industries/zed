@@ -5,11 +5,13 @@ description: "Submit and update extensions in the Zed Extension Registry."
 
 # Publishing Guide {#publishing-your-extension}
 
-In order for the publishing to go smoothly, please make sure to follow the steps below in great detail.
+> Before initiating the publishing process, read and ensure that your extension meets all [publishing prerequisites](./prerequisites.md) and [license requirements](./license-requirements.md). Only proceed with the steps below after satisfying these requirements. The publishing may be delayed our outright rejected otherwise.
+
+Follow each step carefully to help the publishing process go smoothly.
 
 ## Forking and cloning the repo
 
-1. Fork the `zed-indutries/extensions` repository.
+1. Fork the `zed-industries/extensions` repository.
 
 > **Note:** It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
 
@@ -22,8 +24,6 @@ cd extensions
 git submodule init
 git submodule update
 ```
-
-> Prior to publishing your extension, you should have installed as well as tested it locally thoroughly. Furthermore, you should have read the [publishing prerequisites](./prerequisites.md). Note that untested extension submissions where the extension is not functioning at all will be closed eagerly without further feedback.
 
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
 
@@ -54,8 +54,6 @@ submodule = "extensions-my-extension"
 path = "packages/zed"
 version = "0.0.1"
 ```
-
-> Note that the [required extension license](./license-requirements.md) must reside at the specified path, a license at the root of the repository will not work. However, you are free to symlink an existing license within the repository or choose an alternative license from the list of accepted licenses for the extension code.
 
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 

@@ -22,4 +22,6 @@ Furthermore, please make sure that your extension fulfills the following precond
 - Extensions that intend to provide a language, debugger or MCP server must not ship the language server as part of the extension. Instead, the extension should either download the language server or check for the availability of the language server in the user's environment using the APIs as provided by the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
 - Themes and icon themes should not be published as part of extensions that provide other features, e.g. language support. Instead, they should be published as a distinct extension. This also applies to themes and icon themes living in the same repository.
 
+Furthermore, before publishing your extension, [install it locally as a dev extension](../developing-extensions.md#developing-an-extension-locally) and test it thoroughly. Submissions for extensions that have not been tested and do not function at all may be closed without further feedback.
+
 Non-compliance with these rules will be raised during the publishing process by reviewers. If you fail to comply with the laid out guidelines, the publishing of your extension will either be delayed or rejected.

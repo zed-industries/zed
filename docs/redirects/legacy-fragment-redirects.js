@@ -1,4 +1,3 @@
-// URL fragments are not sent to the server, so legacy fragment redirects must run client-side.
 (() => {
   const legacyAnchors = {
     "#extension-publishing-prerequisites": {
