@@ -9629,8 +9629,9 @@ impl WorkspaceHandle for Entity<Workspace> {
 pub async fn last_opened_workspace_location(
     db: &WorkspaceDb,
     fs: Arc<dyn fs::Fs>,
+    executor: gpui::BackgroundExecutor,
 ) -> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
-    db.last_workspace(fs)
+    db.last_workspace(fs, executor)
         .await
         .log_err()
         .flatten()

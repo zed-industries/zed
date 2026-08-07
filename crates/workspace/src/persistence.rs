@@ -19,7 +19,7 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
+use gpui::{Axis, BackgroundExecutor, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
@@ -2019,6 +2019,7 @@ impl WorkspaceDb {
     pub async fn recent_project_workspaces_ungrouped(
         &self,
         fs: Arc<dyn Fs>,
+        _: BackgroundExecutor,
     ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
         let mut result = Vec::new();
@@ -2042,8 +2043,8 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if Self::all_paths_exist_with_a_directory(paths.paths(), &fs).await {
-                let identity_paths = resolve_local_workspace_identity(&fs, &paths)
+            if Self::all_paths_exist_with_a_directory(paths.paths(), fs.as_ref()).await {
+                let identity_paths = resolve_local_workspace_identity(fs.as_ref(), &paths)
                     .await
                     .or(identity_paths_hint)
                     .unwrap_or_else(|| paths.clone());
@@ -2063,9 +2064,14 @@ impl WorkspaceDb {
     // Returns the recent project workspaces suitable for recent-project UIs.
     // Entries are deduplicated by git worktree identity, but preserve the original
     // serialized paths for reopening.
-    pub async fn recent_project_workspaces(&self, fs: Arc<dyn Fs>) -> Result<Vec<RecentWorkspace>> {
+    pub async fn recent_project_workspaces(
+        &self,
+        fs: Arc<dyn Fs>,
+        executor: BackgroundExecutor,
+    ) -> Result<Vec<RecentWorkspace>> {
         Ok(dedupe_recent_workspaces(
-            self.recent_project_workspaces_ungrouped(fs).await?,
+            self.recent_project_workspaces_ungrouped(fs, executor)
+                .await?,
         ))
     }
 
@@ -2169,8 +2175,16 @@ impl WorkspaceDb {
         Ok(())
     }
 
-    pub async fn last_workspace(&self, fs: Arc<dyn Fs>) -> Result<Option<RecentWorkspace>> {
-        Ok(self.recent_project_workspaces(fs).await?.into_iter().next())
+    pub async fn last_workspace(
+        &self,
+        fs: Arc<dyn Fs>,
+        cx: BackgroundExecutor,
+    ) -> Result<Option<RecentWorkspace>> {
+        Ok(self
+            .recent_project_workspaces(fs, cx)
+            .await?
+            .into_iter()
+            .next())
     }
 
     // Returns the locations of the workspaces that were still opened when the last

@@ -206,7 +206,14 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
             return Ok(());
         }
 
-        let recent_workspaces = workspace_db.recent_project_workspaces_ungrouped(fs).await?;
+        let executor = cx.background_executor().clone();
+        let recent_workspaces = cx
+            .background_spawn(async move {
+                workspace_db
+                    .recent_project_workspaces_ungrouped(fs, executor)
+                    .await
+            })
+            .await?;
 
         let mut local_path_lists = HashSet::<PathList>::default();
         let mut remote_path_lists = HashMap::<PathList, RemoteConnectionOptions>::default();
