@@ -254,9 +254,7 @@ impl AsRef<Entry> for GitEntry {
 
 /// Options for [`worktree_child_listing`].
 ///
-/// Settings-gated, sorted, filtered, git-aware one-level directory children.
-/// Breadcrumb directory dropdowns use this today; the project panel's flattened-tree
-/// assembly is the intended follow-up consumer (do not refactor the panel pipeline here).
+/// Options for [`worktree_child_listing`].
 #[derive(Clone, Copy, Debug)]
 pub struct WorktreeChildListingOptions {
     pub sort_mode: SortMode,
@@ -279,9 +277,6 @@ pub struct WorktreeChildListingEntry {
 }
 
 /// Settings-gated, sorted, filtered, git-aware direct children of `parent_path`.
-///
-/// Shared assembly for reusable one-level listings. Breadcrumbs use this for directory
-/// menus; the project panel's full tree pipeline should adopt it later.
 pub fn worktree_child_listing(
     worktree_snapshot: &worktree::Snapshot,
     repo_snapshots: &HashMap<RepositoryId, RepositorySnapshot>,

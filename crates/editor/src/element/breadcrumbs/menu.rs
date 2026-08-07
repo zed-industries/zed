@@ -101,6 +101,9 @@ pub struct BreadcrumbNavigationMenu {
     /// Fuzzy candidates for the current rows, rebuilt on listing changes — not per keystroke.
     filter_candidates: Arc<Vec<StringMatchCandidate>>,
     scroll_handle: UniformListScrollHandle,
+    /// Set just before the DismissEvent when the cause is a mouse-down outside the menu;
+    /// only that kind of dismissal may arm the editor's same-gesture toggle marker.
+    dismissed_by_mouse_down: bool,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -145,6 +148,7 @@ impl BreadcrumbNavigationMenu {
                 filter_epoch: 0,
                 filter_candidates: Arc::new(Vec::new()),
                 scroll_handle: UniformListScrollHandle::new(),
+                dismissed_by_mouse_down: false,
                 focus_handle,
                 _subscriptions: Vec::new(),
             }
@@ -180,9 +184,16 @@ impl BreadcrumbNavigationMenu {
                                             || path.as_ref() == listing_path.as_ref()
                                     })
                             }
-                            project::Event::WorktreeUpdatedRootRepoCommonDir(worktree_id)
-                            | project::Event::WorktreeRemoved(worktree_id) => {
+                            project::Event::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
                                 worktree_id == listing_worktree
+                            }
+                            project::Event::WorktreeRemoved(worktree_id) => {
+                                if worktree_id == listing_worktree {
+                                    // No worktree, no anchor segment: a cleared listing would
+                                    // leave an installed menu that never paints again.
+                                    cx.emit(DismissEvent);
+                                }
+                                false
                             }
                             _ => false,
                         };
@@ -195,6 +206,16 @@ impl BreadcrumbNavigationMenu {
             this.focus_menu(window, cx);
         });
         menu
+    }
+
+    /// Whether the pending dismissal was caused by a mouse-down outside the menu.
+    pub fn dismissed_by_mouse_down(&self) -> bool {
+        self.dismissed_by_mouse_down
+    }
+
+    #[cfg(test)]
+    pub fn set_dismissed_by_mouse_down_for_test(&mut self) {
+        self.dismissed_by_mouse_down = true;
     }
 
     pub fn listing(&self) -> &BreadcrumbListing {
@@ -372,6 +393,7 @@ impl BreadcrumbNavigationMenu {
                 filter_epoch: 0,
                 filter_candidates: Arc::new(Vec::new()),
                 scroll_handle: UniformListScrollHandle::new(),
+                dismissed_by_mouse_down: false,
                 focus_handle,
                 _subscriptions: Vec::new(),
             }
@@ -380,7 +402,6 @@ impl BreadcrumbNavigationMenu {
     }
 
     fn focus_menu(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = cx;
         window.focus(&self.focus_handle, cx);
     }
 
@@ -508,7 +529,14 @@ impl BreadcrumbNavigationMenu {
                 this.directory_entries = entries;
                 this.rebuild_filter_candidates();
                 this.loading = false;
-                this.apply_initial_selection_if_needed(cx);
+                if this.filter_query.is_empty() {
+                    this.apply_initial_selection_if_needed(cx);
+                } else {
+                    // A query typed while loading ranked an empty candidate set.
+                    this.ranked_matches.clear();
+                    this.selected_index = None;
+                    this.rerank_filter(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -591,7 +619,13 @@ impl BreadcrumbNavigationMenu {
                 }
 
                 this.apply_symbol_parent(parent, cx);
-                this.apply_initial_selection_if_needed(cx);
+                if this.filter_query.is_empty() {
+                    this.apply_initial_selection_if_needed(cx);
+                } else {
+                    this.ranked_matches.clear();
+                    this.selected_index = None;
+                    this.rerank_filter(cx);
+                }
                 this.emit_bar_changed(cx);
                 cx.notify();
             })
@@ -1578,9 +1612,10 @@ impl Render for BreadcrumbNavigationMenu {
                             cx.stop_propagation();
                         }
                     }))
-                    .on_mouse_down_out(cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                    .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
                         // Do not stop propagation: a double-click on a segment must both dismiss
                         // this menu and deliver both clicks to the segment (reveal on count 2).
+                        this.dismissed_by_mouse_down = true;
                         cx.emit(DismissEvent);
                     }))
                     .min_w(px(200.))

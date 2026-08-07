@@ -82,13 +82,27 @@ pub(crate) fn hard_cap_middle_segments(
     let mut splice_start = middle_start + half;
     let mut splice_end = middle_end - half;
     // The open menu's anchor segment must survive the cap or the popup loses its anchor.
+    // Keep the removal window the same size and slide it off the protected index, so the
+    // cap still bounds pathological input while a menu is open.
     if let Some(protected) = protected_index
         && (splice_start..splice_end).contains(&protected)
     {
-        if protected - middle_start <= middle_end - protected {
+        let removal = splice_end - splice_start;
+        if protected + 1 + removal <= middle_end {
             splice_start = protected + 1;
-        } else {
+            splice_end = protected + 1 + removal;
+        } else if middle_start + removal <= protected {
             splice_end = protected;
+            splice_start = protected - removal;
+        } else {
+            // Neither side fits the whole window: shrink to the larger side.
+            if protected - middle_start >= middle_end - (protected + 1) {
+                splice_start = middle_start;
+                splice_end = protected;
+            } else {
+                splice_start = protected + 1;
+                splice_end = middle_end;
+            }
         }
         if splice_end <= splice_start {
             return (segments, symbol_segments, kinds, file_segment_index);
@@ -358,10 +372,12 @@ impl BreadcrumbStrip {
                         window,
                     )
                 } else {
-                    let run = text_style.to_run(text.len());
+                    // Syntax highlights can change font weight/style; measuring with a single
+                    // plain run would under-measure what gets painted and clip the strip.
+                    let runs = highlighted_text_runs(&text, &segment.label, &text_style);
                     window
                         .text_system()
-                        .shape_line(text.into(), font_size, &[run], None)
+                        .shape_line(text.into(), font_size, &runs, None)
                         .width()
                 };
                 let icon_width = if segment.icon.is_some() {
@@ -471,19 +487,22 @@ impl BreadcrumbStrip {
         editor: WeakEntity<Editor>,
         cx: &mut App,
     ) -> gpui::AnyElement {
-        let tooltip_title: SharedString = match &target {
+        let (tooltip_title, tooltip_meta): (SharedString, Option<SharedString>) = match &target {
             BreadcrumbSegmentTarget::Directory { path, .. } => {
                 if path.is_empty() {
-                    "Browse project root".into()
+                    ("Browse project root".into(), None)
                 } else {
-                    format!("Browse {}", path.as_unix_str()).into()
+                    (format!("Browse {}", path.as_unix_str()).into(), None)
                 }
             }
             BreadcrumbSegmentTarget::Symbol { item, .. } => {
                 if item.is_some() {
-                    "Navigate related symbols".into()
+                    ("Navigate related symbols".into(), None)
                 } else {
-                    "Navigate file symbols".into()
+                    (
+                        "Navigate file symbols".into(),
+                        Some("Right-click the bar to copy the path".into()),
+                    )
                 }
             }
         };
@@ -503,7 +522,10 @@ impl BreadcrumbStrip {
                     .child(label),
             )
             .when(!menu_open, |this| {
-                this.tooltip(move |_, cx| Tooltip::simple(tooltip_title.clone(), cx))
+                this.tooltip(move |_, cx| match tooltip_meta.clone() {
+                    Some(meta) => Tooltip::with_meta(tooltip_title.clone(), None, meta, cx),
+                    None => Tooltip::simple(tooltip_title.clone(), cx),
+                })
             })
             .on_click({
                 let editor = editor.clone();
@@ -781,6 +803,41 @@ pub(super) fn dirty_filename_bold_range(segment: &HighlightedText) -> Option<Ran
     Some(filename_position..segment.text.len())
 }
 
+/// Text runs for `text` with `segment.highlights` applied, matching what painting produces.
+fn highlighted_text_runs(
+    text: &str,
+    segment: &HighlightedText,
+    text_style: &gpui::TextStyle,
+) -> Vec<gpui::TextRun> {
+    let mut runs = Vec::new();
+    let mut cursor = 0usize;
+    for (range, highlight) in &segment.highlights {
+        let range = range.start.min(text.len())..range.end.min(text.len());
+        if range.start >= range.end {
+            continue;
+        }
+        if range.start > cursor {
+            runs.push(text_style.to_run(range.start - cursor));
+        }
+        let mut styled = text_style.clone();
+        if let Some(weight) = highlight.font_weight {
+            styled.font_weight = weight;
+        }
+        if let Some(style) = highlight.font_style {
+            styled.font_style = style;
+        }
+        runs.push(styled.to_run(range.end - range.start.min(range.end)));
+        cursor = range.end;
+    }
+    if cursor < text.len() {
+        runs.push(text_style.to_run(text.len() - cursor));
+    }
+    if runs.is_empty() {
+        runs.push(text_style.to_run(text.len()));
+    }
+    runs
+}
+
 fn measure_dirty_filename_width(
     text: &str,
     segment: &HighlightedText,
@@ -813,9 +870,6 @@ fn measure_dirty_filename_width(
     let mut bold_style = text_style.clone();
     bold_style.font_weight = FontWeight::BOLD;
     runs.push(bold_style.to_run(bold_range.end - bold_range.start));
-    if bold_range.end < text.len() {
-        runs.push(text_style.to_run(text.len() - bold_range.end));
-    }
     window
         .text_system()
         .shape_line(text.to_string().into(), font_size, &runs, None)

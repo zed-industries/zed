@@ -79,6 +79,7 @@ pub fn render_breadcrumb_text(
         .map(|editor| editor.downgrade());
 
     let mut symbol_segments: Vec<Option<BreadcrumbSegmentTarget>> = Vec::new();
+    let mut menu_listing: Option<BreadcrumbListing> = None;
     let mut file_segment_index = 0usize;
     let mut has_root_segment = false;
     let mut file_icon: Option<SharedString> = None;
@@ -116,6 +117,7 @@ pub fn render_breadcrumb_text(
             let menu_symbol_trail = menu
                 .as_ref()
                 .map(|menu| menu.read(cx).symbol_trail().to_vec());
+            menu_listing = menu.as_ref().map(|menu| menu.read(cx).listing().clone());
 
             let is_navigable = breadcrumb_path_is_navigable(
                 real_project_path.is_some(),
@@ -213,15 +215,6 @@ pub fn render_breadcrumb_text(
     let symbol_segments = align_symbol_segments(&segments, symbol_segments);
     let kinds =
         classify_breadcrumb_segment_kinds(segments.len(), file_segment_index, has_root_segment);
-    let menu_listing = editor
-        .as_ref()
-        .and_then(WeakEntity::upgrade)
-        .and_then(|editor| {
-            editor
-                .read(cx)
-                .breadcrumb_navigation_menu()
-                .map(|menu| menu.read(cx).listing().clone())
-        });
     let protected_index = menu_listing.as_ref().and_then(|listing| {
         symbol_segments
             .iter()
@@ -782,6 +775,93 @@ mod tests {
         assert_eq!(texts(&resolved), vec!["item-2"]);
         let resolved = resolve_bar_symbol_trail(vec![outer], Some(vec![peer]));
         assert_eq!(texts(&resolved), vec!["item-2"]);
+    }
+
+    /// Only mouse-down dismissals may arm the same-gesture toggle marker; Escape and
+    /// confirm-style dismissals must not eat the next click on the segment.
+    #[gpui::test]
+    async fn test_segment_reclick_marker_only_arms_for_mouse_dismissals(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Project};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), serde_json::json!({ "a.txt": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let (editor, editor_cx) = {
+            let buffer = cx.new(|cx| language::Buffer::local("", cx));
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let window = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+            let editor = window.root(cx).unwrap();
+            (editor, VisualTestContext::from_window(*window, cx))
+        };
+        let cx = &mut { editor_cx };
+        editor.update(cx, |editor, cx| {
+            editor.set_workspace_for_test(workspace.downgrade(), cx);
+        });
+
+        let listing = BreadcrumbListing::Directory {
+            worktree_id,
+            path: RelPath::empty().into(),
+        };
+
+        // Escape-style dismissal: no marker, re-click opens again immediately.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
+            assert!(editor.breadcrumb_navigation_menu().is_some());
+        });
+        cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| {
+            let menu = editor.breadcrumb_navigation_menu().unwrap().clone();
+            menu.update(cx, |_, cx| cx.emit(gpui::DismissEvent));
+            let _ = window;
+        });
+        cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.breadcrumb_navigation_menu().is_none());
+            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
+            assert!(
+                editor.breadcrumb_navigation_menu().is_some(),
+                "an Escape-style dismissal must not eat the next open"
+            );
+        });
+        cx.run_until_parked();
+
+        // Mouse-down dismissal: marker arms, the same gesture's click is swallowed once,
+        // and the following click opens again.
+        editor.update_in(cx, |editor, window, cx| {
+            let menu = editor.breadcrumb_navigation_menu().unwrap().clone();
+            menu.update(cx, |menu, cx| {
+                menu.set_dismissed_by_mouse_down_for_test();
+                cx.emit(gpui::DismissEvent);
+            });
+            let _ = window;
+        });
+        cx.run_until_parked();
+        editor.update_in(cx, |editor, window, cx| {
+            assert!(editor.breadcrumb_navigation_menu().is_none());
+            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
+            assert!(
+                editor.breadcrumb_navigation_menu().is_none(),
+                "the click that dismissed the menu must not reopen it"
+            );
+            editor.open_or_toggle_breadcrumb_listing_for_test(listing.clone(), window, cx);
+            assert!(
+                editor.breadcrumb_navigation_menu().is_some(),
+                "the marker is one-shot"
+            );
+        });
     }
 
     /// The production drill must cap runaway single-child chains (symlink cycles).

@@ -88,7 +88,8 @@ pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<S
     file_icons::FileIcons::get_icon(path?.as_std_path(), cx)
 }
 
-/// Direct children of `path` as `(path, is_dir)` pairs.
+/// Direct children of `path` as `(path, is_dir)` pairs — a git-free fast path for the
+/// fold walk, which only needs shape, not row data.
 pub(super) fn directory_child_paths(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,

@@ -11035,10 +11035,13 @@ impl Editor {
                 // Restore editor focus only when the menu owned it; a dismissal caused by
                 // clicking into another pane must not steal that pane's focus back.
                 let menu_had_focus = menu.focus_handle(cx).contains_focused(window, cx);
-                // Cleared by the next open_or_toggle (take); effects run before the
-                // gesture's mouse-up, so a frame-scoped clear would fire too early.
-                this.breadcrumb_listing_dismissed_by_gesture =
-                    Some(menu.read(cx).listing().clone());
+                // Armed only for mouse-down dismissals so Escape/confirm/blur never eat a
+                // later click. Cleared by the next open_or_toggle (take); effects run before
+                // the gesture's mouse-up, so a frame-scoped clear would fire too early.
+                this.breadcrumb_listing_dismissed_by_gesture = menu
+                    .read(cx)
+                    .dismissed_by_mouse_down()
+                    .then(|| menu.read(cx).listing().clone());
                 this.breadcrumb_navigation_menu = None;
                 this._breadcrumb_navigation_menu_subscription = None;
                 if menu_had_focus {
@@ -11100,6 +11103,36 @@ impl Editor {
             cx.emit(EditorEvent::BreadcrumbsChanged);
             cx.notify();
         }
+    }
+
+    #[cfg(test)]
+    pub fn set_workspace_for_test(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        _cx: &mut Context<Self>,
+    ) {
+        self.workspace = Some((workspace, None));
+    }
+
+    #[cfg(test)]
+    pub fn open_or_toggle_breadcrumb_listing_for_test(
+        &mut self,
+        listing: BreadcrumbListing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = match listing {
+            BreadcrumbListing::Directory { worktree_id, path } => {
+                element::BreadcrumbSegmentTarget::Directory { worktree_id, path }
+            }
+            BreadcrumbListing::Symbols { buffer_id, parent } => {
+                element::BreadcrumbSegmentTarget::Symbol {
+                    buffer_id,
+                    item: parent,
+                }
+            }
+        };
+        self.open_or_toggle_breadcrumb_listing(target, window, cx);
     }
 
     /// Map buffer-local outline items into multibuffer anchor space.
