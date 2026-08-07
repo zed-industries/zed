@@ -922,7 +922,7 @@ impl Editor {
     ///     Ordering::Equal => on screen
     ///     Ordering::Less => above or to the left of the screen
     ///     Ordering::Greater => below or to the right of the screen
-    pub fn newest_selection_on_screen(&self, cx: &mut App) -> Ordering {
+    pub fn newest_selection_on_screen(&self, window: &mut Window, cx: &mut App) -> Ordering {
         let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let newest_head = self
             .selections
@@ -938,9 +938,33 @@ impl Editor {
         if let (Some(visible_lines), Some(visible_columns)) =
             (self.visible_line_count(), self.visible_column_count())
             && newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
-            && newest_head.column() <= screen_top.column() + visible_columns as u32
         {
-            return Ordering::Equal;
+            // The horizontal test has to be made in rendered space. `DisplayPoint::column`
+            // is a byte offset, while `visible_column_count` is `editor_width / em_advance`
+            // (see `EditorElement`), a count of rendered cells. Comparing them directly
+            // reports any sufficiently long non-ASCII line as off screen, because its byte
+            // offsets outrun its columns.
+            //
+            // `autoscroll_horizontally` already resolves the same question by mapping the
+            // column through the line layout, which is what `x_for_display_point` does.
+            let text_layout_details = self.text_layout_details(window, cx);
+            let em_advance = text_layout_details.text_system.em_layout_width(
+                text_layout_details
+                    .text_system
+                    .resolve_font(&text_layout_details.editor_style.text.font()),
+                text_layout_details
+                    .editor_style
+                    .text
+                    .font_size
+                    .to_pixels(text_layout_details.rem_size),
+            );
+
+            let head_x = snapshot.x_for_display_point(newest_head, &text_layout_details);
+            let top_x = snapshot.x_for_display_point(screen_top, &text_layout_details);
+
+            if head_x - top_x <= em_advance * visible_columns as f32 {
+                return Ordering::Equal;
+            }
         }
 
         Ordering::Greater
