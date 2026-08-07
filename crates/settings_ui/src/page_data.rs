@@ -5955,7 +5955,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 17] {
+    fn git_panel_section() -> [SettingsPageItem; 18] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6189,6 +6189,29 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .entry_primary_click_action = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Open File On Double-Click",
+                description: "Whether double-clicking a file in the Git panel opens the file in the editor. When disabled, a double-click behaves like a normal click (opens the diff).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.open_file_on_double_click"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .open_file_on_double_click
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .open_file_on_double_click = value;
                     },
                 }),
                 metadata: None,
