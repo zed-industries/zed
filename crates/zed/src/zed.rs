@@ -6025,8 +6025,10 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
+            let credentials_provider = zed_credentials_provider::global(cx);
             copilot_chat::init(
                 app_state.client.http_client(),
+                credentials_provider,
                 copilot_chat::CopilotChatConfiguration::default(),
                 cx,
             );

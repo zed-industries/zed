@@ -1,4 +1,6 @@
-use crate::askpass_modal::AskPassModal;
+use git_ui_core::askpass_modal::AskPassModal;
+pub(crate) use git_ui_core::notifications::{open_output, show_error_toast};
+
 use crate::commit_context_menu::{
     CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
 };
@@ -69,7 +71,7 @@ use project::{
     project_settings::{GitPathStyle, ProjectSettings},
 };
 use prompt_store::RULES_FILE_NAMES;
-use proto::RpcError;
+
 use serde::{Deserialize, Serialize};
 use settings::{
     GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
@@ -1201,7 +1203,9 @@ impl GitPanel {
                             .ok();
                     }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                    GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
+                    GitStoreEvent::JobsUpdated
+                    | GitStoreEvent::ConflictsUpdated
+                    | GitStoreEvent::DiffBaseChanged(_) => {}
                 },
             )
             .detach();
@@ -1218,7 +1222,7 @@ impl GitPanel {
                 view_mode: GitPanelViewMode::from_settings(cx),
                 tree_expanded_dirs: HashMap::default(),
                 projected_entries_by_path: HashMap::default(),
-                focus_handle: cx.focus_handle(),
+                focus_handle,
                 fs,
                 new_count: 0,
                 new_staged_count: 0,
@@ -6302,13 +6306,12 @@ impl GitPanel {
             return;
         }
         self.active_tab = tab;
+        self.activation_focus_handle(cx).focus(window, cx);
         match tab {
             GitPanelTab::History => {
-                self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
             }
             GitPanelTab::Changes => {
-                self.focus_handle.focus(window, cx);
                 self.set_commit_history(CommitHistory::Loading, cx);
                 self._repo_subscriptions.clear();
             }
@@ -8197,7 +8200,9 @@ impl editor::Addon for GitPanelAddon {
 
 impl Panel for GitPanel {
     fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.entries.is_empty() || self.commit_editor_expanded {
+        if self.active_tab == GitPanelTab::Changes
+            && (self.entries.is_empty() || self.commit_editor_expanded)
+        {
             self.commit_editor.focus_handle(cx)
         } else {
             self.focus_handle.clone()
@@ -8783,86 +8788,6 @@ impl Component for PanelRepoFooter {
     }
 }
 
-pub(crate) fn open_output(
-    operation: impl Into<SharedString>,
-    workspace: &mut Workspace,
-    output: &str,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let operation = operation.into();
-
-    let plain_text = terminal::strip_ansi_text(output.as_bytes());
-
-    let buffer = cx.new(|cx| Buffer::local(plain_text.as_str(), cx));
-    buffer.update(cx, |buffer, cx| {
-        buffer.set_capability(language::Capability::ReadOnly, cx);
-    });
-    let editor = cx.new(|cx| {
-        let mut editor = Editor::for_buffer(buffer, None, window, cx);
-        editor.buffer().update(cx, |buffer, cx| {
-            buffer.set_title(format!("Output from git {operation}"), cx);
-        });
-        editor.set_read_only(true);
-        editor
-    });
-
-    workspace.add_item_to_center(Box::new(editor), window, cx);
-}
-
-pub(crate) fn show_error_toast(
-    workspace: Entity<Workspace>,
-    action: impl Into<SharedString>,
-    e: anyhow::Error,
-    cx: &mut App,
-) {
-    let action = action.into();
-    let message = format_git_error_toast_message(&e);
-    if message
-        .matches(git::repository::REMOTE_CANCELLED_BY_USER)
-        .next()
-        .is_some()
-    { // Hide the cancelled by user message
-    } else {
-        cx.defer(move |cx| {
-            workspace.update(cx, |workspace, cx| {
-                let workspace_weak = cx.weak_entity();
-                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
-                    this.icon(
-                        Icon::new(IconName::XCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Error),
-                    )
-                    .action("View Log", move |window, cx| {
-                        let message = message.clone();
-                        let action = action.clone();
-                        workspace_weak
-                            .update(cx, move |workspace, cx| {
-                                open_output(action, workspace, &message, window, cx)
-                            })
-                            .ok();
-                    })
-                });
-                workspace.toggle_status_toast(toast, cx)
-            });
-        });
-    }
-}
-
-fn rpc_error_raw_message_from_chain(error: &anyhow::Error) -> Option<&str> {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<RpcError>().map(RpcError::raw_message))
-}
-
-fn format_git_error_toast_message(error: &anyhow::Error) -> String {
-    if let Some(message) = rpc_error_raw_message_from_chain(error) {
-        message.trim().to_string()
-    } else {
-        error.to_string().trim().to_string()
-    }
-}
-
 pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool {
     max_length > 0 && title.chars().count() > max_length
 }
@@ -8885,7 +8810,10 @@ mod tests {
     use util::path;
     use util::rel_path::rel_path;
 
-    use workspace::{MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation};
+    use workspace::{
+        ActivatePaneLeft, ActivatePaneRight, MultiWorkspace, ToolbarItemEvent, ToolbarItemLocation,
+        item::test::TestItem,
+    };
 
     use super::*;
 
@@ -9375,47 +9303,6 @@ mod tests {
             !matches!(panel.commit_history, CommitHistory::Loading)
         })
         .await;
-    }
-
-    #[test]
-    fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
-        let rpc_error = RpcError::from_proto(
-            &proto::Error {
-                message:
-                    "Your local changes to the following files would be overwritten by merge\n"
-                        .to_string(),
-                code: proto::ErrorCode::Internal as i32,
-                tags: Default::default(),
-            },
-            "Pull",
-        );
-
-        let message = format_git_error_toast_message(&rpc_error);
-        assert_eq!(
-            message,
-            "Your local changes to the following files would be overwritten by merge"
-        );
-    }
-
-    #[test]
-    fn test_format_git_error_toast_message_prefers_raw_rpc_message_when_wrapped() {
-        let rpc_error = RpcError::from_proto(
-            &proto::Error {
-                message:
-                    "Your local changes to the following files would be overwritten by merge\n"
-                        .to_string(),
-                code: proto::ErrorCode::Internal as i32,
-                tags: Default::default(),
-            },
-            "Pull",
-        );
-        let wrapped = rpc_error.context("sending pull request");
-
-        let message = format_git_error_toast_message(&wrapped);
-        assert_eq!(
-            message,
-            "Your local changes to the following files would be overwritten by merge"
-        );
     }
 
     #[gpui::test]
@@ -12566,6 +12453,54 @@ mod tests {
         panel.update_in(&mut cx, |panel, window, cx| {
             assert!(panel.commit_editor.focus_handle(cx).is_focused(window));
         });
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_pane_navigation_focuses_rendered_panel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, _project, workspace, panel, mut cx) =
+            setup_git_panel_with_changes(cx, json!({ ".git": {} }), &[]).await;
+
+        let center_item = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let center_item = cx.new(TestItem::new);
+            workspace.add_item_to_active_pane(
+                Box::new(center_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+            center_item
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.entries.is_empty());
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        center_item.update_in(&mut cx, |center_item, window, cx| {
+            center_item.focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(ActivatePaneRight);
+        cx.run_until_parked();
+
+        let history_panel_was_focused = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_handle.contains_focused(window, cx)
+        });
+
+        cx.dispatch_action(ActivatePaneLeft);
+        cx.run_until_parked();
+
+        let center_item_is_focused = center_item.update_in(&mut cx, |center_item, window, cx| {
+            center_item.focus_handle(cx).is_focused(window)
+        });
+        assert!(
+            history_panel_was_focused && center_item_is_focused,
+            "pane navigation should focus the History panel after moving right and restore the center item after moving left; History panel focused after moving right: {history_panel_was_focused}, center item focused after moving left: {center_item_is_focused}"
+        );
     }
 
     #[gpui::test]
