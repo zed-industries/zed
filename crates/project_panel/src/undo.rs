@@ -157,17 +157,15 @@ enum Operation {
     Batch(Vec<Operation>),
 }
 
-enum OperationOutcome {
-    Changed(Change),
-    Cancelled(Operation),
-}
-
 impl Operation {
-    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<OperationOutcome> {
-        Ok(OperationOutcome::Changed(match self {
+    /// Attempts to execute the operation, returning an `Err` if the operation
+    /// failed to execute or `Ok(None)` if the operation was cancelled by the
+    /// user, for example, cancelling trashing a file with unsaved edits.
+    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Option<Change>> {
+        let change = match self {
             Operation::Trash(project_path) => {
                 let Some(trash_id) = undo_manager.trash(&project_path, cx).await? else {
-                    return Ok(OperationOutcome::Cancelled(Operation::Trash(project_path)));
+                    return Ok(None);
                 };
                 Change::Trashed(project_path.worktree_id, trash_id)
             }
@@ -180,21 +178,21 @@ impl Operation {
                 Change::Restored(project_path)
             }
             Operation::Batch(operations) => {
-                let mut res = Vec::new();
-                let mut operations = operations.into_iter();
-                while let Some(operation) = operations.next() {
-                    match Box::pin(operation.execute(undo_manager, cx)).await? {
-                        OperationOutcome::Changed(change) => res.push(change),
-                        OperationOutcome::Cancelled(operation) => {
-                            return Ok(OperationOutcome::Cancelled(Operation::Batch(
-                                std::iter::once(operation).chain(operations).collect(),
-                            )));
-                        }
-                    }
+                let mut changes = Vec::new();
+
+                for operation in operations {
+                    let Some(change) = Box::pin(operation.execute(undo_manager, cx)).await? else {
+                        return Ok(None);
+                    };
+
+                    changes.push(change);
                 }
-                Change::Batched(res)
+
+                Change::Batched(changes)
             }
-        }))
+        };
+
+        Ok(Some(change))
     }
 }
 
@@ -464,20 +462,17 @@ impl Inner {
         // manual intervention would likely be needed in order to undo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let change = self
-            .history
-            .remove(before_cursor)
-            .expect("we can undo");
+        let change = self.history.remove(before_cursor).expect("we can undo");
         let operation = change.clone().to_inverse();
+
         match operation.execute(self, cx).await? {
-            OperationOutcome::Changed(undo_change) => {
-                self.history.insert(before_cursor, undo_change);
-            }
-            OperationOutcome::Cancelled(_) => {
+            Some(undo_change) => self.history.insert(before_cursor, undo_change),
+            None => {
                 self.history.insert(before_cursor, change);
                 self.cursor += 1;
             }
-        }
+        };
+
         Ok(())
     }
 
@@ -490,19 +485,14 @@ impl Inner {
         // manual intervention would likely be needed in order to redo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let change = self
-            .history
-            .remove(self.cursor)
-            .expect("we can redo");
+        let change = self.history.remove(self.cursor).expect("we can redo");
         let operation = change.clone().to_inverse();
         match operation.execute(self, cx).await? {
-            OperationOutcome::Changed(redo_change) => {
+            Some(redo_change) => {
                 self.history.insert(self.cursor, redo_change);
                 self.cursor += 1;
             }
-            OperationOutcome::Cancelled(_) => {
-                self.history.insert(self.cursor, change);
-            }
+            None => self.history.insert(self.cursor, change),
         }
         Ok(())
     }
@@ -595,6 +585,12 @@ impl Inner {
         })
     }
 
+    /// Trashes the specified `project_path`.
+    ///
+    /// In case the `project_path` has unsaved changes, the user will be
+    /// prompted on whether they'd like to save these changes, as well as
+    /// providing an option to just cancel the trashing, in which case,
+    /// `Ok(None)` is returned.
     async fn trash(
         &self,
         project_path: &ProjectPath,
